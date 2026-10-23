@@ -35,8 +35,9 @@ func TestPodmanImportsAVolumeFromAFile(t *testing.T) {
 	}
 }
 
-// Docker has no `volume import`: a throwaway container with the volume mounted writable and the tarball on its standard input, as
-// confined as the one that exports the volume.
+// Docker has no `volume import`: a throwaway container with the volume mounted writable and the tarball on its standard input. A volume
+// that Docker has just created is owned by root and the helper image has nothing at /data to copy the ownership from, so the container
+// runs as root, with the three capabilities that restore the ownership the tarball records (65532, the service user) and nothing else.
 func TestDockerImportsAVolumeThroughAThrowawayContainer(t *testing.T) {
 	rt, f := linuxDocker(t)
 	f.on("inspect --type container suiteward-db", `[{"Name":"/suiteward-db","Config":{"Image":"`+oldPin+`"}}]`)
@@ -44,17 +45,24 @@ func TestDockerImportsAVolumeThroughAThrowawayContainer(t *testing.T) {
 	if err := rt.ImportVolume(context.Background(), VolumeData, path); err != nil {
 		t.Fatal(err)
 	}
-	calls := f.find("tar -xf")
+	calls := f.find("-xf - -C /data")
 	if len(calls) != 1 {
 		t.Fatalf("the volume was not written by a throwaway container: %v", f.lines())
 	}
-	for _, want := range []string{"run --rm", "--interactive", "--network none", "--read-only", "--cap-drop all", "--security-opt no-new-privileges", suiteward64, "--volume " + VolumeData + ":/data ", oldPin + " tar -xf - -C /data"} {
-		if !strings.Contains(calls[0].line(), want) {
-			t.Errorf("the container lacks %q: %s", want, calls[0].line())
+	line := calls[0].line()
+	for _, want := range []string{
+		"run --rm", "--interactive", "--network none", "--read-only", "--cap-drop all", "--security-opt no-new-privileges", "--user 0 ",
+		"--cap-add CHOWN", "--cap-add FOWNER", "--cap-add DAC_OVERRIDE", "--volume " + VolumeData + ":/data ", oldPin + " tar --numeric-owner -xf - -C /data",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the container lacks %q: %s", want, line)
 		}
 	}
-	if strings.Contains(calls[0].line(), ":/data:ro") {
-		t.Errorf("the volume is mounted read-only, so nothing can be imported into it: %s", calls[0].line())
+	if n := strings.Count(line, "--cap-add"); n != 3 {
+		t.Errorf("the container adds %d capabilities, want the three that tar needs: %s", n, line)
+	}
+	if strings.Contains(line, "65532") || strings.Contains(line, ":/data:ro") {
+		t.Errorf("the container runs as the service user, which cannot write a volume that root owns, or mounts the volume read-only: %s", line)
 	}
 	if calls[0].stdin != "TARDATA" {
 		t.Errorf("the tarball did not reach the standard input: %q", calls[0].stdin)
@@ -75,7 +83,7 @@ func TestDockerImportErrors(t *testing.T) {
 			f.on("inspect --type container suiteward-db", `[{"Name":"/suiteward-db","Config":{"Image":"`+oldPin+`"}}]`)
 		}, "absent.tar", "absent.tar"},
 		{"the import fails", func(f *fakeEngine) {
-			f.fail("tar -xf", errInjected).on("inspect --type container suiteward-db", `[{"Name":"/suiteward-db","Config":{"Image":"`+oldPin+`"}}]`)
+			f.fail("-xf - -C /data", errInjected).on("inspect --type container suiteward-db", `[{"Name":"/suiteward-db","Config":{"Image":"`+oldPin+`"}}]`)
 		}, "", "import the volume suiteward-data"},
 	}
 	for _, tc := range cases {

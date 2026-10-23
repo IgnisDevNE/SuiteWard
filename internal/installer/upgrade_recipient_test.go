@@ -198,3 +198,51 @@ func TestUpgradeIsolatedKeyFlowsAreTheSame(t *testing.T) {
 		noIdentityIn(t, "the output", u.out.String())
 	})
 }
+
+// On a terminal the key is asked for before anything else: a no must not have started a service that was down. The key is made once
+// the service answers, because its instance id names the kit.
+func TestUpgradeColocatedAsksForTheKeyBeforeItStartsAServiceThatIsDown(t *testing.T) {
+	u := newUpgradeHarness(t, noRecipient)
+	u.downUntilStarted()
+	t.Chdir(t.TempDir())
+	err := u.upgradeAt(true, "n\n", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "suiteward backup init") {
+		t.Fatalf("got %v, want a refusal that names `suiteward backup init`", err)
+	}
+	if u.startCalls(ContainerDB) != 0 || u.startCalls(ContainerServe) != 0 || strings.Contains(u.out.String(), startQuestion) {
+		t.Errorf("the service was started, or its start was asked about, for an upgrade whose key was refused:\n%s", u.out.String())
+	}
+	u.noChanges()
+
+	// A yes to the key, a yes to the start: the key question comes first, the kit is written when the service answers.
+	u = newUpgradeHarness(t, noRecipient)
+	u.downUntilStarted()
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	if err := u.upgradeAt(true, "y\n\nstored\n", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	out := u.out.String()
+	if key, start := strings.Index(out, "Make one now"), strings.Index(out, startQuestion); key < 0 || start < 0 || key > start {
+		t.Errorf("the key was not asked for before the start (key at %d, start at %d):\n%s", key, start, out)
+	}
+	if _, err := archive.ParseIdentity(readFile(t, filepath.Join(cwd, "suiteward-recovery-kit-"+testInstance+".txt"))); err != nil {
+		t.Errorf("the kit was not written: %v", err)
+	}
+}
+
+func TestUpgradeIsolatedAsksForTheKeyBeforeItStartsAServiceThatIsDown(t *testing.T) {
+	u := newIsoUpgrade(t, nil)
+	u.withoutRecipient()
+	u.f.serviceRunning = false
+	before := u.units()
+	t.Chdir(t.TempDir())
+	err := u.upgradeAt(true, "n\n", u.downUntilStarted(), "--yes")
+	if err == nil || !strings.Contains(err.Error(), "suiteward backup init") {
+		t.Fatalf("got %v, want a refusal that names `suiteward backup init`", err)
+	}
+	if u.f.started || strings.Contains(u.out.String(), startQuestion) {
+		t.Errorf("the service was started, or its start was asked about, for an upgrade whose key was refused:\n%s", u.out.String())
+	}
+	u.untouched(before)
+}

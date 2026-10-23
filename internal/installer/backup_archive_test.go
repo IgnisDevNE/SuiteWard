@@ -3,7 +3,9 @@ package installer
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -77,13 +79,19 @@ type backupEngine struct {
 	dump      string
 	dumpErr   error
 	exportErr error
+	instance  string            // what the database says its instance id is, "" when it says nothing
 	volume    string            // what the volume holds, "TARBYTES" when empty
 	onExport  func(path string) // called before the volume is written
 	execs     [][]string        // the argument lists of the commands run in a container
 }
 
-func (e *backupEngine) Exec(_ context.Context, container string, argv []string, _ io.Reader) ([]byte, error) {
+func (e *backupEngine) Exec(_ context.Context, container string, argv []string, stdin io.Reader) ([]byte, error) {
 	e.execs = append(e.execs, append([]string{container}, argv...))
+	if stdin != nil { // a query of the instance table
+		if sql, err := io.ReadAll(stdin); err == nil && strings.Contains(string(sql), "suiteward_instance") {
+			return []byte(e.instance + "\n"), nil
+		}
+	}
 	return []byte(e.dump), e.dumpErr
 }
 
@@ -355,5 +363,96 @@ func TestBackupRestrictsEveryFileToThisUserOnWindows(t *testing.T) {
 	}
 	if acl[2][1] != path || acl[2][4] != "*"+testSID+":F" {
 		t.Errorf("the archive: %q, want it restricted before it is written", acl[2])
+	}
+}
+
+// The backup of the state that a restore replaces is taken whether or not the service answers: its status is recorded as unavailable,
+// with the reason, and the manifest names the installed image and what is known of the instance, never something made up.
+func TestBackupThatMayLackAStatusRecordsItAsUnavailable(t *testing.T) {
+	down := func(context.Context) ([]byte, error) { return nil, errors.New("connection refused") }
+	b := newBackup(t, &backupEngine{dump: dumpText, instance: "0a0b0c0d"})
+	b.tolerateStatus, b.status = true, down
+	path, err := takeBackup(context.Background(), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, members := openBackup(t, path)
+	var recorded struct {
+		Unavailable bool   `json:"unavailable"`
+		Reason      string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(members[backupStatus]), &recorded); err != nil || !recorded.Unavailable || recorded.Reason != "connection refused" {
+		t.Errorf("status.json is %q (%v)", members[backupStatus], err)
+	}
+	if manifest.SuitewardVersion != "unknown" || manifest.Instance != "0a0b0c0d" || manifest.ImageDigest != oldDigest {
+		t.Errorf("the manifest names %+v: the instance is the one the database knows, the release is not made up", manifest.Info)
+	}
+
+	// An instance the database does not name, or names in another shape, is "unknown".
+	for name, answer := range map[string]string{"nothing": "", "a shape that is not an instance id": "1"} {
+		t.Run(name, func(t *testing.T) {
+			b := newBackup(t, &backupEngine{dump: dumpText, instance: answer})
+			b.tolerateStatus, b.status = true, down
+			path, err := takeBackup(context.Background(), b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if manifest, _ := openBackup(t, path); manifest.Instance != "unknown" {
+				t.Errorf("the instance is %q", manifest.Instance)
+			}
+		})
+	}
+
+	// A backup that does not tolerate it still needs the status.
+	strict := newBackup(t, &backupEngine{dump: dumpText})
+	strict.status = down
+	if _, err := takeBackup(context.Background(), strict); err == nil || !strings.Contains(err.Error(), "read GET /status") {
+		t.Errorf("a backup without a status was taken: %v", err)
+	}
+}
+
+// A backup or a restore that was killed leaves a private directory with plaintext in it. The next backup removes the directories that
+// carry the names of the two, and only those, and says which.
+func TestBackupRemovesWhatAKilledBackupOrRestoreLeft(t *testing.T) {
+	b := newBackup(t, &backupEngine{dump: dumpText})
+	if err := os.MkdirAll(b.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale := []string{".suiteward-spool-111", ".suiteward-restore-222"}
+	for _, name := range stale {
+		if err := os.MkdirAll(filepath.Join(b.dir, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(b.dir, name, backupVolume), []byte("plaintext"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keep := []string{".suiteward-spool-a-file", "mine", "suiteward-backup-20250101-000000.tar.age"}
+	if err := os.WriteFile(filepath.Join(b.dir, keep[0]), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(b.dir, keep[1]), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b.dir, keep[2]), []byte("an older backup"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var said []string
+	b.warn = func(format string, args ...any) { said = append(said, fmt.Sprintf(format, args...)) }
+	if _, err := takeBackup(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range stale {
+		if _, err := os.Stat(filepath.Join(b.dir, name)); err == nil {
+			t.Errorf("%s was left", name)
+		}
+		if !strings.Contains(strings.Join(said, "\n"), name) {
+			t.Errorf("nothing says that %s was removed: %v", name, said)
+		}
+	}
+	for _, name := range keep {
+		if _, err := os.Stat(filepath.Join(b.dir, name)); err != nil {
+			t.Errorf("%s was removed: %v", name, err)
+		}
 	}
 }

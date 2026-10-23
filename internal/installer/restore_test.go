@@ -4,7 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,7 +119,7 @@ func nothingChanged(t *testing.T, u *upgradeHarness) {
 	if got := destructive(u.f, "\x00"); len(got) != 0 {
 		t.Errorf("the engine was asked to change something: %v", got)
 	}
-	if len(u.f.find("psql -X -q -1")) != 0 {
+	if len(u.f.find("psql -X -q -v ON_ERROR_STOP=1")) != 0 {
 		t.Error("a dump was loaded")
 	}
 	if entries, _ := os.ReadDir(u.backups); len(entries) != 0 {
@@ -134,7 +136,7 @@ func TestRestoreReplacesTheInstanceInOrderAndChecksIt(t *testing.T) {
 	u.assertOrder(
 		"exec -i suiteward-db pg_dump -U suiteward -d suiteward", "volume export suiteward-data --output", // the safety backup of what runs
 		"rm --force --ignore --time 45 suiteward", // the service stops
-		" -q -1 -v ON_ERROR_STOP=1 -U suiteward -d suiteward -f -",
+		" -q -v ON_ERROR_STOP=1 -U suiteward -d suiteward -f -",
 		"volume rm suiteward-data", "volume create suiteward-data", "volume import suiteward-data",
 		"run --rm --replace --name suiteward-migrate", "run --detach --replace --name suiteward --network",
 	)
@@ -164,21 +166,29 @@ func TestRestoreReplacesTheInstanceInOrderAndChecksIt(t *testing.T) {
 	}
 }
 
-// The schema is emptied and the dump loaded in one transaction, on standard input: a load that fails leaves the database as it was.
-func TestRestoreLoadsTheDumpInOneTransactionOnStandardInput(t *testing.T) {
+// The schema is emptied and the dump loaded in one transaction that the stream frames itself, on standard input. psql's own
+// --single-transaction would COMMIT a stream that was cut short (Ctrl-C, an end of input), leaving a schema that is dropped and half
+// loaded; here a cut stream ends inside a transaction that was never committed, and the server rolls it back.
+func TestRestoreFramesTheLoadInATransactionThatIsCommittedOnlyAtTheEnd(t *testing.T) {
 	u := restoreHarness(t)
 	if err := u.restore(aBackup(t, nil), confirmed(t, t.TempDir())...); err != nil {
 		t.Fatal(err)
 	}
-	loads := u.f.find(" -q -1 -v ON_ERROR_STOP=1")
+	loads := u.f.find(" -q -v ON_ERROR_STOP=1")
 	if len(loads) != 1 {
 		t.Fatalf("the dump was loaded %d times: %v", len(loads), u.f.lines())
 	}
-	if !strings.HasPrefix(loads[0].stdin, "DROP SCHEMA public CASCADE;\nCREATE SCHEMA public;\n") || !strings.HasSuffix(loads[0].stdin, completeDump) {
-		t.Errorf("the load is not the empty schema and the dump:\n%q", loads[0].stdin)
+	load := loads[0]
+	for _, bad := range []string{" -1 ", "--single-transaction", "HUNTER2-TOTP"} {
+		if strings.Contains(load.line(), bad) {
+			t.Errorf("the argument list has %q: %s", bad, load.line())
+		}
 	}
-	if strings.Contains(loads[0].line(), "HUNTER2-TOTP") {
-		t.Error("the dump is in the argument list")
+	if !strings.HasPrefix(load.stdin, "BEGIN;\nDROP SCHEMA public CASCADE;\nCREATE SCHEMA public;\n") || !strings.HasSuffix(load.stdin, completeDump+"\nCOMMIT;\n") {
+		t.Errorf("the load is not the open transaction, the empty schema, the dump and the commit:\n%q", load.stdin)
+	}
+	if n := strings.Count(load.stdin, "COMMIT"); n != 1 {
+		t.Errorf("the stream commits %d times, want once, at the very end", n)
 	}
 }
 
@@ -404,32 +414,140 @@ func TestRestoreRefusesTheKeyAsAnArgument(t *testing.T) {
 	nothingChanged(t, u)
 }
 
-func TestRestoreOfAnInstanceThatDoesNotAnswerHasNoSafetyBackupAndComparesTheRelease(t *testing.T) {
-	u := restoreHarness(t)
+// downUntilRestored makes /status fail until the restore has started the service again.
+func (u *upgradeHarness) downUntilRestored() {
 	u.status = func(ctx context.Context, address string) ([]byte, error) {
-		if len(u.f.find("--name suiteward --network")) == 0 { // the service runs again only when the restore started it
+		if len(u.f.find("--name suiteward --network")) == 0 {
 			return nil, errConnectionRefused
 		}
 		return httpGet(ctx, address)
 	}
+}
+
+// The database is healthy (the restore checks), so its dump and the volume can be taken whether or not the service answers: the state
+// that is replaced is always backed up first, and its status is recorded as unavailable, with the reason.
+func TestRestoreOfAnInstanceThatDoesNotAnswerStillBacksItUpAndRecordsWhy(t *testing.T) {
+	u := restoreHarness(t)
+	u.downUntilRestored()
 	if err := u.restore(aBackup(t, nil), confirmed(t, t.TempDir())...); err != nil {
 		t.Fatal(err)
 	}
-	if len(u.f.find("pg_dump")) != 0 {
-		t.Error("a safety backup was taken of an instance that does not answer")
+	u.assertOrder("pg_dump", "volume export", "rm --force --ignore --time 45 suiteward", " -q -v ON_ERROR_STOP=1")
+	safety := oneArchive(t, u.backups)
+	manifest, members := openBackup(t, safety)
+	var recorded struct {
+		Unavailable bool   `json:"unavailable"`
+		Reason      string `json:"reason"`
 	}
-	if !strings.Contains(u.out.String(), "does not answer") {
-		t.Errorf("the output does not say that nothing was backed up:\n%s", u.out.String())
+	if err := json.Unmarshal([]byte(members[backupStatus]), &recorded); err != nil || !recorded.Unavailable || !strings.Contains(recorded.Reason, "connection refused") {
+		t.Errorf("status.json is %q, want {\"unavailable\": true, \"reason\": ...} with the reason (%v)", members[backupStatus], err)
 	}
+	if manifest.ImageDigest != oldDigest || manifest.Instance != "unknown" || manifest.SuitewardVersion != "unknown" {
+		t.Errorf("the manifest names %+v, want the installed image and nothing invented", manifest.Info)
+	}
+	if members[backupDump] != completeDump || members[backupVolume] != tarBytes(t) {
+		t.Errorf("the safety backup lacks the data: %v", memberNames(manifest))
+	}
+	for _, want := range []string{"does not answer", safety} {
+		if !strings.Contains(u.out.String(), want) {
+			t.Errorf("the output lacks %q:\n%s", want, u.out.String())
+		}
+	}
+}
 
-	// Without /status the release is compared by the digest of the installed image.
-	u = restoreHarness(t)
+// Such a backup is restorable: the release is compared by the digest of its image, after a warning that nothing else is known.
+func TestRestoreOfABackupWhoseStatusWasUnavailableWarnsAndComparesTheImage(t *testing.T) {
+	first := restoreHarness(t)
+	first.downUntilRestored()
+	if err := first.restore(aBackup(t, nil), confirmed(t, t.TempDir())...); err != nil {
+		t.Fatal(err)
+	}
+	safety := oneArchive(t, first.backups)
+
+	u := restoreHarness(t)
+	if err := u.restore(safety, "--kit", writeTestKit(t, t.TempDir()), "--yes", "--instance", "unknown"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"not recorded", "connection refused", oldDigest} {
+		if !strings.Contains(u.out.String(), want) {
+			t.Errorf("the preview lacks %q:\n%s", want, u.out.String())
+		}
+	}
+	u.assertOrder("rm --force --ignore --time 45 suiteward", " -q -v ON_ERROR_STOP=1", "volume import suiteward-data", "--name suiteward --network")
+
+	// Another image is refused, by name, before anything changes.
+	other := restoreHarness(t)
+	err := other.restore(aBackup(t, func(b *backup, _ *backupEngine) {
+		b.tolerateStatus, b.image = true, testImage
+		b.status = func(context.Context) ([]byte, error) { return nil, errConnectionRefused }
+	}), "--kit", writeTestKit(t, t.TempDir()), "--yes", "--instance", "unknown")
+	if err == nil || !strings.Contains(err.Error(), releaseImageRepo+"@"+testDigest) {
+		t.Fatalf("got %v, want the release to install first", err)
+	}
+	nothingChanged(t, other)
+}
+
+// Without /status the release is compared by the digest of the installed image.
+func TestRestoreWithoutStatusComparesTheDigestOfTheInstalledImage(t *testing.T) {
+	u := restoreHarness(t)
 	u.status = func(context.Context, string) ([]byte, error) { return nil, errConnectionRefused }
 	err := u.restore(aBackup(t, backupOfVersion("v0.1.9", testImage)), confirmed(t, t.TempDir())...)
 	if err == nil || !strings.Contains(err.Error(), releaseImageRepo+"@"+testDigest) {
 		t.Fatalf("got %v, want the release to install first", err)
 	}
 	nothingChanged(t, u)
+}
+
+// A backup or a restore that was killed leaves its private directory, and what is in it is plaintext: the next one removes it, and says so.
+func TestRestoreRemovesWhatAKilledBackupOrRestoreLeft(t *testing.T) {
+	u := restoreHarness(t)
+	if err := os.MkdirAll(u.backups, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale := []string{".suiteward-restore-1111", ".suiteward-spool-2222"}
+	for _, name := range stale {
+		if err := os.MkdirAll(filepath.Join(u.backups, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(u.backups, name, "suiteward.sql"), []byte("HUNTER2-TOTP"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	other := filepath.Join(u.backups, "mine")
+	if err := os.Mkdir(other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.restore(aBackup(t, nil), confirmed(t, t.TempDir())...); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range stale {
+		if _, err := os.Stat(filepath.Join(u.backups, name)); err == nil {
+			t.Errorf("%s was left", name)
+		}
+		if !strings.Contains(u.out.String(), name) {
+			t.Errorf("the output does not say that %s was removed:\n%s", name, u.out.String())
+		}
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("a directory that is not a leftover was removed: %v", err)
+	}
+}
+
+// The unpacked backup holds the TOTP secret: its directory is restricted to this user before anything is written to it.
+func TestRestoreRestrictsTheDirectoryItUnpacksInToThisUserOnWindows(t *testing.T) {
+	var acl [][]string
+	deps := windowsDepsWith(func() (string, error) { return testSID, nil }, func(_ context.Context, name string, args []string, _ io.Reader) ([]byte, error) {
+		acl = append(acl, append([]string{name}, args...))
+		return nil, nil
+	})
+	x := &restoreRun{env: Env{Deps: deps}, inst: instance{parent: t.TempDir()}, file: aBackup(t, nil), kit: writeTestKit(t, t.TempDir())}
+	if err := x.unpack(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = x.cleanup() }()
+	if len(acl) != 1 || acl[0][0] != "icacls" || acl[0][1] != x.work || acl[0][2] != "/inheritance:r" || acl[0][4] != "*"+testSID+":(OI)(CI)F" {
+		t.Errorf("icacls ran as %q, want one restriction of %s to this user", acl, x.work)
+	}
 }
 
 func TestRestoreWarnsOfAnotherInstanceAndAnotherTier(t *testing.T) {
@@ -476,7 +594,7 @@ func TestRestoreOfAPlaintextDirectoryWarnsAndNeedsNoKit(t *testing.T) {
 			t.Errorf("the output lacks %q:\n%s", want, out)
 		}
 	}
-	u.assertOrder("pg_dump", "rm --force --ignore --time 45 suiteward", " -q -1 -v ON_ERROR_STOP=1", "volume import suiteward-data", "--name suiteward --network")
+	u.assertOrder("pg_dump", "rm --force --ignore --time 45 suiteward", " -q -v ON_ERROR_STOP=1", "volume import suiteward-data", "--name suiteward --network")
 	if u.imported != tarBytes(t) {
 		t.Errorf("the artifacts were not imported: %q", u.imported)
 	}
@@ -519,7 +637,7 @@ func TestRestoreThatFailsAfterTheStopNamesTheSafetyBackupAndHowToGoOn(t *testing
 		rule rule
 		want []string
 	}{
-		{"the load", rule{match: " -q -1 -v ON_ERROR_STOP=1", err: errors.New("psql: ERROR: COPY owner, line 1: \"HUNTER2-TOTP\"")}, []string{"the database was not changed", "suiteward install"}},
+		{"the load", rule{match: " -q -v ON_ERROR_STOP=1", err: errors.New("psql: ERROR: COPY owner, line 1: \"HUNTER2-TOTP\"")}, []string{"the database was not changed", "rolls it back", "may quote rows", "suiteward install"}},
 		{"the import", rule{match: "volume import", err: errInjected}, []string{errInjected.Error(), "database was replaced", "suiteward restore"}},
 		{"the migration", rule{match: "run --rm --replace --name suiteward-migrate", err: errInjected}, []string{errInjected.Error(), "suiteward install"}},
 		{"the start", rule{match: "run --detach --replace --name suiteward --network", err: errInjected}, []string{errInjected.Error(), "suiteward install"}},
@@ -619,7 +737,7 @@ func TestRestoreOnTheIsolatedTierStopsTheUnitsAndStartsThemAgain(t *testing.T) {
 	for _, marker := range []string{
 		"podman exec -i suiteward-db pg_dump", "podman volume export suiteward-data --output",
 		"systemctl --user stop suiteward.service suiteward-migrate.service",
-		" -q -1 -v ON_ERROR_STOP=1 -U suiteward -d suiteward -f -",
+		" -q -v ON_ERROR_STOP=1 -U suiteward -d suiteward -f -",
 		"podman volume rm suiteward-data", "systemctl --user restart suiteward-data-volume.service", "podman volume import suiteward-data",
 		"systemctl --user restart suiteward-migrate.service", "systemctl --user start suiteward.service",
 	} {
@@ -657,8 +775,8 @@ func TestRestoreOnDockerReplacesTheContainersAndWritesTheVolumeThroughAThrowaway
 	if err := Restore(context.Background(), args, h.newEnv()); err != nil {
 		t.Fatal(err)
 	}
-	h.assertOrder("pg_dump", "stop --time 45 suiteward", " -q -1 -v ON_ERROR_STOP=1", "volume rm suiteward-data", "volume create suiteward-data", "tar -xf - -C /data", "run --rm --name suiteward-migrate", "run --detach --name suiteward --network")
-	imports := h.f.find("tar -xf - -C /data")
+	h.assertOrder("pg_dump", "stop --time 45 suiteward", " -q -v ON_ERROR_STOP=1", "volume rm suiteward-data", "volume create suiteward-data", "tar --numeric-owner -xf - -C /data", "run --rm --name suiteward-migrate", "run --detach --name suiteward --network")
+	imports := h.f.find("tar --numeric-owner -xf - -C /data")
 	if len(imports) != 1 || imports[0].stdin != tarBytes(t) {
 		t.Errorf("the volume was not written from the tarball of the backup: %v", imports)
 	}

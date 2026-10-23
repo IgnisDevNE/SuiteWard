@@ -263,7 +263,7 @@ func TestWriterRefusesWhatBreaksTheFormat(t *testing.T) {
 
 	names := []string{
 		"../x", "/etc/x", "units/../../x", `units\..\x`, `..\x`, "", "manifest.json", "SUITEWARD.SQL", "suiteward.sql/",
-		"units/suiteward.txt", "units/x.container", "units/sub/suiteward.container", "units/suiteward.container/", "units/suiteward.CONTAINER",
+		"units/suiteward.txt", "units/suiteward.container\n", "units/x.container", "units/sub/suiteward.container", "units/suiteward.container/", "units/suiteward.CONTAINER",
 	}
 	for _, name := range names {
 		w, err := NewWriter(io.Discard, rec, testInfo())
@@ -479,6 +479,12 @@ func withManifest(data ...rawEntry) []rawEntry { return append(data, manifestOf(
 
 func rawArchive(t *testing.T, rec *age.X25519Recipient, entries []rawEntry) []byte {
 	t.Helper()
+	return paddedArchive(t, rec, entries, 0)
+}
+
+// paddedArchive follows the tar with padding zero bytes inside the encryption, as tools that write whole records do.
+func paddedArchive(t *testing.T, rec *age.X25519Recipient, entries []rawEntry, padding int) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	enc, err := age.Encrypt(&buf, rec)
 	if err != nil {
@@ -495,6 +501,9 @@ func rawArchive(t *testing.T, rec *age.X25519Recipient, entries []rawEntry) []by
 		}
 	}
 	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enc.Write(make([]byte, padding)); err != nil {
 		t.Fatal(err)
 	}
 	if err := enc.Close(); err != nil {
@@ -519,6 +528,27 @@ func TestTheHandBuiltArchiveOfTheRejectionTestsIsValid(t *testing.T) {
 	}
 }
 
+func TestAnArchiveCutAfterItsTarEndedIsRefused(t *testing.T) {
+	// The tar is complete, but the encryption has chunks to go: only reading to the end of the stream notices the cut.
+	rec, id := newKeyPair(t)
+	data := paddedArchive(t, rec, sound(), 4*64*1024)
+
+	rd, err := Open(bytes.NewReader(data), id)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := rd.ReadManifest(); err != nil {
+		t.Fatalf("the control, a padded archive, is refused: %v", err)
+	}
+	rd, err = Open(bytes.NewReader(data[:len(data)-2*64*1024]), id)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := rd.ReadManifest(); !errors.Is(err, ErrInvalid) {
+		t.Errorf("ReadManifest of a cut archive = %v, want ErrInvalid", err)
+	}
+}
+
 func TestAHostileArchiveIsRefusedAndNothingIsLeftBehind(t *testing.T) {
 	good := reg("status.json", "{}")
 	symlink := rawEntry{hdr: tar.Header{Name: "status.json", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd", Mode: 0o600}}
@@ -538,6 +568,7 @@ func TestAHostileArchiveIsRefusedAndNothingIsLeftBehind(t *testing.T) {
 		{"a name outside the allowlist", withManifest(good, reg("other.txt", "evil")), "not allowed"},
 		{"a unit that is not a unit", withManifest(good, reg("units/suiteward.sh", "evil")), "not allowed"},
 		{"a nested unit", withManifest(good, reg("units/a/suiteward.container", "evil")), "not allowed"},
+		{"a name with a trailing newline", withManifest(good, reg("units/suiteward.container\n", "evil")), "not allowed"},
 		{"a name in another case", withManifest(good, reg("Status.json", "evil")), "not allowed"},
 		{"a duplicate", withManifest(good, good), "twice"},
 		{"a symbolic link", withManifest(good, symlink), "not a regular file"},

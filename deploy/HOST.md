@@ -85,6 +85,12 @@ cat > ~/smoke.sh
 SMOKE_TIER=isolated sh ~/smoke.sh
 ```
 
+A host installed before M1.14 keeps 8081 (HTTP) and 8091 (MCP): an upgrade never moves a port. On such a host the smoke test names them:
+
+```
+SMOKE_BASE=http://127.0.0.1:8081 SMOKE_MCP_BASE=http://127.0.0.1:8091 SMOKE_TIER=isolated sh ~/smoke.sh
+```
+
 It waits for `/readyz`, checks `/healthz` and `/status` (zero failed and discarded), the `tier` (`SMOKE_TIER=isolated` makes anything but `isolated` fail), the `github` step (it waits up to `SMOKE_GITHUB_TIMEOUT`, 120 s by default, until every repository in the `github` array of `/status` shows `lastSuccess`, and fails at once on a `lastError`; `SMOKE_GITHUB=0` skips only that step, for a stack without GitHub) and the `mcp` step (two requests to `http://127.0.0.1:27091/mcp`, `SMOKE_MCP_BASE`, that never read the token: a POST without a token must answer 401, a POST with `Origin: http://evil.example` 403). Then it runs a probe through the worker, enqueues a probe whose job is delayed by 20 s, restarts the service and checks that the delayed job still ran afterwards, and prints a summary block with a timestamp and elapsed milliseconds per step. That step proves a delayed job survives a restart; it is no proof of outbox durability. To assert the version, run `SMOKE_VERSION=<version> sh ~/smoke.sh`: `/status` reports the release tag as `version`. `SMOKE_BASE` and `SMOKE_MCP_BASE` name other ports. It exits non-zero and names the failing step otherwise.
 
 Paste back: the whole summary block (it holds the `tier`, `github` and `mcp` lines; if any step fails, add `journalctl --user -u suiteward.service -n 50 --no-pager`: log lines carry no secret, and a restart loop shows its cause there); the output of `suiteward doctor`; the output of `systemctl --user status suiteward-db.service suiteward-migrate.service suiteward.service --no-pager`; `podman --version`; `podman inspect suiteward --format '{{.Config.StopTimeout}}'` (must print 45, the contract needs it above the 30 s shutdown timeout); `sudo ss -tlnp` (every listener on `127.0.0.1` or `::1` except the system and SSM ones you recognise; both published ports, 27081 and 27091, show as `rootlessport`); about 30 `journalctl` lines of the service around the restart; and how long the first pull and start took.
@@ -111,6 +117,15 @@ The MCP listener is forwarded the same way (a second terminal, or a second sessi
 ```
 aws ssm start-session --target <instance-id> --region us-east-2 --document-name AWS-StartPortForwardingSession --parameters portNumber=27091,localPortNumber=27091
 ```
+
+On a host installed before M1.14 (ports 8081 and 8091, see section 3), forward those instead:
+
+```
+aws ssm start-session --target <instance-id> --region us-east-2 --document-name AWS-StartPortForwardingSession --parameters portNumber=8081,localPortNumber=8081
+aws ssm start-session --target <instance-id> --region us-east-2 --document-name AWS-StartPortForwardingSession --parameters portNumber=8091,localPortNumber=8091
+```
+
+Where this section names a port (`curl`, `claude mcp add`), use the port of your host.
 
 To read the token once, in your own Session Manager terminal on the host, and put it in your own secret store (your password manager); nothing else keeps a copy:
 

@@ -155,7 +155,7 @@ Set `SUITEWARD_VERSION` to the same tag: the script is the same file in every re
   - `v0.1.3` was the last release before the hardening phase.
   - `v0.2.0` (2026-10-22) is the current release and runs on both tiers. It adds a least-privilege database role, `suiteward migrate`, signed releases with provenance and an SBOM, and an AlmaLinux 9 isolated host.
   - The security assessment is done, and the hardening phase ([SH](docs/plan/phases/SH.md)) is merged and released.
-  - The installer (phase M1.12) is merged and ships as the pre-release `v0.3.0-alpha.1`; the findings of its validation are fixed in `v0.3.0-alpha.2` ([#53](https://github.com/IgnisDevNE/SuiteWard/pull/53)).
+  - The installer (phase M1.12) is merged and ships as the pre-release `v0.3.0-alpha.1`; the findings of its validation are fixed for `v0.3.0-alpha.2` in [#53](https://github.com/IgnisDevNE/SuiteWard/pull/53).
   - Phase [M1.13](docs/plan/phases/M1.13.md) adds macOS, the one-line install and the full-screen installer; its change report and encrypted backups are not merged yet.
 - **Security:** see [SECURITY.md](SECURITY.md), the [threat model](docs/security/threat-model.md), and [`scripts/verify-release.ps1`](scripts/verify-release.ps1), which verifies a release's signature and provenance.
 - **After the MVP:**

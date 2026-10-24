@@ -64,28 +64,25 @@ func TestTheSummaryOfAnUpgradeHasOneReleaseRowAndAnImageRow(t *testing.T) {
 	}
 }
 
-// engineOnly is a runtime that knows its engine and nothing else: the summary of the isolated tier asks for no more.
-type engineOnly struct{ Runtime }
-
-func (engineOnly) Engine() Engine { return Engine{Name: "Podman", Version: "5.8", Rootless: true} }
-
-// The isolated tier passes its upgrade's row as Release: the summary shows it as the image, and the Release row is the version.
-func TestTheSummaryOfTheIsolatedTierHasTheSameRows(t *testing.T) {
-	env := Env{HTTPGet: func(context.Context, string) ([]byte, error) {
-		return []byte(`{"version":"v0.2.0","instance":"` + testInstance + `"}`), nil
-	}}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // the closing checks are skipped: only the rows before them are looked at
-	swap := digestOf(testImage) + " (was " + digestOf(testImage) + ")"
-	rows := isolatedSummary(ctx, env, isolatedHost{rt: engineOnly{}, settingsPath: "settings.yaml"}, Settings{Tier: config.TierIsolated, HTTPPort: 27081}, ui.KV{Key: "Release", Value: swap})
-	got := map[string][]string{}
-	for _, kv := range rows {
-		got[kv.Key] = append(got[kv.Key], kv.Value)
+// The isolated tier has the same rows: the instance id, the version as the Release row, and, in an upgrade, the Image row.
+func TestTheSummaryOfAnIsolatedUpgradeHasTheSameRows(t *testing.T) {
+	u := newIsoUpgrade(t, nil)
+	c := newTermConsole(&u.out)
+	env := u.env()
+	env.OpenScreen = c.open
+	fastHealthWait(t)
+	args := []string{"--upgrade", "--tier", "isolated", "--settings", settingsFile(u.home), "--backup-dir", u.backups, "--image", testDigest, "--yes"}
+	if err := Install(liveContext(t), args, env); err != nil {
+		t.Fatal(err)
 	}
-	for key, want := range map[string]string{"Instance": testInstance, "Release": "v0.2.0", "Image": swap} {
-		if len(got[key]) != 1 || got[key][0] != want {
-			t.Errorf("the %s rows are %q, want exactly %q", key, got[key], want)
+	tail := c.tail()
+	for _, want := range []string{"Instance: " + testInstance + "\n", "Release: v0.2.0\n", "Image: " + testDigest + " (was " + oldDigest + ")\n"} {
+		if !strings.Contains(tail, want) {
+			t.Errorf("the summary lacks %q:\n%s", want, tail)
 		}
+	}
+	if got := len(regexp.MustCompile(`(?m)^Release: `).FindAllString(tail, -1)); got != 1 {
+		t.Errorf("the summary has %d Release rows, want 1:\n%s", got, tail)
 	}
 }
 

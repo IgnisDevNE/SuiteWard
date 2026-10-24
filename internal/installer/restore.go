@@ -554,7 +554,7 @@ func (x *restoreRun) warn() {
 	}
 	if tier := string(x.inst.s.Tier); x.info.Tier != "" && x.info.Tier != tier {
 		if x.scr.FullScreen() { // one row: the page has few of them for the facts above the warnings, and the plain lines keep the reason
-			x.scr.Warn("The backup is %s; this instance is %s.\n", x.info.Tier, tier)
+			x.scr.Warn("Backup tier: %s; this instance: %s.\n", x.info.Tier, tier)
 		} else {
 			x.scr.Warn("The backup was made on the %s tier and this instance is on the %s tier: the owner's enrollment records its tier, and /status says so after the restore.\n", x.info.Tier, tier)
 		}

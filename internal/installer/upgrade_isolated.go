@@ -126,7 +126,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	upgraded(scr, image, dir, goBackIsolated(env.Deps.command(), dir, host.unitsDir, scope), env.Deps.command()+" doctor")
 	sayOldEnvFile(out, host.envPath, st.oldEnv, false)
 	return showSummary(scr, func() []ui.KV {
-		return isolatedSummary(ctx, env, host, s, ui.KV{Key: "Release", Value: fmt.Sprintf("%s (was %s)", digestOf(image), digestOf(st.adopted.Image))})
+		return isolatedSummary(ctx, env, host, s, ui.KV{Key: "Image", Value: fmt.Sprintf("%s (was %s)", digestOf(image), digestOf(st.adopted.Image))})
 	})
 }
 

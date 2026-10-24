@@ -138,14 +138,11 @@ func instanceStatus(ctx context.Context, status func(context.Context) ([]byte, e
 	if err != nil {
 		return "", ""
 	}
-	var parsed struct {
-		Version  string `json:"version"`
-		Instance string `json:"instance"`
-	}
-	if json.Unmarshal(body, &parsed) != nil {
+	var doc statusDoc
+	if json.Unmarshal(body, &doc) != nil {
 		return "", ""
 	}
-	return parsed.Version, parsed.Instance
+	return doc.Version, doc.Instance
 }
 
 // statusRow is where to read /status of the co-located stack: its address, or, when the port is published inside a Podman machine and does
@@ -207,7 +204,7 @@ func (c *colocatedInstall) upgradeSummary(ctx context.Context, t installTarget) 
 	return rows
 }
 
-// isolatedSummary is the summary of the isolated tier: what an install or an upgrade of it share, then its own rows.
+// isolatedSummary is the summary of the isolated tier: what an install or an upgrade of it share, then its own rows (an upgrade's is Image).
 func isolatedSummary(ctx context.Context, env Env, host isolatedHost, s Settings, own ...ui.KV) []ui.KV {
 	var rows summaryRows
 	rows.add("Tier", string(s.Tier))
@@ -218,11 +215,6 @@ func isolatedSummary(ctx context.Context, env Env, host isolatedHost, s Settings
 	rows.add("Release", version)
 	rows.addGitHub(s.GitHub)
 	for _, kv := range own {
-		// shortcut: the upgrade of the isolated tier (upgrade_isolated.go) passes the image that replaced the old one under the key
-		// Release, which is the version of the service here, so it is renamed. Upgrade when that caller passes Image itself.
-		if kv.Key == "Release" {
-			kv.Key = "Image"
-		}
 		rows.add(kv.Key, kv.Value)
 	}
 	rows.add("Status", address)

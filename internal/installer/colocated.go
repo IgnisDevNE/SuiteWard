@@ -228,7 +228,7 @@ func askImage(r *Resolver, previous stackInstalled) (string, error) {
 	var asked string
 	var err error
 	if shown {
-		asked, err = r.screen.AskDefault("Release image (Enter keeps the default)", defaultImage)
+		asked, err = r.screen.AskDefault("Release image", defaultImage) // the Default row and the hint line say what Enter does
 	} else {
 		asked, err = r.Value("image", "Release image (pinned by digest)", defaultImage)
 	}

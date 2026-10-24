@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // accountPersonal is the answer for an App owned by the user's personal account.
@@ -74,14 +75,8 @@ var manifestPage = template.Must(template.New("manifest").Parse(`<!doctype html>
 <script>document.getElementById("f").submit()</script>
 `))
 
-// pasted is one line the user typed or pasted.
-type pasted struct {
-	line string
-	err  error
-}
-
-// obtainManifestCode serves the manifest form on a loopback listener and returns the code, from GitHub's callback or pasted
-// into the terminal, whichever comes first. The code is a credential until it is converted: it is never printed.
+// obtainManifestCode serves the manifest form on a loopback listener and returns the code, from GitHub's callback or, when that is late,
+// pasted into a hidden question of the terminal (waitForCode). The code is a credential until it is converted: it is never printed.
 func obtainManifestCode(ctx context.Context, env githubEnv, account string) (string, string, error) {
 	if _, ok := env.R.given("manifest-code"); ok { // a code from an earlier attempt, within its hour; a secret, so never a flag
 		given, err := env.R.Secret("manifest-code", "The manifest code")
@@ -149,56 +144,108 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 		}
 	}()
 
-	ghSay(env.Out, "Create the GitHub App: open this address in the browser of this machine and approve the App on GitHub. The App is named %s unless you rename it there; note the name, in case the installer cannot finish and the App has to be deleted.\n  http://%s/\n", name, addr)
-	if env.Tier == config.TierIsolated {
-		port := addr[strings.LastIndex(addr, ":")+1:]
-		ghSay(env.Out, "This host is isolated: from your PC, forward the port first, then open the address on the PC (the browser reaches the listener through the forward).\n"+
-			"  aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"%s\"],\"localPortNumber\":[\"%s\"]}'\n", port, port)
+	if scr := env.R.screen; scr.FullScreen() {
+		blocks := []ui.Block{
+			ui.Para("Open the address below in the browser of this machine, review the App on GitHub and approve it. The installer continues by itself when GitHub answers."),
+			ui.Fields(ui.KV{Key: "Address", Value: "http://" + addr + "/"}, ui.KV{Key: "App name", Value: name}),
+			ui.Para("Note the App name, in case the installer cannot finish and the App has to be deleted on GitHub. You may rename it there."),
+		}
+		if env.Tier == config.TierIsolated {
+			port := addr[strings.LastIndex(addr, ":")+1:]
+			blocks = append(blocks,
+				ui.Para("This host is isolated: from your PC, forward the port first, then open the address on the PC (the browser reaches the listener through the forward)."),
+				ui.Para("aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\""+port+"\"],\"localPortNumber\":[\""+port+"\"]}'"))
+		}
+		scr.Page("Create the GitHub App", blocks...)
+	} else {
+		ghSay(env.Out, "Create the GitHub App: open this address in the browser of this machine and approve the App on GitHub. The App is named %s unless you rename it there; note the name, in case the installer cannot finish and the App has to be deleted.\n  http://%s/\n", name, addr)
+		if env.Tier == config.TierIsolated {
+			port := addr[strings.LastIndex(addr, ":")+1:]
+			ghSay(env.Out, "This host is isolated: from your PC, forward the port first, then open the address on the PC (the browser reaches the listener through the forward).\n"+
+				"  aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"%s\"],\"localPortNumber\":[\"%s\"]}'\n", port, port)
+		}
 	}
 
-	wait := env.ManifestWait
-	ctx, cancel := context.WithTimeout(ctx, wait)
+	ctx, cancel := context.WithTimeout(ctx, env.ManifestWait)
 	defer cancel()
-	var paste chan pasted // nil without a terminal: select never receives from it
-	readLine := func() {
-		c := make(chan pasted, 1)
-		paste = c
-		go func() { // only one read is ever pending: the Resolver's reader is not safe for two
-			line, err := env.R.screen.Prompt("") // the question is printed by the caller; the answer joins it on the page
-			c <- pasted{line, err}
-		}()
+	code, err := waitForCode(ctx, env, codes, state)
+	if err != nil {
+		return "", "", err
 	}
-	if env.R.term.IsTerminal {
-		ghSay(env.Out, "If the browser cannot reach this machine, paste the code (or the whole address the browser shows after GitHub redirects) here and press Enter: ")
-		readLine()
-	}
+	return code, name, nil
+}
+
+// errNoMoreInput is the end of the input at the question that offers the paste.
+var errNoMoreInput = errors.New("no more input")
+
+// waitForCode waits for the code of GitHub's callback. It reads nothing from the terminal while it waits: a read that was still pending
+// when the callback came would take the answer to the next question (the Resolver's reader is shared, and a read cannot be given up),
+// or need an Enter to end it. After PasteAfter without an answer, a terminal is offered the paste of the code, or of the address the
+// browser ended on (askPaste); the offer comes again after each Enter that keeps waiting. A callback that comes while it is open is
+// taken when it ends.
+func waitForCode(ctx context.Context, env githubEnv, codes <-chan string, state string) (string, error) {
+	canPaste := env.R.term.IsTerminal
 	for {
+		if !canPaste {
+			select {
+			case code := <-codes:
+				return code, nil
+			case <-ctx.Done():
+				return "", waitError(ctx, env.ManifestWait)
+			}
+		}
+		late := time.NewTimer(env.PasteAfter)
 		select {
 		case code := <-codes:
-			if paste != nil { // a read is still pending: the user's next Enter ends it, so it cannot take a later answer
-				ghSay(env.Out, "\nGitHub answered. Press Enter to continue: ")
-				select {
-				case <-paste:
-				case <-ctx.Done():
-					return "", "", waitError(ctx, wait)
-				}
-			}
-			return code, name, nil
-		case p := <-paste:
-			paste = nil
-			code, perr := parseManifestCode(p.line, state)
-			switch {
-			case perr == nil:
-				return code, name, nil
-			case p.err != nil: // end of input: nothing more can be pasted
-				ghSay(env.Out, "\nNo more input: waiting for GitHub's callback only.\n")
-			default:
-				ghSay(env.Out, "That was refused: %v\nPaste the code or the whole address again: ", perr)
-				readLine()
-			}
+			late.Stop()
+			return code, nil
 		case <-ctx.Done():
-			return "", "", waitError(ctx, wait)
+			late.Stop()
+			return "", waitError(ctx, env.ManifestWait)
+		case <-late.C:
 		}
+		code, err := askPaste(ctx, env, codes, state)
+		switch {
+		case errors.Is(err, errNoMoreInput):
+			canPaste = false
+		case err != nil:
+			return "", err
+		case code != "":
+			return code, nil
+		}
+	}
+}
+
+// askPaste asks, hidden, for the code or the address that the browser ended on, until it gets a good one. An answer with nothing in it
+// is no paste: it is the callback if that has come, and otherwise the wish to keep waiting, which is no code and no error.
+// The code is a credential until it is converted: it is read with no echo, and neither the terminal nor the frame shows it.
+func askPaste(ctx context.Context, env githubEnv, codes <-chan string, state string) (string, error) {
+	const label = "No answer from GitHub yet. If your browser is on another machine, paste the address it shows after GitHub redirects (or the code in it); otherwise press Enter to keep waiting"
+	for {
+		secret, err := env.R.screen.Secret(label, env.R.term.ReadPassword)
+		switch {
+		case errors.Is(err, io.EOF):
+			ghSay(env.Out, "No more input: waiting for GitHub's callback only.\n")
+			return "", errNoMoreInput
+		case err != nil:
+			return "", fmt.Errorf("read the pasted code: %w", err)
+		case ctx.Err() != nil: // the read cannot be given up, so the time may be over when it ends
+			return "", waitError(ctx, env.ManifestWait)
+		}
+		line := strings.TrimSpace(string(secret))
+		if line == "" {
+			select {
+			case code := <-codes:
+				return code, nil
+			default:
+				return "", nil
+			}
+		}
+		code, perr := parseManifestCode(line, state)
+		if perr == nil {
+			return code, nil
+		}
+		ghSay(env.Out, "That was refused: %v\n", perr)
 	}
 }
 

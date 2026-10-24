@@ -24,6 +24,7 @@ import (
 	appowner "github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // resolveGitHub is the one entry the tier flows call (M1.12-I6):
@@ -40,7 +41,7 @@ import (
 // key: "app-key-file" (a path, or - for stdin) or "app-key" (the answers file, a no-echo prompt, or stdin; when stdin carries the key, every
 // other answer must come from flags or the answers file, because reading the key consumes the rest of stdin).
 //
-// Answer keys (flag names and answers-file keys): github-account (personal, or an organization login), manifest-code (the answers file only: it is a credential for an hour),
+// Answer keys (flag names and answers-file keys): github-account (personal, or an organization login that GitHub is asked about before the browser opens, unless manifest-code is given), manifest-code (the answers file only: it is a credential for an hour),
 // app-id, installation-id, app-key-file, app-key, repositories, owner, test-check (a plain check name for one repository,
 // or OWNER/NAME=CHECK entries one per line as setup takes them; test-check.OWNER/NAME for one repository wins), ruleset-imported.
 //
@@ -67,6 +68,9 @@ func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 	defaultOwner := ""
 	if res.AccountType == "User" {
 		defaultOwner = res.Account
+	}
+	if env.R.screen.FullScreen() && env.R.asks("owner") {
+		env.R.screen.Page("Instance owner", ui.Para("Your GitHub username, as in github.com/<username>. Only this account's /suiteward commands and approvals count, and it cannot be an organization."))
 	}
 	if res.OwnerLogin, err = env.R.Value("owner", "GitHub login of the instance owner, the only account whose approvals count", defaultOwner); err != nil {
 		return fail(err)
@@ -208,6 +212,22 @@ func missingKey(env githubEnv, who, deleteAt string) ([]byte, error) {
 		return nil, fmt.Errorf("the %s has no key in the secret store (%s): pass --github-app-key-file <file> with the App's private key (create one on the App's settings page if you have none), or --github %s to create a new App (the old one stays on GitHub: delete it at %s)",
 			who, SecretGitHubAppKey, newAppAnswer, deleteAt)
 	}
+	if scr := env.R.screen; scr.FullScreen() {
+		scr.Page("The App has no key",
+			ui.Para(fmt.Sprintf("The %s has no key in the secret store (%s).", who, SecretGitHubAppKey)),
+			ui.Para("Give the App's private key file, or create a new App: the old one stays on GitHub, and you delete it at "+deleteAt+"."))
+		picked, err := scr.Select("What do you want to do?", []ui.Choice{
+			{Name: "key file", Desc: "give the App's private key file"},
+			{Name: "new App", Desc: "create a new App; the old one stays on GitHub"},
+		}, 0)
+		switch {
+		case err != nil:
+			return nil, fmt.Errorf("read the choice: %w", err)
+		case picked == 0:
+			return readAppKey(env.R)
+		}
+		return nil, errNewApp
+	}
 	ghSay(env.Out, "The %s has no key in the secret store (%s).\n  1) give the App's private key file\n  2) create a new App (the old one stays on GitHub: delete it at %s)\n", who, SecretGitHubAppKey, deleteAt)
 	choice, err := env.R.ask("Choose 1 or 2: ")
 	if err != nil {
@@ -290,6 +310,9 @@ func (e githubEnv) withDefaults() (githubEnv, error) {
 	}
 	if e.ManifestWait == 0 {
 		e.ManifestWait = defaultManifestWait
+	}
+	if e.PasteAfter == 0 {
+		e.PasteAfter = 2 * time.Minute
 	}
 	if e.InstallWait == 0 {
 		e.InstallWait = 10 * time.Minute
@@ -432,22 +455,134 @@ func verifyApp(ctx context.Context, env githubEnv, appID, installationID int64, 
 	}
 	for _, in := range installations {
 		if in.ID == installationID {
-			ghSay(env.Out, "Using the existing App %s, installation %d on %s.\n", slug, in.ID, in.Account)
+			env.R.screen.Check("Using the existing App %s, installation %d on %s.\n", slug, in.ID, in.Account)
 			return app, GitHubResult{AppID: appID, Slug: slug, InstallationID: in.ID, Account: in.Account, AccountType: in.AccountType, PrivateKey: key}, nil
 		}
 	}
 	return appauth.App{}, GitHubResult{}, fmt.Errorf("installation %d is not one of the installations of App %s", installationID, slug)
 }
 
+// organizationAnswer is the answer of the account question that asks for an organization's login next.
+// shortcut: an organization literally named "organization" cannot be chosen, as none named "personal" can; give such a login in a flag if that ever matters.
+const organizationAnswer = "organization"
+
+// accountRefused is why an account cannot own the App: a person who is asked can answer again, a flag or an answers file cannot.
+type accountRefused string
+
+func (e accountRefused) Error() string { return string(e) }
+
+// chooseAccount finds the account that will own the App: "personal", or the login of an organization that exists. On a terminal a
+// refusal is explained and the question asked again, from its start; an answer that came from a flag or the answers file is refused for
+// good, because it would come back unchanged. The organization is looked up before the browser opens, so that a typo or a word that
+// is no organization does not become an App under the wrong account. A manifest code that is given exists only once GitHub has made
+// the App, so it is not looked up: the conversion's own check names the App it refuses.
+func chooseAccount(ctx context.Context, env githubEnv) (string, error) {
+	_, haveCode := env.R.given("manifest-code")
+	if env.R.screen.FullScreen() && env.R.asks("github-account") {
+		env.R.screen.Page("GitHub account for the App", ui.Para("SuiteWard creates its GitHub App under one account: your personal account, or an organization where you can create GitHub Apps. It must be the account that owns the repositories to protect."))
+	}
+	for {
+		account, typed, err := askAccount(env)
+		if err == nil {
+			err = checkAppOwner(ctx, env, account, !haveCode)
+		}
+		var refused accountRefused
+		if err == nil {
+			return account, nil
+		} else if !errors.As(err, &refused) || !typed {
+			return "", err
+		}
+		ghSay(env.Out, "%s\n", refused)
+	}
+}
+
+// askAccount asks for the account: personal or an organization on a full screen, a typed "personal" or login elsewhere (the question
+// of the flag and the answers-file key github-account, which also takes a login). Choosing organization asks for its login. typed says
+// that a terminal gave the answer.
+func askAccount(env githubEnv) (account string, typed bool, err error) {
+	const key, label = "github-account", "GitHub account that will own the App"
+	typed = env.R.asks(key)
+	if env.R.screen.FullScreen() && typed {
+		account, err = env.R.Select(key, label, []ui.Choice{
+			{Name: accountPersonal, Desc: "your own GitHub account"},
+			{Name: organizationAnswer, Desc: "an organization; asks its login"},
+		}, accountPersonal)
+	} else {
+		account, err = env.R.Value(key, label+` ("personal" or an organization login)`, accountPersonal)
+	}
+	switch {
+	case err != nil:
+		return "", false, err
+	case strings.EqualFold(account, accountPersonal):
+		return accountPersonal, typed, nil
+	case !strings.EqualFold(account, organizationAnswer):
+		return account, typed, nil
+	case !env.R.term.IsTerminal:
+		return "", false, fmt.Errorf("%s is %q: name the organization with its login (--github-account <login>)", key, account)
+	}
+	account, err = env.R.screen.Ask("Organization login (as in github.com/<org>)", "")
+	return account, true, err
+}
+
+// checkAppOwner refuses what cannot own the App: a word that is no login, and, when lookup is set, an account that GitHub does not know
+// or that is not an organization.
+func checkAppOwner(ctx context.Context, env githubEnv, account string, lookup bool) error {
+	switch {
+	case account == accountPersonal:
+		return nil
+	case !ghLoginPattern.MatchString(account):
+		return accountRefused(fmt.Sprintf("github-account %q is not %q or a GitHub login", account, accountPersonal))
+	case !lookup:
+		return nil
+	}
+	return lookupOrganization(ctx, env, account)
+}
+
+// lookupOrganization asks GitHub, with no authentication, whether login is an organization. Only 404 says that there is no such
+// account; a rate limit, an error of GitHub or the network is an error that names the status and no text of the answer.
+// shortcut: an unauthenticated call is limited to 60 an hour per address, and whether the user may create Apps in the organization is
+// not asked: the conversion refuses an App that another account owns. Upgrade when the flow holds a token before this point.
+func lookupOrganization(ctx context.Context, env githubEnv, login string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(env.APIURL, "/")+"/users/"+url.PathEscape(login), nil)
+	if err != nil {
+		return fmt.Errorf("build the request that looks up the organization %s", login)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := env.HTTP.Do(req)
+	if err != nil {
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		return fmt.Errorf("look up the organization %s on GitHub: %w", login, err)
+	}
+	defer func() { _ = resp.Body.Close() }() // the answer is read below; a close error cannot change it
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return accountRefused("GitHub has no account named " + login)
+	default:
+		return fmt.Errorf("could not look up the organization %s on GitHub: HTTP %d (run the installer again later)", login, resp.StatusCode)
+	}
+	var out struct {
+		Type string `json:"type"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxConversionAnswer)).Decode(&out); err != nil {
+		return fmt.Errorf("the answer of GitHub about %s is not an account object", login)
+	}
+	if out.Type != "Organization" {
+		return accountRefused(login + " is a personal account, not an organization (answer personal to create the App under your own account)")
+	}
+	return nil
+}
+
 // createApp makes the App through the manifest flow and waits for the user to install it. created is the address that
 // deletes the App, set as soon as it exists.
 func createApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubResult, created string, err error) {
-	account, err := env.R.Value("github-account", `GitHub account that will own the App ("personal" or an organization login)`, accountPersonal)
+	account, err := chooseAccount(ctx, env)
 	if err != nil {
 		return app, res, "", err
-	}
-	if !ghLoginPattern.MatchString(account) {
-		return app, res, "", fmt.Errorf("github-account %q is not %q or a GitHub login", account, accountPersonal)
 	}
 	code, appName, err := obtainManifestCode(ctx, env, account)
 	if err != nil {
@@ -463,20 +598,19 @@ func createApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 	if app, err = appauth.NewApp(conv.ID, conv.PrivateKey, env.Now); err != nil {
 		return app, res, created, fmt.Errorf("the key GitHub returned for the App %s is not usable: %w", conv.Slug, err)
 	}
-	ghSay(env.Out, "Created the GitHub App %s.\n", conv.Slug)
+	env.R.screen.Check("Created the GitHub App %s.\n", conv.Slug)
 	if env.StoreKey != nil { // before the wait: a failure later must not lose the only copy of the key
 		if err := env.StoreKey(ctx, conv.PrivateKey); err != nil {
 			return app, res, created, fmt.Errorf("store the App key: %w", err)
 		}
-		ghSay(env.Out, "The App key is in the secret store.\n")
+		env.R.screen.Check("The App key is in the secret store.\n")
 	}
 	if env.RecordApp != nil { // after the key: a record without its key would send a re-run to an App it cannot use
 		if err := env.RecordApp(ctx, PendingApp{AppID: conv.ID, Slug: conv.Slug, Account: conv.OwnerLogin, AccountType: conv.OwnerType}); err != nil {
 			return app, res, created, fmt.Errorf("record the App: %w", err)
 		}
 	}
-	ghSay(env.Out, "Install it: open %s/apps/%s/installations/new, choose %s, and give it access to the repositories to protect.\n", env.WebURL, conv.Slug, conv.OwnerLogin)
-	info, err := waitForInstallation(ctx, env, app, conv.OwnerLogin)
+	info, err := waitForInstallation(ctx, env, app, conv.Slug, conv.OwnerLogin)
 	if err != nil {
 		return app, res, created, err
 	}
@@ -529,23 +663,38 @@ func resumeApp(ctx context.Context, env githubEnv) (app appauth.App, res GitHubR
 		return app, res, created, notStored("the key file is not the key of the App "+p.Slug, fmt.Errorf("verify the App with GET /app: %w", err))
 	}
 	if given {
-		ghSay(env.Out, "Taking up the GitHub App %s that an earlier run created, with the key you gave.\n", p.Slug)
+		env.R.screen.Check("Taking up the GitHub App %s that an earlier run created, with the key you gave.\n", p.Slug)
 	} else {
-		ghSay(env.Out, "Taking up the GitHub App %s that an earlier run created; its key is in the secret store.\n", p.Slug)
+		env.R.screen.Check("Taking up the GitHub App %s that an earlier run created; its key is in the secret store.\n", p.Slug)
 	}
-	ghSay(env.Out, "Install it: open %s/apps/%s/installations/new, choose %s, and give it access to the repositories to protect.\n", env.WebURL, p.Slug, p.Account)
-	info, err := waitForInstallation(ctx, env, app, p.Account)
+	info, err := waitForInstallation(ctx, env, app, p.Slug, p.Account)
 	if err != nil {
 		return app, res, created, notStored("the key you gave was not stored", err)
 	}
 	return app, GitHubResult{AppID: p.AppID, Slug: p.Slug, InstallationID: info.ID, Account: info.Account, AccountType: info.AccountType, PrivateKey: key}, created, nil
 }
 
-// waitForInstallation polls the App's installations until one is on account, or InstallWait passes.
-func waitForInstallation(ctx context.Context, env githubEnv, app appauth.App, account string) (appauth.InstallationInfo, error) {
+// waitForInstallation tells the user to install the App on account, and polls the App's installations until one is on account, or
+// InstallWait passes.
+func waitForInstallation(ctx context.Context, env githubEnv, app appauth.App, slug, account string) (info appauth.InstallationInfo, err error) {
 	ctx, cancel := context.WithTimeout(ctx, env.InstallWait)
 	defer cancel()
-	ghSay(env.Out, "Waiting for the installation on %s (checking every %s, up to %s)...\n", account, env.PollEvery, env.InstallWait)
+	address := fmt.Sprintf("%s/apps/%s/installations/new", env.WebURL, slug)
+	scr := env.R.screen
+	if scr.FullScreen() {
+		scr.Page("Install the GitHub App",
+			ui.Para(fmt.Sprintf("The App exists. Install it on %s and give it access to the repositories to protect, at most %d: the installer continues by itself when it sees the installation.", account, MaxRepositories)),
+			ui.Fields(ui.KV{Key: "Address", Value: address}, ui.KV{Key: "Account", Value: account}))
+	} else {
+		ghSay(env.Out, "Install it: open %s, choose %s, and give it access to the repositories to protect.\n", address, account)
+		ghSay(env.Out, "Waiting for the installation on %s (checking every %s, up to %s)...\n", account, env.PollEvery, env.InstallWait)
+	}
+	spinning(scr, "Waiting for the installation on "+account, func() { info, err = pollInstallation(ctx, env, app, account) })
+	return info, err
+}
+
+// pollInstallation looks for the installation every PollEvery until ctx is done.
+func pollInstallation(ctx context.Context, env githubEnv, app appauth.App, account string) (appauth.InstallationInfo, error) {
 	tick := time.NewTicker(env.PollEvery)
 	defer tick.Stop()
 	for {
@@ -586,15 +735,30 @@ func chooseRepositories(ctx context.Context, env githubEnv, app appauth.App, res
 			return nil, fmt.Errorf("the installation lists %s, which is not owned by %s: one instance serves one owner", name, res.Account)
 		}
 	}
-	ghSay(env.Out, "The App can reach these repositories:\n")
-	for i, name := range all {
-		ghSay(env.Out, "  %d) %s\n", i+1, name)
-	}
-	def := ""
+	scr := env.R.screen
+	def, defaults := "", []int(nil)
 	if len(all) <= MaxRepositories {
 		def = strings.Join(all, ",")
+		for i := range all {
+			defaults = append(defaults, i)
+		}
 	}
-	answer, err := env.R.Value("repositories", fmt.Sprintf("Repositories to protect (numbers or owner/name, comma-separated, at most %d)", MaxRepositories), def)
+	hint := fmt.Sprintf("numbers or owner/name, comma-separated, at most %d", MaxRepositories)
+	if scr.FullScreen() && env.R.asks("repositories") {
+		scr.Page("Repositories to protect", ui.Para(fmt.Sprintf("The App can reach the repositories below, and SuiteWard protects the ones you select, at most %d: each gets a ruleset that requires SuiteWard / Contract and your test check.", MaxRepositories)))
+		choices := make([]ui.Choice, len(all))
+		for i, name := range all {
+			choices[i] = ui.Choice{Name: name}
+		}
+		return env.R.MultiSelect("repositories", ui.Multi{Label: "Repositories to protect", Choices: choices, Defaults: defaults, Min: 1, Max: MaxRepositories, Hint: hint})
+	}
+	if !scr.FullScreen() { // a full screen that does not ask has no use for the list
+		ghSay(env.Out, "The App can reach these repositories:\n")
+		for i, name := range all {
+			ghSay(env.Out, "  %d) %s\n", i+1, name)
+		}
+	}
+	answer, err := env.R.Value("repositories", "Repositories to protect ("+hint+")", def)
 	if err != nil {
 		return nil, err
 	}
@@ -797,6 +961,10 @@ func lookupFold(m map[string]string, key string) string {
 
 // askTestCheck offers the check runs of the repository's default branch, or asks for the name CI will publish.
 func askTestCheck(ctx context.Context, env githubEnv, client *rest.Client, r repoInfo, key string) (string, error) {
+	if env.R.screen.FullScreen() && env.R.asks(key) { // one repository to a page, before the list is read: the list goes under it
+		env.R.screen.Page("Required test check for "+r.name,
+			ui.Para("SuiteWard runs no tests. The ruleset of this repository requires your CI's test check beside "+protection.ContractCheck+", so a pull request needs both to pass. The list shows the checks seen on the default branch."))
+	}
 	names, err := checkRunNames(ctx, client, r)
 	if err != nil {
 		ghSay(env.Out, "Could not read the check runs of %s (%v); you will type the name.\n", r.name, err)
@@ -826,9 +994,14 @@ func askTestCheck(ctx context.Context, env githubEnv, client *rest.Client, r rep
 }
 
 // importRulesets writes one ruleset file per repository, tells the user how to import it, waits for the import and re-reads
-// the protection of each repository.
+// the protection of each repository. A full screen that asks pauses the user at the page (pauseForImport); everywhere else the
+// question is the one it was, whose answer, a typed no included, only makes the protection be read: what is missing is reported
+// after it all the same.
 func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubResult, repos []repoInfo) (map[string]protection.Result, error) {
-	scr := screenOn(env.Out)
+	scr := env.R.screen
+	if scr.FullScreen() { // before the lines below: a page that comes after them takes them off the screen
+		scr.Page("Import the rulesets", ui.Para("Import the file of each repository on GitHub, as below. If an older SuiteWard ruleset (of an earlier App) is already there, delete it first: both would apply."))
+	}
 	for _, r := range repos {
 		data, err := rulesetJSON(res.AppID, res.TestChecks[r.name])
 		if err != nil {
@@ -844,7 +1017,8 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		}
 		scr.Keep("Import it: open %s/%s/settings/rules, choose New ruleset, then Import a ruleset, select that file and create the ruleset.\n", env.WebURL, r.name)
 	}
-	if !env.SkipRulesetWait {
+	pausing := !env.SkipRulesetWait && scr.FullScreen() && env.R.asks("ruleset-imported")
+	if !env.SkipRulesetWait && !pausing {
 		if env.R.asks("ruleset-imported") {
 			ghSay(env.Out, "\n") // the blank line is not part of the label: an interrupted question names its label in one line
 		}
@@ -860,34 +1034,105 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 	if err != nil {
 		return nil, fmt.Errorf("compose the GitHub reader: %w", err)
 	}
+	if pausing {
+		return pauseForImport(ctx, scr, reader, res, repos)
+	}
+	results, lines := readProtections(ctx, reader, res, repos)
+	keepProtection(scr, lines)
+	return results, nil
+}
+
+// pauseForImport holds the user at the page while the rulesets are imported on GitHub, and reads the protection back when they say so. A
+// repository that is not protected yet, or whose protection cannot be read, is shown with what is missing and the same two choices are
+// offered again; enforcement that is unavailable ends it, as no import can change that. Skipping goes on with a warning: the
+// results are what the last check found, or unknown when there was none.
+func pauseForImport(ctx context.Context, scr *ui.Screen, reader *github.Reader, res GitHubResult, repos []repoInfo) (map[string]protection.Result, error) {
+	choices := []ui.Choice{
+		{Name: "I imported it, check now", Desc: "check on GitHub"},
+		{Name: "Skip, import later", Desc: "go on without it"},
+	}
+	var results map[string]protection.Result
+	for {
+		picked, err := scr.Select("Ruleset import", choices, 0)
+		if err != nil {
+			return nil, fmt.Errorf("read the choice: %w", err)
+		}
+		if picked == 1 {
+			break
+		}
+		var lines []string
+		if results, lines = readProtections(ctx, reader, res, repos); !awaitingImport(results) {
+			keepProtection(scr, lines)
+			return results, nil
+		}
+		scr.Say("\nNot enforced yet:\n") // not kept, and short: the files and the steps above stay in sight, and only the check that ends the step is kept in full
+		for _, r := range repos {
+			scr.Say("%s", unfinishedLine(r.name, results[r.name]))
+		}
+	}
+	if results == nil {
+		results = make(map[string]protection.Result, len(repos))
+		for _, r := range repos {
+			results[r.name] = protection.Unknown()
+		}
+	}
+	var open []string
+	for _, r := range repos {
+		if kind := results[r.name].Kind; kind != protection.KindEnforced && kind != protection.KindEnforcementUnavailable {
+			open = append(open, r.name)
+		}
+	}
+	scr.Warn("The rulesets of %s are not imported or not checked yet: import the files named above on GitHub, then run suiteward doctor to check the protection.\n", strings.Join(open, ", "))
+	return results, nil
+}
+
+// awaitingImport says that an import may still fix a repository: its protection has findings, or could not be read.
+func awaitingImport(results map[string]protection.Result) bool {
+	for _, r := range results {
+		if r.Kind == protection.KindFindings || r.Kind == protection.KindUnknown {
+			return true
+		}
+	}
+	return false
+}
+
+// readProtections reads the protection of each repository and returns what it found with the lines that report it.
+func readProtections(ctx context.Context, reader *github.Reader, res GitHubResult, repos []repoInfo) (map[string]protection.Result, []string) {
 	results := make(map[string]protection.Result, len(repos))
-	// The protection the user must act on is kept as well.
-	scr.Keep("\nProtection as GitHub reports it now:\n")
+	var lines []string
 	for _, r := range repos {
 		result := protection.Unknown()
 		read, err := reader.Protection(ctx, r.name, r.branch)
 		if err != nil {
-			scr.Keep("  %s: could not read the protection (%v)\n", r.name, err)
+			lines = append(lines, fmt.Sprintf("  %s: could not read the protection (%v)\n", r.name, err))
 		} else if facts, err := read.Facts(r.private); err != nil {
-			scr.Keep("  %s: the protection answer is not usable (%v)\n", r.name, err)
+			lines = append(lines, fmt.Sprintf("  %s: the protection answer is not usable (%v)\n", r.name, err))
 		} else {
 			result = protection.Evaluate(facts, res.AppID, res.TestChecks[r.name])
 		}
 		results[r.name] = result
-		scr.Keep("  %s: %s\n", r.name, result.Kind)
+		lines = append(lines, fmt.Sprintf("  %s: %s\n", r.name, result.Kind))
 		if len(result.Findings) > 0 {
 			codes := make([]string, len(result.Findings))
 			for i, c := range result.Findings {
 				codes[i] = string(c)
 			}
-			scr.Keep("    findings: %s\n", strings.Join(codes, ", "))
+			lines = append(lines, fmt.Sprintf("    findings: %s\n", strings.Join(codes, ", ")))
 		}
 		for _, line := range result.Instructions {
-			scr.Keep("    - %s\n", line)
+			lines = append(lines, fmt.Sprintf("    - %s\n", line))
 		}
 	}
+	return results, lines
+}
+
+// keepProtection prints the protection the user must act on as lines that stay.
+func keepProtection(scr *ui.Screen, lines []string) {
+	scr.Keep("\nProtection as GitHub reports it now:\n")
+	for _, line := range lines {
+		scr.Keep("%s", line)
+	}
 	scr.Keep("Run the checks again at any time with suiteward doctor.\n")
-	return results, nil
 }
 
 // runSetup runs `suiteward setup` in the serving container with the real terminal passed through. Setup prints the TOTP
@@ -952,4 +1197,20 @@ var setupTerminal = func() bool {
 func wantsNewApp(r *Resolver) bool {
 	v, _ := r.given("github")
 	return strings.EqualFold(strings.TrimSpace(v), newAppAnswer)
+}
+
+// unfinishedLine says in one line what keeps a repository from being protected, or that it is not: the findings of its protection, or
+// that it could not be read.
+func unfinishedLine(name string, r protection.Result) string {
+	switch {
+	case r.Kind == protection.KindUnknown:
+		return fmt.Sprintf("  %s: the protection could not be read\n", name)
+	case len(r.Findings) == 0:
+		return fmt.Sprintf("  %s: %s\n", name, r.Kind)
+	}
+	codes := make([]string, len(r.Findings))
+	for i, c := range r.Findings {
+		codes[i] = string(c)
+	}
+	return fmt.Sprintf("  %s: %s\n", name, strings.Join(codes, ", "))
 }

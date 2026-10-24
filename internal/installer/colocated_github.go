@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // githubInstall is the GitHub part of an install, which both tiers run: the flow with its settings, and the enrollment of the
@@ -111,6 +112,9 @@ func (g *githubInstall) wantsGitHub(ctx context.Context, r *Resolver) (bool, err
 	if !r.term.IsTerminal {
 		return false, nil
 	}
+	r.screen.Page("What SuiteWard needs on GitHub",
+		ui.Para("SuiteWard protects your repositories through a GitHub App that it creates for you in your browser, and that you install on the repositories to protect. The App asks for no write access to your code (no Contents write)."),
+		ui.Para("Answer No to install the stack without GitHub. A later run of the installer can set GitHub up."))
 	return r.confirm("github", "Set up GitHub now (creates a GitHub App in your browser)?")
 }
 

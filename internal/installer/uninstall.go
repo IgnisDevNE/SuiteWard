@@ -181,8 +181,8 @@ func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, q
 	return nil
 }
 
-// showRemoval says which instance is about to be removed: a page on a full screen, which says that nothing is removed before the
-// confirmation, and the line it always printed otherwise.
+// showRemoval says which instance is about to be removed: a page on a full screen, and the line it always printed otherwise. The page
+// says that nothing is removed before the confirmation only where a question is going to ask for it: --yes answers for the person.
 func showRemoval(r *Resolver, purge bool, id, engine, settings string) {
 	if !r.screen.FullScreen() {
 		r.say("This is the instance %s on %s. Its settings file: %s.\n", id, engine, settings)
@@ -192,9 +192,11 @@ func showRemoval(r *Resolver, purge bool, id, engine, settings string) {
 	if purge {
 		title = "Remove everything of this instance"
 	}
-	r.screen.Page(title,
-		ui.Para("Nothing is removed until you confirm."),
-		ui.Fields(ui.KV{Key: "Instance", Value: id}, ui.KV{Key: "Engine", Value: engine}, ui.KV{Key: "Settings", Value: settings}))
+	blocks := []ui.Block{ui.Fields(ui.KV{Key: "Instance", Value: id}, ui.KV{Key: "Engine", Value: engine}, ui.KV{Key: "Settings", Value: settings})}
+	if yes, _ := r.yes(); r.term.IsTerminal && !yes { // a --yes that cannot be read is refused by the confirmation itself
+		blocks = append([]ui.Block{ui.Para("Nothing is removed until you confirm.")}, blocks...)
+	}
+	r.screen.Page(title, blocks...)
 }
 
 // refuseUnnamed refuses a purge by --yes of an instance that nothing names (its id is "unknown"), with no settings file, while its database volume is

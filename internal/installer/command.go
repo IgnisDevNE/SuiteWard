@@ -358,7 +358,7 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 	}
 	var tier string
 	if upgrade { // an upgrade works on what is installed: it never asks which tier
-		if err := tierNeeded(r, haveSaved, env.Deps.GOOS, offerBothTiers); err != nil {
+		if err := tierNeeded(r, haveSaved, env.Deps.GOOS, coLocatedTierFlag); err != nil {
 			return err
 		}
 		tier = r.preset("tier", string(saved.Tier))
@@ -518,8 +518,8 @@ func tierNeeded(r *Resolver, haveSaved bool, goos, coLocated string) error {
 	return nil
 }
 
-// offerBothTiers is what tierNeeded offers for a co-located stack to the commands that find one without a settings file.
-const offerBothTiers = "--tier co-located"
+// coLocatedTierFlag is what tierNeeded offers for a co-located stack to the commands that can work on one without a settings file.
+const coLocatedTierFlag = "--tier co-located"
 
 var plainArg = regexp.MustCompile(`^[A-Za-z0-9_+=.,:/\\@%-]+$`)
 

@@ -55,7 +55,7 @@ func locateInstance(ctx context.Context, r *Resolver, env Env, flags map[string]
 	if err != nil {
 		return instance{}, err
 	}
-	if err := tierNeeded(r, haveSaved, env.Deps.GOOS, offerBothTiers); err != nil {
+	if err := tierNeeded(r, haveSaved, env.Deps.GOOS, coLocatedTierFlag); err != nil {
 		return instance{}, err
 	}
 	switch tier := r.preset("tier", string(saved.Tier)); config.Tier(tier) {

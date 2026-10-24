@@ -62,9 +62,15 @@ func (h *hiddenReader) readsReach(t *testing.T, n int32, out *syncBuffer) {
 // it; readPassword answers a hidden question.
 func fullManifestEnvWith(t *testing.T, in io.Reader, readPassword func() ([]byte, error)) (githubEnv, *syncBuffer) {
 	t.Helper()
+	return fullManifestEnvSized(t, in, readPassword, 100, 30)
+}
+
+// fullManifestEnvSized is fullManifestEnvWith on a terminal of width by height.
+func fullManifestEnvSized(t *testing.T, in io.Reader, readPassword func() ([]byte, error), width, height int) (githubEnv, *syncBuffer) {
+	t.Helper()
 	out := &syncBuffer{}
 	br := bufio.NewReader(in)
-	scr, err := ui.Open(ui.Options{Out: out, In: br, Context: liveContext(t), Version: "v0", Mode: ui.ModeFull, Color: ui.ColorNone, Width: 100, Height: 30})
+	scr, err := ui.Open(ui.Options{Out: out, In: br, Context: liveContext(t), Version: "v0", Mode: ui.ModeFull, Color: ui.ColorNone, Width: width, Height: height})
 	if err != nil {
 		t.Fatal(err)
 	}

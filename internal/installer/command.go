@@ -482,11 +482,22 @@ const dockerWarning = `Docker is allowed on this PC, but Podman is strongly reco
   - Docker has no secret store outside Swarm, so the secrets (the database owner URL, the App key, the MCP token) live in named volumes that anyone who controls the Docker daemon can read.
 `
 
+// dockerWarningShort is the same two risks for a full screen, in the few rows that the smallest window leaves above the question: a typed
+// yes must be an informed one there too.
+const dockerWarningShort = `Docker is allowed on this PC, but Podman is strongly recommended.
+  - Docker's daemon runs as root: its containers are not isolated from whoever controls it.
+  - Its secrets live in volumes that anyone who controls the daemon can read.
+`
+
 // confirmDocker prints the warning and requires an explicit yes. The warning is one Warn: the full screen wraps its lines and keeps it.
 func confirmDocker(r *Resolver) error {
 	r.explain([]string{"accept-docker"}, "Docker is not recommended",
 		ui.Para("This is a confirmation: SuiteWard uses Docker only if you accept the risks below by typing yes. Choose Podman to avoid them."))
-	r.screen.Warn("%s", dockerWarning)
+	warning := dockerWarning
+	if r.screen.FullScreen() {
+		warning = dockerWarningShort
+	}
+	r.screen.Warn("%s", warning)
 	answer, err := r.Value("accept-docker", "Type yes to use Docker anyway", "no")
 	if err != nil {
 		return err

@@ -126,6 +126,9 @@ func (e Env) validate() error {
 	if e.PortFree == nil || e.Sleep == nil {
 		return errors.New("the installer needs PortFree and Sleep")
 	}
+	if s := e.Self; s != nil && (s.Executable == nil || s.LookPath == nil || s.Rename == nil || s.Path == nil) {
+		return errors.New("the installer needs Executable, LookPath, Rename and Path to offer the copy of the program")
+	}
 	return nil
 }
 

@@ -283,6 +283,9 @@ func (x *restoreRun) readIdentity() (*age.HybridIdentity, error) {
 	if x.kit != "" {
 		kit, err = readKit(x.kit)
 	} else {
+		x.r.explain([]string{"recovery-key"}, "Open the backup",
+			ui.Para("A backup is encrypted to the recovery key of its instance. Paste the last line of the recovery kit that was saved when that key was made: it is the private key. "+
+				"The input is hidden and nothing of it is kept. To read the kit from a file instead, run the restore again with --kit PATH."))
 		kit, err = x.r.Secret("recovery-key", "Recovery key: the last line of your recovery kit, the private key (the input is hidden)")
 	}
 	if err != nil {

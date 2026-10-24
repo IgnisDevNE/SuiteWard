@@ -1,6 +1,6 @@
 # Delivery plan
 
-- **Updated:** 2026-10-23 (the MVP `v0.2.0` is released; phase [M1.12](phases/M1.12.md), the installer, is merged and `v0.3.0-alpha.2` is published; phase [M1.13](phases/M1.13.md) is built on its phase branch and waits for its PR, so it is not merged and not released)
+- **Updated:** 2026-10-24 (the MVP `v0.2.0` is released; phase [M1.12](phases/M1.12.md), the installer, is merged and `v0.3.0-alpha.2` is published; phase [M1.13](phases/M1.13.md) is merged and released as `v0.4.0-alpha.1`; phase [M1.14](phases/M1.14.md), the installer UX refinement, is built on its phase branch and waits for its PR, so it is not merged and not released)
 
 Each phase produces one PR, integrated with a merge commit after the user's authorization. Work inside a phase is orchestrated as described in [orchestration](orchestration.md): the main session writes [briefs](task-brief.md), `sw-implementer` subagents implement them test-first in their own worktrees, and `sw-reviewer` subagents review them. Open and accepted product choices live in the [decision register](decisions.md).
 
@@ -33,17 +33,18 @@ Phase pages are written by hand and kept short. A task listed on a page becomes 
 | [M1.11](phases/M1.11.md) | Merged 2026-10-21 and released as `v0.2.0-rc.3`. Close-out and robustness (owner, 2026-10-21), one phase that joins what SH left:<ul><li>the budget and the instance in `/status` and MCP `status`; MCP syncs counted in the poll's pace; an ETag cache bounded by bytes;</li><li>a test that keeps the job-kind list of `status.sql` in sync with Go;</li><li>a weekly, non-gating scan of the pinned PostgreSQL image;</li><li>the Deploy workflow retired, CI building the image without pushing, and `local.ps1 -Image` mandatory;</li><li>these records, and a private security register kept locally.</li></ul>It ships as `v0.2.0-rc.3`. |
 | Final `v0.2.0` | The MVP release, released on 2026-10-22 from `21423ec` (the same code as rc.3), after the owner's authorization. Index digest: `sha256:51aa230a215dfb30c662448ce090db7ab67a8173fb119237cf688caffe5db30e`; `latest-stable` moved to it. It was cut from a revision validated on three targets: A3 (co-located), the AlmaLinux 9 host (isolated), and a throwaway instance that ran the live in-place upgrade of [install 11.5](../install.md#11-updating) from v0.1.3 to rc.3 (Fedora 44 with Podman 6.1.4, not AlmaLinux; see the [M1.11 outcome](phases/M1.11.md#outcome)). A3 runs v0.2.0 and its smoke test passed; the AlmaLinux host is updated by the owner. Verified with `scripts/verify-release.ps1` before any host pins it. |
 | [M1.12](phases/M1.12.md) | Merged 2026-10-22 ([#51](https://github.com/IgnisDevNE/SuiteWard/pull/51), `0f9e0dc`). The installer: `suiteward install` on both tiers (Podman, or Docker as a discouraged co-located option), the App created through the manifest flow, `install --upgrade` with a backup first, `uninstall`, `doctor` and the in-container `check`, `suiteward enroll`, the `suiteward` binary as signed release assets, and the install guide rewritten around it. It ships as `v0.3.0-alpha.1`. | v0.2.0 |
+| [M1.13](phases/M1.13.md) | Merged 2026-10-23 ([#54](https://github.com/IgnisDevNE/SuiteWard/pull/54)), with the fixes of the screens ([#55](https://github.com/IgnisDevNE/SuiteWard/pull/55)) and of the settings file and the purge ([#56](https://github.com/IgnisDevNE/SuiteWard/pull/56)), and released as the pre-release `v0.4.0-alpha.1`. macOS (darwin binaries and a macOS CI job), the one-line install (`install.sh`, a signed release asset), the full-screen installer, the numeric revision comment with the change report on loopback, and encrypted backups with a guided restore (`suiteward backup init`, `backup` and `restore`). Results in the [phase page](phases/M1.13.md#outcome). |
 
 Evidence for the earlier phases lives in [history](../history.md).
 
 ## Roadmap
 
-The MVP, released as `v0.2.0`, is a self-hosted, tamper-evident, human-approved test contract for one developer working with AI agents on GitHub. M1.12 (the installer) is merged; the alpha follows it.
+The MVP, released as `v0.2.0`, is a self-hosted, tamper-evident, human-approved test contract for one developer working with AI agents on GitHub. M1.12 (the installer) and M1.13 are merged and released as alphas; M1.14 refines the installer.
 
 | Phase | Outcome | Depends on |
 | --- | --- | --- |
-| Alpha (`v0.3.0-alpha.2`) | The first distributable version, a pre-release handed to individual testers. `v0.3.0-alpha.1` passed its validation runs with eight findings; `v0.3.0-alpha.2` fixes them and a ninth ([M1.12](phases/M1.12.md#v030-alpha2), merged 2026-10-23 as #53). Everything after the alpha is post-MVP. | M1.12 |
-| [M1.13](phases/M1.13.md) | macOS, a one-line install, full-screen installer steps, an HTML change report linked from the revision comment, and encrypted backups with a guided restore. It is built on `phase/M1.13`; its PR is not merged, and no release carries it yet. | Alpha |
+| Alpha (`v0.3.0-alpha.2`) | The first distributable version, a pre-release handed to individual testers. `v0.3.0-alpha.1` passed its validation runs with eight findings; `v0.3.0-alpha.2` fixes them and a ninth ([M1.12](phases/M1.12.md#v030-alpha2), merged 2026-10-23 as #53). Everything after the alpha is post-MVP. `v0.4.0-alpha.1` is the release of [M1.13](phases/M1.13.md). | M1.12 |
+| [M1.14](phases/M1.14.md) | The installer UX refinement after the owner's fresh install of `v0.4.0-alpha.1`: every question explains itself on a page of its own, choices with the arrow keys, setup in a window of its own on Windows and macOS, the install ending with doctor, the command on the Windows PATH, the default ports 27081 and 27091, and `suiteward version`. It is built on `phase/M1.14`; its PR is not open, and no release carries it yet. | M1.13 |
 
 S1's findings may change the tasks of M1.4–M1.7; the orchestrator updates those pages before starting them.
 

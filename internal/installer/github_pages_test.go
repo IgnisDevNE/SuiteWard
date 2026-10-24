@@ -53,7 +53,8 @@ func waitForText(t *testing.T, out *syncBuffer, text string) {
 }
 
 func TestGitHubQuestionIsExplainedOnAFullScreen(t *testing.T) {
-	scr, br, out := fullScreenOn(t, liveContext(t), strings.NewReader("n\n"))
+	// On a full screen the yes/no question is a Yes/No choice; without key input it is answered by number, and 2 is No.
+	scr, br, out := fullScreenOn(t, liveContext(t), strings.NewReader("2\n"))
 	r := newTestResolver(t, map[string]string{}, nil, Terminal{In: br, Out: scr, IsTerminal: true, ReadPassword: func() ([]byte, error) { return nil, errors.New("no") }})
 	yes, err := (&githubInstall{}).wantsGitHub(context.Background(), r)
 	if err != nil || yes {

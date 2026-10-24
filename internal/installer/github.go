@@ -1008,32 +1008,42 @@ func askTestCheck(ctx context.Context, env githubEnv, client *rest.Client, r rep
 }
 
 // importRulesets writes one ruleset file per repository, tells the user how to import it, waits for the import and re-reads
-// the protection of each repository. A full screen that asks pauses the user at the page (pauseForImport); everywhere else the
-// question is the one it was, whose answer, a typed no included, only makes the protection be read: what is missing is reported
-// after it all the same.
+// the protection of each repository. A full screen that asks pauses the user at a page of one compact row per repository
+// (pauseForImport); everywhere else the question is the one it was, whose answer, a typed no included, only makes the protection be
+// read: what is missing is reported after it all the same.
 func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubResult, repos []repoInfo) (map[string]protection.Result, error) {
 	scr := env.R.screen
-	if scr.FullScreen() { // before the lines below: a page that comes after them takes them off the screen
-		scr.Page("Import the rulesets", ui.Para("Import the file of each repository on GitHub, as below. If an older SuiteWard ruleset (of an earlier App) is already there, delete it first: both would apply."))
-	}
-	files := make(map[string]string, len(repos)) // where each ruleset is, for the page that is drawn again
-	for _, r := range repos {
-		data, err := rulesetJSON(res.AppID, res.TestChecks[r.name])
-		if err != nil {
-			return nil, fmt.Errorf("ruleset of %s: %w", r.name, err)
-		}
-		path, err := writeRuleset(env.SettingsDir, r.name, data)
-		if err != nil {
-			return nil, fmt.Errorf("write the ruleset of %s: %w", r.name, err)
-		}
-		files[r.name] = path
-		scr.Keep("\nRuleset for %s: %s\n", r.name, path) // the file and how to import it are needed after the page of this step is gone
-		if r.private {
-			scr.Warn("Warning: %s is a private repository. On GitHub Free, rules are not enforced on private repositories, so SuiteWard cannot protect it until the repository is a public repository or the account is on a paid plan (Team). The install continues, and /status will report enforcement-unavailable.\n", r.name)
-		}
-		scr.Keep("Import it: open %s/%s/settings/rules, choose New ruleset, then Import a ruleset, select that file and create the ruleset.\n", env.WebURL, r.name)
-	}
 	pausing := !env.SkipRulesetWait && scr.FullScreen() && env.R.asks("ruleset-imported")
+	files := make(map[string]string, len(repos)) // where each ruleset is
+	if pausing {
+		for _, r := range repos {
+			path, err := writeRulesetFile(env.SettingsDir, res, r)
+			if err != nil {
+				return nil, err
+			}
+			files[r.name] = path
+		}
+		// One page, before the warnings below, which a page that came after them would take off the screen. What the user must keep is
+		// kept when the pause is over (keepImports), and only for what is left to do.
+		importPage(scr, "Import each file on GitHub.", env.WebURL, res.Account, repos, files, nil)
+		for _, r := range repos {
+			warnPrivate(scr, r)
+		}
+	} else {
+		if scr.FullScreen() { // before the lines below: a page that comes after them takes them off the screen
+			scr.Page("Import the rulesets", ui.Para("Import the file of each repository on GitHub, as below. If an older SuiteWard ruleset (of an earlier App) is already there, delete it first: both would apply."))
+		}
+		for _, r := range repos {
+			path, err := writeRulesetFile(env.SettingsDir, res, r)
+			if err != nil {
+				return nil, err
+			}
+			files[r.name] = path
+			keepImport(scr, r, path)
+			warnPrivate(scr, r)
+			keepSteps(scr, env.WebURL, r)
+		}
+	}
 	if !env.SkipRulesetWait && !pausing {
 		if env.R.asks("ruleset-imported") {
 			ghSay(env.Out, "\n") // the blank line is not part of the label: an interrupted question names its label in one line
@@ -1058,16 +1068,80 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 	return results, nil
 }
 
+// writeRulesetFile writes the ruleset of r in dir, and returns the file.
+func writeRulesetFile(dir string, res GitHubResult, r repoInfo) (string, error) {
+	data, err := rulesetJSON(res.AppID, res.TestChecks[r.name])
+	if err != nil {
+		return "", fmt.Errorf("ruleset of %s: %w", r.name, err)
+	}
+	path, err := writeRuleset(dir, r.name, data)
+	if err != nil {
+		return "", fmt.Errorf("write the ruleset of %s: %w", r.name, err)
+	}
+	return path, nil
+}
+
+// keepImport prints where the ruleset of r is, as a line that stays: the file and how to import it are needed after the page of this
+// step is gone.
+func keepImport(scr *ui.Screen, r repoInfo, path string) {
+	scr.Keep("\nRuleset for %s: %s\n", r.name, path)
+}
+
+// keepSteps prints how to import the ruleset of r, as a line that stays.
+func keepSteps(scr *ui.Screen, webURL string, r repoInfo) {
+	scr.Keep("Import it: open %s/%s/settings/rules, choose New ruleset, then Import a ruleset, select that file and create the ruleset.\n", webURL, r.name)
+}
+
+// warnPrivate warns that a private repository cannot be protected on GitHub Free.
+func warnPrivate(scr *ui.Screen, r repoInfo) {
+	if r.private {
+		scr.Warn("Warning: %s is a private repository. On GitHub Free, rules are not enforced on private repositories, so SuiteWard cannot protect it until the repository is a public repository or the account is on a paid plan (Team). The install continues, and /status will report enforcement-unavailable.\n", r.name)
+	}
+}
+
+// keepImports prints, as lines that stay, the file and the rules page of each repository that is not protected: what is left to do once
+// the page of the pause is gone.
+func keepImports(scr *ui.Screen, webURL string, repos []repoInfo, files map[string]string, results map[string]protection.Result) {
+	for _, r := range repos {
+		if results[r.name].Kind != protection.KindEnforced {
+			keepImport(scr, r, files[r.name])
+			keepSteps(scr, webURL, r)
+		}
+	}
+}
+
+// importPage draws the page of the import: one row for each repository in repos, its name and the file of its ruleset (and what is
+// missing, when missing says it), then how to import. The folder of the files comes first, and the explanation last: a page that is too
+// long for the screen loses the end of it, and the user imports from the folder and the rows.
+func importPage(scr *ui.Screen, lead, webURL, owner string, repos []repoInfo, files map[string]string, missing map[string]string) {
+	rows := make([]ui.KV, 0, len(repos))
+	dir := ""
+	for _, r := range repos {
+		_, name, _ := strings.Cut(r.name, "/") // one instance serves one owner, who is in the address below
+		value := filepath.Base(files[r.name])
+		if m := missing[r.name]; m != "" {
+			value += ": " + m
+		}
+		rows = append(rows, ui.KV{Key: name, Value: value})
+		dir = filepath.Dir(files[r.name])
+	}
+	scr.Page("Import the rulesets", ui.Para(lead+" The files are in "+dir+":"), ui.Fields(rows...), ui.Para(fmt.Sprintf(
+		"For each repository open %s/%s/<name>/settings/rules, choose New ruleset, then Import a ruleset, select its file and create the ruleset. If an older SuiteWard ruleset (of an earlier App) is already there, delete it first: both would apply.",
+		webURL, owner)))
+}
+
 // pauseForImport holds the user at the page while the rulesets are imported on GitHub, and reads the protection back when they say so. A
 // repository that is not protected yet, or whose protection cannot be read, is shown with what is missing and the same two choices are
 // offered again; enforcement that is unavailable ends it, as no import can change that. Skipping goes on with a warning: the
-// results are what the last check found, or unknown when there was none.
+// results are what the last check found, or unknown when there was none, and what the last check found stays with it. What is left to
+// do, the file and the rules page of each repository that is not protected, is kept when the pause is over.
 func pauseForImport(ctx context.Context, scr *ui.Screen, webURL string, reader *github.Reader, res GitHubResult, repos []repoInfo, files map[string]string) (map[string]protection.Result, error) {
 	choices := []ui.Choice{
 		{Name: "I imported it, check now", Desc: "check on GitHub"},
 		{Name: "Skip, import later", Desc: "go on without it"},
 	}
 	var results map[string]protection.Result
+	var lines []string
 	for {
 		picked, err := scr.Select("Ruleset import", choices, 0)
 		if err != nil {
@@ -1076,12 +1150,20 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, webURL string, reader *
 		if picked == 1 {
 			break
 		}
-		var lines []string
 		if results, lines = readProtections(ctx, reader, res, repos); !awaitingImport(results) {
+			keepImports(scr, webURL, repos, files, results)
 			keepProtection(scr, lines)
 			return results, nil
 		}
-		importAgain(scr, webURL, repos, files, results)
+		missing := make(map[string]string, len(repos))
+		var open []repoInfo
+		for _, r := range repos {
+			if mayBeFixedByImport(results[r.name]) {
+				missing[r.name] = unfinishedText(results[r.name])
+				open = append(open, r)
+			}
+		}
+		importPage(scr, "Not enforced yet.", webURL, res.Account, open, files, missing)
 	}
 	if results == nil {
 		results = make(map[string]protection.Result, len(repos))
@@ -1089,9 +1171,13 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, webURL string, reader *
 			results[r.name] = protection.Unknown()
 		}
 	}
+	keepImports(scr, webURL, repos, files, results)
+	if lines != nil { // what the last check found stays with it
+		keepProtection(scr, lines)
+	}
 	var open []string
 	for _, r := range repos {
-		if kind := results[r.name].Kind; kind != protection.KindEnforced && kind != protection.KindEnforcementUnavailable {
+		if mayBeFixedByImport(results[r.name]) {
 			open = append(open, r.name)
 		}
 	}
@@ -1099,31 +1185,37 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, webURL string, reader *
 	return results, nil
 }
 
-// importAgain draws the page of the import again for the repositories that may still be fixed by it: what is missing, how to import, and
-// the file and the rules page of each. A page that only went on from the one before would push the files off the screen, where the
-// user needs them again; what it says is not kept (the files were, with the first page, and only the check that ends the step is).
-func importAgain(scr *ui.Screen, webURL string, repos []repoInfo, files map[string]string, results map[string]protection.Result) {
-	var missing, where []string
-	for _, r := range repos {
-		if kind := results[r.name].Kind; kind == protection.KindFindings || kind == protection.KindUnknown {
-			missing = append(missing, strings.TrimSpace(unfinishedLine(r.name, results[r.name])))
-			where = append(where, r.name+"\n  file: "+files[r.name]+"\n  rules page: "+webURL+"/"+r.name+"/settings/rules")
-		}
-	}
-	scr.Page("Import the rulesets",
-		ui.Para("Not enforced yet:\n"+strings.Join(missing, "\n")),
-		ui.Para("Import the file of each repository on GitHub: open its rules page, choose New ruleset, then Import a ruleset, select the file and create the ruleset. If an older SuiteWard ruleset (of an earlier App) is already there, delete it first."),
-		ui.Para(strings.Join(where, "\n")))
+// mayBeFixedByImport says that an import may still fix a repository: its protection has findings, or could not be read. Enforcement that
+// is unavailable is not fixed by one.
+func mayBeFixedByImport(r protection.Result) bool {
+	return r.Kind == protection.KindFindings || r.Kind == protection.KindUnknown
 }
 
-// awaitingImport says that an import may still fix a repository: its protection has findings, or could not be read.
+// awaitingImport says that an import may still fix a repository of results.
 func awaitingImport(results map[string]protection.Result) bool {
 	for _, r := range results {
-		if r.Kind == protection.KindFindings || r.Kind == protection.KindUnknown {
+		if mayBeFixedByImport(r) {
 			return true
 		}
 	}
 	return false
+}
+
+// findingCodes are the findings of a protection, comma-separated.
+func findingCodes(r protection.Result) string {
+	codes := make([]string, len(r.Findings))
+	for i, c := range r.Findings {
+		codes[i] = string(c)
+	}
+	return strings.Join(codes, ", ")
+}
+
+// unfinishedText says what keeps a repository from being protected: the findings of its protection, or that it could not be read.
+func unfinishedText(r protection.Result) string {
+	if len(r.Findings) == 0 {
+		return "the protection could not be read"
+	}
+	return findingCodes(r)
 }
 
 // readProtections reads the protection of each repository and returns what it found with the lines that report it.
@@ -1143,11 +1235,7 @@ func readProtections(ctx context.Context, reader *github.Reader, res GitHubResul
 		results[r.name] = result
 		lines = append(lines, fmt.Sprintf("  %s: %s\n", r.name, result.Kind))
 		if len(result.Findings) > 0 {
-			codes := make([]string, len(result.Findings))
-			for i, c := range result.Findings {
-				codes[i] = string(c)
-			}
-			lines = append(lines, fmt.Sprintf("    findings: %s\n", strings.Join(codes, ", ")))
+			lines = append(lines, fmt.Sprintf("    findings: %s\n", findingCodes(result)))
 		}
 		for _, line := range result.Instructions {
 			lines = append(lines, fmt.Sprintf("    - %s\n", line))
@@ -1227,20 +1315,4 @@ var setupTerminal = func() bool {
 func wantsNewApp(r *Resolver) bool {
 	v, _ := r.given("github")
 	return strings.EqualFold(strings.TrimSpace(v), newAppAnswer)
-}
-
-// unfinishedLine says in one line what keeps a repository from being protected, or that it is not: the findings of its protection, or
-// that it could not be read.
-func unfinishedLine(name string, r protection.Result) string {
-	switch {
-	case r.Kind == protection.KindUnknown:
-		return fmt.Sprintf("  %s: the protection could not be read\n", name)
-	case len(r.Findings) == 0:
-		return fmt.Sprintf("  %s: %s\n", name, r.Kind)
-	}
-	codes := make([]string, len(r.Findings))
-	for i, c := range r.Findings {
-		codes[i] = string(c)
-	}
-	return fmt.Sprintf("  %s: %s\n", name, strings.Join(codes, ", "))
 }

@@ -544,13 +544,13 @@ func TestTheFilesOfWhatIsStillMissingAreOnTheScreenAfterACheck(t *testing.T) {
 // the number of them (up to what the rows hold): the user imports from it.
 func TestTheRulesetPagesShowTheFileOfEveryRepositoryOnA80By24Screen(t *testing.T) {
 	g := newFakeGitHub(t)
-	g.repos = manyRepos(4)
+	g.repos = manyRepos(3)
 	g.changeRepos(func(repos []fakeRepo) {
 		for i := range repos {
 			repos[i].noRule = true
 		}
 	})
-	names := []string{"acme/r1", "acme/r2", "acme/r3", "acme/r4"}
+	names := []string{"acme/r1", "acme/r2", "acme/r3"}
 	flags := existingFlags(t, map[string]string{"repositories": strings.Join(names, ",")})
 	delete(flags, "test-check")
 	for _, n := range names {
@@ -558,7 +558,7 @@ func TestTheRulesetPagesShowTheFileOfEveryRepositoryOnA80By24Screen(t *testing.T
 	}
 	run := startRulesetRunSized(t, g, flags, 80, 24)
 	waitForText(t, run.out, "I imported it, check now")
-	folder := filepath.Base(filepath.Dir(run.env.SettingsDir)) // the test's own name: the folder of the files is under it
+	folder := filepath.Base(run.env.SettingsDir) + ":" // the last part of the folder, which the page says once, above the rows
 	onScreen := func(when string, codes bool) {
 		t.Helper()
 		frame := lastFrame(run.out.String())

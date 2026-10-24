@@ -2,6 +2,7 @@ package installer
 
 import (
 	"cmp"
+	"context"
 	"os"
 	"path/filepath"
 )
@@ -37,3 +38,44 @@ func sameFile(a, b string) bool {
 	infoB, errB := os.Stat(b)
 	return errA == nil && errB == nil && os.SameFile(infoA, infoB)
 }
+
+// The copy of the program that the installer offers on Windows: %LOCALAPPDATA%\SuiteWard\bin\suiteward.exe, with that folder on the user's PATH.
+const (
+	selfFile    = "suiteward.exe"
+	staleSuffix = ".old" // the copy that a running program held: renamed aside, removed by the next run that can
+)
+
+// SelfInstall is what the copy of the program and the change of the user's PATH read and change on this PC. OSEnv fills it on Windows,
+// and nil means that this PC is not offered one: a test, or another system.
+type SelfInstall struct {
+	Executable func() (string, error)              // os.Executable
+	LookPath   func(string) (string, error)        // exec.LookPath
+	Rename     func(oldpath, newpath string) error // os.Rename; a test makes the copy that a running program holds refuse to be replaced
+	Path       UserPath
+}
+
+// UserPath is the Path variable of the user's own environment, which a new terminal reads.
+type UserPath interface {
+	// Read is the raw value: expand says that it is of the expandable kind (REG_EXPAND_SZ) and found that there is one.
+	Read() (value string, expand, found bool, err error)
+	Write(value string, expand bool) error
+	// Announce tells the programs that run that the environment changed (WM_SETTINGCHANGE), so that a new terminal reads it.
+	Announce() error
+}
+
+func addPathEntry(path, dir string) (string, bool) { return path, false }
+
+func removePathEntry(path, dir string) (string, bool) { return path, false }
+
+// folder is where the copy lives.
+func (s SelfInstall) folder(d Deps) (string, error) { return "", nil }
+
+// copyTo writes the program at src to dir as suiteward.exe and returns that path.
+func (s SelfInstall) copyTo(src, dir string) (string, error) { return "", nil }
+
+func (s SelfInstall) addToUserPath(dir string) (changed bool, err error) { return false, nil }
+
+func (s SelfInstall) removeFromUserPath(dir string) (changed bool, err error) { return false, nil }
+
+// selfInstallStep is the part of the summary of an install or an upgrade that offers the copy and the PATH entry.
+func selfInstallStep(ctx context.Context, env Env, rows *summaryRows) Deps { return env.Deps }

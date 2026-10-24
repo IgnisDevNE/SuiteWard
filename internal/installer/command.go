@@ -51,6 +51,8 @@ type Env struct {
 	// Version is shown in the title bar of the full screen ("installer <Version>"); empty reads "dev". The caller that knows the build version
 	// (app.Run) sets it.
 	Version string
+	// Self is the copy of the program that a full screen offers on Windows; nil offers none. OSEnv sets it there.
+	Self *SelfInstall
 	// OpenScreen opens the console of one command (ui.OpenOS on the process's console); nil means a plain one on Term.Out. A test replaces it.
 	OpenScreen func(ctx context.Context, in io.Reader, version string, plain bool) (*ui.Screen, error)
 }

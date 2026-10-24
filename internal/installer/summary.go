@@ -106,13 +106,19 @@ func instanceVersion(ctx context.Context, status func(context.Context) ([]byte, 
 	return parsed.Version
 }
 
-// statusRow is where to read /status of the co-located stack: its address, or inside the Podman machine, which publishes the port,
-// the command that reads it there.
+// statusRow is where to read /status of the co-located stack: its address, or, when the port is published inside a Podman machine and does
+// not answer from this PC, the command that reads it there (statusHint).
 func (c *colocatedInstall) statusRow(ctx context.Context) string {
 	if c.inMachine() {
 		return c.statusHint(ctx)
 	}
 	return statusURL(c.s.HTTPPort)
+}
+
+// answersHere says that /status of the service answers from this PC, with the version of a SuiteWard service.
+func (c *colocatedInstall) answersHere(ctx context.Context) bool {
+	address := statusURL(c.s.HTTPPort)
+	return instanceVersion(ctx, func(ctx context.Context) ([]byte, error) { return c.env.httpGet()(ctx, address) }) != ""
 }
 
 // commonSummary is what an install and an upgrade of the co-located tier both show. The service has been started a moment ago, and

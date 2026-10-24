@@ -122,7 +122,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	if err := SaveSettings(host.settingsPath, s); err != nil {
 		return withBackup(migratingError{err}, dir, host.unitsDir)
 	}
-	upgraded(scr, image, dir, goBackIsolated(dir, host.unitsDir), "suiteward doctor")
+	upgraded(scr, image, dir, goBackIsolated(dir, host.unitsDir, scopeFlags(r, true)), "suiteward doctor")
 	sayOldEnvFile(out, host.envPath, st.oldEnv, false)
 	return showSummary(scr, func() []ui.KV {
 		return isolatedSummary(ctx, env, host, s, ui.KV{Key: "Release", Value: fmt.Sprintf("%s (was %s)", digestOf(image), digestOf(st.adopted.Image))})

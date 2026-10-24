@@ -225,7 +225,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	}
 	scr.Step(5)
 	c.restartAfterReboot(ctx)
-	upgraded(scr, image, dir, goBackColocated(rt.Name(), previous.Image, dir), doctor)
+	upgraded(scr, image, dir, goBackColocated(engine, previous.Image, dir, scopeFlags(r, false)), doctor)
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }
 
@@ -283,16 +283,29 @@ const goingBack = "the steps: docs/backup.md, Going back after an upgrade"
 
 // goBackColocated is the way back after the upgrade of a co-located stack: a restore alone cannot undo an upgrade that migrated, so the stack
 // and its data volumes go first, and the previous release is installed before the backup is restored.
-func goBackColocated(engine, previousImage, backupPath string) string {
-	return fmt.Sprintf("To go back, remove the stack and its data volumes (`suiteward uninstall --yes`, then `%s volume rm %s %s`), install the previous release (`suiteward install --image %s`), then run `suiteward restore %s` with that kit; migrations only go forward, so it must be the previous release (%s).",
-		engine, VolumeData, VolumeDBData, previousImage, quoteArg(backupPath), goingBack)
+func goBackColocated(engine, previousImage, backupPath, scope string) string {
+	return fmt.Sprintf("To go back, remove the stack and its data volumes (`suiteward uninstall --yes%[1]s`, then `%[2]s volume rm %[3]s %[4]s`), install the previous release (`suiteward install --image %[5]s%[1]s`), then run `suiteward restore %[6]s%[1]s` with that kit; migrations only go forward, so it must be the previous release (%[7]s).",
+		scope, engine, VolumeData, VolumeDBData, previousImage, quoteArg(backupPath), goingBack)
 }
 
 // goBackIsolated is the way back after the upgrade of an isolated host: the unit files that the upgrade replaced were kept beside the backup;
 // they go back, systemd reloads them and the service stops, and then the backup is restored.
-func goBackIsolated(backupPath, unitsDir string) string {
-	return fmt.Sprintf("To go back, copy the unit files that this upgrade replaced, from %s to %s, then run `systemctl --user daemon-reload` and `systemctl --user stop suiteward.service`, and then `suiteward restore %s` with that kit; migrations only go forward, so the units must be the previous release's (%s).",
-		unitsKeptBeside(backupPath), unitsDir, quoteArg(backupPath), goingBack)
+func goBackIsolated(backupPath, unitsDir, scope string) string {
+	return fmt.Sprintf("To go back, copy the unit files that this upgrade replaced, from %s to %s, then run `systemctl --user daemon-reload` and `systemctl --user stop suiteward.service`, and then `suiteward restore %s%s` with that kit; migrations only go forward, so the units must be the previous release's (%s).",
+		unitsKeptBeside(backupPath), unitsDir, quoteArg(backupPath), scope, goingBack)
+}
+
+// scopeFlags names the tier and the settings file of this run when they are not the defaults, for a command that a message tells the person
+// to run next: copied on a PC with a second instance, it must reach this one (the command line of this run, as enrollCommand takes it).
+func scopeFlags(r *Resolver, isolated bool) string {
+	flags := ""
+	if isolated {
+		flags += " --tier isolated"
+	}
+	if path, ok := r.flags["settings"]; ok {
+		flags += " --settings " + quoteArg(path)
+	}
+	return flags
 }
 
 // The wait for /status of a service the upgrade started: at most startWaitTries probes, and a deadline on the whole wait, because a

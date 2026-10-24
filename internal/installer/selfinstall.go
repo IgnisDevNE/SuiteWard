@@ -313,7 +313,7 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 		rows.add("Command", target+" (the shell finds another suiteward first: "+other+")")
 		return d
 	}
-	line := `$env:Path += ";` + dir + `"`
+	line := `$env:Path += ';` + strings.ReplaceAll(dir, "'", "''") + `'` // a string that does not expand: a $ or a backtick in dir is text
 	rows.add("Command", target+" (new terminals find it as suiteward)")
 	rows.add("This terminal (PowerShell)", line)
 	scr.Keep("%s\n", line) // a line of its own in the scrollback, to copy as it is

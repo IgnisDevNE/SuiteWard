@@ -41,7 +41,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	if !st.found {
 		return ErrNothingInstalled
 	}
-	err = refuseUnfinishedInstall(pendingAppPath(host.settingsPath), func() (GitHub, error) {
+	err = refuseUnfinishedInstall(env.Deps.command(), pendingAppPath(host.settingsPath), func() (GitHub, error) {
 		if s.GitHub.AppID != 0 {
 			return s.GitHub, nil
 		}

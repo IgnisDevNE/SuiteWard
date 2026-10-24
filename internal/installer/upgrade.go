@@ -162,7 +162,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if !previous.Known {
 		return ErrNothingInstalled
 	}
-	if err := refuseUnfinishedInstall(pendingAppPath(t.settingsPath), func() (GitHub, error) { return base.GitHub, nil }); err != nil {
+	if err := refuseUnfinishedInstall(env.Deps.command(), pendingAppPath(t.settingsPath), func() (GitHub, error) { return base.GitHub, nil }); err != nil {
 		return err
 	}
 	s := base
@@ -395,7 +395,7 @@ func (c *colocatedInstall) startInstalled(ctx context.Context) error {
 // refuseUnfinishedInstall refuses an upgrade while an earlier install is unfinished: the App it recorded holds the key secret, and the
 // upgrade would start the stack again with the App of the settings, which GitHub refuses with that key. settings is called only when
 // a record exists.
-func refuseUnfinishedInstall(pendingPath string, settings func() (GitHub, error)) error {
+func refuseUnfinishedInstall(cmd, pendingPath string, settings func() (GitHub, error)) error {
 	pending, found, err := loadPendingApp(pendingPath)
 	if err != nil || !found {
 		return err

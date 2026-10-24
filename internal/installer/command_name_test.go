@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -262,5 +263,23 @@ func TestTheMessagesOfARestoreNameTheProgramAsTheRunReachesIt(t *testing.T) {
 		if !strings.Contains(c.got, c.want) {
 			t.Errorf("%s: got %q, want it to contain %q", name, c.got, c.want)
 		}
+	}
+}
+
+func TestAnUpgradeRefusedForAnUnfinishedInstallNamesInstallAsTheRunReachesIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.yaml.pending-app")
+	if err := savePendingApp(path, PendingApp{AppID: 7, Slug: "suiteward-acme", Account: "acme", AccountType: "Organization"}); err != nil {
+		t.Fatal(err)
+	}
+	err := refuseUnfinishedInstall(swCmd, path, func() (GitHub, error) { return GitHub{AppID: 3}, nil })
+	if err == nil || !strings.Contains(err.Error(), "with a plain `"+swCmd+" install`") {
+		t.Errorf("got %v, want a refusal that names `%s install`", err, swCmd)
+	}
+}
+
+func TestOSEnvNamesTheProgramAsTheShellReachesIt(t *testing.T) {
+	want := commandName(runtime.GOOS, os.Executable, exec.LookPath)
+	if got := OSEnv(&bytes.Buffer{}).Deps.Command; got != want {
+		t.Errorf("OSEnv carries the command name %q, want %q", got, want)
 	}
 }

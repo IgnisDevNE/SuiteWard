@@ -100,14 +100,8 @@ func TestTheDefaultImageIsOnThePageAndTheQuestionIsShort(t *testing.T) {
 		if !strings.Contains(strings.ReplaceAll(v.text(), " ", ""), "Default"+testImage) {
 			t.Errorf("%dx%d: the page has no row that gives the default image:\n%s", sz.w, sz.h, v.dump())
 		}
-		var asked []string
-		for _, r := range v.rows {
-			if strings.TrimSpace(r) != "" {
-				asked = append(asked, r)
-			}
-		}
-		if last := asked[len(asked)-1]; last != "Release image (Enter keeps the default):" {
-			t.Errorf("%dx%d: the last row of the page is %q, want the short question alone on it:\n%s", sz.w, sz.h, last, v.dump())
+		if !strings.HasSuffix(v.text(), "Release image (Enter keeps the default):") { // the words of the page: a narrow window wraps the question
+			t.Errorf("%dx%d: the page does not end in the short question:\n%s", sz.w, sz.h, v.dump())
 		}
 		if !strings.Contains(v.hint, "Enter takes the default") {
 			t.Errorf("%dx%d: the hint is %q, want it to say that Enter takes the default", sz.w, sz.h, v.hint)
@@ -234,5 +228,63 @@ func TestTheRestorePageOfABackupOfAnotherTierStillShowsTheInstanceAndTheReleaseA
 			t.Errorf("the page does not show the fact %q of the backup (row %q):\n%s", strings.TrimSpace(fact), row, v.dump())
 		}
 	}
-	mustSay(t, v, "The backup is from the isolated tier; this instance is on the co-located tier.", "Type the instance id "+testInstance+" to confirm")
+	mustSay(t, v, "The backup is isolated; this instance is co-located.", "Type the instance id "+testInstance+" to confirm")
+}
+
+// ---- what stays as it was ----
+
+// The answers of the image question are the ones it always took: Enter keeps the default, a typed reference replaces it, and a build that
+// has no default asks the question it asked, with nothing to show.
+func TestTheImageQuestionOfAFullScreenKeepsItsAnswers(t *testing.T) {
+	other := "ghcr.io/other/suiteward@sha256:" + strings.Repeat("b", 64)
+	for name, tc := range map[string]struct{ input, want string }{
+		"Enter keeps the default":       {"\n", testImage},
+		"a typed reference replaces it": {other + "\n", other},
+	} {
+		t.Run(name, func(t *testing.T) {
+			scr, br, _ := fullScreenOn(t, liveContext(t), strings.NewReader(tc.input))
+			r := newTestResolver(t, map[string]string{}, nil, Terminal{In: br, Out: scr, IsTerminal: true, ReadPassword: noSecret})
+			if got, err := askImage(r, stackInstalled{Image: testImage}); err != nil || got != tc.want {
+				t.Fatalf("askImage = %q, %v, want %q", got, err, tc.want)
+			}
+		})
+	}
+	t.Run("a build that carries no release image", func(t *testing.T) {
+		scr, br, out := fullScreenOn(t, liveContext(t), strings.NewReader(testImage+"\n"))
+		r := newTestResolver(t, map[string]string{}, nil, Terminal{In: br, Out: scr, IsTerminal: true, ReadPassword: noSecret})
+		if got, err := askImage(r, stackInstalled{}); err != nil || got != testImage {
+			t.Fatalf("askImage = %q, %v, want the typed image", got, err)
+		}
+		if !shows(out.String(), "Release image (pinned by digest)") || shows(out.String(), "Default "+releaseImageRepo) {
+			t.Errorf("a question with no default is not the one it was:\n%s", out.String())
+		}
+	})
+}
+
+// A repository with no check run yet has nothing to pick from: the question is the typed one, on its page, with no list.
+func TestTheTestCheckOfARepositoryWithNoCheckRunIsTyped(t *testing.T) {
+	g := newFakeGitHub(t)
+	g.repos[0].checkRuns = nil
+	env, in := keyedFlowEnv(t, g, without(existingFlags(t, nil), "test-check"), "custom / ci\n")
+	res, err := resolve(t, env)
+	if err != nil || res.TestChecks["acme/app"] != "custom / ci" {
+		t.Fatalf("resolveGitHub = %v, %v, want the typed name", res.TestChecks, err)
+	}
+	v := viewOf(t, in.shown[0], 100, 30)
+	if !strings.Contains(v.text(), "Name of the check your CI publishes for acme/app") || strings.Contains(v.text(), "another name") || strings.Contains(v.hint, "↑/↓") {
+		t.Errorf("the question of a repository with no check run is not the typed one:\n%s", v.dump())
+	}
+}
+
+// A plain restore keeps the long warning about the tier: only a full screen, which has few rows, says it in a row.
+func TestThePlainRestoreOfABackupOfAnotherTierKeepsTheLongWarning(t *testing.T) {
+	u := restoreHarness(t)
+	file := aBackup(t, func(b *backup, _ *backupEngine) { b.tier = config.TierIsolated })
+	if err := u.restore(file, confirmed(t, t.TempDir())...); err != nil {
+		t.Fatal(err)
+	}
+	want := "The backup was made on the isolated tier and this instance is on the co-located tier: the owner's enrollment records its tier, and /status says so after the restore."
+	if !strings.Contains(u.out.String(), want) {
+		t.Errorf("the plain output lacks the warning about the tier:\n%s", u.out.String())
+	}
 }

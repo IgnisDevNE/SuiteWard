@@ -38,25 +38,23 @@ func (s *summaryRows) warn(text string) { *s = append(*s, ui.KV{Value: text}) }
 const interruptedKey = "\x00interrupted"
 
 // addDoctor runs the checks of `suiteward doctor` against the instance the settings file describes, as the last step of an install or an
-// upgrade, and adds what they found: the Doctor row (the counts, why doctor did not run, or that it was interrupted), a warning with its
-// fix for each result that needs a look, and, when there is something to look at, how to check again. A failed check is not a failed
-// install: it never fails the run. A Ctrl-C is the exception, as it is for doctor itself: one during the checks ends the command as
-// interrupted, and the checks it cancelled are not counted. One that came before them only skips them, as it skips the wait for the service.
-// again is the command that checks again.
-// shortcut: ui.Summary shows its last rows when the page is taller than the window, and cannot trim warnings as Page does, so many warnings
-// push the rows above them off a small window; Close keeps them all. Upgrade when ui.Summary trims (the polish task).
+// upgrade, and adds what they found: the Doctor row (the counts, why doctor did not run, that it was skipped, or that it was interrupted),
+// a warning with its fix for each result that needs a look, and, when there is something to look at, how to check again. A failed check is
+// not a failed install: it never fails the run. A Ctrl-C is the exception, as it is for doctor itself: one during the checks ends the
+// command as interrupted, and the checks it cancelled are not counted. One that came before them only skips them ("skipped (Ctrl-C)"), as
+// it skips the wait for the service. again is the command that checks again.
 func (s *summaryRows) addDoctor(ctx context.Context, env Env, settingsPath, again string) {
-	before := ctx.Err() != nil
-	var results []doctorResult
-	if !before {
-		spinning(screenOn(env.Term.Out), "Checking the instance", func() { results = doctorChecks(ctx, env.Deps, env.httpGet(), settingsPath) })
+	if ctx.Err() != nil {
+		s.add("Doctor", "skipped (Ctrl-C)")
+		s.add("Check again", again)
+		return
 	}
-	if before || ctx.Err() != nil {
+	var results []doctorResult
+	spinning(screenOn(env.Term.Out), "Checking the instance", func() { results = doctorChecks(ctx, env.Deps, env.httpGet(), settingsPath) })
+	if ctx.Err() != nil {
 		s.add("Doctor", "interrupted")
 		s.add("Check again", again)
-		if !before {
-			*s = append(*s, ui.KV{Key: interruptedKey})
-		}
+		*s = append(*s, ui.KV{Key: interruptedKey})
 		return
 	}
 	if first := results[0]; first.Name == "settings" && !first.OK { // the first result is always the settings, and doctor stops at one it cannot read
@@ -133,20 +131,21 @@ func (s *summaryRows) addGitHub(gh GitHub) {
 
 func statusURL(httpPort int) string { return fmt.Sprintf("http://127.0.0.1:%d/status", httpPort) }
 
-// instanceVersion is the version /status of the service reports. A service that does not answer, or answers something else, has no
-// version to show: the summary leaves the row out, and doctor is what diagnoses the instance.
-func instanceVersion(ctx context.Context, status func(context.Context) ([]byte, error)) string {
+// instanceStatus is the version and the instance id (the 8 hex characters) that /status of the service reports. A service that does not
+// answer, or answers something else, has neither to show: the summary leaves the rows out, and doctor is what diagnoses the instance.
+func instanceStatus(ctx context.Context, status func(context.Context) ([]byte, error)) (version, id string) {
 	body, err := status(ctx)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	var parsed struct {
-		Version string `json:"version"`
+		Version  string `json:"version"`
+		Instance string `json:"instance"`
 	}
 	if json.Unmarshal(body, &parsed) != nil {
-		return ""
+		return "", ""
 	}
-	return parsed.Version
+	return parsed.Version, parsed.Instance
 }
 
 // statusRow is where to read /status of the co-located stack: its address, or, when the port is published inside a Podman machine and does
@@ -161,19 +160,23 @@ func (c *colocatedInstall) statusRow(ctx context.Context) string {
 // answersHere says that /status of the service answers from this PC, with the version of a SuiteWard service.
 func (c *colocatedInstall) answersHere(ctx context.Context) bool {
 	address := statusURL(c.s.HTTPPort)
-	return instanceVersion(ctx, func(ctx context.Context) ([]byte, error) { return c.env.httpGet()(ctx, address) }) != ""
+	version, _ := instanceStatus(ctx, func(ctx context.Context) ([]byte, error) { return c.env.httpGet()(ctx, address) })
+	return version != ""
 }
 
 // commonSummary is what an install and an upgrade of the co-located tier both show. The service has been started a moment ago, and
 // without GitHub (and in an upgrade) nothing has waited for it since, so the version is waited for as the owner's enrollment waits for
-// /status; after an enrollment that gave up there is no version to wait for, and the Owner row says so.
+// /status; after an enrollment that gave up there is no version to wait for, and the Owner row says so. The Instance row is the instance id
+// and the Release row the version of the service, as /status reports them.
 func (c *colocatedInstall) commonSummary(ctx context.Context, rows *summaryRows) {
 	rows.add("Tier", string(c.s.Tier))
 	rows.add("Runtime", engineLine(c.rt.Engine()))
 	if !c.statusDead {
-		rows.add("Instance", instanceVersion(ctx, func(ctx context.Context) ([]byte, error) {
+		version, id := instanceStatus(ctx, func(ctx context.Context) ([]byte, error) {
 			return waitForStatus(ctx, c.env.Sleep, c.readStatus, barOn(screenOn(c.out), "Service"))
-		}))
+		})
+		rows.add("Instance", id)
+		rows.add("Release", version)
 	}
 	rows.addGitHub(c.s.GitHub)
 }
@@ -190,11 +193,12 @@ func (c *colocatedInstall) installSummary(ctx context.Context, t installTarget) 
 	return rows
 }
 
-// upgradeSummary has no row for the backup: upgraded keeps the lines that name it.
+// upgradeSummary has no row for the backup: upgraded keeps the lines that name it. The image that replaced the old one has a row of its
+// own, Image, as the Release row is the version of the service.
 func (c *colocatedInstall) upgradeSummary(ctx context.Context, t installTarget) []ui.KV {
 	var rows summaryRows
 	c.commonSummary(ctx, &rows)
-	rows.add("Release", fmt.Sprintf("%s (was %s)", digestOf(c.image), digestOf(c.previous.Image)))
+	rows.add("Image", fmt.Sprintf("%s (was %s)", digestOf(c.image), digestOf(c.previous.Image)))
 	rows.add("Status", c.statusRow(ctx))
 	rows.add("Token file", c.tokenFile)
 	rows.add("Settings", t.settingsPath)
@@ -209,9 +213,14 @@ func isolatedSummary(ctx context.Context, env Env, host isolatedHost, s Settings
 	rows.add("Tier", string(s.Tier))
 	rows.add("Runtime", engineLine(host.rt.Engine()))
 	address := statusURL(s.HTTPPort)
-	rows.add("Instance", instanceVersion(ctx, func(ctx context.Context) ([]byte, error) { return env.httpGet()(ctx, address) }))
+	version, id := instanceStatus(ctx, func(ctx context.Context) ([]byte, error) { return env.httpGet()(ctx, address) })
+	rows.add("Instance", id)
+	rows.add("Release", version)
 	rows.addGitHub(s.GitHub)
 	for _, kv := range own {
+		if kv.Key == "Release" { // the row of an upgrade is the image that replaced the old one: Release is the version of the service
+			kv.Key = "Image"
+		}
 		rows.add(kv.Key, kv.Value)
 	}
 	rows.add("Status", address)

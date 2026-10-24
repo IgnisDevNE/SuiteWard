@@ -550,7 +550,9 @@ func (s *Screen) Ask(label, def string) (string, error) {
 
 // AskDefault is Ask for a default that the page above the question already shows, as a long reference does: the question is "label: ",
 // and an empty answer is def all the same, which the hint line of the frame says. The caller draws the default, so it is for a full screen.
-func (s *Screen) AskDefault(label, def string) (string, error) { return s.answer(label+": ", label, def) }
+func (s *Screen) AskDefault(label, def string) (string, error) {
+	return s.answer(label+": ", label, def)
+}
 
 // answer asks prompt, and returns the trimmed answer, def when it is empty.
 func (s *Screen) answer(prompt, label, def string) (string, error) {

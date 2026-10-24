@@ -288,29 +288,36 @@ func (l *multiList) plainRow(i int) string {
 // minListRows is the fewest rows that the list keeps when the page above it leaves no room.
 const minListRows = 5
 
-// multiRows is the question and its list under the rows of the page above, which are above rows long. A list that does not fit in what
-// is left of the body shows a window of it around the cursor, with a line above and below that say how many rows are out of sight.
+// multiRows is the question and its list under the rows of the page above, which are above rows long (see listRows).
 func (s *Screen) multiRows(above, width int) []row {
 	l := s.multi
 	rows := s.textRows(l.label, width)
-	n := len(l.rows)
-	room := max(minListRows, s.h-frameRows-above-len(rows)-1) // one row is kept for the note
+	rows = append(rows, s.listRows(above+len(rows), len(l.rows), l.cur, func(i int) row { return s.multiRow(i, width) })...)
+	if l.note != "" {
+		rows = append(rows, s.markedRows(warnGlyph, toneAmber, toneAmber, l.note, width)...)
+	}
+	return rows
+}
+
+// listRows is the n rows of a list that ends the page, under the rows above it, which are above rows long; at draws row i. A list that
+// does not fit in what is left of the body shows a window of it around row cur (the first rows when cur is -1), with a line above and
+// below that say how many rows are out of sight.
+func (s *Screen) listRows(above, n, cur int, at func(i int) row) []row {
+	room := max(minListRows, s.h-frameRows-above-1) // one row is kept for the note
 	top, shown := 0, n
 	if n > room {
 		shown = room - 2
-		top = min(max(l.cur-shown/2, 0), n-shown)
+		top = min(max(cur-shown/2, 0), n-shown)
 	}
+	var rows []row
 	if shown < n {
 		rows = append(rows, s.moreRow("↑", top, "above"))
 	}
 	for i := top; i < top+shown; i++ {
-		rows = append(rows, s.multiRow(i, width))
+		rows = append(rows, at(i))
 	}
 	if shown < n {
 		rows = append(rows, s.moreRow("↓", n-top-shown, "below"))
-	}
-	if l.note != "" {
-		rows = append(rows, s.markedRows(warnGlyph, toneAmber, toneAmber, l.note, width)...)
 	}
 	return rows
 }

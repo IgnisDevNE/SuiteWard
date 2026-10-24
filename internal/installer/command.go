@@ -53,6 +53,9 @@ type Env struct {
 	Version string
 	// Self is the copy of the program that a full screen offers on Windows; nil offers none. OSEnv sets it there.
 	Self *SelfInstall
+	// Unattended says that the command line answers for the person (--yes, an answers file): the copy of the program is then kept up to date
+	// where it exists, and never offered.
+	Unattended bool
 	// OpenScreen opens the console of one command (ui.OpenOS on the process's console); nil means a plain one on Term.Out. A test replaces it.
 	OpenScreen func(ctx context.Context, in io.Reader, version string, plain bool) (*ui.Screen, error)
 }
@@ -337,7 +340,7 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 		}
 	}
 	if _, answered := flags["answers"]; answered || flags["yes"] == "true" { // nobody to ask, or told not to ask: the PATH is changed only by a person who answers
-		env.Self = nil
+		env.Unattended = true
 	}
 	plain, err := wantsPlain(flags, answers)
 	if err != nil {

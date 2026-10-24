@@ -203,8 +203,9 @@ func (s SelfInstall) place(staged, target string) error {
 }
 
 // selfInstallStep is the part of the summary of an install or an upgrade that deals with the copy of the program, on a full screen of a PC
-// that offers one. It removes the copy that an earlier run put aside, refreshes a copy that exists (its owner said yes once), and otherwise
-// explains the copy and the PATH entry and asks. It returns the Deps the rest of the summary builds its hints with: after a copy that is on the
+// that offers one. It removes the copy that an earlier run put aside, refreshes a copy that exists (its owner said yes once: this asks nothing
+// and leaves the PATH alone, so a run that was told not to ask does it too), and otherwise explains the copy and the PATH entry and asks, unless
+// the run was told not to (env.Unattended). It returns the Deps the rest of the summary builds its hints with: after a copy that is on the
 // PATH they name the program suiteward. A failure is a warning in the summary, because the install it ends has worked.
 func selfInstallStep(ctx context.Context, env Env, rows *summaryRows) Deps {
 	d, s, scr := env.Deps, env.Self, screenOn(env.Term.Out)
@@ -232,6 +233,9 @@ func selfInstallStep(ctx context.Context, env Env, rows *summaryRows) Deps {
 			return d
 		}
 		rows.add("Command", target+" (updated)")
+		return d
+	}
+	if env.Unattended {
 		return d
 	}
 	return offerCopy(ctx, env, rows, exe, dir)
@@ -269,8 +273,10 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir string)
 			rows.warn(fmt.Sprintf("Your PATH was changed, but the programs that run were not told (%v): a new terminal may need you to sign out and in again.", err))
 		}
 	}
+	line := `$env:Path += ";` + dir + `"`
 	rows.add("Command", target+" (new terminals find it as suiteward)")
-	rows.add("This terminal", `$env:Path += ";`+dir+`"`)
+	rows.add("This terminal (PowerShell)", line)
+	scr.Keep("%s\n", line) // a line of its own in the scrollback, to copy as it is
 	d.Command = selfName
 	return d
 }

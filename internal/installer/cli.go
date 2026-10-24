@@ -109,7 +109,12 @@ func (c *cli) Exec(ctx context.Context, container string, argv []string, stdin i
 }
 
 func (c *cli) ExecTTY(ctx context.Context, container string, argv []string) error {
-	return c.d.Interactive(ctx, c.bin, c.args(append([]string{"exec", "-it", container}, argv...)...))
+	name, args := c.ExecTTYCommand(container, argv)
+	return c.d.Interactive(ctx, name, args)
+}
+
+func (c *cli) ExecTTYCommand(container string, argv []string) (string, []string) {
+	return c.bin, c.args(append([]string{"exec", "-it", container}, argv...)...)
 }
 
 // runArgs is the argument list of `run`; secretArgs are the runtime's own way of mounting the container's secrets.

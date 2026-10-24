@@ -560,16 +560,19 @@ func lookupOrganization(ctx context.Context, env githubEnv, login string) error 
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := env.HTTP.Do(req)
-	if err != nil {
-		if ctx.Err() != nil { // Ctrl-C is not a failure of GitHub
+	failed := func(why string) error { // Ctrl-C is not a failure of GitHub, whichever way the look-up meets it
+		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		return lookupFailed(why)
+	}
+	resp, err := env.HTTP.Do(req)
+	if err != nil {
 		var urlErr *url.Error // its text names the URL
 		if errors.As(err, &urlErr) {
 			err = urlErr.Err
 		}
-		return lookupFailed(err.Error())
+		return failed(err.Error())
 	}
 	defer func() { _ = resp.Body.Close() }() // the answer is read below; a close error cannot change it
 	switch resp.StatusCode {
@@ -577,13 +580,13 @@ func lookupOrganization(ctx context.Context, env githubEnv, login string) error 
 	case http.StatusNotFound:
 		return accountRefused("GitHub has no account named " + login)
 	default:
-		return lookupFailed(fmt.Sprintf("HTTP %d", resp.StatusCode))
+		return failed(fmt.Sprintf("HTTP %d", resp.StatusCode))
 	}
 	var out struct {
 		Type string `json:"type"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxConversionAnswer)).Decode(&out); err != nil {
-		return lookupFailed("an answer that is not an account")
+		return failed("an answer that is not an account")
 	}
 	if out.Type != "Organization" {
 		return accountRefused(login + " is a personal account, not an organization (answer personal to create the App under your own account)")
@@ -1144,7 +1147,8 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, webURL string, reader *
 	var lines []string
 	for {
 		picked, err := scr.Select("Ruleset import", choices, 0)
-		if err != nil {
+		if err != nil { // Ctrl-C, or the input ended: the page goes with the screen, and the files with it unless they are kept
+			keepImports(scr, webURL, repos, files, unchecked(repos, results))
 			return nil, fmt.Errorf("read the choice: %w", err)
 		}
 		if picked == 1 {
@@ -1165,12 +1169,7 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, webURL string, reader *
 		}
 		importPage(scr, "Not enforced yet.", webURL, res.Account, open, files, missing)
 	}
-	if results == nil {
-		results = make(map[string]protection.Result, len(repos))
-		for _, r := range repos {
-			results[r.name] = protection.Unknown()
-		}
-	}
+	results = unchecked(repos, results)
 	keepImports(scr, webURL, repos, files, results)
 	if lines != nil { // what the last check found stays with it
 		keepProtection(scr, lines)
@@ -1183,6 +1182,18 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, webURL string, reader *
 	}
 	scr.Warn("The rulesets of %s are not imported or not checked yet: import the files named above on GitHub, then run suiteward doctor to check the protection.\n", strings.Join(open, ", "))
 	return results, nil
+}
+
+// unchecked is results, or, when no check ran (nil), an unknown protection for every repository.
+func unchecked(repos []repoInfo, results map[string]protection.Result) map[string]protection.Result {
+	if results != nil {
+		return results
+	}
+	results = make(map[string]protection.Result, len(repos))
+	for _, r := range repos {
+		results[r.name] = protection.Unknown()
+	}
+	return results
 }
 
 // mayBeFixedByImport says that an import may still fix a repository: its protection has findings, or could not be read. Enforcement that

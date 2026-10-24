@@ -2,6 +2,7 @@ package installer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -48,6 +49,24 @@ func TestMain(m *testing.M) {
 		}
 		for _, a := range args {
 			fmt.Println("arg=" + a)
+		}
+		code, _ := strconv.Atoi(os.Getenv("SUITEWARD_TEST_EXIT"))
+		os.Exit(code)
+	case "args-file": // the arguments after "--" as a JSON list in the file SUITEWARD_TEST_ARGS_FILE, whatever the standard handles are; the exit code is SUITEWARD_TEST_EXIT
+		args := os.Args
+		for i, a := range args {
+			if a == "--" {
+				args = args[i+1:]
+				break
+			}
+		}
+		data, err := json.Marshal(args)
+		if err == nil {
+			err = os.WriteFile(os.Getenv("SUITEWARD_TEST_ARGS_FILE"), data, 0o600)
+		}
+		if err != nil {
+			fmt.Fprint(os.Stderr, err)
+			os.Exit(99)
 		}
 		code, _ := strconv.Atoi(os.Getenv("SUITEWARD_TEST_EXIT"))
 		os.Exit(code)

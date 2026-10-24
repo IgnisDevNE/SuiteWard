@@ -16,7 +16,9 @@ const (
 	machineStatus = `podman machine ssh --username user podman-machine-default "curl -s ` + hostStatus + `"`
 )
 
-func hostRefuses(context.Context, string) ([]byte, error) { return nil, errors.New("connection refused") }
+func hostRefuses(context.Context, string) ([]byte, error) {
+	return nil, errors.New("connection refused")
+}
 
 // statusLineOf is what follows the prefix on the first line of text that starts with it.
 func statusLineOf(text, prefix string) string {

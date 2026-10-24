@@ -151,8 +151,10 @@ func windowOutcome(exitFile string, fallback error) error {
 
 // terminalScript is the script a terminal runs for setup: it removes itself, runs the command in the environment OSInteractive gives
 // it, leaves the exit code in exitDir for the installer, waits for Enter so that the secret can be copied, and clears the screen and
-// its scrollback before it ends, so that the secret does not stay in a window the profile keeps open. It holds the command line and
-// nothing that the command prints.
+// its scrollback before it ends, so that the secret does not stay in a window the profile keeps open. Once the command has ended the
+// clear is a trap on EXIT, and Ctrl-C, a termination or a hung-up terminal at the prompt exit through it: sh would die on them before a
+// clear that follows the prompt. (An interrupt while the command runs goes to the engine's own terminal, not to the shell, and a kill
+// that no trap sees leaves the screen as it is.) It holds the command line and nothing that the command prints.
 func terminalScript(bin string, args, environ []string, exitDir string) string {
 	var b strings.Builder
 	b.WriteString("#!/bin/sh\nrm -f -- \"$0\"\n")
@@ -163,8 +165,9 @@ func terminalScript(bin string, args, environ []string, exitDir string) string {
 	}
 	exit := shellQuote(filepath.ToSlash(exitDir) + "/exit")
 	b.WriteString("\ncode=$?\n")
+	b.WriteString("trap 'clear; printf \"\\033[3J\"' EXIT\ntrap 'exit \"$code\"' INT TERM HUP\n")
 	b.WriteString("printf '%s\\n' \"$code\" > " + exit + ".tmp && mv " + exit + ".tmp " + exit + "\n") // whole or not there, for the poll
-	b.WriteString("printf '\\nPress Enter to close this window. '\nread -r answer\nclear\nprintf '\\033[3J'\nexit \"$code\"\n")
+	b.WriteString("printf '\\nPress Enter to close this window. '\nread -r answer\nexit \"$code\"\n")
 	return b.String()
 }
 
@@ -173,7 +176,13 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// shellEnv is the lines that turn the environment before into the environment after in a shell.
+// engineEnv is what selects the container engine. The login shell of a terminal has an environment of its own, so these are exported
+// whenever the installer has them, and not only when childEnv changed them.
+var engineEnv = []string{"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY",
+	"CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINER_SSHKEY"}
+
+// shellEnv is the lines that turn the environment before into the environment after in a shell, and that give it the engine selection
+// that after has.
 func shellEnv(before, after []string) string {
 	was, is := envMap(before), envMap(after)
 	var b strings.Builder
@@ -183,7 +192,7 @@ func shellEnv(before, after []string) string {
 		}
 	}
 	for _, k := range slices.Sorted(maps.Keys(is)) {
-		if v, had := was[k]; (!had || v != is[k]) && envName.MatchString(k) {
+		if v, had := was[k]; (!had || v != is[k] || slices.Contains(engineEnv, k)) && envName.MatchString(k) {
 			b.WriteString("export " + k + "=" + shellQuote(is[k]) + "\n")
 		}
 	}

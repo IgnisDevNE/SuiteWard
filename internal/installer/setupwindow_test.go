@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -309,5 +311,44 @@ func TestEnrollOnWindowsRunsSetupInAWindowWithTheEnginesCommand(t *testing.T) {
 	}
 	if tail := c.tail(); strings.Count(tail, "alice is enrolled as the owner.") != 1 {
 		t.Errorf("the scrollback must say once that the owner is enrolled:\n%s", tail)
+	}
+}
+
+// A window that the installer waits on can end with a code of its own after setup has ended: the user closes it with the X, or Ctrl-C
+// ends its Enter prompt. What setup left in the file, before it waited for Enter, is how it ended.
+func TestSetupWindowEndsWithTheCodeSetupLeftNotWithTheCodeOfTheWindowThatWasClosed(t *testing.T) {
+	closed := errors.New("the setup window was closed before setup ended (exit code 0xc000013a)")
+	for _, tc := range []struct {
+		name     string
+		file     string // what the file holds; empty: no file
+		fallback error
+		want     string // empty: success; otherwise a part of the error
+		wantIs   error
+	}{
+		{name: "closed after setup ended well", file: "0\r\n", fallback: closed},
+		{name: "Ctrl-C at the installer after setup ended well", file: "0\n", fallback: context.Canceled},
+		{name: "setup ended with an error", file: "7\n", want: "exit code 7"},
+		{name: "closed before setup ended", fallback: closed, wantIs: closed},
+		{name: "Ctrl-C before setup ended", fallback: context.Canceled, wantIs: context.Canceled},
+		{name: "ended with no code left and no error", want: ""},
+		{name: "a file that is not a code", file: "?\n", want: "not a number"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "exit")
+			if tc.file != "" {
+				if err := os.WriteFile(file, []byte(tc.file), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := windowOutcome(file, tc.fallback)
+			switch {
+			case tc.want == "" && tc.wantIs == nil && err != nil:
+				t.Errorf("windowOutcome = %v, want success", err)
+			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+				t.Errorf("windowOutcome = %v, want an error with %q", err, tc.want)
+			case tc.wantIs != nil && !errors.Is(err, tc.wantIs):
+				t.Errorf("windowOutcome = %v, want %v", err, tc.wantIs)
+			}
+		})
 	}
 }

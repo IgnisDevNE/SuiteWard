@@ -30,7 +30,7 @@ const windowScript = `$Host.UI.RawUI.WindowTitle = 'SuiteWard setup'; $code = 1;
 	`Read-Host 'Press Enter to close this window' | Out-Null; Clear-Host; exit $code`
 
 // windowEnv is the environment of the window: the one OSInteractive gives the command, and the command and its arguments as data.
-func windowEnv(environ []string, name string, args []string) []string {
+func windowEnv(environ []string, name string, args []string, exitFile string) []string {
 	return append(childEnv(environ, name, args), envSetupBin+"="+name, envSetupArgs+"="+windows.ComposeCommandLine(args))
 }
 
@@ -54,7 +54,7 @@ func startConsoleWindow(ctx context.Context, name string, args []string) (func()
 	// No standard handles: CreateProcess with CREATE_NEW_CONSOLE then gives the child the console it makes. exec.Cmd hands the child NUL
 	// instead, and a console program on NUL ends at once.
 	pid, handle, err := startProcess(powershell, nil, &syscall.ProcAttr{
-		Env:   windowEnv(os.Environ(), bin, args),
+		Env:   windowEnv(os.Environ(), bin, args, ""),
 		Files: []uintptr{0, 0, 0},
 		Sys: &syscall.SysProcAttr{
 			CreationFlags: windows.CREATE_NEW_CONSOLE,

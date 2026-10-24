@@ -11,8 +11,9 @@ import (
 func TestWindowEnvCarriesTheCommandAsDataAndDropsWhatOSInteractiveDrops(t *testing.T) {
 	environ := []string{`PATH=C:\Windows`, "CONTAINER_HOST=ssh://elsewhere", `USERPROFILE=C:\Users\me`}
 	args := []string{"--connection", "pm", "exec", "-it", "suiteward", "/suiteward", "setup", "--owner", "alice", "--test-check", "acme/app=CI / test", "--test-check", `acme/lib=say "hi" & stop`}
-	env := windowEnv(environ, "podman", args)
+	env := windowEnv(environ, "podman", args, `C:\Temp\suiteward-setup-1\exit`)
 	want := map[string]string{
+		"SUITEWARD_SETUP_EXIT": `C:\Temp\suiteward-setup-1\exit`,
 		"SUITEWARD_SETUP_BIN":  "podman",
 		"SUITEWARD_SETUP_ARGS": `--connection pm exec -it suiteward /suiteward setup --owner alice --test-check "acme/app=CI / test" --test-check "acme/lib=say \"hi\" & stop"`,
 	}
@@ -47,5 +48,17 @@ func TestWindowScriptHoldsNoDataAndClearsTheScreenBeforeItEnds(t *testing.T) {
 	}
 	if !strings.Contains(windowScript, "$code = 1") {
 		t.Errorf("a window that cannot start the command must not end as a success:\n%s", windowScript)
+	}
+}
+
+// The code of setup is left for the installer before the window waits for Enter: a window that the user closes after that, with the X or
+// with Ctrl-C, ends with a code of its own, and setup has ended well.
+func TestWindowScriptLeavesTheExitCodeBeforeItWaitsForEnter(t *testing.T) {
+	leave, pause := strings.Index(windowScript, "$env:SUITEWARD_SETUP_EXIT"), strings.Index(windowScript, "Read-Host")
+	if leave < 0 || pause < leave {
+		t.Errorf("the script must write $code to the file of SUITEWARD_SETUP_EXIT before Read-Host:\n%s", windowScript)
+	}
+	if !strings.Contains(windowScript[:max(leave, 0)], "$code = $p.ExitCode") {
+		t.Errorf("the code that is left must be the one of the command, which is read before it is written:\n%s", windowScript)
 	}
 }

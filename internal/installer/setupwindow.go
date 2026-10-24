@@ -134,6 +134,9 @@ func exitCodeError(code string) error {
 	return nil
 }
 
+// windowOutcome says how setup ended in a window that the installer can wait on.
+func windowOutcome(exitFile string, fallback error) error { return fallback }
+
 // terminalScript is the script a terminal runs for setup: it removes itself, runs the command in the environment OSInteractive gives
 // it, leaves the exit code in exitDir for the installer, waits for Enter so that the secret can be copied, and clears the screen and
 // its scrollback before it ends, so that the secret does not stay in a window the profile keeps open. It holds the command line and

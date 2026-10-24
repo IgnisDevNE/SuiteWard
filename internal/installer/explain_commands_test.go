@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/config"
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/archive"
 )
 
@@ -17,20 +18,23 @@ import (
 
 // ---- restore ----
 
-// restoreOnScreen is a restore of a backup of testInstance on a full screen of w x h: the owner types the instance id, then Enter at the summary.
-func restoreOnScreen(t *testing.T, w, h int) (*screenRun, *upgradeHarness) {
+// restoreOnScreen is a restore of a backup of testInstance, made on the tier of the backup, on a full screen of w x h: the owner types the
+// instance id, then Enter at the summary. The harness's own instance is co-located, so a co-located backup raises no warning about the tier.
+func restoreOnScreen(t *testing.T, w, h int, backupTier config.Tier) (*screenRun, *upgradeHarness) {
 	t.Helper()
 	u := restoreHarness(t)
 	run := newScreenRun(w, h, testInstance+"\n", "\n")
-	args := u.restoreArgs(aBackup(t, nil), "--kit", writeTestKit(t, t.TempDir()))
-	if err := Restore(liveContext(t), args, run.on(u.env())); err != nil {
+	file := aBackup(t, func(b *backup, _ *backupEngine) { b.tier = backupTier })
+	if err := Restore(liveContext(t), u.restoreArgs(file, "--kit", writeTestKit(t, t.TempDir())), run.on(u.env())); err != nil {
 		t.Fatalf("Restore: %v\n%s", err, run.output())
 	}
 	return run, u
 }
 
-func TestTheRestorePageSaysThatTheTypedIdIsAConfirmationAndExplainsWhatIsLost(t *testing.T) {
-	run, _ := restoreOnScreen(t, termWidth, termHeight)
+// What is confirmed is on the page, whole, at 100x30: what the backup holds, what runs now, the key of the safety backup, the warnings and
+// the question. The instruction for what a restore leaves behind comes after it, in the closing message.
+func TestTheRestorePageSaysThatTheTypedIdIsAConfirmationAndShowsWhatIsConfirmed(t *testing.T) {
+	run, u := restoreOnScreen(t, termWidth, termHeight, config.TierCoLocated)
 	v := run.question(t, 0)
 	if !strings.HasPrefix(v.rows[0], "Restore preview") {
 		t.Errorf("the page is titled %q, want \"Restore preview\"", v.rows[0])
@@ -39,32 +43,66 @@ func TestTheRestorePageSaysThatTheTypedIdIsAConfirmationAndExplainsWhatIsLost(t 
 		"This is a confirmation",
 		"What was approved, proposed or promoted after the backup is lost",
 		"the default branch on GitHub may be ahead of the restored canonical",
-		"approve again what was approved after the backup",
-		"approve the revision its check names",
+		"This instance runs",
+		"Safety backup the state that is replaced, encrypted to "+archive.Fingerprint(u.settings().BackupRecipient),
 		"Type the instance id "+testInstance+" to confirm",
 	)
-	// What the backup holds is trimmed first when the window is small, and here it must still be there: the id the owner is about to type
-	// is one of its facts.
 	if row := v.row("Instance"); !strings.Contains(row, testInstance) {
 		t.Errorf("the page does not show the instance of the backup (row %q):\n%s", row, v.dump())
 	}
-	if out := run.output(); strings.Contains(out, "section 3") {
-		t.Errorf("the screen still points to a section of a document:\n%s", out)
+	if strings.Contains(v.text(), trimmed) {
+		t.Errorf("the restore page is trimmed at %dx%d:\n%s", termWidth, termHeight, v.dump())
+	}
+	if strings.Contains(run.output(), "section 3") {
+		t.Errorf("the screen points to a section of a document:\n%s", v.dump())
+	}
+	if strings.Contains(v.text(), "pull request") {
+		t.Errorf("the instruction for the canonical is on the confirmation page, where it takes the room of what is confirmed:\n%s", v.dump())
 	}
 }
 
-// At 80x24 the explanation is trimmed before the warning, and never the title, the question or the warning about what is lost.
-func TestTheRestorePageKeepsItsTitleItsWarningAndItsQuestionAt80x24(t *testing.T) {
-	run, _ := restoreOnScreen(t, 80, 24)
+// At 80x24 the page keeps the title, the warnings and the question, and still shows which instance is replaced by which backup.
+func TestTheRestorePageStillShowsTheInstanceAndTheReleaseAt80x24(t *testing.T) {
+	run, _ := restoreOnScreen(t, 80, 24, config.TierCoLocated)
 	v := run.question(t, 0)
 	if !strings.HasPrefix(v.rows[0], "Restore preview") {
 		t.Errorf("the page is titled %q, want \"Restore preview\"", v.rows[0])
 	}
-	mustSay(t, v, "approve again what was approved after the backup", "Type the instance id "+testInstance+" to confirm")
+	if row := v.row("Instance"); !strings.Contains(row, testInstance) {
+		t.Errorf("the page does not show the instance of the backup (row %q):\n%s", row, v.dump())
+	}
+	if row := v.row("Release"); !strings.Contains(row, "v0.2.0") {
+		t.Errorf("the page does not show the release of the backup (row %q):\n%s", row, v.dump())
+	}
+	mustSay(t, v, "This is a confirmation", "This instance runs", "ahead of the restored canonical", "Type the instance id "+testInstance+" to confirm")
 }
 
-// Plain keeps the prompt of a restore: a script that types the id answers it. The warning lost its pointer to a document, in both.
-func TestThePlainRestoreKeepsItsPromptAndExplainsWhatIsLostInsteadOfPointingToADocument(t *testing.T) {
+// With a warning about the tier too, the explanation is trimmed before the warnings, and never the title or the question.
+func TestTheRestorePageKeepsItsTitleItsWarningAndItsQuestionAt80x24(t *testing.T) {
+	run, _ := restoreOnScreen(t, 80, 24, config.TierIsolated)
+	v := run.question(t, 0)
+	if !strings.HasPrefix(v.rows[0], "Restore preview") {
+		t.Errorf("the page is titled %q, want \"Restore preview\"", v.rows[0])
+	}
+	mustSay(t, v, "ahead of the restored canonical", "Type the instance id "+testInstance+" to confirm")
+}
+
+// After the restore, what it leaves behind is said once, in a line that stays when the screen has gone: the canonical can be behind the
+// default branch, and one corrective pull request brings it level.
+func TestTheClosingMessageOfARestoreSaysHowToBringTheCanonicalLevel(t *testing.T) {
+	run, _ := restoreOnScreen(t, termWidth, termHeight, config.TierCoLocated)
+	tail := run.console.tail()
+	for _, want := range []string{"may be behind the default branch on GitHub", "one corrective pull request", "approve the revision its check names", "details: docs/backup.md"} {
+		if !strings.Contains(tail, want) {
+			t.Errorf("the scrollback after the restore lacks %q:\n%s", want, tail)
+		}
+	}
+	noRepeats(t, tail)
+}
+
+// Plain keeps the prompt of a restore: a script that types the id answers it. The warning is the short one and the instruction comes at the
+// end, as in the full screen; neither points to a section of a document.
+func TestThePlainRestoreKeepsItsPromptAndSaysWhatToDoAboutTheCanonicalAtTheEnd(t *testing.T) {
 	u := restoreHarness(t)
 	env := u.env()
 	env.Term = Terminal{In: strings.NewReader(testInstance + "\n"), Out: &u.out, IsTerminal: true, ReadPassword: noSecret}
@@ -76,10 +114,13 @@ func TestThePlainRestoreKeepsItsPromptAndExplainsWhatIsLostInsteadOfPointingToAD
 	if !strings.Contains(out, prompt) {
 		t.Errorf("the plain prompt changed:\n%s", out)
 	}
-	for _, want := range []string{"approve again what was approved after the backup", "approve the revision its check names", "details: docs/backup.md"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("the plain warning lacks %q:\n%s", want, out)
-		}
+	warning := "Restoring replaces the database and the artifacts of this instance with the backup's. What was approved, proposed or promoted after the backup is lost, and the default branch on GitHub may be ahead of the restored canonical.\n"
+	if !strings.Contains(out, warning) {
+		t.Errorf("the plain warning is not the short one:\n%s", out)
+	}
+	closing := "The restored canonical may be behind the default branch on GitHub: to bring it level, open one corrective pull request from the current default branch (any small change outside the protected files), approve the revision its check names, and merge it (details: docs/backup.md).\n"
+	if at := strings.Index(out, closing); at < strings.Index(out, prompt) {
+		t.Errorf("the plain output lacks the closing line, or has it before the confirmation:\n%s", out)
 	}
 	for _, not := range []string{"section 3", "This is a confirmation", "Restore preview"} {
 		if strings.Contains(out, not) {

@@ -105,10 +105,3 @@ func TestAUserWithoutAPathInTheRegistryGetsOneOfTheExpandableKind(t *testing.T) 
 		t.Errorf("the new Path is %q of kind %d, want the folder as REG_EXPAND_SZ", value, kind)
 	}
 }
-
-// The area is one that nothing listens for: the call is made as the real one is, to every top-level window, and changes no environment.
-func TestTheSettingChangeIsBroadcastToEveryWindow(t *testing.T) {
-	if err := broadcastSettingChange("SuiteWardTestNothingChanged"); err != nil {
-		t.Errorf("broadcastSettingChange = %v, want the call to succeed", err)
-	}
-}

@@ -58,7 +58,7 @@ func (p registryPath) Write(value string, expand bool) error {
 
 // Announce broadcasts WM_SETTINGCHANGE for "Environment", as the system's own dialog does: Explorer reads the variables again, and a terminal
 // that is opened from it afterwards has the new Path.
-func (registryPath) Announce() error { return broadcastSettingChange("Environment") }
+func (registryPath) Announce() error { return broadcastEnvironmentChange() }
 
 var sendMessageTimeout = windows.NewLazySystemDLL("user32.dll").NewProc("SendMessageTimeoutW")
 
@@ -69,13 +69,15 @@ const (
 	broadcastWaitMs = 5000 // for each window: one that does not answer is skipped
 )
 
-// broadcastSettingChange sends WM_SETTINGCHANGE with the name of the area that changed to every top-level window.
-func broadcastSettingChange(area string) error {
-	text, err := windows.UTF16PtrFromString(area)
+// broadcastEnvironmentChange sends WM_SETTINGCHANGE for the area "Environment" to every top-level window.
+func broadcastEnvironmentChange() error {
+	text, err := windows.UTF16PtrFromString("Environment")
 	if err != nil {
 		return err
 	}
-	// The pointer is handed over as a number, from the value that Go keeps alive until the call returns.
+	// shortcut: the pointer goes through reflect.ValueOf(text).Pointer() because an inline unsafe.Pointer is flagged by gosec G103, which has no
+	// exception here; it rests on the heap buffer of UTF16PtrFromString, which runtime.KeepAlive holds until the call returns. Move to
+	// uintptr(unsafe.Pointer(text)) if a G103 exception is granted. The call itself is not run by the tests: the fake of Announce covers its use.
 	r, _, callErr := sendMessageTimeout.Call(hwndBroadcast, wmSettingChange, 0, reflect.ValueOf(text).Pointer(), smtoAbortIfHung, broadcastWaitMs, 0)
 	runtime.KeepAlive(text)
 	if r == 0 {

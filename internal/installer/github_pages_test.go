@@ -337,6 +337,10 @@ func startRulesetRunCtx(t *testing.T, ctx context.Context, g *fakeGitHub, flags 
 	t.Cleanup(func() { _ = pw.Close() })
 	env, _ := flowEnv(t, g, flags, pr, true)
 	env.Command = flags["_command"] // the name that the messages of the flow give the program: empty, suiteward
+	// Where the ruleset files go, when the test needs a folder that is not a temp directory.
+	if dir := flags["_settings-dir"]; dir != "" {
+		env.SettingsDir = dir
+	}
 	out := &syncBuffer{}
 	br := bufio.NewReader(pr)
 	scr, err := ui.Open(ui.Options{Out: out, In: br, Context: ctx, Version: "v0", Mode: ui.ModeFull, Color: ui.ColorNone, Width: width, Height: height})
@@ -564,9 +568,15 @@ func TestTheRulesetPagesShowTheFileOfEveryRepositoryOnA80By24Screen(t *testing.T
 	for _, n := range names {
 		flags["test-check."+n] = "CI / test"
 	}
+	// The page says the folder of the files once, above the rows, as one long word that it cuts wherever a row ends (after a separator when
+	// one fits): with the path of a temp directory, which the test name and a random number make long, the last part of it could be cut in
+	// two, and the rows below it come under the trim. The folder is a short one, relative to a temp directory, so that the page does not
+	// depend on how long that path is.
+	t.Chdir(t.TempDir())
+	flags["_settings-dir"] = "rulesets"
 	run := startRulesetRunSized(t, g, flags, 80, 24)
 	waitForText(t, run.out, "I imported it, check now")
-	folder := filepath.Base(run.env.SettingsDir) + ":" // the last part of the folder, which the page says once, above the rows
+	folder := filepath.Base(run.env.SettingsDir) + ":" // the folder, which the page says once, above the rows
 	onScreen := func(when string, codes bool) {
 		t.Helper()
 		frame := lastFrame(run.out.String())

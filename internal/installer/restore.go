@@ -553,7 +553,11 @@ func (x *restoreRun) warn() {
 		x.scr.Warn("This backup is of another instance (%s) than the one that runs here (%s): after the restore this instance is the backup's, and the authenticator entry of the backup is the one that works.\n", x.doc.Instance, x.current.Instance)
 	}
 	if tier := string(x.inst.s.Tier); x.info.Tier != "" && x.info.Tier != tier {
-		x.scr.Warn("The backup was made on the %s tier and this instance is on the %s tier: the owner's enrollment records its tier, and /status says so after the restore.\n", x.info.Tier, tier)
+		if x.scr.FullScreen() { // one row: the page has few of them for the facts above the warnings, and the plain lines keep the reason
+			x.scr.Warn("Backup tier: %s; this instance: %s.\n", x.info.Tier, tier)
+		} else {
+			x.scr.Warn("The backup was made on the %s tier and this instance is on the %s tier: the owner's enrollment records its tier, and /status says so after the restore.\n", x.info.Tier, tier)
+		}
 	}
 }
 

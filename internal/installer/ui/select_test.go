@@ -307,7 +307,7 @@ func TestSelectInPlainModeIsChoose(t *testing.T) {
 func TestSelectRefusesADefaultOutsideItsChoices(t *testing.T) {
 	keys := &fakeKeys{}
 	s, _ := openKeyScreen(t, "\r", keys)
-	for _, def := range []int{-1, 2} {
+	for _, def := range []int{-2, 2} {
 		if _, err := s.Select(selectLabel, testChoices, def); err == nil {
 			t.Errorf("Select accepted the default %d of 2 choices", def)
 		}

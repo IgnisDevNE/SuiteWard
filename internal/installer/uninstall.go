@@ -166,7 +166,16 @@ func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, q
 	}
 	showRemoval(r, purge, shown, engineLine(i.rt.Engine()), settings)
 	if purge {
-		r.screen.Critical("%s", question) // the line it always was in plain mode, a red box under the page on a full screen
+		// The line it always was in plain mode; a red box under the page on a full screen, where it is a statement: the typed id is the one question.
+		warning := question
+		if r.screen.FullScreen() {
+			of := "instance " + id
+			if id == unknownValue { // nothing names it: "instance unknown" would read as a name
+				of = "this instance"
+			}
+			warning = "This deletes the database, the artifacts, the secrets and the settings of " + of + "."
+		}
+		r.screen.Critical("%s", warning)
 		if err := i.refuseUnnamed(ctx, r, id); err != nil {
 			return err
 		}

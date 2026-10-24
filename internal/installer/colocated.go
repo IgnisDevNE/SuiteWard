@@ -217,9 +217,21 @@ func askImage(r *Resolver, previous stackInstalled) (string, error) {
 			keep = "This build carries no release image, so give one: " + releaseImageRepo + "@sha256:<64 hex>."
 		}
 	}
-	r.explain([]string{"image"}, "Release image",
-		ui.Para("SuiteWard runs from one container image, pinned by its digest so that exactly the release you chose runs. "+keep))
-	asked, err := r.Value("image", "Release image (pinned by digest)", defaultImage)
+	// A full screen that asks gives the default, a long reference, in a row of the page and asks short: in the prompt it wrapped until the
+	// cursor stood alone on a row.
+	shown := defaultImage != "" && r.screen.FullScreen() && r.asks("image")
+	blocks := []ui.Block{ui.Para("SuiteWard runs from one container image, pinned by its digest so that exactly the release you chose runs. " + keep)}
+	if shown {
+		blocks = append(blocks, ui.Fields(ui.KV{Key: "Default", Value: defaultImage}))
+	}
+	r.explain([]string{"image"}, "Release image", blocks...)
+	var asked string
+	var err error
+	if shown {
+		asked, err = r.screen.AskDefault("Release image", defaultImage) // the Default row and the hint line say what Enter does
+	} else {
+		asked, err = r.Value("image", "Release image (pinned by digest)", defaultImage)
+	}
 	if err != nil {
 		return "", err
 	}

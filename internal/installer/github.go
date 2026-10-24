@@ -980,15 +980,20 @@ func lookupFold(m map[string]string, key string) string {
 	return ""
 }
 
-// askTestCheck offers the check runs of the repository's default branch, or asks for the name CI will publish.
+// askTestCheck offers the check runs of the repository's default branch, or asks for the name CI will publish. A full screen that asks
+// and has check runs to offer picks one with the arrow keys (pickTestCheck); everything else is the typed question.
 func askTestCheck(ctx context.Context, env githubEnv, client *rest.Client, r repoInfo, key string) (string, error) {
-	if env.R.screen.FullScreen() && env.R.asks(key) { // one repository to a page, before the list is read: the list goes under it
+	asking := env.R.screen.FullScreen() && env.R.asks(key)
+	if asking { // one repository to a page, before the list is read: the list goes under it
 		env.R.screen.Page("Required test check for "+r.name,
 			ui.Para("SuiteWard runs no tests. The ruleset of this repository requires your CI's test check beside "+protection.ContractCheck+", so a pull request needs both to pass. The list shows the checks seen on the default branch."))
 	}
 	names, err := checkRunNames(ctx, client, r)
 	if err != nil {
 		ghSay(env.Out, "Could not read the check runs of %s (%v); you will type the name.\n", r.name, err)
+	}
+	if asking && len(names) > 0 {
+		return pickTestCheck(env.R, r, names, key)
 	}
 	def, label := "", fmt.Sprintf("Name of the check your CI publishes for %s", r.name)
 	if len(names) > 0 {
@@ -1012,6 +1017,43 @@ func askTestCheck(ctx context.Context, env githubEnv, client *rest.Client, r rep
 		answer = names[n-1]
 	}
 	return answer, nil
+}
+
+// testCheckDefault is the index of the check run that Enter takes: the only one there is, or the only one with "test" in its name (in any
+// case). With several runs and none or more than one of those names, it is -1: no run is a better guess than another, and the person picks.
+func testCheckDefault(names []string) int {
+	if len(names) == 1 {
+		return 0
+	}
+	found := -1
+	for i, name := range names {
+		if strings.Contains(strings.ToLower(name), "test") {
+			if found >= 0 {
+				return -1
+			}
+			found = i
+		}
+	}
+	return found
+}
+
+// pickTestCheck is the check runs seen, picked with the arrow keys with the one that testCheckDefault names highlighted, and one more
+// choice at the end: another name, which is then typed.
+func pickTestCheck(r *Resolver, repo repoInfo, names []string, key string) (string, error) {
+	choices := make([]ui.Choice, 0, len(names)+1)
+	for _, name := range names {
+		choices = append(choices, ui.Choice{Name: name})
+	}
+	choices = append(choices, ui.Choice{Name: "another name…"})
+	picked, err := r.screen.Select("Required test check for "+repo.name, choices, testCheckDefault(names))
+	if err != nil {
+		return "", err
+	}
+	if picked < len(names) {
+		return names[picked], nil
+	}
+	typed, err := r.Value(key, "Name of the check your CI publishes for "+repo.name, "")
+	return strings.TrimSpace(typed), err
 }
 
 // importRulesets writes one ruleset file per repository, tells the user how to import it, waits for the import and re-reads

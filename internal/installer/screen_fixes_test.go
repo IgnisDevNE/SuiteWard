@@ -260,13 +260,13 @@ func TestTheSummaryOfAnInstallWithoutGitHubWaitsForTheServiceToAnswer(t *testing
 		return c.tail(), asked
 	}
 
-	if tail, _ := run(t, 3); !strings.Contains(tail, "Instance: v0.2.0\n") {
-		t.Errorf("the summary has no Instance row although the service answered a few seconds in:\n%s", tail)
+	if tail, _ := run(t, 3); !strings.Contains(tail, "Release: v0.2.0\n") {
+		t.Errorf("the summary has no Release row although the service answered a few seconds in:\n%s", tail)
 	}
 	// A service that never answers is waited for as long as the install waits for it with GitHub, and the summary still comes.
 	tail, asked := run(t, 1000)
-	if strings.Contains(tail, "Instance:") || !strings.Contains(tail, "Status: ") {
-		t.Errorf("the summary of a service that does not answer has an Instance row or lacks the rest:\n%s", tail)
+	if strings.Contains(tail, "Instance:") || strings.Contains(tail, "Release:") || !strings.Contains(tail, "Status: ") {
+		t.Errorf("the summary of a service that does not answer has an Instance or a Release row or lacks the rest:\n%s", tail)
 	}
 	if asked != statusTries {
 		t.Errorf("/status was asked %d times, want %d", asked, statusTries)
@@ -291,8 +291,8 @@ func TestTheSummaryOfAnUpgradeWaitsForTheServiceToAnswer(t *testing.T) {
 	if err := Install(liveContext(t), args, env); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(c.tail(), "Instance: v0.2.0\n") {
-		t.Errorf("the summary has no Instance row although the service answered a few tries in:\n%s", c.tail())
+	if !strings.Contains(c.tail(), "Instance: "+testInstance+"\n") || !strings.Contains(c.tail(), "Release: v0.2.0\n") {
+		t.Errorf("the summary has no Instance and Release rows although the service answered a few tries in:\n%s", c.tail())
 	}
 }
 

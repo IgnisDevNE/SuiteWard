@@ -1200,25 +1200,48 @@ func noEnv(string) string { return "" }
 // A Path of the expandable kind may hold the folder as %LOCALAPPDATA%\SuiteWard\bin, which a terminal reads as the folder that this program
 // adds. It is the same folder: it is not added a second time, it is taken off by a purge, and the text of the value stays as it was stored.
 func TestAnEntryThatNamesTheFolderByAVariableIsTheSameFolder(t *testing.T) {
-	env := func(name string) string { // a Windows variable has no case
-		if strings.EqualFold(name, "LOCALAPPDATA") {
-			return `C:\Users\me\AppData\Local`
-		}
-		return ""
-	}
 	const named = `%LOCALAPPDATA%\SuiteWard\bin`
 	for _, entry := range []string{named, `%localappdata%\suiteward\BIN\`} {
-		if got, changed := addPathEntry(`C:\A;`+entry, folderOnPath, env); got != `C:\A;`+entry || changed {
+		if got, changed := addPathEntry(`C:\A;`+entry, folderOnPath, localAppData); got != `C:\A;`+entry || changed {
 			t.Errorf("addPathEntry with the entry %q = %q, %v; want it left as it is", entry, got, changed)
 		}
-		if got, changed := removePathEntry(`%SystemRoot%\system32;`+entry+`;C:\B`, folderOnPath, env); got != `%SystemRoot%\system32;C:\B` || !changed {
+		if got, changed := removePathEntry(`%SystemRoot%\system32;`+entry+`;C:\B`, folderOnPath, localAppData); got != `%SystemRoot%\system32;C:\B` || !changed {
 			t.Errorf("removePathEntry with the entry %q = %q, %v; want the other entries as they were stored", entry, got, changed)
 		}
 	}
 	// A variable that is not defined stays as it is written: that entry is another folder.
 	other := `%NOWHERE%\SuiteWard\bin`
-	if got, changed := addPathEntry(other, folderOnPath, env); got != other+";"+folderOnPath || !changed {
+	if got, changed := addPathEntry(other, folderOnPath, localAppData); got != other+";"+folderOnPath || !changed {
 		t.Errorf("addPathEntry with an undefined variable = %q, %v; want the folder added", got, changed)
+	}
+}
+
+// localAppData is the environment of a test whose folder is under C:\Users\me\AppData\Local.
+func localAppData(name string) string {
+	if strings.EqualFold(name, "LOCALAPPDATA") { // a Windows variable has no case
+		return `C:\Users\me\AppData\Local`
+	}
+	return ""
+}
+
+// Windows expands the variables of a Path of the expandable kind (REG_EXPAND_SZ) and takes one of the plain kind (REG_SZ) as it is written,
+// so that %LOCALAPPDATA%\SuiteWard\bin there is not the folder of the copy: it is not looked for, and the folder is added.
+func TestAPathOfThePlainKindIsNotExpandedWhenTheFolderIsLookedFor(t *testing.T) {
+	const named = `%LOCALAPPDATA%\SuiteWard\bin`
+	for _, expand := range []bool{true, false} {
+		p := &fakeUserPath{value: `C:\A;` + named, expand: expand, found: true}
+		self := SelfInstall{Path: p}
+		if there, err := self.onUserPath(folderOnPath, localAppData); err != nil || there != expand {
+			t.Errorf("expand=%v: onUserPath = %v, %v; want %v", expand, there, err, expand)
+		}
+		changed, err := self.addToUserPath(folderOnPath, localAppData)
+		if want := `C:\A;` + named + `;` + folderOnPath; err != nil || changed == expand || (!expand && p.value != want) {
+			t.Errorf("expand=%v: addToUserPath = %v, %v and the PATH %q; want it added only to the plain kind: %q", expand, changed, err, p.value, want)
+		}
+	}
+	p := &fakeUserPath{value: named, expand: false, found: true}
+	if changed, err := (SelfInstall{Path: p}).removeFromUserPath(folderOnPath, localAppData); err != nil || changed {
+		t.Errorf("removeFromUserPath of the plain kind = %v, %v; want the entry of that odd name left", changed, err)
 	}
 }
 

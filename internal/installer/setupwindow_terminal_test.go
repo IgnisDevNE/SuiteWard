@@ -268,7 +268,11 @@ func openSimulating(code string, delay time.Duration, opened *string) func(conte
 		*opened = script
 		go func() {
 			time.Sleep(delay)
-			_ = os.WriteFile(filepath.Join(filepath.Dir(script), "exit"), []byte(code+"\n"), 0o600)
+			exit := filepath.Join(filepath.Dir(script), "exit")
+			// Whole or not there, as the script leaves it. A link and not a rename: a poll that opens the file as it is renamed in fails
+			// with a sharing violation on Windows.
+			_ = os.WriteFile(exit+".tmp", []byte(code+"\n"), 0o600)
+			_ = os.Link(exit+".tmp", exit)
 		}()
 		return nil
 	}

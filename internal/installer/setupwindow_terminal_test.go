@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -45,8 +46,20 @@ func TestTerminalScriptRemovesItselfFirstAndHoldsOnlyTheCommand(t *testing.T) {
 			t.Errorf("the script mentions %q: it holds the command line and nothing the command prints", leaked)
 		}
 	}
-	if cleared, end := strings.Index(script, "clear"), strings.LastIndex(script, "exit"); cleared < 0 || end < cleared || !strings.Contains(script, `\033[3J`) {
-		t.Errorf("the script does not clear the screen and its scrollback before it ends:\n%s", script)
+}
+
+// The screen and its scrollback are cleared on every way out of the script once the command has ended and its secret may be on the screen:
+// the Enter, and Ctrl-C, a terminated shell or a hung-up terminal at the prompt, which would end sh before a clear that follows the prompt.
+func TestTerminalScriptClearsTheScreenOnEveryWayOutOfThePrompt(t *testing.T) {
+	script := terminalScript("podman", []string{"exec", "-it", "suiteward"}, nil, "/tmp/sw")
+	ran, onExit, onSignal, prompt, leave := strings.Index(script, "code=$?\n"), strings.Index(script, "trap 'clear; printf \"\\033[3J\"' EXIT\n"),
+		strings.Index(script, "trap 'exit \"$code\"' INT TERM HUP\n"), strings.Index(script, "read -r"), strings.LastIndex(script, "exit \"$code\"\n")
+	if ran < 0 || onExit < ran || onSignal < ran || prompt < onExit || prompt < onSignal || leave < prompt {
+		t.Errorf("the traps must be set after the command ran (%d), before the prompt (%d): the clear on EXIT at %d, the exit on INT TERM HUP at %d, the last exit at %d:\n%s",
+			ran, prompt, onExit, onSignal, leave, script)
+	}
+	if n := strings.Count(script, "clear"); n != 1 {
+		t.Errorf("the script clears %d times; the clear on EXIT is the only one, which runs whatever way the script ends:\n%s", n, script)
 	}
 }
 
@@ -72,10 +85,32 @@ func TestTerminalScriptGivesTheCommandTheEnvironmentOfOSInteractive(t *testing.T
 	if strings.Contains(script, "HOME") {
 		t.Errorf("the script sets what the command already has:\n%s", script)
 	}
-	// With no connection flag and no directory to put first, there is nothing to change.
-	plain := terminalScript("podman", []string{"exec", "-it", "suiteward"}, environ, "/tmp/sw")
+	// With no connection flag, no directory to put first and no engine selection, there is nothing to change.
+	plain := terminalScript("podman", []string{"exec", "-it", "suiteward"}, []string{"PATH=/usr/bin:/bin", "HOME=/home/me"}, "/tmp/sw")
 	if strings.Contains(plain, "unset") || strings.Contains(plain, "export") {
 		t.Errorf("the script changes the environment of a command that needs no change:\n%s", plain)
+	}
+}
+
+// The login shell of Terminal has an environment of its own, so what selects the engine in the installer's environment is exported
+// whether or not OSInteractive changes it, except what childEnv drops.
+func TestTerminalScriptExportsWhatSelectsTheEngineInTheEnvironmentOfTheInstaller(t *testing.T) {
+	environ := []string{"PATH=/usr/bin:/bin", "HOME=/home/me", "DOCKER_HOST=unix:///run/user/1/docker.sock", "DOCKER_CONTEXT=desktop-linux",
+		"CONTAINER_CONNECTION=pm", "CONTAINER_HOST=ssh://elsewhere", "DOCKER_CERT_PATH=/home/me/it's", "DOCKER_TLS_VERIFY=1"}
+	script := terminalScript("podman", []string{"exec", "-it", "suiteward"}, environ, "/tmp/sw")
+	for _, want := range []string{"export DOCKER_HOST='unix:///run/user/1/docker.sock'\n", "export DOCKER_CONTEXT='desktop-linux'\n", "export CONTAINER_CONNECTION='pm'\n",
+		"export CONTAINER_HOST='ssh://elsewhere'\n", `export DOCKER_CERT_PATH='/home/me/it'\''s'` + "\n", "export DOCKER_TLS_VERIFY='1'\n"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the script lacks %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "HOME") {
+		t.Errorf("the script exports what does not select the engine:\n%s", script)
+	}
+	// --connection makes childEnv drop CONTAINER_HOST: the terminal must not have it either, whatever its own shell sets.
+	withConnection := terminalScript("podman", []string{"--connection", "pm", "exec", "-it", "suiteward"}, environ, "/tmp/sw")
+	if !strings.Contains(withConnection, "unset CONTAINER_HOST\n") || strings.Contains(withConnection, "export CONTAINER_HOST") {
+		t.Errorf("CONTAINER_HOST must be unset, not exported, with --connection:\n%s", withConnection)
 	}
 }
 
@@ -112,11 +147,69 @@ func TestTerminalScriptRunsTheCommandWithEveryArgumentIntactAndLeavesItsExitCode
 	if !slices.Equal(got, tricky) {
 		t.Errorf("the command got %q, want %q", got, tricky)
 	}
+	if !strings.Contains(string(out), "\x1b[3J") {
+		t.Errorf("the script did not clear the scrollback on its way out:\n%q", out)
+	}
 	if code, err := os.ReadFile(filepath.Clean(filepath.Join(dir, "exit"))); err != nil || strings.TrimSpace(string(code)) != "3" {
 		t.Errorf("the exit code the script left is %q, %v; want 3", code, err)
 	}
 	if _, err := os.Stat(script); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the script is still there: %v", err)
+	}
+}
+
+// Ctrl-C at the prompt of the window is an interrupt of the shell: it must still clear the screen, which holds the secret, and end with the
+// code of setup. The shell is bash in the mode macOS runs it as sh: dash does not leave a blocked read for a trap.
+func TestTerminalScriptClearsTheScreenWhenInterruptedAtItsPrompt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Go cannot send an interrupt to a process on Windows")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash here")
+	}
+	dir := t.TempDir()
+	linkOrCopyTestBinary(t, filepath.Join(dir, "engine"+exeSuffix()))
+	script := filepath.Join(dir, "setup.command")
+	if err := os.WriteFile(script, []byte(terminalScript("./engine", []string{"--", "setup"}, nil, dir)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SUITEWARD_TEST_HELPER", "record")
+	t.Setenv("SUITEWARD_TEST_EXIT", "3")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cmd := commandContext(ctx, bash, "--posix", "setup.command")
+	cmd.Dir = dir
+	stdin, err := cmd.StdinPipe() // never written to: the prompt waits for an Enter that does not come
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stdin.Close() }()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var seen strings.Builder
+	buf := make([]byte, 256)
+	for !strings.Contains(seen.String(), "Press Enter to close this window") {
+		n, err := stdout.Read(buf)
+		seen.Write(buf[:n])
+		if err != nil {
+			t.Fatalf("the script ended before its prompt: %v\n%q", err, seen.String())
+		}
+	}
+	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	rest, _ := io.ReadAll(stdout)
+	if err := cmd.Wait(); exitCodeOf(err) != 3 {
+		t.Errorf("the interrupted script ended with %v, want the exit code of setup, 3", err)
+	}
+	if !strings.Contains(string(rest), "\x1b[3J") {
+		t.Errorf("the interrupted script did not clear the scrollback:\n%q", rest)
 	}
 }
 

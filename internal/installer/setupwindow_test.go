@@ -352,3 +352,36 @@ func TestSetupWindowEndsWithTheCodeSetupLeftNotWithTheCodeOfTheWindowThatWasClos
 		})
 	}
 }
+
+// What the pages promise of the window is what the window does on the system: it clears itself and closes on Windows, and Terminal keeps it
+// open on macOS; the installer goes on when the window closes on Windows, and when setup ends on macOS, before the Enter.
+func TestWindowPagesSayWhatTheWindowDoesOnTheSystem(t *testing.T) {
+	for _, tc := range []struct {
+		goos string
+		want []string
+		not  []string
+	}{
+		{"windows", []string{"it clears itself and closes", "goes on when the setup window closes"}, []string{"goes on when setup ends"}},
+		{"darwin", []string{"it clears itself.", "goes on when setup ends"}, []string{"clears itself and closes", "when the setup window closes"}},
+	} {
+		t.Run(tc.goos, func(t *testing.T) {
+			withTerminal(t, true)
+			withSetupMachine(t, tc.goos, nil, newFakeWindow().start)
+			c, err := setupOnFullScreen(t, liveContext(t), strings.NewReader("\n"), &ttyRuntime{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := c.out.String()
+			for _, want := range tc.want {
+				if !shows(out, want) {
+					t.Errorf("the pages lack %q:\n%s", want, out)
+				}
+			}
+			for _, not := range tc.not {
+				if shows(out, not) {
+					t.Errorf("the pages say %q, which the window does not do on %s:\n%s", not, tc.goos, out)
+				}
+			}
+		})
+	}
+}

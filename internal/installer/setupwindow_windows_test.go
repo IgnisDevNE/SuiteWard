@@ -38,16 +38,29 @@ func TestWindowScriptHoldsNoDataAndClearsTheScreenBeforeItEnds(t *testing.T) {
 	if strings.Contains(windowScript, `"`) {
 		t.Errorf("the script has a double quote, which the command line of PowerShell would have to escape:\n%s", windowScript)
 	}
-	for _, want := range []string{"$env:SUITEWARD_SETUP_BIN", "$env:SUITEWARD_SETUP_ARGS", "Press Enter to close this window", "Clear-Host", "exit $code"} {
+	for _, want := range []string{"$env:SUITEWARD_SETUP_BIN", "$env:SUITEWARD_SETUP_ARGS", "Press Enter to close this window", "Clear-Host", "[char]27", "exit 0", "exit $code"} {
 		if !strings.Contains(windowScript, want) {
 			t.Errorf("the script lacks %q:\n%s", want, windowScript)
 		}
 	}
-	if pause, cleared, end := strings.Index(windowScript, "Read-Host"), strings.Index(windowScript, "Clear-Host"), strings.Index(windowScript, "exit $code"); pause < 0 || cleared < pause || end < cleared {
-		t.Errorf("the script must wait for Enter, then clear, then exit with the code of setup:\n%s", windowScript)
-	}
 	if !strings.Contains(windowScript, "$code = 1") {
 		t.Errorf("a window that cannot start the command must not end as a success:\n%s", windowScript)
+	}
+}
+
+// Windows Terminal, which this system hands new consoles to, keeps a pane open when its process ends with a code other than 0, and a
+// Ctrl-C at the prompt stops the script: the screen and its scrollback are cleared in a finally block, so that they are on every way out
+// that PowerShell gets to run, and the script ends with 0 once the code of setup is where the installer reads it. (A hard kill of the
+// window runs no finally block; the installer's own Ctrl-C ends the window whole, after the secret was shown and used.)
+func TestWindowScriptClearsInAFinallyBlockAndEndsWithZeroOnceTheCodeIsLeft(t *testing.T) {
+	leave, pause, finally := strings.Index(windowScript, "Set-Content -LiteralPath $env:SUITEWARD_SETUP_EXIT"), strings.Index(windowScript, "Read-Host"), strings.Index(windowScript, "finally")
+	cleared, scrollback, ok, fallback := strings.Index(windowScript, "Clear-Host"), strings.Index(windowScript, "[char]27 + '[3J'"), strings.Index(windowScript, "exit 0"), strings.LastIndex(windowScript, "exit $code")
+	if leave < 0 || pause < leave || finally < pause || cleared < finally || scrollback < cleared || ok < scrollback || fallback < ok {
+		t.Errorf("the script must leave the code (%d), wait for Enter (%d), then in a finally block (%d) clear the screen (%d) and the scrollback (%d), then exit 0 (%d), else with the code (%d):\n%s",
+			leave, pause, finally, cleared, scrollback, ok, fallback, windowScript)
+	}
+	if !strings.Contains(windowScript, "$left = $true") || !strings.Contains(windowScript, "if ($left)") {
+		t.Errorf("the script ends with 0 only when the code was left: a window that could not leave it must end with the code of setup:\n%s", windowScript)
 	}
 }
 

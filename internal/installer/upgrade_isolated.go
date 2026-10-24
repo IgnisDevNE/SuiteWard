@@ -39,7 +39,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		return err
 	}
 	if !st.found {
-		return ErrNothingInstalled
+		return nothingInstalled(env.Deps.command())
 	}
 	err = refuseUnfinishedInstall(env.Deps.command(), pendingAppPath(host.settingsPath), func() (GitHub, error) {
 		if s.GitHub.AppID != 0 {
@@ -57,7 +57,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	if err != nil {
 		return err
 	}
-	if err := refuseChangedSettings(asked, s, installCommand(r, true)); err != nil {
+	if err := refuseChangedSettings(asked, s, installCommand(env.Deps.command(), r, true)); err != nil {
 		return err
 	}
 	say := func(format string, args ...any) { _, _ = fmt.Fprintf(out, format, args...) }
@@ -132,7 +132,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 
 // installCommand is the command that installs again, as the messages of the installer name it: the tier and the settings file
 // are named when they are not the defaults (see enrollCommand).
-func installCommand(r *Resolver, isolated bool) string {
+func installCommand(cmd string, r *Resolver, isolated bool) string {
 	command := "suiteward install"
 	if isolated {
 		command += " --tier isolated"

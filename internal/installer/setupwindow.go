@@ -198,3 +198,6 @@ func shellEnv(before, after []string) string {
 	}
 	return b.String()
 }
+
+// errSetupTimeout is the end of the wait for a setup window that did not end in time.
+var errSetupTimeout = errors.New("setup did not end within the time allowed")

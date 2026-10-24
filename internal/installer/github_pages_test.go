@@ -336,6 +336,7 @@ func startRulesetRunCtx(t *testing.T, ctx context.Context, g *fakeGitHub, flags 
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pw.Close() })
 	env, _ := flowEnv(t, g, flags, pr, true)
+	env.Command = flags["_command"] // the name that the messages of the flow give the program: empty, suiteward
 	out := &syncBuffer{}
 	br := bufio.NewReader(pr)
 	scr, err := ui.Open(ui.Options{Out: out, In: br, Context: ctx, Version: "v0", Mode: ui.ModeFull, Color: ui.ColorNone, Width: width, Height: height})

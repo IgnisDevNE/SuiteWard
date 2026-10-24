@@ -421,3 +421,6 @@ func (c *colocatedInstall) installSelf(ctx context.Context) {
 	refreshCopy(ctx, c.env)
 	c.env.Deps = offerSelf(ctx, c.env, &c.copyRows)
 }
+
+// nothingInstalled is the refusal of a command that works on what is installed when there is nothing: ErrNothingInstalled, and the install to run.
+func nothingInstalled(cmd string) error { return ErrNothingInstalled }

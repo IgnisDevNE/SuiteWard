@@ -57,7 +57,7 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
-	saved, haveSaved, err := loadSaved(settingsPath, !defaultPath)
+	saved, haveSaved, err := loadSaved(env.Deps.command(), settingsPath, !defaultPath)
 	if err != nil {
 		return err
 	}

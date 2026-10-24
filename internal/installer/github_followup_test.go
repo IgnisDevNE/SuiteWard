@@ -233,7 +233,7 @@ func TestRunSetupNeedsARealTerminal(t *testing.T) {
 	withTerminal(t, false)
 	rt := &ttyRuntime{}
 	var out strings.Builder
-	err := runSetup(context.Background(), rt, "alice", map[string]string{"acme/app": "CI"}, &out)
+	err := runSetup(context.Background(), "suiteward", rt, "alice", map[string]string{"acme/app": "CI"}, &out)
 	if err == nil || rt.calls != 0 || !strings.Contains(err.Error(), "terminal") {
 		t.Fatalf("runSetup = %v after %d calls; want a refusal that names the terminal", err, rt.calls)
 	}
@@ -246,11 +246,11 @@ func TestRunSetupBoundsEachCheck(t *testing.T) {
 	withTerminal(t, true)
 	rt := &ttyRuntime{}
 	long := strings.Repeat("c", owner.MaxTestCheckBytes+1)
-	if err := runSetup(context.Background(), rt, "alice", map[string]string{"acme/app": long}, io.Discard); err == nil || rt.calls != 0 || !strings.Contains(err.Error(), "acme/app") {
+	if err := runSetup(context.Background(), "suiteward", rt, "alice", map[string]string{"acme/app": long}, io.Discard); err == nil || rt.calls != 0 || !strings.Contains(err.Error(), "acme/app") {
 		t.Fatalf("runSetup = %v after %d calls; want a refusal naming the repository", err, rt.calls)
 	}
 	exact := strings.Repeat("c", owner.MaxTestCheckBytes)
-	if err := runSetup(context.Background(), rt, "alice", map[string]string{"acme/app": exact}, io.Discard); err != nil || rt.calls != 1 {
+	if err := runSetup(context.Background(), "suiteward", rt, "alice", map[string]string{"acme/app": exact}, io.Discard); err != nil || rt.calls != 1 {
 		t.Fatalf("runSetup at the limit = %v after %d calls", err, rt.calls)
 	}
 }

@@ -52,7 +52,7 @@ func BackupInit(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := inst.needSettings(); err != nil {
+	if err := inst.needSettings(env.Deps.command()); err != nil {
 		return err
 	}
 	k := &keyInit{r: r, env: env, inst: &inst, kit: flags["kit"], replace: flags["replace"] == "true", yes: flags["yes"] == "true"}

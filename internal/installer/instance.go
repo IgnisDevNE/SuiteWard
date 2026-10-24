@@ -51,7 +51,7 @@ func locateInstance(ctx context.Context, r *Resolver, env Env, flags map[string]
 	if err != nil {
 		return instance{}, err
 	}
-	saved, haveSaved, err := loadSaved(settingsPath, !defaultPath)
+	saved, haveSaved, err := loadSaved(env.Deps.command(), settingsPath, !defaultPath)
 	if err != nil {
 		return instance{}, err
 	}
@@ -83,7 +83,7 @@ func locateColocated(ctx context.Context, r *Resolver, env Env, t installTarget)
 		return instance{}, err
 	}
 	if !previous.Known {
-		return instance{}, ErrNothingInstalled
+		return instance{}, nothingInstalled(env.Deps.command())
 	}
 	s := base
 	s.Tier, s.Runtime, s.Connection, s.Image = config.TierCoLocated, rt.Name(), connection, previous.Image
@@ -105,7 +105,7 @@ func locateColocated(ctx context.Context, r *Resolver, env Env, t installTarget)
 		rt: rt, s: s, settingsPath: t.settingsPath, haveSettings: t.haveSaved, image: previous.Image, status: c.readStatus,
 		parent:       backupParent(r, filepath.Dir(tokenFile)),
 		startCommand: fmt.Sprintf("`%s start %s`, then, once it is healthy, `%s start %s`", engine, ContainerDB, engine, ContainerServe),
-		restore:      colocatedSteps(rt, s, previous.Image, r.screen),
+		restore:      colocatedSteps(env.Deps.command(), rt, s, previous.Image, r.screen),
 	}, nil
 }
 
@@ -119,7 +119,7 @@ func locateIsolated(ctx context.Context, r *Resolver, env Env, s Settings, haveS
 		return instance{}, err
 	}
 	if !st.found {
-		return instance{}, ErrNothingInstalled
+		return instance{}, nothingInstalled(env.Deps.command())
 	}
 	// The ports and the release are the installed ones, whatever an older settings file says.
 	s.HTTPPort, s.MCPPort, s.JobTimeout, s.Image = st.adopted.Settings.HTTPPort, st.adopted.Settings.MCPPort, st.adopted.Settings.JobTimeout, st.adopted.Image
@@ -228,7 +228,7 @@ func (i instance) readStatus(ctx context.Context) ([]byte, statusDoc, error) {
 
 // needSettings refuses a command that keeps something in the settings file when there is none: install first, or the upgrade that
 // converts the stack saves them.
-func (i instance) needSettings() error {
+func (i instance) needSettings(cmd string) error {
 	if !i.haveSettings {
 		return fmt.Errorf("there are no settings at %s to keep the recovery key in: install first, or run `suiteward install --upgrade`, which saves them", i.settingsPath)
 	}
@@ -312,7 +312,7 @@ type tierSteps struct {
 
 // colocatedSteps: the service container is removed (a volume that a container uses cannot be), and made again by the run of its
 // own spec, the one an upgrade uses, so a restore changes nothing about how the stack is run.
-func colocatedSteps(rt Runtime, s Settings, image string, scr *ui.Screen) tierSteps {
+func colocatedSteps(cmd string, rt Runtime, s Settings, image string, scr *ui.Screen) tierSteps {
 	stack, err := ColocatedStack(s, image)
 	return tierSteps{
 		unavailable: err,

@@ -160,7 +160,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	if !previous.Known {
-		return ErrNothingInstalled
+		return nothingInstalled(env.Deps.command())
 	}
 	if err := refuseUnfinishedInstall(env.Deps.command(), pendingAppPath(t.settingsPath), func() (GitHub, error) { return base.GitHub, nil }); err != nil {
 		return err
@@ -176,7 +176,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err != nil {
 		return err
 	}
-	if err := refuseChangedSettings(asked, s, installCommand(r, false)); err != nil {
+	if err := refuseChangedSettings(asked, s, installCommand(env.Deps.command(), r, false)); err != nil {
 		return err
 	}
 	dbImage, err := installedDBImage(ctx, rt)

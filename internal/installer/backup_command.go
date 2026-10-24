@@ -55,7 +55,7 @@ func Backup(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := inst.needSettings(); err != nil {
+	if err := inst.needSettings(env.Deps.command()); err != nil {
 		return err
 	}
 	// A service that does not answer is refused before a key is offered or anything is written: its status belongs in the backup.

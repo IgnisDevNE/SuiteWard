@@ -317,7 +317,7 @@ func settingsPathFrom(flags map[string]string) (path string, isDefault bool, err
 
 // loadSaved reads the settings of an earlier install. None yet is not an error for the default file, but a file the command line
 // names (named) must exist: a mistyped path would otherwise run the command on defaults, which are not an instance.
-func loadSaved(path string, named bool) (Settings, bool, error) {
+func loadSaved(cmd, path string, named bool) (Settings, bool, error) {
 	saved, err := LoadSettings(path)
 	switch {
 	case err == nil:
@@ -369,7 +369,7 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	upgrade := flags["upgrade"] == "true"
-	saved, haveSaved, err := loadSaved(settingsPath, upgrade && !defaultPath) // an install makes the file: only an upgrade needs it to be there
+	saved, haveSaved, err := loadSaved(env.Deps.command(), settingsPath, upgrade && !defaultPath) // an install makes the file: only an upgrade needs it to be there
 	if err != nil {
 		return err
 	}

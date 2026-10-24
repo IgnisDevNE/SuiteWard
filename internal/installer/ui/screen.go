@@ -150,8 +150,9 @@ type Screen struct {
 	spinText  string
 	spinFor   time.Duration
 	summary   bool
-	waiting   bool   // Wait is reading the Enter that ends it
-	failure   string // Fail is showing this error under the page, and reading the Enter that ends it
+	waiting   bool            // Wait is reading the Enter that ends it
+	givenUp   <-chan struct{} // closed when a read that its call gave up on (a HiddenLine whose deadline passed) ends; nil when none is pending
+	failure   string          // Fail is showing this error under the page, and reading the Enter that ends it
 	rows      []KV
 	warns     []string
 	// history is the Check, Warn and Keep lines of the pages that are gone, as Close prints them: the pages before the current one.
@@ -413,6 +414,9 @@ func awaiting[T any](s *Screen, read func() (T, error)) (T, error) {
 }
 
 // awaitingUntil is awaiting that also gives up with the error of extra, the context of one call, when that is done. A nil extra has none.
+// A read that is given up for extra is not ended: it stays pending in its goroutine, and the screen remembers it (givenUp), so that no
+// other read starts beside it on the one buffered input: the next question waits for it to end, and a wait for Enter takes its end as
+// the Enter it waits for. A read that is given up for the screen's own context is not remembered: nothing is read again after that.
 func awaitingUntil[T any](s *Screen, extra context.Context, read func() (T, error)) (T, error) {
 	var zero T
 	var extraDone <-chan struct{} // nil, which no select takes, without a context of the call
@@ -425,6 +429,16 @@ func awaitingUntil[T any](s *Screen, extra context.Context, read func() (T, erro
 	if err := s.ctx.Err(); err != nil {
 		return zero, err
 	}
+	if pending := s.pendingGivenUp(); pending != nil {
+		select {
+		case <-pending:
+			s.settleGivenUp(pending)
+		case <-s.ctx.Done():
+			return zero, s.ctx.Err()
+		case <-extraDone:
+			return zero, extra.Err()
+		}
+	}
 	if s.ctx.Done() == nil && extraDone == nil { // a context that is never done needs no goroutine
 		return read()
 	}
@@ -433,9 +447,11 @@ func awaitingUntil[T any](s *Screen, extra context.Context, read func() (T, erro
 		err error
 	}
 	got := make(chan result, 1)
+	ended := make(chan struct{})
 	go func() {
 		v, err := read()
 		got <- result{v, err}
+		close(ended)
 	}()
 	select {
 	case r := <-got:
@@ -446,7 +462,26 @@ func awaitingUntil[T any](s *Screen, extra context.Context, read func() (T, erro
 	case <-s.ctx.Done():
 		return zero, s.ctx.Err()
 	case <-extraDone:
+		s.mu.Lock()
+		s.givenUp = ended
+		s.mu.Unlock()
 		return zero, extra.Err()
+	}
+}
+
+// pendingGivenUp is the read that a call gave up on and that has not ended, as the channel that closes when it does; nil when none.
+func (s *Screen) pendingGivenUp() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.givenUp
+}
+
+// settleGivenUp forgets the read that was given up, which has ended.
+func (s *Screen) settleGivenUp(ended <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.givenUp == ended {
+		s.givenUp = nil
 	}
 }
 
@@ -757,7 +792,9 @@ func (s *Screen) Secret(label string, read func() ([]byte, error)) ([]byte, erro
 // length of the call, whatever the mode of the screen, and back whatever the way out: a read with no line editing and no echo, the
 // signals kept, so that Ctrl-C cancels the screen's context. The read ends with that context and with ctx, the context of the call (a
 // deadline), as a Select does, and the typed text is dropped: the read that was pending is abandoned in its goroutine (see
-// Options.Context). Backspace deletes a character, Ctrl-U the line, and an arrow or another escape sequence is not text. The returned
+// Options.Context). One that ends for ctx stays on the input until the user presses Enter, so the next question waits for it to end and
+// a wait for Enter takes that Enter as its own: no two reads share the input, and what the read took is never drawn. Backspace deletes a
+// character, Ctrl-U the line, and an arrow or another escape sequence is not text. The returned
 // bytes are the line as typed, without its newline; the end of the input before any character is an error that wraps io.EOF. A terminal
 // that cannot be put in key mode, and a screen that was opened without a way to, read through fallback, the caller's own no-echo reader
 // (term.ReadPassword), which cannot be interrupted, as Secret does; with no fallback the question is an error and is not asked.
@@ -876,8 +913,18 @@ func (s *Screen) Fail(text string) bool {
 	return true
 }
 
-// waitForEnter reads the line that ends a wait, without the lock held; the end of the input ends it too.
+// waitForEnter reads the line that ends a wait, without the lock held; the end of the input ends it too. A read that a call gave up on
+// (see awaitingUntil) is still pending on the input: the Enter that ends it is the Enter of this wait, and no second read is started.
 func (s *Screen) waitForEnter() error {
+	if pending := s.pendingGivenUp(); pending != nil {
+		select {
+		case <-pending:
+			s.settleGivenUp(pending)
+			return nil
+		case <-s.ctx.Done():
+			return fmt.Errorf("wait for Enter: %w", s.ctx.Err())
+		}
+	}
 	if _, err := s.readLine(); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("wait for Enter: %w", err)
 	}

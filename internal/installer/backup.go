@@ -103,12 +103,12 @@ func (e migratingError) Unwrap() error { return e.error }
 // the schema and the data are unchanged; a rerun of --upgrade does not help from there, because the stack no longer looks like
 // the installed old release (the co-located service is gone, the isolated units name the new release). scope is the tier and the settings
 // file of an isolated run (scopeFlags), for the command its message names; the co-located message names none.
-func withBackup(err error, path, unitsDir, scope string) error {
+func withBackup(cmd string, err error, path, unitsDir, scope string) error {
 	var migrating migratingError
 	switch {
 	case errors.As(err, &migrating) && unitsDir != "":
 		// The isolated tier runs the release its units name: they go back first, and the restore compares them with the backup's release.
-		return fmt.Errorf("%w\nThe backup is in %s; everything after it is lost. %s", err, path, goBackIsolated(path, unitsDir, scope))
+		return fmt.Errorf("%w\nThe backup is in %s; everything after it is lost. %s", err, path, goBackIsolated(cmd, path, unitsDir, scope))
 	case errors.As(err, &migrating):
 		return fmt.Errorf("%w\nThe backup is in %s. To go back, install the previous release and run `suiteward restore %s` with your recovery kit (the restore names the release to install); everything after the backup is lost (%s)", err, path, quoteArg(path), goingBack)
 	}

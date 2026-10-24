@@ -161,10 +161,10 @@ func TestUpgradeIsolatedRefusesWhileAnInstallIsUnfinished(t *testing.T) {
 // ---- the settings path in the commands the installer prints ----
 
 func TestTheCommandsTheInstallerPrintsQuoteTheSettingsPath(t *testing.T) {
-	if got := doctorHint("/home/me/My Settings/s.yaml", false); got != "suiteward doctor --settings '/home/me/My Settings/s.yaml'" {
+	if got := doctorHint("suiteward", "/home/me/My Settings/s.yaml", false); got != "suiteward doctor --settings '/home/me/My Settings/s.yaml'" {
 		t.Errorf("doctorHint = %q", got)
 	}
-	if got := doctorHint("/home/me/s.yaml", false); got != "suiteward doctor --settings /home/me/s.yaml" {
+	if got := doctorHint("suiteward", "/home/me/s.yaml", false); got != "suiteward doctor --settings /home/me/s.yaml" {
 		t.Errorf("doctorHint = %q", got)
 	}
 	h := newHarness(t, "linux")

@@ -685,7 +685,7 @@ func (x *restoreRun) waitForService(ctx context.Context) (statusDoc, error) {
 // is a restore that did not take; an integrity check that failed means the artifacts and the database do not come from one moment.
 func (x *restoreRun) compare(context.Context) error {
 	x.stage = stageCheck
-	problems, notes := compareStatus(x.doc, x.after)
+	problems, notes := compareStatus(x.env.Deps.command(), x.doc, x.after)
 	for _, note := range notes {
 		x.scr.Warn("%s\n", note)
 	}
@@ -700,7 +700,7 @@ func (x *restoreRun) compare(context.Context) error {
 	return nil
 }
 
-func compareStatus(backup, after statusDoc) (problems, notes []string) {
+func compareStatus(cmd string, backup, after statusDoc) (problems, notes []string) {
 	if !backup.Unavailable { // a backup that records no status has nothing to be compared with but the integrity
 		if after.Version != backup.Version {
 			problems = append(problems, fmt.Sprintf("the service runs %s, the backup is of %s", after.Version, backup.Version))

@@ -185,7 +185,7 @@ func (c *colocatedInstall) installSummary(ctx context.Context, t installTarget) 
 	rows.add("Status", c.statusRow(ctx))
 	rows.add("Token file", c.tokenFile)
 	rows.add("Settings", t.settingsPath)
-	rows.addDoctor(ctx, c.env, t.settingsPath, doctorHint(t.settingsPath, t.defaultPath))
+	rows.addDoctor(ctx, c.env, t.settingsPath, doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
 	return rows
 }
 
@@ -197,7 +197,7 @@ func (c *colocatedInstall) upgradeSummary(ctx context.Context, t installTarget) 
 	rows.add("Status", c.statusRow(ctx))
 	rows.add("Token file", c.tokenFile)
 	rows.add("Settings", t.settingsPath)
-	rows.addDoctor(ctx, c.env, t.settingsPath, doctorHint(t.settingsPath, t.defaultPath))
+	rows.addDoctor(ctx, c.env, t.settingsPath, doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
 	return rows
 }
 
@@ -214,6 +214,6 @@ func isolatedSummary(ctx context.Context, env Env, host isolatedHost, s Settings
 	}
 	rows.add("Status", address)
 	rows.add("Settings", host.settingsPath)
-	rows.addDoctor(ctx, env, host.settingsPath, "suiteward doctor")
+	rows.addDoctor(ctx, env, host.settingsPath, env.Deps.command()+" doctor")
 	return rows
 }

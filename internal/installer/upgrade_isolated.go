@@ -112,18 +112,18 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	}
 	scr.Step(4)
 	if err := replaceUnits(ctx, host, d, scr, params, plan.dbChanges()); err != nil {
-		return withBackup(err, dir, host.unitsDir, scope)
+		return withBackup(env.Deps.command(), err, dir, host.unitsDir, scope)
 	}
 	// Migrate ran: a release that crash-loops now gets the advice of a failure after the migration, the restore of the backup.
 	scr.Step(5)
 	if err := waitStable(ctx, env, scr, s.HTTPPort); err != nil {
-		return withBackup(migratingError{err}, dir, host.unitsDir, scope)
+		return withBackup(env.Deps.command(), migratingError{err}, dir, host.unitsDir, scope)
 	}
 	s.Image = image
 	if err := SaveSettings(host.settingsPath, s); err != nil {
-		return withBackup(migratingError{err}, dir, host.unitsDir, scope)
+		return withBackup(env.Deps.command(), migratingError{err}, dir, host.unitsDir, scope)
 	}
-	upgraded(scr, image, dir, goBackIsolated(dir, host.unitsDir, scope), "suiteward doctor")
+	upgraded(scr, image, dir, goBackIsolated(env.Deps.command(), dir, host.unitsDir, scope), env.Deps.command()+" doctor")
 	sayOldEnvFile(out, host.envPath, st.oldEnv, false)
 	return showSummary(scr, func() []ui.KV {
 		return isolatedSummary(ctx, env, host, s, ui.KV{Key: "Release", Value: fmt.Sprintf("%s (was %s)", digestOf(image), digestOf(st.adopted.Image))})

@@ -258,7 +258,7 @@ func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 		rows.add(kv[0], kv[1])
 	}
 	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}}
-	rows.addDoctor(context.Background(), env, path, doctorHint(path, true))
+	rows.addDoctor(context.Background(), env, path, doctorHint("suiteward", path, true))
 
 	c := sizedConsole{termConsole: newTermConsole(&bytes.Buffer{}), w: 80, h: 24}
 	scr, err := c.open(liveContext(t), strings.NewReader("\n"), "v0", false)

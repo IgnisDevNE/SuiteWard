@@ -299,7 +299,7 @@ func parseEnrolledOwner(body []byte) (string, error) {
 
 // enrollCommand is the command that enrolls the owner again, as the messages of the installer name it: the tier and the
 // settings file are named when they are not the defaults.
-func enrollCommand(r *Resolver, isolated bool) string {
+func enrollCommand(cmd string, r *Resolver, isolated bool) string {
 	command := "suiteward enroll"
 	if isolated {
 		command += " --tier isolated"

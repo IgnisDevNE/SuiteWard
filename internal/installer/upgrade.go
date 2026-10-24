@@ -104,7 +104,7 @@ func (r *Resolver) askYes(question string) (bool, error) {
 	return err == nil && yes, nil
 }
 
-func doctorHint(settingsPath string, defaultPath bool) string {
+func doctorHint(cmd, settingsPath string, defaultPath bool) string {
 	hint := "suiteward doctor"
 	if !defaultPath {
 		hint += " --settings " + quoteArg(settingsPath)
@@ -188,7 +188,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	plan := upgradePlan{oldImage: previous.Image, newImage: image, oldDB: dbImage, newDB: postgres}
-	doctor := doctorHint(t.settingsPath, t.defaultPath)
+	doctor := doctorHint(env.Deps.command(), t.settingsPath, t.defaultPath)
 	// A stack without a settings file (made by local.ps1) is converted even when it runs this release: the settings are saved.
 	if plan.current() && t.haveSaved {
 		r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctor)
@@ -236,15 +236,15 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
-		return withBackup(err, dir, "", "")
+		return withBackup(env.Deps.command(), err, dir, "", "")
 	}
 	scr.Step(4)
 	if err := c.bringUp(ctx, func() error { return SaveSettings(t.settingsPath, c.s) }); err != nil {
-		return withBackup(err, dir, "", "")
+		return withBackup(env.Deps.command(), err, dir, "", "")
 	}
 	scr.Step(5)
 	c.restartAfterReboot(ctx)
-	upgraded(scr, image, dir, goBackColocated(engine, previous.Image, dir, scopeFlags(r, false)), doctor)
+	upgraded(scr, image, dir, goBackColocated(env.Deps.command(), engine, previous.Image, dir, scopeFlags(r, false)), doctor)
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }
 
@@ -253,16 +253,16 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 // is asked whether to make one: a no ends the run here, and a yes (agreed) is acted on once the service answers, because the instance id of
 // /status names the kit. The key is stored with the settings when the upgrade is done.
 func settleRecipient(r *Resolver, env Env, s *Settings) (agreed bool, err error) {
-	if err := askedRecipient(r, s); err != nil {
+	if err := askedRecipient(env.Deps.command(), r, s); err != nil {
 		return false, err
 	}
 	if s.BackupRecipient != "" {
 		return false, nil
 	}
 	if !env.Term.IsTerminal {
-		return false, noKeyError(true)
+		return false, noKeyError(env.Deps.command(), true)
 	}
-	if err := askForKey(r, true); err != nil {
+	if err := askForKey(env.Deps.command(), r, true); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -302,14 +302,14 @@ const goingBack = "the steps: docs/backup.md, Going back after an upgrade"
 
 // goBackColocated is the way back after the upgrade of a co-located stack: a restore alone cannot undo an upgrade that migrated, so the stack
 // and its data volumes go first, and the previous release is installed before the backup is restored.
-func goBackColocated(engine, previousImage, backupPath, scope string) string {
+func goBackColocated(cmd, engine, previousImage, backupPath, scope string) string {
 	return fmt.Sprintf("To go back, remove the stack and its data volumes (`suiteward uninstall --yes%[1]s`, then `%[2]s volume rm %[3]s %[4]s`), install the previous release (`suiteward install --image %[5]s%[1]s`), then run `suiteward restore %[6]s%[1]s` with that kit; migrations only go forward, so it must be the previous release (%[7]s).",
 		scope, engine, VolumeData, VolumeDBData, previousImage, quoteArg(backupPath), goingBack)
 }
 
 // goBackIsolated is the way back after the upgrade of an isolated host: the unit files that the upgrade replaced were kept beside the backup;
 // they go back, systemd reloads them and the service stops, and then the backup is restored.
-func goBackIsolated(backupPath, unitsDir, scope string) string {
+func goBackIsolated(cmd, backupPath, unitsDir, scope string) string {
 	return fmt.Sprintf("To go back, copy the unit files that this upgrade replaced, from %s to %s, then run `systemctl --user daemon-reload` and `systemctl --user stop suiteward.service`, and then `suiteward restore %s%s` with that kit; migrations only go forward, so the units must be the previous release's (%s).",
 		unitsKeptBeside(backupPath), unitsDir, quoteArg(backupPath), scope, goingBack)
 }

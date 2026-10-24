@@ -188,7 +188,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 		return err
 	}
 	scr.Step(3)
-	g := &githubInstall{rt: rt, env: env, out: out, s: s, pendingPath: pendingAppPath(settingsPath), enrollHint: enrollCommand(r, true)}
+	g := &githubInstall{rt: rt, env: env, out: out, s: s, pendingPath: pendingAppPath(settingsPath), enrollHint: enrollCommand(env.Deps.command(), r, true)}
 	if err := g.githubFlow(ctx, r, configDir); err != nil {
 		return err
 	}

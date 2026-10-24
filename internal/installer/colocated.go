@@ -86,7 +86,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	s.Image = image
-	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(r, false)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
+	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(env.Deps.command(), r, false)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
 			return err
@@ -891,7 +891,7 @@ func (c *colocatedInstall) finish(ctx context.Context, scr *ui.Screen, t install
 			return err
 		}
 		c.say("Read the status of the service: %s\n", c.statusHint(ctx)) // after the enrollment, which waited for the service to answer
-		c.say("Then check the instance with `%s`.\n", doctorHint(t.settingsPath, t.defaultPath))
+		c.say("Then check the instance with `%s`.\n", doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
 	}
 	scr.Step(6)
 	return showSummary(scr, func() []ui.KV { return c.installSummary(ctx, t) })

@@ -8,7 +8,7 @@ This is the short path for one owner. The **co-located** tier runs SuiteWard nex
 
 On Windows and macOS, start the Podman machine first: `podman machine start` (`podman machine init` once before that). Windows with Podman is the path validated live. macOS is covered by CI tests, and its live validation is pending; Linux is covered by tests only.
 
-**1. Get and verify the installer** ([section 4](install.md#4-get-and-verify-the-installer)).
+**1. Get the installer, and verify it if you choose** ([section 4](install.md#4-get-and-verify-the-installer)). Verifying is optional but recommended: the binary is the trust root of the install, and the checks below prove that it is the one the release workflow signed.
 
 On Linux and macOS, one command downloads the binary of the release you chose, checks it against the release's `SHA256SUMS`, verifies the signature too when cosign 3.x is installed, and puts it in `~/.local/bin`. Use the same tag twice, and pick a release whose page lists `install.sh`:
 
@@ -18,14 +18,14 @@ curl -fsSL https://github.com/IgnisDevNE/SuiteWard/releases/download/<tag>/insta
 
 Without cosign the script says that the signature was not verified: read [section 4.1](install.md#4-get-and-verify-the-installer) before you rely on it. The macOS binaries are not notarized: a browser download needs `xattr -d com.apple.quarantine <file>`, a `curl` download does not.
 
-On Windows, or to verify by hand on any system: from the release page, download the binary for your platform, `SHA256SUMS` and `SHA256SUMS.sigstore.json`, then verify them once, with PowerShell 7.2 or later and cosign 3.x, from the release source:
+On Windows, or to verify by hand on any system (the checks need the release source, which holds `scripts/verify-release.ps1`): from the release page, download the binary for your platform, `SHA256SUMS` and `SHA256SUMS.sigstore.json`, then verify them once, with PowerShell 7.2 or later and cosign 3.x, from the release source:
 
 ```powershell
 pwsh ./scripts/verify-release.ps1 -Blob <folder>/SHA256SUMS -Bundle <folder>/SHA256SUMS.sigstore.json
 pwsh ./scripts/verify-release.ps1 -Sums <folder>/SHA256SUMS -File <folder>/suiteward_<tag>_<os>_<arch>
 ```
 
-Use the file of your platform: `suiteward_<tag>_windows_amd64.exe`, or one of the `linux` and `darwin` files. Rename it to `suiteward.exe` on Windows, or to `suiteward` on Linux and macOS, where you also run `chmod +x suiteward`, and put it on your PATH. A browser download on macOS needs `xattr -d com.apple.quarantine <file>` first.
+Use the file of your platform: `suiteward_<tag>_windows_amd64.exe`, or one of the `linux` and `darwin` files. On Linux and macOS, rename it to `suiteward`, run `chmod +x suiteward` and put it on your PATH. On Windows you can run the file where it is, by its path: at the end of the install it offers to copy itself to a folder on your PATH, and until then every command it prints names the path it was run from. A browser download on macOS needs `xattr -d com.apple.quarantine <file>` first.
 
 **2. Install** ([section 5](install.md#5-install-co-located)):
 
@@ -33,14 +33,15 @@ Use the file of your platform: `suiteward_<tag>_windows_amd64.exe`, or one of th
 suiteward install
 ```
 
-On a real terminal it runs full screen, in the SuiteWard colors; `--plain` (or no terminal) prints plain lines instead.
+On a real terminal it runs full screen, in the SuiteWard colors, and each question has a page that explains it, so you do not need the guide open. Choose with the arrow keys; Space picks in a list with boxes; Enter confirms. `--plain` (or no terminal) prints plain lines instead, with no explanations.
 
 It starts the stack, and it walks you through the rest, on this PC:
 
-- one click in your browser creates the GitHub App, and one more installs it on the repositories to protect;
-- you choose the repositories and the test check of each;
-- it writes a ruleset file for each repository and tells you where to import it (GitHub, Settings, Rules, New ruleset, Import a ruleset);
-- it runs setup: turn off terminal recording first. Setup prints your TOTP secret once. Scan it with your authenticator and type the current code. Never paste the output, the secret or a code anywhere. To enroll again later (a lost authenticator), run `suiteward enroll`: it asks you to type `enroll` before it replaces the secret.
+- one click in your browser creates the GitHub App (personal or organization), and one more installs it on the repositories to protect;
+- you pick the repositories from a list and choose the test check of each;
+- it writes a ruleset file for each repository and pauses while you import it (GitHub, Settings, Rules, New ruleset, Import a ruleset), then reads the protection back;
+- it runs setup: turn off terminal recording first. On Windows and macOS setup opens in a window of its own, and the installer waits. Setup prints your TOTP secret once. Scan it with your authenticator and type the current code. Never paste the output, the secret or a code anywhere. To enroll again later (a lost authenticator), run `suiteward enroll`: it asks you to type `enroll` before it replaces the secret;
+- it ends with a summary that includes the result of `suiteward doctor`.
 
 **3. Check** ([section 5.7](install.md#5-install-co-located)):
 
@@ -48,7 +49,7 @@ It starts the stack, and it walks you through the rest, on this PC:
 suiteward doctor
 ```
 
-Expect `ok` on every line. A `FAIL` line names the fix. For Docker instead of Podman, read the warning in [section 5](install.md#5-install-co-located) first, then add `--runtime docker --accept-docker` to the install.
+On a full screen the install has run these checks already: read its summary. Run it later with `suiteward doctor`, and expect `ok` on every line. A `FAIL` line names the fix. For Docker instead of Podman, read the warning in [section 5](install.md#5-install-co-located) first, then add `--runtime docker --accept-docker` to the install.
 
 ## Isolated (AlmaLinux 9 host)
 

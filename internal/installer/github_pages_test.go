@@ -1,9 +1,11 @@
 package installer
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -318,9 +320,27 @@ func startRulesetRun(t *testing.T, g *fakeGitHub) *rulesetRun {
 
 func startRulesetRunWith(t *testing.T, g *fakeGitHub, flags map[string]string) *rulesetRun {
 	t.Helper()
+	return startRulesetRunSized(t, g, flags, 100, 30)
+}
+
+// startRulesetRunSized is startRulesetRunWith on a terminal of width by height.
+func startRulesetRunSized(t *testing.T, g *fakeGitHub, flags map[string]string, width, height int) *rulesetRun {
+	t.Helper()
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pw.Close() })
-	env, out := fullFlowEnv(t, liveContext(t), g, flags, pr, true)
+	env, _ := flowEnv(t, g, flags, pr, true)
+	out := &syncBuffer{}
+	br := bufio.NewReader(pr)
+	scr, err := ui.Open(ui.Options{Out: out, In: br, Context: liveContext(t), Version: "v0", Mode: ui.ModeFull, Color: ui.ColorNone, Width: width, Height: height})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = scr.Close() })
+	r, err := NewResolver(env.R.flags, env.R.answers, Terminal{In: br, Out: scr, IsTerminal: true, ReadPassword: func() ([]byte, error) { return nil, errors.New("no password here") }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.R, env.Out = r, scr
 	env.SkipRulesetWait = false
 	run := &rulesetRun{env: env, out: out, pw: pw, done: make(chan browserResult, 1)}
 	go func() {
@@ -360,13 +380,10 @@ func TestTheRulesetStepIsAPageAndAPause(t *testing.T) {
 	run := startRulesetRun(t, g)
 	waitForText(t, run.out, "I imported it, check now")
 	text := run.out.String()
-	for _, want := range []string{"Import the rulesets", "Ruleset for acme/app:", "https://github.example/acme/app/settings/rules", "Skip, import later", "older SuiteWard ruleset"} {
+	for _, want := range []string{"Import the rulesets", "suiteward-ruleset-acme-app.json", "https://github.example/acme/<name>/settings/rules", "Skip, import later", "older SuiteWard ruleset"} {
 		if !shows(text, want) {
 			t.Errorf("the screen lacks %q:\n%s", want, text)
 		}
-	}
-	if strings.Index(flat(text), "Import the rulesets") > strings.Index(flat(text), "Ruleset for acme/app:") {
-		t.Error("the page was drawn after the lines it should hold: they are gone from the screen")
 	}
 	if shows(text, "Press Enter when the rulesets are imported") {
 		t.Error("the pause still looks like a question that Enter answers with yes")
@@ -440,6 +457,14 @@ func TestTheRulesetStepCanBeSkippedAndSaysWhatIsLeftToDo(t *testing.T) {
 		if got := res.Protection["acme/app"].Kind; got != protection.KindFindings {
 			t.Errorf("protection = %q, want what the last check found", got)
 		}
+		// What the last check found, and what is left to do, stay after the screen is gone.
+		_ = run.env.Out.(*ui.Screen).Close()
+		tail := run.out.String()[strings.LastIndex(run.out.String(), leaveAlt):]
+		for _, want := range []string{"Protection as GitHub reports it now:", "acme/app: findings", "findings: missing-contract-check", "Ruleset for acme/app:", "Import it: open https://github.example/acme/app/settings/rules", "suiteward doctor"} {
+			if !strings.Contains(tail, want) {
+				t.Errorf("the scrollback lacks %q:\n%s", want, tail)
+			}
+		}
 	})
 }
 
@@ -498,9 +523,9 @@ func TestTheFilesOfWhatIsStillMissingAreOnTheScreenAfterACheck(t *testing.T) {
 	run := startRulesetRunWith(t, g, flags)
 	waitForText(t, run.out, "I imported it, check now")
 	run.answer(t, "1")
-	waitForText(t, run.out, "acme/r2: missing-contract-check")
+	waitForText(t, run.out, "missing-contract-check")
 	frame := lastFrame(run.out.String())
-	for _, want := range []string{"suiteward-ruleset-acme-r2.json", "https://github.example/acme/r2/settings/rules", "New ruleset"} {
+	for _, want := range []string{"suiteward-ruleset-acme-r2.json", "missing-contract-check", "New ruleset"} {
 		if !shows(frame, want) {
 			t.Errorf("the screen no longer shows %q after the check:\n%s", want, frame)
 		}
@@ -508,6 +533,57 @@ func TestTheFilesOfWhatIsStillMissingAreOnTheScreenAfterACheck(t *testing.T) {
 	if shows(frame, "suiteward-ruleset-acme-r1.json") {
 		t.Errorf("the screen still shows the file of a repository that is protected:\n%s", frame)
 	}
+	run.answer(t, "2")
+	run.result(t)
+}
+
+// ---- the ruleset pages on a small screen ----
+
+// Every repository is one row of the page: its name and the file of its ruleset, the folder said once, the missing checks in the row of
+// the check that found them. A page that is only 18 rows must show the file of each repository that still needs one, whatever
+// the number of them (up to what the rows hold): the user imports from it.
+func TestTheRulesetPagesShowTheFileOfEveryRepositoryOnA80By24Screen(t *testing.T) {
+	g := newFakeGitHub(t)
+	g.repos = manyRepos(4)
+	g.changeRepos(func(repos []fakeRepo) {
+		for i := range repos {
+			repos[i].noRule = true
+		}
+	})
+	names := []string{"acme/r1", "acme/r2", "acme/r3", "acme/r4"}
+	flags := existingFlags(t, map[string]string{"repositories": strings.Join(names, ",")})
+	delete(flags, "test-check")
+	for _, n := range names {
+		flags["test-check."+n] = "CI / test"
+	}
+	run := startRulesetRunSized(t, g, flags, 80, 24)
+	waitForText(t, run.out, "I imported it, check now")
+	folder := filepath.Base(filepath.Dir(run.env.SettingsDir)) // the test's own name: the folder of the files is under it
+	onScreen := func(when string, codes bool) {
+		t.Helper()
+		frame := lastFrame(run.out.String())
+		for _, n := range names {
+			file := "suiteward-ruleset-" + strings.ReplaceAll(n, "/", "-") + ".json"
+			if got := strings.Count(flat(frame), file); got != 1 {
+				t.Errorf("%s: the file %s shows %d times, want once:\n%s", when, file, got, frame)
+			}
+		}
+		if got := strings.Count(flat(frame), folder); got != 1 {
+			t.Errorf("%s: the folder of the files shows %d times, want once:\n%s", when, got, frame)
+		}
+		if codes {
+			if got := strings.Count(flat(frame), "missing-contract-check"); got != len(names) {
+				t.Errorf("%s: the missing checks show %d times, want once in the row of each repository:\n%s", when, got, frame)
+			}
+		}
+	}
+	onScreen("the first page", false)
+	run.answer(t, "1")
+	waitForText(t, run.out, "missing-contract-check")
+	onScreen("after a check", true)
+	run.answer(t, "1")
+	waitForText(t, run.out, "missing-contract-check")
+	onScreen("after a second check", true)
 	run.answer(t, "2")
 	run.result(t)
 }

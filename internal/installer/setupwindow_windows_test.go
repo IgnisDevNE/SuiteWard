@@ -201,22 +201,35 @@ func runHiddenWindow(t *testing.T, args []string, code string) (left string, got
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = enter.Close(); _ = typed.Close() }()
+	t.Cleanup(func() { _ = enter.Close(); _ = typed.Close() })
 	out, err := os.Create(filepath.Clean(filepath.Join(t.TempDir(), "powershell.txt")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = out.Close() }()
+	t.Cleanup(func() { _ = out.Close() })
 	exitFile := hiddenPowerShell(t, enter, out)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
+	t.Cleanup(cancel)
 	wait, err := startConsoleWindow(ctx, exe, args)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The window ends whatever the test does next: a failure still presses the Enter and waits, which removes the directory of the exit file.
+	// It is registered last, so it runs first.
+	ended := false
+	finish := func() error {
+		if !ended {
+			ended = true
+			_, _ = typed.WriteString("\r\n") // a window that has ended already needs no Enter
+			waitErr = wait()
+		}
+		return waitErr
+	}
+	t.Cleanup(func() { _ = finish() })
 	for strings.TrimSpace(left) == "" { // the exit file is there before the Enter, and whole once it has text
 		data, err := os.ReadFile(filepath.Clean(*exitFile))
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		// Not there yet, or held by Set-Content while it writes it.
+		if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
 			t.Fatal(err)
 		}
 		if left = string(data); ctx.Err() != nil {
@@ -234,10 +247,7 @@ func runHiddenWindow(t *testing.T, args []string, code string) (left string, got
 			got = append(got, arg)
 		}
 	}
-	if _, err := typed.WriteString("\r\n"); err != nil {
-		t.Fatal(err)
-	}
-	return strings.TrimSpace(left), got, wait()
+	return strings.TrimSpace(left), got, finish()
 }
 
 // The real script, in the real PowerShell and with no window: the engine gets every argument as it was, text that PowerShell would read as

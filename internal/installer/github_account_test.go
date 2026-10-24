@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"html"
@@ -325,6 +326,55 @@ func TestTheAccountIsAChoiceOnAFullScreen(t *testing.T) {
 		}
 		if shows(out.String(), "GitHub account for the App") {
 			t.Error("the page of a question that is not asked wiped the screen")
+		}
+	})
+}
+
+// cancelling is an HTTP client whose answer comes as Ctrl-C is pressed: it cancels the context, then answers.
+type cancelling struct {
+	cancel func()
+	status int
+	body   string
+}
+
+func (c cancelling) RoundTrip(*http.Request) (*http.Response, error) {
+	c.cancel()
+	return &http.Response{StatusCode: c.status, Body: io.NopCloser(strings.NewReader(c.body)), Header: http.Header{}}, nil
+}
+
+// Ctrl-C is not a failure of GitHub, whichever way the look-up sees it: after the answer arrives as well as while it is awaited, the
+// look-up ends with the interrupt, and the install is not told to go on.
+func TestACtrlCDuringTheOrganizationLookupIsTheInterruptAndNoWarning(t *testing.T) {
+	for name, answer := range map[string]struct {
+		status int
+		body   string
+	}{
+		"an answer that cannot be read": {http.StatusOK, "not json at all"},
+		"an error status":               {http.StatusBadGateway, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			env := githubEnv{APIURL: "https://api.github.example", HTTP: &http.Client{Transport: cancelling{cancel, answer.status, answer.body}}}
+			if err := lookupOrganization(ctx, env, "acme"); !errors.Is(err, context.Canceled) {
+				var failed lookupFailed
+				t.Fatalf("lookupOrganization = %v (a lookupFailed: %v), want the interrupt", err, errors.As(err, &failed))
+			}
+		})
+	}
+	t.Run("the flow does not warn", func(t *testing.T) {
+		g := newFakeGitHub(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		f := accountFlags()
+		f["github-account"] = "acme"
+		env, out := flowEnv(t, g, f, strings.NewReader(""), false)
+		env.HTTP = &http.Client{Transport: cancelling{cancel, http.StatusOK, "not json at all"}}
+		if _, err := resolveGitHub(ctx, env); !errors.Is(err, context.Canceled) {
+			t.Fatalf("resolveGitHub = %v, want the interrupt", err)
+		}
+		if strings.Contains(out.String(), "Could not check") || g.sawRequest("POST /app-manifests") {
+			t.Errorf("the interrupt was taken for a failure of GitHub, and the install went on:\n%s", out.String())
 		}
 	})
 }

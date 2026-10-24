@@ -326,12 +326,18 @@ func startRulesetRunWith(t *testing.T, g *fakeGitHub, flags map[string]string) *
 // startRulesetRunSized is startRulesetRunWith on a terminal of width by height.
 func startRulesetRunSized(t *testing.T, g *fakeGitHub, flags map[string]string, width, height int) *rulesetRun {
 	t.Helper()
+	return startRulesetRunCtx(t, liveContext(t), g, flags, width, height)
+}
+
+// startRulesetRunCtx is startRulesetRunSized on a screen whose context is ctx: the one Ctrl-C cancels.
+func startRulesetRunCtx(t *testing.T, ctx context.Context, g *fakeGitHub, flags map[string]string, width, height int) *rulesetRun {
+	t.Helper()
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pw.Close() })
 	env, _ := flowEnv(t, g, flags, pr, true)
 	out := &syncBuffer{}
 	br := bufio.NewReader(pr)
-	scr, err := ui.Open(ui.Options{Out: out, In: br, Context: liveContext(t), Version: "v0", Mode: ui.ModeFull, Color: ui.ColorNone, Width: width, Height: height})
+	scr, err := ui.Open(ui.Options{Out: out, In: br, Context: ctx, Version: "v0", Mode: ui.ModeFull, Color: ui.ColorNone, Width: width, Height: height})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,4 +592,40 @@ func TestTheRulesetPagesShowTheFileOfEveryRepositoryOnA80By24Screen(t *testing.T
 	onScreen("after a second check", true)
 	run.answer(t, "2")
 	run.result(t)
+}
+
+// A Ctrl-C at the pause ends the install, and the page that holds the files goes with the screen: the files of what is not imported
+// must be in the scrollback, where the user finds them again.
+func TestTheFilesAreInTheScrollbackAfterACtrlCAtTheRulesetPause(t *testing.T) {
+	for name, checked := range map[string]bool{"before any check": false, "after a check": true} {
+		t.Run(name, func(t *testing.T) {
+			g := newFakeGitHub(t)
+			g.changeRepos(func(repos []fakeRepo) { repos[0].noRule = true })
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			run := startRulesetRunCtx(t, ctx, g, existingFlags(t, nil), 100, 30)
+			waitForText(t, run.out, "I imported it, check now")
+			if checked {
+				run.answer(t, "1")
+				waitForText(t, run.out, "missing-contract-check")
+			}
+			time.Sleep(50 * time.Millisecond) // the pause is open
+			cancel()
+			select {
+			case res := <-run.done:
+				if !errors.Is(res.err, context.Canceled) {
+					t.Fatalf("resolveGitHub = %v, want the interrupt", res.err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("the flow did not end with Ctrl-C:\n%s", run.out.String())
+			}
+			_ = run.env.Out.(*ui.Screen).Close()
+			tail := run.out.String()[strings.LastIndex(run.out.String(), leaveAlt):]
+			for _, want := range []string{"Ruleset for acme/app:", "suiteward-ruleset-acme-app.json", "Import it: open https://github.example/acme/app/settings/rules"} {
+				if !strings.Contains(tail, want) {
+					t.Errorf("the scrollback lacks %q:\n%s", want, tail)
+				}
+			}
+		})
+	}
 }

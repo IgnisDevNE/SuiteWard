@@ -313,9 +313,14 @@ type rulesetRun struct {
 
 func startRulesetRun(t *testing.T, g *fakeGitHub) *rulesetRun {
 	t.Helper()
+	return startRulesetRunWith(t, g, existingFlags(t, nil))
+}
+
+func startRulesetRunWith(t *testing.T, g *fakeGitHub, flags map[string]string) *rulesetRun {
+	t.Helper()
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pw.Close() })
-	env, out := fullFlowEnv(t, liveContext(t), g, existingFlags(t, nil), pr, true)
+	env, out := fullFlowEnv(t, liveContext(t), g, flags, pr, true)
 	env.SkipRulesetWait = false
 	run := &rulesetRun{env: env, out: out, pw: pw, done: make(chan browserResult, 1)}
 	go func() {
@@ -477,4 +482,32 @@ func TestThePlainRulesetQuestionIsUnchanged(t *testing.T) {
 	if !strings.Contains(out.String(), want) {
 		t.Errorf("the plain question changed:\n%s", out.String())
 	}
+}
+
+// A page that goes on from the one before would push the files off the screen, where the user needs them again after a check that
+// found something missing: the page is drawn again for the repositories that are not protected yet, with their files.
+func TestTheFilesOfWhatIsStillMissingAreOnTheScreenAfterACheck(t *testing.T) {
+	g := newFakeGitHub(t)
+	g.repos = manyRepos(2)
+	g.changeRepos(func(repos []fakeRepo) {
+		repos[0].ruleChecks, repos[0].ruleStrict = []fakeRuleChk{{protection.ContractCheck, fakeAppID}, {"CI / test", 0}}, true // imported
+		repos[1].noRule = true                                                                                                  // not yet
+	})
+	flags := existingFlags(t, map[string]string{"repositories": "acme/r1,acme/r2", "test-check.acme/r1": "CI / test", "test-check.acme/r2": "CI / test"})
+	delete(flags, "test-check")
+	run := startRulesetRunWith(t, g, flags)
+	waitForText(t, run.out, "I imported it, check now")
+	run.answer(t, "1")
+	waitForText(t, run.out, "acme/r2: missing-contract-check")
+	frame := lastFrame(run.out.String())
+	for _, want := range []string{"suiteward-ruleset-acme-r2.json", "https://github.example/acme/r2/settings/rules", "New ruleset"} {
+		if !shows(frame, want) {
+			t.Errorf("the screen no longer shows %q after the check:\n%s", want, frame)
+		}
+	}
+	if shows(frame, "suiteward-ruleset-acme-r1.json") {
+		t.Errorf("the screen still shows the file of a repository that is protected:\n%s", frame)
+	}
+	run.answer(t, "2")
+	run.result(t)
 }

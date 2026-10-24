@@ -3,9 +3,16 @@
 package installer
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestWindowEnvCarriesTheCommandAsDataAndDropsWhatOSInteractiveDrops(t *testing.T) {
@@ -73,5 +80,81 @@ func TestWindowScriptLeavesTheExitCodeBeforeItWaitsForEnter(t *testing.T) {
 	}
 	if !strings.Contains(windowScript[:max(leave, 0)], "$code = $p.ExitCode") {
 		t.Errorf("the code that is left must be the one of the command, which is read before it is written:\n%s", windowScript)
+	}
+}
+
+// swapPowerShell makes startConsoleWindow start the test binary, as the helper mode says, where it would start PowerShell: with no console
+// and no window, so that no test opens one. It returns where the starter said that the exit code goes.
+func swapPowerShell(t *testing.T, mode string) (exe string, exitFile *string) {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exitFile = new(string)
+	original := startProcess
+	startProcess = func(_ string, _ []string, attr *syscall.ProcAttr) (int, uintptr, error) {
+		for _, entry := range attr.Env {
+			if file, ok := strings.CutPrefix(entry, envSetupExit+"="); ok {
+				*exitFile = file
+			}
+		}
+		return original(exe, []string{exe}, &syscall.ProcAttr{
+			Env:   append(slices.Clone(attr.Env), "SUITEWARD_TEST_HELPER="+mode),
+			Dir:   filepath.Dir(*exitFile), // where the helper leaves its exit file, as "exit"
+			Files: []uintptr{0, 0, 0},
+			Sys:   &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW},
+		})
+	}
+	t.Cleanup(func() { startProcess = original })
+	return exe, exitFile
+}
+
+// Through the real code path: setup ended well and left its code, then the window was closed (the X, Ctrl-C at its prompt), which ends
+// the window with the code of a closed console. That is a success, and the directory of the exit file is gone.
+func TestWindowClosedAfterSetupLeftItsCodeIsASuccess(t *testing.T) {
+	exe, exitFile := swapPowerShell(t, "window-left")
+	wait, err := startConsoleWindow(context.Background(), exe, []string{"--", "setup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wait(); err != nil {
+		t.Errorf("wait = %v, want success: setup left the code 0 before the window was closed", err)
+	}
+	if _, err := os.Stat(filepath.Dir(*exitFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the directory of the exit file is still there: %v", err)
+	}
+}
+
+func TestWindowClosedBeforeSetupLeftACodeIsAFailure(t *testing.T) {
+	exe, exitFile := swapPowerShell(t, "window-closed")
+	wait, err := startConsoleWindow(context.Background(), exe, []string{"--", "setup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wait(); err == nil || !strings.Contains(err.Error(), "closed before setup ended") {
+		t.Errorf("wait = %v, want the report that the window was closed before setup ended", err)
+	}
+	if _, err := os.Stat(filepath.Dir(*exitFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the directory of the exit file is still there: %v", err)
+	}
+}
+
+// Ctrl-C while setup is at its prompt ends the window (taskkill of the system directory, which also takes its children), and the wait
+// reports the interrupt.
+func TestCtrlCWhileTheWindowWaitsEndsItAndRemovesItsDirectory(t *testing.T) {
+	exe, exitFile := swapPowerShell(t, "window-blocked")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wait, err := startConsoleWindow(ctx, exe, []string{"--", "setup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := wait(); !errors.Is(err, context.Canceled) {
+		t.Errorf("wait = %v, want the interrupt", err)
+	}
+	if _, err := os.Stat(filepath.Dir(*exitFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the directory of the exit file is still there: %v", err)
 	}
 }

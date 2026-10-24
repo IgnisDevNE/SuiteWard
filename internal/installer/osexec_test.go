@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
@@ -50,6 +51,19 @@ func TestMain(m *testing.M) {
 		}
 		code, _ := strconv.Atoi(os.Getenv("SUITEWARD_TEST_EXIT"))
 		os.Exit(code)
+	// The stand-ins for the PowerShell of a setup window (the Windows tests swap startProcess for them): no console, and no window. The
+	// exit code that Windows gives a console program that its window took with it is 0xC000013A.
+	case "window-left": // setup ended well and left its code in the exit file of the working directory, then the window was closed
+		if err := os.WriteFile("exit", []byte("0\n"), 0o600); err != nil {
+			fmt.Fprint(os.Stderr, err)
+			os.Exit(99)
+		}
+		os.Exit(-1073741510)
+	case "window-closed": // the window was closed before setup left a code
+		os.Exit(-1073741510)
+	case "window-blocked": // setup is at its prompt and stays there
+		time.Sleep(time.Hour)
+		os.Exit(1)
 	}
 	// No test opens a window of its own: the window is for the real machine, where it would start a real terminal.
 	setupMachine = machine{goos: "linux", getenv: func(string) string { return "" }}

@@ -752,10 +752,15 @@ func listTar(r io.Reader) error {
 	}
 }
 
+// canonicalBehind is what a restore leaves behind: the canonical it restored can be behind the default branch on GitHub.
+const canonicalBehind = "The restored canonical may be behind the default branch on GitHub: to bring it level, open one corrective pull request from the current default branch (any small change outside the protected files), approve the revision its check names, and merge it (details: docs/backup.md)."
+
 func (x *restoreRun) finish() {
 	x.scr.Say("Restored the backup of the instance %s (%s) into this instance.\n", x.doc.Instance, x.info.SuitewardVersion)
 	x.scr.Keep("The credentials of this installation are not in a backup, so they are as they were: the database passwords and the MCP token. The owner's TOTP enrollment is the backup's.\n")
-	x.scr.Keep("The restored canonical may be behind the default branch on GitHub: to bring it level, open one corrective pull request from the current default branch (any small change outside the protected files), approve the revision its check names, and merge it (details: docs/backup.md).\n")
+	if !x.scr.FullScreen() { // a full screen has it on the summary page, which Close keeps
+		x.scr.Keep("%s\n", canonicalBehind)
+	}
 	x.scr.Say("Check the instance with `suiteward doctor`.\n")
 	if x.inst.s.BackupRecipient == "" {
 		x.scr.Warn("No recovery key is set on this instance: run `suiteward backup init` to back it up.\n")
@@ -763,13 +768,12 @@ func (x *restoreRun) finish() {
 }
 
 func (x *restoreRun) summary() []ui.KV {
-	rows := []ui.KV{
+	rows := summaryRows{
 		{Key: "Restored", Value: x.source()},
 		{Key: "Instance", Value: x.doc.Instance},
 		{Key: "Release", Value: x.after.Version},
 	}
-	if x.safety != "" {
-		rows = append(rows, ui.KV{Key: "Backup before", Value: x.safety})
-	}
+	rows.add("Backup before", x.safety)
+	rows.warn(canonicalBehind)
 	return rows
 }

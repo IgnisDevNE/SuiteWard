@@ -24,13 +24,19 @@ const (
 )
 
 // windowScript is what PowerShell runs in the window: the engine runs as a child on the console of the window, its exit code is kept (a
-// command that cannot start is a failure) and left in a file for the installer, the window waits for Enter so that the secret can be
-// copied, then clears the screen and ends with that exit code. It has no double quote: the command line of PowerShell would have to
-// escape it.
-const windowScript = `$Host.UI.RawUI.WindowTitle = 'SuiteWard setup'; $code = 1; ` +
+// command that cannot start is a failure) and left in a file for the installer, and the window waits for Enter so that the secret can be
+// copied. The screen and its scrollback are cleared in a finally block, so that Ctrl-C at the prompt clears them too. Windows Terminal,
+// which a new console may be handed to, keeps a pane open when its process ends with a code other than 0, so the script ends with 0 once
+// the code is where the installer reads it (windowOutcome reads that file first), and with the code of setup when it could not leave it.
+// The limit: a hard kill of the window (the X after the grace period, Stop-Process) runs no finally block, and what the screen showed
+// stays until the pane closes. It has no double quote: the command line of PowerShell would have to escape it.
+const windowScript = `$Host.UI.RawUI.WindowTitle = 'SuiteWard setup'; $code = 1; $left = $false; ` +
+	`try { ` +
 	`try { $p = Start-Process -FilePath $env:SUITEWARD_SETUP_BIN -ArgumentList $env:SUITEWARD_SETUP_ARGS -NoNewWindow -Wait -PassThru; $code = $p.ExitCode } catch { Write-Host $_ }; ` +
-	`Set-Content -LiteralPath $env:SUITEWARD_SETUP_EXIT -Value $code; ` +
-	`Read-Host 'Press Enter to close this window' | Out-Null; Clear-Host; exit $code`
+	`try { Set-Content -LiteralPath $env:SUITEWARD_SETUP_EXIT -Value $code -ErrorAction Stop; $left = $true } catch { Write-Host $_ }; ` +
+	`Read-Host 'Press Enter to close this window' | Out-Null ` +
+	`} finally { Clear-Host; [Console]::Write([char]27 + '[3J') }; ` +
+	`if ($left) { exit 0 }; exit $code`
 
 // windowEnv is the environment of the window: the one OSInteractive gives the command, and the command, its arguments and the file for
 // its exit code as data.
@@ -84,7 +90,7 @@ func startConsoleWindow(ctx context.Context, name string, args []string) (func()
 		case err := <-ended:
 			return windowOutcome(exitFile, err)
 		case <-ctx.Done():
-			killTree(pid, process)
+			killTree(system, pid, process)
 			<-ended
 			return windowOutcome(exitFile, ctx.Err()) // setup that ended well before Ctrl-C is not an interrupted setup
 		}
@@ -117,11 +123,11 @@ func waitProcess(process windows.Handle) error {
 }
 
 // killTree ends PowerShell and the engine it started: ending PowerShell alone would leave the engine in a window that stays open, and
-// the secret with it.
-func killTree(pid int, process windows.Handle) {
+// the secret with it. taskkill is the one of the system directory, as PowerShell is, and not whatever the PATH finds first.
+func killTree(system string, pid int, process windows.Handle) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := commandContext(ctx, "taskkill", "/T", "/F", "/PID", strconv.Itoa(pid)).Run(); err != nil {
+	if err := commandContext(ctx, filepath.Join(system, "taskkill.exe"), "/T", "/F", "/PID", strconv.Itoa(pid)).Run(); err != nil {
 		_ = windows.TerminateProcess(process, 1) // the best that is left; the process may have ended on its own meanwhile
 	}
 }

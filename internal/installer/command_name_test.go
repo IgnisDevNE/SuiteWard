@@ -207,7 +207,7 @@ func TestAnUpgradeNamesItsNextCommandsAsTheRunReachesThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := u.out.String()
-	for _, want := range []string{"`" + swCmd + " uninstall --yes`", "`" + swCmd + " install --image ", "`" + swCmd + " restore ", "Check the instance with `" + swCmd + " doctor --settings "} {
+	for _, want := range []string{"`" + swCmd + " uninstall --yes --settings ", "`" + swCmd + " install --image ", "`" + swCmd + " restore ", "Check the instance with `" + swCmd + " doctor --settings "} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the output of the upgrade lacks %q:\n%s", want, out)
 		}

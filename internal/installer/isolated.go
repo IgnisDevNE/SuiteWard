@@ -246,7 +246,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 			return err
 		}
 	}
-	say("Then run `suiteward doctor`.\n")
+	say("Then run `%s doctor`.\n", env.Deps.command())
 	sayOldEnvFile(out, filepath.Join(configDir, "github.env"), oldEnvFile, leftRunning)
 	scr.Step(7)
 	return showSummary(scr, func() []ui.KV { return isolatedSummary(ctx, env, host, g.s, ui.KV{Key: "Owner", Value: g.owner}) })

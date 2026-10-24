@@ -374,7 +374,7 @@ func (x *restoreRun) checkRelease(ctx context.Context) error {
 func (x *restoreRun) otherRelease(running string) error {
 	install := ""
 	if x.info.ImageDigest != "" {
-		install = " (`suiteward install --image " + releaseImageRepo + "@" + x.info.ImageDigest + "`)"
+		install = " (`" + x.env.Deps.command() + " install --image " + releaseImageRepo + "@" + x.info.ImageDigest + "`)"
 	}
 	madeBy := "SuiteWard " + x.info.SuitewardVersion
 	if x.doc.Unavailable {
@@ -568,7 +568,7 @@ func (x *restoreRun) chooseSafetyKey() (string, error) {
 	case x.identity != nil:
 		recipient = x.identity.Recipient().String()
 	default:
-		return "", errors.New("the state of this instance is backed up, encrypted, before it is replaced, and this instance has no recovery key (a plaintext backup has none to borrow): run `suiteward backup init` first, then run the restore again")
+		return "", errors.New("the state of this instance is backed up, encrypted, before it is replaced, and this instance has no recovery key (a plaintext backup has none to borrow): run `" + x.env.Deps.command() + " backup init` first, then run the restore again")
 	}
 	key, err := archive.ParseRecipient(recipient)
 	if err != nil {
@@ -718,7 +718,7 @@ func compareStatus(cmd string, backup, after statusDoc) (problems, notes []strin
 		case "failed":
 			problems = append(problems, g.Repo+": the integrity check failed, so the artifacts and the database do not come from the same moment")
 		default:
-			notes = append(notes, g.Repo+": the integrity check has not passed yet (it runs when the service starts, after each promotion and every hour): look at `suiteward doctor` in a moment")
+			notes = append(notes, g.Repo+": the integrity check has not passed yet (it runs when the service starts, after each promotion and every hour): look at `"+cmd+" doctor` in a moment")
 		}
 	}
 	return problems, notes
@@ -733,9 +733,9 @@ func (x *restoreRun) failed(err error) error {
 		stageStart:     "the database and the artifacts are the backup's, but the service did not come up",
 		stageCheck:     "the database and the artifacts are the backup's, and the service runs, but it does not match",
 	}[x.stage]
-	advice := fmt.Sprintf("The restore stopped here: %s.\nTo get the service back: %s.\nTo run the restore again: suiteward restore %s.", state, x.inst.restore.recovery, x.source())
+	advice := fmt.Sprintf("The restore stopped here: %s.\nTo get the service back: %s.\nTo run the restore again: %s restore %s.", state, x.inst.restore.recovery, x.env.Deps.command(), x.source())
 	if x.safety != "" {
-		advice += fmt.Sprintf("\nTo go back to the state before the restore: suiteward restore %s, with the recovery kit of that backup.", quoteArg(x.safety))
+		advice += fmt.Sprintf("\nTo go back to the state before the restore: %s restore %s, with the recovery kit of that backup.", x.env.Deps.command(), quoteArg(x.safety))
 	}
 	return fmt.Errorf("%w\n%s", err, advice)
 }
@@ -761,9 +761,9 @@ func (x *restoreRun) finish() {
 	if !x.scr.FullScreen() { // a full screen has it on the summary page, which Close keeps
 		x.scr.Keep("%s\n", canonicalBehind)
 	}
-	x.scr.Say("Check the instance with `suiteward doctor`.\n")
+	x.scr.Say("Check the instance with `%s doctor`.\n", x.env.Deps.command())
 	if x.inst.s.BackupRecipient == "" {
-		x.scr.Warn("No recovery key is set on this instance: run `suiteward backup init` to back it up.\n")
+		x.scr.Warn("No recovery key is set on this instance: run `%s backup init` to back it up.\n", x.env.Deps.command())
 	}
 }
 

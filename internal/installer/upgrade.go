@@ -105,7 +105,7 @@ func (r *Resolver) askYes(question string) (bool, error) {
 }
 
 func doctorHint(cmd, settingsPath string, defaultPath bool) string {
-	hint := "suiteward doctor"
+	hint := cmd + " doctor"
 	if !defaultPath {
 		hint += " --settings " + quoteArg(settingsPath)
 	}
@@ -303,15 +303,15 @@ const goingBack = "the steps: docs/backup.md, Going back after an upgrade"
 // goBackColocated is the way back after the upgrade of a co-located stack: a restore alone cannot undo an upgrade that migrated, so the stack
 // and its data volumes go first, and the previous release is installed before the backup is restored.
 func goBackColocated(cmd, engine, previousImage, backupPath, scope string) string {
-	return fmt.Sprintf("To go back, remove the stack and its data volumes (`suiteward uninstall --yes%[1]s`, then `%[2]s volume rm %[3]s %[4]s`), install the previous release (`suiteward install --image %[5]s%[1]s`), then run `suiteward restore %[6]s%[1]s` with that kit; migrations only go forward, so it must be the previous release (%[7]s).",
-		scope, engine, VolumeData, VolumeDBData, previousImage, quoteArg(backupPath), goingBack)
+	return fmt.Sprintf("To go back, remove the stack and its data volumes (`%[8]s uninstall --yes%[1]s`, then `%[2]s volume rm %[3]s %[4]s`), install the previous release (`%[8]s install --image %[5]s%[1]s`), then run `%[8]s restore %[6]s%[1]s` with that kit; migrations only go forward, so it must be the previous release (%[7]s).",
+		scope, engine, VolumeData, VolumeDBData, previousImage, quoteArg(backupPath), goingBack, cmd)
 }
 
 // goBackIsolated is the way back after the upgrade of an isolated host: the unit files that the upgrade replaced were kept beside the backup;
 // they go back, systemd reloads them and the service stops, and then the backup is restored.
 func goBackIsolated(cmd, backupPath, unitsDir, scope string) string {
-	return fmt.Sprintf("To go back, copy the unit files that this upgrade replaced, from %s to %s, then run `systemctl --user daemon-reload` and `systemctl --user stop suiteward.service`, and then `suiteward restore %s%s` with that kit; migrations only go forward, so the units must be the previous release's (%s).",
-		unitsKeptBeside(backupPath), unitsDir, quoteArg(backupPath), scope, goingBack)
+	return fmt.Sprintf("To go back, copy the unit files that this upgrade replaced, from %s to %s, then run `systemctl --user daemon-reload` and `systemctl --user stop suiteward.service`, and then `%s restore %s%s` with that kit; migrations only go forward, so the units must be the previous release's (%s).",
+		unitsKeptBeside(backupPath), unitsDir, cmd, quoteArg(backupPath), scope, goingBack)
 }
 
 // scopeFlags names the tier and the settings file of this run when they are not the defaults, for a command that a message tells the person

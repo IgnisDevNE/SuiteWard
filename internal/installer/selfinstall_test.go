@@ -1245,9 +1245,13 @@ func TestAPathOfThePlainKindIsNotExpandedWhenTheFolderIsLookedFor(t *testing.T) 
 	}
 }
 
+// namedFolder is the folder of the copy as a Path names it by its variable, with the separators of the machine that runs the test: the test
+// writes the copy under the temp directory of this machine, whose path is the value of LOCALAPPDATA, and a backslash is no separator on Linux.
+func namedFolder() string { return filepath.Join("%LOCALAPPDATA%", "SuiteWard", "bin") }
+
 func TestAnAcceptedCopyDoesNotAddAFolderThatThePathNamesByAVariable(t *testing.T) {
 	pc := newPC(t)
-	pc.path.value = `C:\Windows\system32;%LOCALAPPDATA%\SuiteWard\bin;C:\Tools`
+	pc.path.value = `C:\Windows\system32;` + namedFolder() + `;C:\Tools`
 	pc.offer(false, "\n")
 	if readText(t, pc.target()) != "NEW BUILD" || len(pc.path.writes) != 0 || pc.path.announced != 0 {
 		t.Errorf("the PATH was written (%q, %d writes, announced %d times), want the entry that is there left as it is", pc.path.value, len(pc.path.writes), pc.path.announced)
@@ -1256,7 +1260,7 @@ func TestAnAcceptedCopyDoesNotAddAFolderThatThePathNamesByAVariable(t *testing.T
 
 func TestAPurgeRemovesTheEntryThatNamesTheFolderByAVariable(t *testing.T) {
 	pc := newPC(t).installed()
-	pc.path.value = `%SystemRoot%\system32;%LOCALAPPDATA%\SuiteWard\bin;C:\Tools`
+	pc.path.value = `%SystemRoot%\system32;` + namedFolder() + `;C:\Tools`
 	if run, err := purgeOn(t, pc, []string{testInstance + "\n", "1\n", "\n"}, "--purge"); err != nil {
 		t.Fatalf("Uninstall: %v\n%s", err, run.output())
 	}

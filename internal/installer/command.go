@@ -10,7 +10,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -65,6 +67,7 @@ func OSEnv(stdout io.Writer) Env {
 	term := OSTerminal()
 	term.Out = stdout
 	env := Env{Deps: OSDeps(), Term: term, PortFree: loopbackFree, Sleep: time.Sleep}
+	env.Deps.Command = commandName(runtime.GOOS, os.Executable, exec.LookPath)
 	if stdout == io.Writer(os.Stdout) { // the full screen takes over the process's console, so only the real stdout may ask for it
 		env.OpenScreen = ui.OpenOS
 	}

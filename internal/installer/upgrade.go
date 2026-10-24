@@ -407,6 +407,6 @@ func refuseUnfinishedInstall(cmd, pendingPath string, settings func() (GitHub, e
 	if !recordWins(&gh, &pending) {
 		return nil
 	}
-	return fmt.Errorf("an earlier install did not finish: it created the App %s and recorded it in %s, and that App's key is the secret %s now. Finish that install first, with a plain `suiteward install` (it takes the recorded App up), then upgrade",
-		pending.Slug, pendingPath, SecretGitHubAppKey)
+	return fmt.Errorf("an earlier install did not finish: it created the App %s and recorded it in %s, and that App's key is the secret %s now. Finish that install first, with a plain `%s install` (it takes the recorded App up), then upgrade",
+		pending.Slug, pendingPath, SecretGitHubAppKey, cmd)
 }

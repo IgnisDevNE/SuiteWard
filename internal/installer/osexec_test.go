@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -36,7 +37,23 @@ func TestMain(m *testing.M) {
 	case "fail":
 		fmt.Fprint(os.Stderr, "something went wrong")
 		os.Exit(3)
+	case "record": // the arguments after "--", one per line, into the file named by SUITEWARD_TEST_RECORD; the exit code is SUITEWARD_TEST_EXIT
+		args := os.Args
+		for i, a := range args {
+			if a == "--" {
+				args = args[i+1:]
+				break
+			}
+		}
+		if err := os.WriteFile(os.Getenv("SUITEWARD_TEST_RECORD"), []byte(strings.Join(args, "\n")+"\n"), 0o600); err != nil {
+			fmt.Fprint(os.Stderr, err)
+			os.Exit(99)
+		}
+		code, _ := strconv.Atoi(os.Getenv("SUITEWARD_TEST_EXIT"))
+		os.Exit(code)
 	}
+	// No test opens a window of its own: the window is for the real machine, where it would start a real terminal.
+	setupMachine = machine{goos: "linux", getenv: func(string) string { return "" }}
 	os.Exit(m.Run())
 }
 

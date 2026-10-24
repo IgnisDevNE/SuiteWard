@@ -496,7 +496,7 @@ func TestResolveGitHubRulesetFileIsPrivate(t *testing.T) {
 	}
 }
 
-// ttyRuntime is a Runtime where only ExecTTY exists: any other call panics on the nil embedded interface.
+// ttyRuntime is a Runtime where only ExecTTY and its command line exist: any other call panics on the nil embedded interface.
 type ttyRuntime struct {
 	Runtime
 	container string
@@ -509,6 +509,11 @@ func (r *ttyRuntime) ExecTTY(_ context.Context, container string, argv []string)
 	r.calls++
 	r.container, r.argv = container, slices.Clone(argv)
 	return r.err
+}
+
+// ExecTTYCommand is the command line of an engine with a connection, as the real runtimes make it.
+func (r *ttyRuntime) ExecTTYCommand(container string, argv []string) (string, []string) {
+	return "podman", append([]string{"--connection", "pm", "exec", "-it", container}, argv...)
 }
 
 func TestRunSetupPassesTheTerminalThroughAndCapturesNothing(t *testing.T) {

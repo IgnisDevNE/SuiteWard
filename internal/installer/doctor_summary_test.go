@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -199,5 +200,33 @@ func TestTheDoctorRowSaysWhenDoctorCannotRun(t *testing.T) {
 	}
 	if m := doctorSummaryRow.FindString(c.tail()); m != "" {
 		t.Errorf("counts of a doctor that did not run: %q", m)
+	}
+}
+
+// A healthy instance is the counts and nothing else: no warning, and no command to check again.
+func TestTheDoctorRowOfAHealthyInstanceHasNoWarningsAndNothingToCheckAgain(t *testing.T) {
+	f, s := colocated{}.build(t)
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := SaveSettings(path, s); err != nil {
+		t.Fatal(err)
+	}
+	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}}
+	var rows summaryRows
+	rows.addDoctor(context.Background(), env, path, "suiteward doctor")
+	assertReadOnly(t, f)
+	if len(rows) != 1 || rows[0].Key != "Doctor" || !regexp.MustCompile(`^\d+ ok, 0 warnings, 0 failures$`).MatchString(rows[0].Value) {
+		t.Errorf("the rows of a healthy instance are %+v, want the Doctor row alone", rows)
+	}
+}
+
+// The summary names the ruleset file by the name writeRuleset gives it: the two spellings are one.
+func TestTheRulesetFileOfTheSummaryIsTheOneTheInstallWrites(t *testing.T) {
+	dir := t.TempDir()
+	written, err := writeRuleset(dir, "Acme/api", []byte("{}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rulesetPathOf(dir, "Acme/api"); got != written {
+		t.Errorf("the summary looks for %s, the install wrote %s", got, written)
 	}
 }

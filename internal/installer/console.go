@@ -125,12 +125,22 @@ func (b waitBar) set(fraction float64, status string) {
 }
 
 // showSummary shows the summary screen of a finished install or upgrade, and waits for Enter. A plain run has printed its closing lines
-// already, and does not even build the rows (they may ask the service for its status). Ctrl-C there only skips the wait: the work is done.
+// already, and does not even build the rows (they may ask the service for its status, or run doctor). A row without a key is a warning of
+// the summary (summaryRows.warn). Ctrl-C there only skips the wait: the work is done.
 func showSummary(scr *ui.Screen, rows func() []ui.KV) error {
 	if !scr.FullScreen() {
 		return nil
 	}
-	if err := scr.Summary(rows(), nil); err != nil && !errors.Is(err, context.Canceled) {
+	var kept []ui.KV
+	var warnings []string
+	for _, kv := range rows() {
+		if kv.Key == "" {
+			warnings = append(warnings, kv.Value)
+		} else {
+			kept = append(kept, kv)
+		}
+	}
+	if err := scr.Summary(kept, warnings); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil

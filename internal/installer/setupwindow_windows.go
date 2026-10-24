@@ -20,18 +20,22 @@ import (
 const (
 	envSetupBin  = "SUITEWARD_SETUP_BIN"
 	envSetupArgs = "SUITEWARD_SETUP_ARGS"
+	envSetupExit = "SUITEWARD_SETUP_EXIT"
 )
 
 // windowScript is what PowerShell runs in the window: the engine runs as a child on the console of the window, its exit code is kept (a
-// command that cannot start is a failure), the window waits for Enter so that the secret can be copied, then clears the screen and ends
-// with that exit code. It has no double quote: the command line of PowerShell would have to escape it.
+// command that cannot start is a failure) and left in a file for the installer, the window waits for Enter so that the secret can be
+// copied, then clears the screen and ends with that exit code. It has no double quote: the command line of PowerShell would have to
+// escape it.
 const windowScript = `$Host.UI.RawUI.WindowTitle = 'SuiteWard setup'; $code = 1; ` +
 	`try { $p = Start-Process -FilePath $env:SUITEWARD_SETUP_BIN -ArgumentList $env:SUITEWARD_SETUP_ARGS -NoNewWindow -Wait -PassThru; $code = $p.ExitCode } catch { Write-Host $_ }; ` +
+	`Set-Content -LiteralPath $env:SUITEWARD_SETUP_EXIT -Value $code; ` +
 	`Read-Host 'Press Enter to close this window' | Out-Null; Clear-Host; exit $code`
 
-// windowEnv is the environment of the window: the one OSInteractive gives the command, and the command and its arguments as data.
+// windowEnv is the environment of the window: the one OSInteractive gives the command, and the command, its arguments and the file for
+// its exit code as data.
 func windowEnv(environ []string, name string, args []string, exitFile string) []string {
-	return append(childEnv(environ, name, args), envSetupBin+"="+name, envSetupArgs+"="+windows.ComposeCommandLine(args))
+	return append(childEnv(environ, name, args), envSetupBin+"="+name, envSetupArgs+"="+windows.ComposeCommandLine(args), envSetupExit+"="+exitFile)
 }
 
 func platformSetupWindow() windowStarter { return startConsoleWindow }
@@ -51,10 +55,15 @@ func startConsoleWindow(ctx context.Context, name string, args []string) (func()
 		return nil, fmt.Errorf("find the system directory: %w", err)
 	}
 	powershell := filepath.Join(system, "WindowsPowerShell", "v1.0", "powershell.exe")
+	dir, err := os.MkdirTemp("", "suiteward-setup-")
+	if err != nil {
+		return nil, fmt.Errorf("make a directory for the exit code of setup: %w", err)
+	}
+	exitFile := filepath.Join(dir, "exit")
 	// No standard handles: CreateProcess with CREATE_NEW_CONSOLE then gives the child the console it makes. exec.Cmd hands the child NUL
 	// instead, and a console program on NUL ends at once.
 	pid, handle, err := startProcess(powershell, nil, &syscall.ProcAttr{
-		Env:   windowEnv(os.Environ(), bin, args, ""),
+		Env:   windowEnv(os.Environ(), bin, args, exitFile),
 		Files: []uintptr{0, 0, 0},
 		Sys: &syscall.SysProcAttr{
 			CreationFlags: windows.CREATE_NEW_CONSOLE,
@@ -62,6 +71,7 @@ func startConsoleWindow(ctx context.Context, name string, args []string) (func()
 		},
 	})
 	if err != nil {
+		_ = os.RemoveAll(dir) // only the file of an exit code that no window will leave
 		return nil, fmt.Errorf("start %s: %w", powershell, err)
 	}
 	process := windows.Handle(handle)
@@ -69,13 +79,14 @@ func startConsoleWindow(ctx context.Context, name string, args []string) (func()
 	go func() { ended <- waitProcess(process) }()
 	return func() error {
 		defer func() { _ = windows.CloseHandle(process) }()
+		defer func() { _ = os.RemoveAll(dir) }()
 		select {
 		case err := <-ended:
-			return err
+			return windowOutcome(exitFile, err)
 		case <-ctx.Done():
 			killTree(pid, process)
 			<-ended
-			return ctx.Err()
+			return windowOutcome(exitFile, ctx.Err()) // setup that ended well before Ctrl-C is not an interrupted setup
 		}
 	}, nil
 }

@@ -1388,7 +1388,7 @@ func setupHere(ctx context.Context, rt Runtime, scr *ui.Screen, out io.Writer, a
 // setup that did not end well.
 func afterSetup(scr *ui.Screen, err error) error {
 	if err != nil {
-		scr.Page("Setup did not finish", ui.Para("This run has not enrolled the owner. Run suiteward enroll to try again."))
+		scr.Page("Setup did not finish", ui.Para("This run did not see setup finish. If the owner is not enrolled, run suiteward enroll to try again."))
 		return fmt.Errorf("setup failed: %w", err)
 	}
 	scr.Page("Setup finished", ui.Para("The TOTP secret was shown only in the terminal of setup: the installer did not see it, keep it or log it. From now on an approval of this instance needs the code your authenticator shows."))

@@ -134,8 +134,20 @@ func exitCodeError(code string) error {
 	return nil
 }
 
-// windowOutcome says how setup ended in a window that the installer can wait on.
-func windowOutcome(exitFile string, fallback error) error { return fallback }
+// windowOutcome says how setup ended in a window that the installer can wait on: by the exit code that the window left in exitFile before it
+// waited for Enter. Once setup has ended, a window that the user closes (the X, Ctrl-C at its prompt) or that Ctrl-C at the installer
+// closes ends with a code of its own, and that is not how setup ended. Only when no code was left is how the window ended (fallback) the
+// answer.
+func windowOutcome(exitFile string, fallback error) error {
+	data, err := os.ReadFile(filepath.Clean(exitFile))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return fallback
+	case err != nil:
+		return fmt.Errorf("read the exit code of setup: %w", err)
+	}
+	return exitCodeError(strings.TrimSpace(string(data)))
+}
 
 // terminalScript is the script a terminal runs for setup: it removes itself, runs the command in the environment OSInteractive gives
 // it, leaves the exit code in exitDir for the installer, waits for Enter so that the secret can be copied, and clears the screen and

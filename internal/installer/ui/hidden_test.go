@@ -243,3 +243,64 @@ func TestHiddenLineOnAPlainScreenUsesTheKeyModeAndSelectStaysTyped(t *testing.T)
 	}
 	keys.balanced(t, 1) // Select asked by number: the console was not touched again
 }
+
+// A hidden line that its call gave up on (the deadline of the wait for GitHub) leaves a read pending in its goroutine, which cannot be
+// ended. The next read of the screen must not start beside it: the two would share the one buffered input, and the Enter of the user
+// would go to the read that was given up. So the next question waits for that read to end, and what the read took is dropped; and a wait
+// for Enter (the page of a failure) counts the Enter that ends it as its own.
+
+// givenUpHiddenLine opens a screen over a pipe and has a HiddenLine give up on its 50ms call context, which leaves its read pending.
+func givenUpHiddenLine(t *testing.T) (*Screen, *io.PipeWriter) {
+	t.Helper()
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pw.Close() })
+	keys := &fakeKeys{}
+	o := fullOptions(ColorNone)
+	o.Out, o.In, o.Version, o.KeyInput = io.Discard, pr, testVersion, keys.toggle
+	s, err := Open(o)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := s.HiddenLine(ctx, hiddenLabel, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("HiddenLine = %v, want the deadline of the call", err)
+	}
+	return s, pw
+}
+
+func TestAWaitForEnterTakesTheEnterThatEndsAHiddenLineThatWasGivenUp(t *testing.T) {
+	s, pw := givenUpHiddenLine(t)
+	done := make(chan error, 1)
+	go func() { done <- s.Wait() }()
+	time.Sleep(50 * time.Millisecond) // the wait is open
+	go func() { _, _ = io.WriteString(pw, "pasted\r\n") }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Wait = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("one Enter did not end the wait: it went to the read that was given up")
+	}
+}
+
+func TestTheQuestionAfterAHiddenLineThatWasGivenUpGetsItsOwnInput(t *testing.T) {
+	s, pw := givenUpHiddenLine(t)
+	type answer struct {
+		line string
+		err  error
+	}
+	done := make(chan answer, 1)
+	go func() { line, err := s.Prompt("Next: "); done <- answer{line, err} }()
+	time.Sleep(50 * time.Millisecond) // the question is open
+	go func() { _, _ = io.WriteString(pw, "taken\r\nnext\n") }()
+	select {
+	case a := <-done:
+		if a.err != nil || a.line != "next" {
+			t.Fatalf("Prompt = %q, %v, want the line after the one the hidden read took", a.line, a.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the question never got its input: the read that was given up still holds it")
+	}
+}

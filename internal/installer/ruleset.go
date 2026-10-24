@@ -61,13 +61,19 @@ func rulesetJSON(appID int64, testCheck string) ([]byte, error) {
 	return append(raw, '\n'), nil
 }
 
-// writeRuleset writes the ruleset of repo (owner/name) into dir as suiteward-ruleset-<owner>-<name>.json (0600) and returns its path.
+// rulesetPath is where the install writes the ruleset of repo (owner/name): suiteward-ruleset-<owner>-<name>.json in dir.
+func rulesetPath(dir, repo string) string {
+	owner, name, _ := strings.Cut(repo, "/")
+	return filepath.Join(dir, "suiteward-ruleset-"+owner+"-"+name+".json")
+}
+
+// writeRuleset writes the ruleset of repo (owner/name) into dir at rulesetPath (0600) and returns it.
 func writeRuleset(dir, repo string, data []byte) (string, error) {
 	owner, name, _ := strings.Cut(repo, "/")
 	if !repositoryName.MatchString(repo) || owner == "." || owner == ".." || name == "." || name == ".." {
 		return "", fmt.Errorf("repository %q is not an owner/name pair", repo)
 	}
-	path := filepath.Join(dir, "suiteward-ruleset-"+owner+"-"+name+".json")
+	path := rulesetPath(dir, repo)
 	if err := writeFileAtomic(path, data, 0o700); err != nil {
 		return "", err
 	}

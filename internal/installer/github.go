@@ -278,7 +278,7 @@ type githubEnv struct {
 	InstallWait     time.Duration // the installation, 10 minutes
 	PollEvery       time.Duration // 5 seconds
 
-	// Command is how a message names this program (Deps.Command); empty reads suiteward.
+	// Command is how a message names this program (Deps.command()); empty reads suiteward.
 	Command string
 
 	// StoreKey puts a key the flow created into the secret store, right after the conversion and before anything else can fail.
@@ -324,6 +324,7 @@ func (e githubEnv) withDefaults() (githubEnv, error) {
 	if e.PollEvery == 0 {
 		e.PollEvery = 5 * time.Second
 	}
+	e.Command = cmp.Or(e.Command, selfName)
 	e.WebURL = strings.TrimSuffix(e.WebURL, "/")
 	return e, nil
 }
@@ -1110,10 +1111,10 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		return nil, fmt.Errorf("compose the GitHub reader: %w", err)
 	}
 	if pausing {
-		return pauseForImport(ctx, scr, env.command(), env.WebURL, reader, res, repos, files)
+		return pauseForImport(ctx, scr, env.Command, env.WebURL, reader, res, repos, files)
 	}
 	results, lines := readProtections(ctx, reader, res, repos)
-	keepProtection(scr, env.command(), lines)
+	keepProtection(scr, env.Command, lines)
 	return results, nil
 }
 
@@ -1463,6 +1464,3 @@ func wantsNewApp(r *Resolver) bool {
 	v, _ := r.given("github")
 	return strings.EqualFold(strings.TrimSpace(v), newAppAnswer)
 }
-
-// command is how a message of the flow names this program.
-func (e githubEnv) command() string { return cmp.Or(e.Command, selfName) }

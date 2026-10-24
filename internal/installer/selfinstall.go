@@ -288,14 +288,11 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 	if other != "" {
 		def = 1 // No
 	}
-	picked, err := scr.Select("Copy suiteward.exe and add it to your PATH?", yesNo, def)
-	switch {
-	case ctx.Err() != nil || errors.Is(err, io.EOF): // Ctrl-C, or an input that ended: no answer is not a yes
-		return d
-	case err != nil:
-		rows.warn("suiteward.exe was not copied to a folder on your PATH: the answer could not be read: " + err.Error())
-		return d
-	case picked != 0:
+	yes, err := askYesNo(ctx, scr, "Copy suiteward.exe and add it to your PATH?", def)
+	if err != nil {
+		rows.warn("suiteward.exe was not copied to a folder on your PATH: " + err.Error())
+	}
+	if !yes {
 		return d
 	}
 	if err := s.copyTo(exe, dir); err != nil {
@@ -322,6 +319,19 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 	scr.Keep("%s\n", line) // a line of its own in the scrollback, to copy as it is
 	d.Command = selfName
 	return d
+}
+
+// askYesNo asks a question with the arrow keys, Yes in the first row and the default the row def names (0 Yes, 1 No), and says whether the
+// answer is Yes. A Ctrl-C and an input that ended are a No: no answer is not a yes. So is a question that could not be read, which err reports.
+func askYesNo(ctx context.Context, scr *ui.Screen, question string, def int) (yes bool, err error) {
+	picked, err := scr.Select(question, yesNo, def)
+	switch {
+	case ctx.Err() != nil || errors.Is(err, io.EOF):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("the answer could not be read: %w", err)
+	}
+	return picked == 0, nil
 }
 
 // onUserPath says whether dir is on the user's PATH.
@@ -366,14 +376,11 @@ func offerRemoveCopy(ctx context.Context, env Env) {
 		ui.Para("An install of this PC put the suiteward command where a terminal finds it: a copy of the installer, and its folder on your user PATH. The instance itself is gone."),
 		ui.Fields(found...),
 		ui.Para("A copy that a program is running is renamed aside, to suiteward.exe.old: delete that file by hand."))
-	picked, err := scr.Select("Remove the copy and its PATH entry?", yesNo, 1)
-	switch {
-	case ctx.Err() != nil || errors.Is(err, io.EOF): // Ctrl-C, or an input that ended: no answer is not a yes
-		return
-	case err != nil:
-		scr.Warn("The suiteward command was not removed: the answer could not be read: %v\n", err)
-		return
-	case picked != 0:
+	yes, err := askYesNo(ctx, scr, "Remove the copy and its PATH entry?", 1)
+	if err != nil {
+		scr.Warn("The suiteward command was not removed: %v\n", err)
+	}
+	if !yes {
 		return
 	}
 	if onPath {

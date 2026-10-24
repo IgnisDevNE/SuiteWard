@@ -603,7 +603,8 @@ func TestAFailedAnswerIsNotAYes(t *testing.T) {
 
 // ---- the install and the upgrade ----
 
-// installOn runs the co-located install on a full screen of this PC, whose terminal types stdin: the Enter that returns from setup, then the answer to the offer.
+// installOnPC runs the co-located install on a full screen of this PC, whose terminal types stdin: the Enter that starts setup, the Enter that
+// returns from it, then the answer to the offer.
 func installOnPC(t *testing.T, pc *aPC, stdin string, extra ...string) (*harness, *termConsole, error) {
 	t.Helper()
 	withTerminal(t, true)
@@ -623,7 +624,7 @@ func installOnPC(t *testing.T, pc *aPC, stdin string, extra ...string) (*harness
 
 func TestTheSummaryOfAnInstallOffersTheCopyAndSaysWhatToRunInThisTerminal(t *testing.T) {
 	pc := newPC(t)
-	h, c, err := installOnPC(t, pc, "\n1\n")
+	h, c, err := installOnPC(t, pc, "\n\n1\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -659,7 +660,7 @@ func TestARunThatCannotBeAnsweredNeverTouchesThePath(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			pc := newPC(t)
-			_, c, err := installOnPC(t, pc, "\n1\n", extra...)
+			_, c, err := installOnPC(t, pc, "\n\n1\n", extra...)
 			if err != nil {
 				t.Fatal(err)
 			}

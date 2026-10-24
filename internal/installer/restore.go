@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -427,23 +428,39 @@ func tarReadable(path string) error {
 // ---- preview and confirmation ----
 
 func (x *restoreRun) preview() error {
-	if x.scr.FullScreen() {
-		x.previewPage()
+	var fingerprint string
+	var err error
+	if x.scr.FullScreen() { // the key of the safety backup is a fact of the page, and a refusal for want of one comes before it
+		if fingerprint, err = x.chooseSafetyKey(); err != nil {
+			return err
+		}
+		x.previewPage(fingerprint)
+		x.warn()
 	} else {
 		x.showBackup()
 		x.showInstance()
+		x.warn()
+		if fingerprint, err = x.chooseSafetyKey(); err != nil {
+			return err
+		}
+		x.scr.Say("The state of this instance is backed up first, encrypted to the recovery key %s.\n", fingerprint)
 	}
-	x.warn()
-	if err := x.chooseSafetyKey(); err != nil {
-		return err
+	if x.current == nil {
+		x.scr.Warn("This instance does not answer /status, so that backup records its status as unavailable, with the reason.\n")
 	}
 	return x.confirm()
 }
 
-// previewPage is the page of the confirmation on a full screen: what it is, what the backup holds and what runs now. The warnings that
-// follow it stay when the window is too small for all of it, and the facts of the instance that runs go first.
-func (x *restoreRun) previewPage() {
+// previewOrder is the order of the facts on the page of the confirmation. A window that is too small trims the page from its end, so the
+// facts that say what is being replaced by what come first.
+var previewOrder = []string{"Instance", "Release", "Safety backup", "Owner", "Repositories", "Tier", "Made", "Schema", "Backup"}
+
+// previewPage is the page of the confirmation on a full screen: what it is, what runs now, and what the backup holds. The warnings that
+// follow it outlast it when the window is too small for all of it.
+func (x *restoreRun) previewPage(safetyKey string) {
 	source, facts := x.backupFacts(true)
+	facts = append(facts, ui.KV{Key: "Backup", Value: source}, ui.KV{Key: "Safety backup", Value: "the state that is replaced, encrypted to " + safetyKey})
+	slices.SortStableFunc(facts, func(a, b ui.KV) int { return slices.Index(previewOrder, a.Key) - slices.Index(previewOrder, b.Key) })
 	instance := "This instance does not answer /status."
 	if now := x.instanceFacts(); now != nil {
 		parts := make([]string, len(now))
@@ -453,9 +470,9 @@ func (x *restoreRun) previewPage() {
 		instance = "This instance runs: " + strings.Join(parts, ", ") + "."
 	}
 	x.scr.Page("Restore preview",
-		ui.Para("This is a confirmation: nothing changes until you confirm it."),
-		ui.Fields(append([]ui.KV{{Key: "Backup", Value: source}}, facts...)...),
-		ui.Para(instance))
+		ui.Para("This is a confirmation: nothing is replaced before it."),
+		ui.Para(instance+" The backup holds:"),
+		ui.Fields(facts...))
 }
 
 // backupFacts is where the backup is and what it says of itself. A page, which has few rows for it, names the file and shortens the digest.
@@ -524,8 +541,7 @@ func (x *restoreRun) showInstance() {
 }
 
 func (x *restoreRun) warn() {
-	x.scr.Warn("Restoring replaces the database and the artifacts of this instance with the backup's. What was approved, proposed or promoted after the backup is lost, and the default branch on GitHub may be ahead of the restored canonical. " +
-		"To catch up after the restore, approve again what was approved after the backup: open a small pull request from the current default branch (a change outside the protected files), approve the revision its check names, and merge it (details: docs/backup.md).\n")
+	x.scr.Warn("Restoring replaces the database and the artifacts of this instance with the backup's. What was approved, proposed or promoted after the backup is lost, and the default branch on GitHub may be ahead of the restored canonical.\n")
 	x.scr.Warn("Stop any other running instance that uses the same GitHub App before you go on: two instances would publish and promote for the same repositories.\n")
 	if x.plaintext != "" {
 		x.scr.Warn("This backup is a plaintext directory: it is not encrypted, and nothing verifies who made it or that it is untouched. Whoever could read %s could read the TOTP secret in it.\n", x.plaintext)
@@ -543,8 +559,8 @@ func (x *restoreRun) warn() {
 
 // chooseSafetyKey decides how the state that is replaced is backed up, before the confirmation: a refusal then changes nothing. The state
 // is always backed up, whether or not the service answers, because the database is healthy (the restore checks) and its dump and the
-// volume can be taken. The key is the settings' own, else the one of the kit that opens this backup.
-func (x *restoreRun) chooseSafetyKey() error {
+// volume can be taken. The key is the settings' own, else the one of the kit that opens this backup. It returns the fingerprint of the key.
+func (x *restoreRun) chooseSafetyKey() (string, error) {
 	var recipient string
 	switch {
 	case x.inst.s.BackupRecipient != "":
@@ -552,18 +568,14 @@ func (x *restoreRun) chooseSafetyKey() error {
 	case x.identity != nil:
 		recipient = x.identity.Recipient().String()
 	default:
-		return errors.New("the state of this instance is backed up, encrypted, before it is replaced, and this instance has no recovery key (a plaintext backup has none to borrow): run `suiteward backup init` first, then run the restore again")
+		return "", errors.New("the state of this instance is backed up, encrypted, before it is replaced, and this instance has no recovery key (a plaintext backup has none to borrow): run `suiteward backup init` first, then run the restore again")
 	}
 	key, err := archive.ParseRecipient(recipient)
 	if err != nil {
-		return err
+		return "", err
 	}
 	x.safetyKey = key
-	x.scr.Say("The state of this instance is backed up first, encrypted to the recovery key %s.\n", archive.Fingerprint(recipient))
-	if x.current == nil {
-		x.scr.Warn("This instance does not answer /status, so that backup records its status as unavailable, with the reason.\n")
-	}
-	return nil
+	return archive.Fingerprint(recipient), nil
 }
 
 // confirm is the owner typing the instance id of the backup, or --yes with --instance where nobody can type.
@@ -743,6 +755,7 @@ func listTar(r io.Reader) error {
 func (x *restoreRun) finish() {
 	x.scr.Say("Restored the backup of the instance %s (%s) into this instance.\n", x.doc.Instance, x.info.SuitewardVersion)
 	x.scr.Keep("The credentials of this installation are not in a backup, so they are as they were: the database passwords and the MCP token. The owner's TOTP enrollment is the backup's.\n")
+	x.scr.Keep("The restored canonical may be behind the default branch on GitHub: to bring it level, open one corrective pull request from the current default branch (any small change outside the protected files), approve the revision its check names, and merge it (details: docs/backup.md).\n")
 	x.scr.Say("Check the instance with `suiteward doctor`.\n")
 	if x.inst.s.BackupRecipient == "" {
 		x.scr.Warn("No recovery key is set on this instance: run `suiteward backup init` to back it up.\n")

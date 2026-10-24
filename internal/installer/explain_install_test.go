@@ -83,7 +83,7 @@ func TestDockerKeepsItsWarningAndTheTypedYesOnAPageOfItsOwn(t *testing.T) {
 	if !strings.HasPrefix(v.rows[0], "Docker is not recommended") {
 		t.Errorf("the page of the Docker confirmation is titled %q", v.rows[0])
 	}
-	mustSay(t, v, "This is a confirmation", "by typing yes", "daemon runs as root", "in volumes", "Type yes to use Docker anyway")
+	mustSay(t, v, "This is a confirmation", "typing yes accepts the risks below", "daemon runs as root", "in volumes", "Type yes to use Docker anyway")
 	if !strings.Contains(run.output(), "Using Docker") {
 		t.Errorf("the install did not go on with Docker after the typed yes:\n%s", run.output())
 	}
@@ -136,7 +136,7 @@ func TestTheReleaseImageIsExplainedAndEnterKeepsTheOneTheBinaryCarries(t *testin
 	if !strings.HasPrefix(v.rows[0], "Release image") {
 		t.Errorf("the page of the image is titled %q, want \"Release image\"", v.rows[0])
 	}
-	mustSay(t, v, "pinned by its digest", "Enter keeps the release this binary carries", "Release image (pinned by digest)")
+	mustSay(t, v, "pinned by its digest", "Enter keeps the release this binary carries", "Release image (Enter keeps the default)")
 }
 
 func TestTheImageOfAnInstalledStackIsTheOneEnterKeeps(t *testing.T) {
@@ -150,7 +150,7 @@ func TestTheImageOfAnInstalledStackIsTheOneEnterKeeps(t *testing.T) {
 	}
 	var image frameView
 	for i := range run.in.shown {
-		if v := run.question(t, i); strings.Contains(v.text(), "Release image (pinned by digest)") {
+		if v := run.question(t, i); strings.Contains(v.text(), "Release image (Enter keeps the default)") {
 			image = v
 			break
 		}

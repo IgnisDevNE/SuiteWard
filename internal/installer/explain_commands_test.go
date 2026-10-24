@@ -303,9 +303,12 @@ func TestThePurgePageSaysWhatItDeletesInABoxAndThatTheTypedIdIsAConfirmation(t *
 	if !strings.HasPrefix(v.rows[0], "Remove everything of this instance") {
 		t.Errorf("the page is titled %q, want \"Remove everything of this instance\"", v.rows[0])
 	}
-	mustSay(t, v, "Nothing is removed until you confirm", testInstance, "this deletes the database and the artifacts", "Type the instance id "+testInstance+" to confirm")
-	if v.row("╭") == "" || !strings.HasPrefix(strings.TrimSpace(v.row("this deletes the database")), "│") {
+	mustSay(t, v, "Nothing is removed until you confirm", testInstance, "This deletes the database, the artifacts, the secrets and the settings of instance "+testInstance+".", "Type the instance id "+testInstance+" to confirm")
+	if v.row("╭") == "" || !strings.HasPrefix(strings.TrimSpace(v.row("This deletes the database")), "│") {
 		t.Errorf("what the purge deletes is not in a box:\n%s", v.dump())
+	}
+	if strings.Contains(v.text(), "?") {
+		t.Errorf("the page asks a question besides the typed id, which is the confirmation:\n%s", v.dump())
 	}
 }
 

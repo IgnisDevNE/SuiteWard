@@ -85,8 +85,8 @@ func TestCtrlCBeforeTheClosingChecksOnlySkipsThem(t *testing.T) {
 		t.Fatalf("exit %d with stderr %q: a Ctrl-C after setup only skips what remains", code, stderr.String())
 	}
 	tail := c.tail()
-	if !strings.Contains(tail, "Doctor: interrupted\n") || strings.Contains(tail, "failures") {
-		t.Errorf("the summary reports the checks that were never run:\n%s", tail)
+	if !strings.Contains(tail, "Doctor: skipped (Ctrl-C)\n") || strings.Contains(tail, "Doctor: interrupted") || strings.Contains(tail, "failures") {
+		t.Errorf("the summary reports the checks that were never run, or says they were interrupted:\n%s", tail)
 	}
 }
 

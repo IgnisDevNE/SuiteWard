@@ -453,7 +453,7 @@ func (x *restoreRun) preview() error {
 
 // previewOrder is the order of the facts on the page of the confirmation. A window that is too small trims the page from its end, so the
 // facts that say what is being replaced by what come first.
-var previewOrder = []string{"Instance", "Release", "Safety backup", "Owner", "Repositories", "Tier", "Made", "Schema", "Backup"}
+var previewOrder = []string{"Instance", "Release", "Owner", "Repositories", "Tier", "Made", "Schema", "Safety backup", "Backup"}
 
 // previewPage is the page of the confirmation on a full screen: what it is, what runs now, and what the backup holds. The warnings that
 // follow it outlast it when the window is too small for all of it.

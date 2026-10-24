@@ -70,6 +70,7 @@ func OSEnv(stdout io.Writer) Env {
 	term.Out = stdout
 	env := Env{Deps: OSDeps(), Term: term, PortFree: loopbackFree, Sleep: time.Sleep}
 	env.Deps.Command = commandName(runtime.GOOS, os.Executable, exec.LookPath)
+	env.Self = osSelfInstall()
 	if stdout == io.Writer(os.Stdout) { // the full screen takes over the process's console, so only the real stdout may ask for it
 		env.OpenScreen = ui.OpenOS
 	}
@@ -331,6 +332,9 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 		if answers, err = LoadAnswers(path); err != nil {
 			return err
 		}
+	}
+	if _, answered := flags["answers"]; answered || flags["yes"] == "true" { // nobody to ask, or told not to ask: the PATH is changed only by a person who answers
+		env.Self = nil
 	}
 	plain, err := wantsPlain(flags, answers)
 	if err != nil {

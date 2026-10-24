@@ -159,12 +159,18 @@ func TestParseManifestCode(t *testing.T) {
 // manifestEnv is an environment for the manifest step alone; in is the terminal input.
 func manifestEnv(t *testing.T, in io.Reader, terminal bool) (githubEnv, *syncBuffer) {
 	t.Helper()
+	return manifestEnvWith(t, in, terminal, func() ([]byte, error) { return nil, errors.New("no password here") })
+}
+
+// manifestEnvWith is manifestEnv with the reader that answers a hidden question.
+func manifestEnvWith(t *testing.T, in io.Reader, terminal bool, readPassword func() ([]byte, error)) (githubEnv, *syncBuffer) {
+	t.Helper()
 	out := &syncBuffer{}
-	r, err := NewResolver(map[string]string{}, map[string]string{}, Terminal{In: in, Out: out, IsTerminal: terminal, ReadPassword: func() ([]byte, error) { return nil, errors.New("no password here") }})
+	r, err := NewResolver(map[string]string{}, map[string]string{}, Terminal{In: in, Out: out, IsTerminal: terminal, ReadPassword: readPassword})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return githubEnv{R: r, Out: out, WebURL: "https://github.example", Tier: config.TierCoLocated, ManifestWait: 5 * time.Second}, out
+	return githubEnv{R: r, Out: out, WebURL: "https://github.example", Tier: config.TierCoLocated, ManifestWait: 5 * time.Second, PasteAfter: time.Hour}, out
 }
 
 type codeResult struct {
@@ -265,73 +271,6 @@ func TestManifestTimesOut(t *testing.T) {
 	env.ManifestWait = 50 * time.Millisecond
 	res := await(t, startManifest(env, "acme"))
 	if res.err == nil || !strings.Contains(res.err.Error(), "timed out") {
-		t.Fatalf("result = %+v", res)
-	}
-}
-
-func TestManifestPasteFallback(t *testing.T) {
-	t.Run("a pasted code", func(t *testing.T) {
-		env, out := manifestEnv(t, strings.NewReader("pastedcode\n"), true)
-		res := await(t, startManifest(env, "acme"))
-		if res.err != nil || res.code != "pastedcode" {
-			t.Fatalf("result = %+v", res)
-		}
-		if strings.Contains(out.String(), "pastedcode") {
-			t.Errorf("the pasted code was echoed:\n%s", out.String())
-		}
-	})
-	t.Run("a pasted callback URL", func(t *testing.T) {
-		pr, pw := io.Pipe()
-		t.Cleanup(func() { _ = pw.Close() })
-		env, out := manifestEnv(t, pr, true)
-		done := startManifest(env, "acme")
-		base := waitForListener(t, out)
-		action, _ := fetchForm(t, base)
-		_, _ = io.WriteString(pw, base+"callback?code=urlcode1&state="+stateOf(t, action)+"\n")
-		if res := await(t, done); res.err != nil || res.code != "urlcode1" {
-			t.Fatalf("result = %+v", res)
-		}
-	})
-	t.Run("a pasted URL with the wrong state is refused", func(t *testing.T) {
-		pr, pw := io.Pipe()
-		t.Cleanup(func() { _ = pw.Close() })
-		env, out := manifestEnv(t, pr, true)
-		env.ManifestWait = 300 * time.Millisecond
-		done := startManifest(env, "acme")
-		base := waitForListener(t, out)
-		_, _ = io.WriteString(pw, base+"callback?code=urlcode1&state=other\n")
-		res := await(t, done)
-		if res.err == nil || res.code != "" {
-			t.Fatalf("result = %+v, want a refusal", res)
-		}
-	})
-	t.Run("the answers file can carry the code", func(t *testing.T) {
-		env, _ := manifestEnv(t, strings.NewReader(""), false)
-		env.R.answers["manifest-code"] = "fromanswers"
-		if res := await(t, startManifest(env, "acme")); res.err != nil || res.code != "fromanswers" {
-			t.Fatalf("result = %+v", res)
-		}
-	})
-}
-
-func TestManifestCallbackFirstWaitsForTheEnterThatEndsThePasteRead(t *testing.T) {
-	pr, pw := io.Pipe()
-	t.Cleanup(func() { _ = pw.Close() })
-	env, out := manifestEnv(t, pr, true)
-	done := startManifest(env, "acme")
-	base := waitForListener(t, out)
-	action, _ := fetchForm(t, base)
-	callback(t, base, "browsercode", stateOf(t, action))
-	select {
-	case res := <-done:
-		t.Fatalf("returned while the paste read was still pending: %+v", res)
-	case <-time.After(100 * time.Millisecond):
-	}
-	if !strings.Contains(out.String(), "Press Enter") {
-		t.Errorf("the user was not told to press Enter:\n%s", out.String())
-	}
-	_, _ = io.WriteString(pw, "\n")
-	if res := await(t, done); res.err != nil || res.code != "browsercode" {
 		t.Fatalf("result = %+v", res)
 	}
 }

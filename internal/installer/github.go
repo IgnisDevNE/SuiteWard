@@ -253,6 +253,7 @@ type githubEnv struct {
 	ManifestPort    int    // 0: any free port; --manifest-port for the isolated SSM port forward
 	SkipRulesetWait bool
 	ManifestWait    time.Duration // the manifest code, 15 minutes
+	PasteAfter      time.Duration // how long the callback may take before the paste is offered, 2 minutes
 	InstallWait     time.Duration // the installation, 10 minutes
 	PollEvery       time.Duration // 5 seconds
 

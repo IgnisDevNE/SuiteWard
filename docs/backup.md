@@ -51,7 +51,7 @@ suiteward backup init
 It needs the installer's settings file and a service that answers `/status`: the instance id names the kit. It makes a key pair of the hybrid post-quantum kind of age, ML-KEM-768 with X25519, because a backup lives for years. Then it takes three steps:
 
 1. **Keys.** It reads the instance id from `/status` and makes the pair. A key that is set already stops it, with its fingerprint: replacing it is `--replace` (below).
-2. **Kit.** It writes the **recovery kit**, `suiteward-recovery-kit-<instance>.txt` in the current directory, or the file that `--kit PATH` names. The kit is a text file that only your user can read (mode 0600, or an owner-only ACL on Windows). It holds the private key, the line that starts with `AGE-SECRET-KEY-PQ-1`, with comments that name the instance, the public key and its fingerprint. It never overwrites a file: name another with `--kit`, or move the old one away. It warns that the kit is the only way to read a backup, and asks you to copy it off this machine, for example into a password manager, and to delete this copy. On a terminal you then type `stored`; without a terminal, say it with `--yes`. A kit that was not confirmed is removed, and nothing is changed.
+2. **Kit.** It writes the **recovery kit**, `suiteward-recovery-kit-<instance>.txt` in the current directory, or the file that `--kit PATH` names. The kit is a text file that only your user can read (mode 0600, or an owner-only ACL on Windows). It holds the private key, the line that starts with `AGE-SECRET-KEY-PQ-1`, with comments that name the instance, the public key and its fingerprint. It never overwrites a file: name another with `--kit`, or move the old one away. It warns that the kit is the only way to read a backup, and that whoever has it reads every backup, and asks you to copy it off this machine, for example into a password manager, and to delete this copy. This is the most important warning of the command: on a full screen it is a red box, and in plain mode a warning line. On a terminal you then type `stored` (a full screen first says that this is a confirmation, because nothing can see whether you copied the kit); without a terminal, say it with `--yes`. A kit that was not confirmed is removed, and nothing is changed.
 3. **Settings.** It stores only the public key, as `backup_recipient: age1pq1...` in the settings file (about 2000 characters). The private key never reaches the settings, a log or an error.
 
 It prints the fingerprint of the key (`SHA256:...`), which is also in the kit, so that you can tell kits apart. The key is the trusted configuration of the instance. Through SuiteWard, a pull request, a `.suiteward.yml` or an MCP call cannot change who a backup is encrypted to. Whatever runs as your user can still write the settings file, run `suiteward backup init --replace`, or (while no key is set) give `--backup-recipient` to an upgrade: on the co-located tier that includes the coding agent, and on the isolated tier whoever runs as the service account.
@@ -111,7 +111,7 @@ suiteward restore <backup.tar.age> [--kit PATH] [--yes --instance ID] [--backup-
 | Flag | Meaning |
 | --- | --- |
 | `<backup.tar.age>` | The backup file. Name it, or `--plaintext-dir`, and not both. |
-| `--kit PATH` | The recovery kit file. Without it the command asks for the private key line of the kit, hidden on a terminal, or reads it from standard input (a pipe). A key is never an argument: it would show in the process list. |
+| `--kit PATH` | The recovery kit file. Without it the command asks for the private key line of the kit, hidden on a terminal (a full screen first has a page that says what to paste, and that `--kit` reads a file instead), or reads it from standard input (a pipe). A key is never an argument: it would show in the process list. |
 | `--yes --instance ID` | Without a terminal: confirm the restore. `--instance` is the instance id of the backup, and a different id refuses. A terminal asks you to type the id. |
 | `--backup-dir DIR` | Where the backup of the state that is replaced goes (default: the backup folder of [section 2](#take-a-backup)). The restore unpacks the backup there too. |
 | `--plaintext-dir DIR` | Restore a directory of an earlier release instead of a file (below). |
@@ -120,14 +120,14 @@ suiteward restore <backup.tar.age> [--kit PATH] [--yes --instance ID] [--backup-
 The command takes seven steps. The first two change nothing.
 
 1. **Verify.** It checks that the database container runs and that the application role exists. It removes the private directories that a killed backup or restore left. It opens the backup with the kit and reads the whole file twice: once to check every member against the manifest, and once to unpack it into a private directory, `.suiteward-restore-<random>` (mode 0700, or an owner-only ACL on Windows), in the backup folder. The two readings must agree. The unpacked files are plaintext, so the directory is removed when the command ends, on a failure too. It then checks that the dump ends as `pg_dump` ends a dump, that the artifact tar can be listed to its end, and that the release of the backup is the release that runs. All of that happens before the instance is touched.
-2. **Preview.** It shows what the backup holds (when it was made, its release and image digest, the instance, the tier, the owner, the repositories and the schema version) beside what the instance runs. It warns when the backup is of another instance than the one that runs here (after the restore this instance is the backup's, and the authenticator entry of the backup is the one that works), when the tiers differ, when the backup is a plaintext directory, and when its status was not recorded. Then you confirm: on a terminal, type the instance id of the backup; otherwise pass `--yes --instance <id>`. Anything else ends the command with nothing changed. To check a backup and its kit without restoring, answer no here.
+2. **Preview.** It shows what the backup holds (when it was made, its release and image digest, the instance, the tier, the owner, the repositories and the schema version) beside what the instance runs. On a full screen this is a page that says it is a confirmation, with the facts that say what is replaced by what first (the instance, the release, the owner, the repositories, the tier, the schema and the key that the safety backup is encrypted to), then the warnings. It warns when the backup is of another instance than the one that runs here (after the restore this instance is the backup's, and the authenticator entry of the backup is the one that works), when the tiers differ, when the backup is a plaintext directory, and when its status was not recorded. Then you confirm: on a terminal, type the instance id of the backup (the question says that it is a confirmation: the typed id is there so that an Enter out of habit, a script or the wrong instance cannot restore); otherwise pass `--yes --instance <id>`. Anything else ends the command with nothing changed. To check a backup and its kit without restoring, answer no here.
 3. **Safety backup.** The state that is replaced is always backed up first, encrypted, to the key in the settings, or to the key of the kit that opens this backup when the settings have none. A service that does not answer is backed up too, with its status recorded as unavailable and the reason. The command prints where that backup is. Going back is `suiteward restore` of that file with its kit.
 4. **Stop.** It stops the service. Co-located, the service container is removed, because a volume that a container uses cannot be replaced; isolated, both units stop.
 5. **Load.** It empties the database and loads the dump as one transaction: `BEGIN`, drop and create the `public` schema (the application keeps every table in it), the dump, and `COMMIT` as the very last statement. A load that is cut short, because a statement fails, you press Ctrl-C or the input ends, is never committed, and the server rolls it back. Then it deletes the artifact volume, creates it empty and imports the tar (Docker through a throwaway container).
 6. **Start.** It runs the migration, which applies the grants to `suiteward_app` again and any migration the dump lacks, then starts the service as the settings describe it, and waits for `/status`.
 7. **Compare.** It compares what the service reports with the status of the backup: the release, the schema version and the owner. A difference is an error. An integrity check that `failed` is an error too: the artifacts and the database do not come from one moment. One that has not passed yet is a note, because it runs when the service starts, after each promotion and every hour: look at `suiteward doctor` in a moment.
 
-At the end the command says what it restored, where the backup before the restore is, and to run `suiteward doctor`.
+At the end the command says what it restored, where the backup before the restore is, and to run `suiteward doctor`. It also says how to bring the canonical level with the default branch, which a restore can leave ahead: open one corrective pull request from the current default branch (any small change outside the protected files), approve the revision its check names, and merge it (see "What a restore loses" above). On a full screen that line is on the summary page, which the screen keeps when it closes; in plain mode it is a kept line.
 
 **What it does not restore.** The credentials of the installation are not in a backup, so they stay as they were: the database passwords, the MCP token and the GitHub App key, and the settings and the units. The owner's TOTP enrollment is the backup's: use the authenticator entry that names the instance of the backup (`SuiteWard:<login> (<tier> <instance>)`). If the instance has no recovery key, the command ends with a warning to run `suiteward backup init`.
 
@@ -237,7 +237,7 @@ Run the commands in the shell of the `suiteward` account, which [the manual back
    Then wait until the service is ready, as in step 5 of the manual backup in Appendix A.
 
    ```bash
-   curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
+   curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:<http port>/readyz
    ```
 
    Expect `{"schemaVersion":N,"status":"ready"}`. If it gives up, run it again until it answers.
@@ -263,13 +263,13 @@ Run every `podman` command in the PowerShell session where you selected the root
 3. Wait until the service is ready.
 
    ```powershell
-   curl.exe --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
+   curl.exe --retry 10 --retry-connrefused -fsS http://127.0.0.1:<http port>/readyz
    ```
 
-   Expect `{"schemaVersion":N,"status":"ready"}`. If it gives up, run it again until it answers. If `127.0.0.1:8081` does not answer from Windows, or `curl.exe` keeps retrying, stop it with Ctrl-C and run the check through the Podman machine, as its rootless user, as in step 5 of the manual backup in Appendix A:
+   Expect `{"schemaVersion":N,"status":"ready"}`. If it gives up, run it again until it answers. If `127.0.0.1:<http port>` does not answer from Windows, or `curl.exe` keeps retrying, stop it with Ctrl-C and run the check through the Podman machine, as its rootless user, as in step 5 of the manual backup in Appendix A:
 
    ```powershell
-   podman machine ssh --username user "curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz"
+   podman machine ssh --username user "curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:<http port>/readyz"
    ```
 
 ### Enroll, propose and approve (both tiers)
@@ -305,19 +305,19 @@ These steps are the same on both tiers. Run the first one in the shell of your f
 4. Read `/status`. Expect `owner` to show the new enrollment, and each `github` entry to show its `protection` result and no `bootstrap` error. On the isolated host, in the `suiteward` shell:
 
    ```bash
-   curl -sS http://127.0.0.1:8081/status
+   curl -sS http://127.0.0.1:<http port>/status
    ```
 
    On the co-located PC, in PowerShell:
 
    ```powershell
-   curl.exe -sS http://127.0.0.1:8081/status
+   curl.exe -sS http://127.0.0.1:<http port>/status
    ```
 
-   If `127.0.0.1:8081` does not answer from Windows, or `curl.exe` keeps retrying, stop it with Ctrl-C and run it through the Podman machine, as its rootless user:
+   If `127.0.0.1:<http port>` does not answer from Windows, or `curl.exe` keeps retrying, stop it with Ctrl-C and run it through the Podman machine, as its rootless user:
 
    ```powershell
-   podman machine ssh --username user "curl -sS http://127.0.0.1:8081/status"
+   podman machine ssh --username user "curl -sS http://127.0.0.1:<http port>/status"
    ```
 
 
@@ -343,6 +343,8 @@ These flows are the runbook of the releases before the encrypted backup. Use the
 - the service is down and cannot be started, so `suiteward backup` cannot read its status.
 
 They are written for Podman. Docker has no `volume export` and `volume import`, so they do not cover a Docker stack; `suiteward backup` and `suiteward restore` do.
+
+**The HTTP port.** The commands below write it `<http port>`: 27081 by default from the release that made it the default (M1.14), 8081 on a stack that was installed before (an upgrade never moves a port), or the port you gave `--http-port`. It is `http_port` in the settings file, and `podman port suiteward` shows it.
 
 > [!WARNING]
 > These flows write the dump and the artifacts in plaintext, and the dump holds the TOTP secret, so anyone with the files can approve as the owner. Keep every file offline and encrypted at rest by your own means: these flows do not encrypt.
@@ -414,13 +416,13 @@ The command opens a new shell and waits for commands, so it prints nothing. Chec
 5. Wait until the service is ready, then check `/status` and save it next to the files. Its `version` is the version of these files, and the restore is checked against this saved copy.
 
    ```bash
-   curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
+   curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:<http port>/readyz
    ```
 
    Expect `{"schemaVersion":N,"status":"ready"}`. The service needs a moment after the start, and the command retries while nothing answers. If it gives up (curl does not retry a connection that is reset), run it again until it answers.
 
    ```bash
-   curl -sS -o ~/suiteward-backup/status.json http://127.0.0.1:8081/status
+   curl -sS -o ~/suiteward-backup/status.json http://127.0.0.1:<http port>/status
    ```
 
    Expect `status.json` to hold the status object, with `version`, `schemaVersion`, `owner` and `outbox`.
@@ -493,13 +495,13 @@ Run every `podman` command in the PowerShell session where you selected the root
 5. Wait until the service is ready, then check `/status` and save it next to the files. Its `version` is the version of these files, and the restore is checked against this saved copy.
 
    ```powershell
-   curl.exe --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
+   curl.exe --retry 10 --retry-connrefused -fsS http://127.0.0.1:<http port>/readyz
    ```
 
    Expect `{"schemaVersion":N,"status":"ready"}`. The service needs a moment after the start, and the command retries while nothing answers.
 
    ```powershell
-   curl.exe -sS -o $HOME\suiteward-backup\status.json http://127.0.0.1:8081/status
+   curl.exe -sS -o $HOME\suiteward-backup\status.json http://127.0.0.1:<http port>/status
    ```
 
    Expect `status.json` to hold the status object, with `version`, `schemaVersion`, `owner` and `outbox`.
@@ -507,11 +509,11 @@ Run every `podman` command in the PowerShell session where you selected the root
    The port is published inside the Podman machine and may not answer from Windows, as the status command that `suiteward install` prints shows. A `curl.exe` that cannot connect keeps retrying for minutes: stop it with Ctrl-C, then run both commands through the Podman machine as its rootless user, `podman machine ssh --username user` (the default ssh user is `root`, which is the rootful store and does not hold this stack). Redirect on the Windows side to save the file:
 
    ```powershell
-   podman machine ssh --username user "curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz"
+   podman machine ssh --username user "curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:<http port>/readyz"
    ```
 
    ```powershell
-   podman machine ssh --username user "curl -sS http://127.0.0.1:8081/status" > $HOME\suiteward-backup\status.json
+   podman machine ssh --username user "curl -sS http://127.0.0.1:<http port>/status" > $HOME\suiteward-backup\status.json
    ```
 
 6. Keep a copy of the backup folder off this machine, offline and encrypted, as the warning at the top of this appendix says. No command.
@@ -661,13 +663,13 @@ Run the commands in the shell of the `suiteward` account, which [the manual back
 8. Wait until the service is ready, then check `/status` against `status.json`.
 
    ```bash
-   curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
+   curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:<http port>/readyz
    ```
 
    Expect `{"schemaVersion":N,"status":"ready"}`. If it gives up, run it again until it answers.
 
    ```bash
-   curl -sS http://127.0.0.1:8081/status
+   curl -sS http://127.0.0.1:<http port>/status
    ```
 
    Expect the same `version` as in `status.json`, the same `schemaVersion` as before, the same `owner` login, and `outbox.failed` 0. If GitHub is configured, each `github` entry shows `integrity` `passed`; it appears after the first check, which runs when the service starts, right after each promotion and then every hour, so wait a moment for it. If `integrity` reports `failed`, the artifacts and the database come from different moments: restore both from the same backup.
@@ -759,25 +761,25 @@ The installer creates the volumes and the roles only when it runs, and a run als
 8. Wait until the service is ready, then check `/status` against `status.json`.
 
    ```powershell
-   curl.exe --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz
+   curl.exe --retry 10 --retry-connrefused -fsS http://127.0.0.1:<http port>/readyz
    ```
 
    Expect `{"schemaVersion":N,"status":"ready"}`. If it gives up, run it again until it answers.
 
    ```powershell
-   curl.exe -sS http://127.0.0.1:8081/status
+   curl.exe -sS http://127.0.0.1:<http port>/status
    ```
 
    Expect the same `version` as in `status.json`, the same `schemaVersion` as before, the same `owner` login, and `outbox.failed` 0. If GitHub is configured, each `github` entry shows `integrity` `passed`; it appears after the first check, which runs when the service starts, right after each promotion and then every hour, so wait a moment for it. If `integrity` reports `failed`, the artifacts and the database come from different moments: restore both from the same backup.
 
-   If `127.0.0.1:8081` does not answer from Windows, or `curl.exe` keeps retrying, stop it with Ctrl-C and run both commands through the Podman machine, as its rootless user, as in step 5 of the manual backup above:
+   If `127.0.0.1:<http port>` does not answer from Windows, or `curl.exe` keeps retrying, stop it with Ctrl-C and run both commands through the Podman machine, as its rootless user, as in step 5 of the manual backup above:
 
    ```powershell
-   podman machine ssh --username user "curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:8081/readyz"
+   podman machine ssh --username user "curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:<http port>/readyz"
    ```
 
    ```powershell
-   podman machine ssh --username user "curl -sS http://127.0.0.1:8081/status"
+   podman machine ssh --username user "curl -sS http://127.0.0.1:<http port>/status"
    ```
 
 On a new PC, put GitHub back now: the stack runs without it. Run the installer again with the App's values and key file. The restore brought the enrollment back, so the installer finds an owner in `/status` and skips setup: the TOTP secret stays as it was. `--ruleset-imported yes` skips the wait for a ruleset import: the rulesets are already on GitHub.

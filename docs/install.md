@@ -210,7 +210,7 @@ Until setup succeeds, SuiteWard comments nothing and publishes no `SuiteWard / C
 Before you start:
 
 - Have your authenticator app ready.
-- Turn off recording of the terminal session. Setup prints the `otpauth://` URI and the base32 secret to the terminal, and a recorded session keeps them. If recording was on, turn it off and run setup again. That replaces the secret, so the old one stops working.
+- Turn off recording of the terminal session. Setup prints the `otpauth://` URI and the base32 secret to its terminal (the window of its own, or yours), and a recorded session keeps them. Make sure that no coding agent can read that terminal. If recording was on, turn it off and run setup again. That replaces the secret, so the old one stops working.
 
 Setup takes your login and one `--test-check` for each configured repository (`suiteward enroll` fills them in, see "Enroll again" below). The check name is the exact name of the required status check that runs your tests, as it appears in that repository's ruleset. Do not use `SuiteWard / Contract`: SuiteWard publishes that check itself. Quote each `--test-check` value, for example `--test-check 'owner/name=CI / test'`: check names often contain spaces and slashes, and an unquoted value would be split by the shell.
 

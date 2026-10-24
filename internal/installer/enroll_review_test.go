@@ -47,6 +47,8 @@ func TestSetupRefusesTheContractCheckAsATestCheck(t *testing.T) {
 	})
 }
 
+// Enroll refuses the co-located tier when there is no settings file, so the message does not offer it: it names the isolated tier and the
+// `install --upgrade` that makes the file.
 func TestEnrollOnLinuxWithoutSettingsNeedsTheTier(t *testing.T) {
 	withTerminal(t, true)
 	useDefaultConfigDir(t)
@@ -54,7 +56,7 @@ func TestEnrollOnLinuxWithoutSettingsNeedsTheTier(t *testing.T) {
 	h.status = statusIs(statusNoOwner)
 	term, _ := fakeTerminal(true, "")
 	code, stderr := h.enrollWith(term, "--owner", "alice")
-	if code != 1 || !strings.Contains(stderr, "pass --tier isolated") || !strings.Contains(stderr, "--tier co-located") || len(h.f.tty) != 0 {
+	if code != 1 || !strings.Contains(stderr, "pass --tier isolated") || !strings.Contains(stderr, "suiteward install --upgrade") || strings.Contains(stderr, "--tier co-located") || len(h.f.tty) != 0 {
 		t.Fatalf("exit %d, stderr %q, setup %v", code, stderr, h.f.tty)
 	}
 }

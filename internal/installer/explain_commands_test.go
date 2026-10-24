@@ -43,8 +43,10 @@ func TestTheRestorePageSaysThatTheTypedIdIsAConfirmationAndExplainsWhatIsLost(t 
 		"approve the revision its check names",
 		"Type the instance id "+testInstance+" to confirm",
 	)
-	if strings.Contains(v.text(), trimmed) {
-		t.Errorf("the restore page is trimmed at %dx%d:\n%s", termWidth, termHeight, v.dump())
+	// What the backup holds is trimmed first when the window is small, and here it must still be there: the id the owner is about to type
+	// is one of its facts.
+	if row := v.row("Instance"); !strings.Contains(row, testInstance) {
+		t.Errorf("the page does not show the instance of the backup (row %q):\n%s", row, v.dump())
 	}
 	if out := run.output(); strings.Contains(out, "section 3") {
 		t.Errorf("the screen still points to a section of a document:\n%s", out)

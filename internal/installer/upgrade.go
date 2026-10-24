@@ -274,7 +274,7 @@ func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, di
 func upgraded(scr *ui.Screen, previous, image, backupPath, doctor string) {
 	scr.Say("Upgraded to %s.\n", digestOf(image))
 	scr.Keep("The backup is in %s. It holds the TOTP secret, encrypted to your recovery key: keep its kit off this machine.\n", backupPath)
-	scr.Keep("To go back, install the previous release %s and run `suiteward restore %s` with that kit (docs/backup.md, section 3; migrations only go forward).\n", digestOf(previous), quoteArg(backupPath))
+	scr.Keep("To go back, install the previous release %s, then run `suiteward restore %s` with that kit (migrations only go forward, so the release must be the previous one).\n", digestOf(previous), quoteArg(backupPath))
 	scr.Say("Check the instance with `%s`.\n", doctor)
 }
 
@@ -310,7 +310,7 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 			return false, refuse
 		}
 	}
-	const manual = "take the backup by hand instead (docs/backup.md, section 2), then upgrade"
+	const manual = "take the backup by hand instead (dump the database and copy the artifacts volume yourself; details: docs/backup.md, Appendix A), then upgrade"
 	if err := start(ctx); err != nil {
 		return false, fmt.Errorf("start the installed service: %w; %s", err, manual)
 	}

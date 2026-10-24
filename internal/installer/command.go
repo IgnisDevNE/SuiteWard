@@ -358,11 +358,11 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 	}
 	var tier string
 	if upgrade { // an upgrade works on what is installed: it never asks which tier
-		if err := tierNeeded(r, haveSaved, env.Deps.GOOS); err != nil {
+		if err := tierNeeded(r, haveSaved, env.Deps.GOOS, offerBothTiers); err != nil {
 			return err
 		}
 		tier = r.preset("tier", string(saved.Tier))
-	} else if tier, err = r.Select("tier", "Installation tier", tierChoices, string(saved.Tier)); err != nil {
+	} else if tier, err = chooseTier(r, saved.Tier); err != nil {
 		return err
 	}
 	switch config.Tier(tier) {
@@ -484,6 +484,8 @@ const dockerWarning = `Docker is allowed on this PC, but Podman is strongly reco
 
 // confirmDocker prints the warning and requires an explicit yes. The warning is one Warn: the full screen wraps its lines and keeps it.
 func confirmDocker(r *Resolver) error {
+	r.explain([]string{"accept-docker"}, "Docker is not recommended",
+		ui.Para("This is a confirmation: SuiteWard uses Docker only if you accept the risks below by typing yes. Choose Podman to avoid them."))
 	r.screen.Warn("%s", dockerWarning)
 	answer, err := r.Value("accept-docker", "Type yes to use Docker anyway", "no")
 	if err != nil {
@@ -496,13 +498,17 @@ func confirmDocker(r *Resolver) error {
 }
 
 // tierNeeded refuses a command that works on what is installed when it cannot tell the tier: a host installed by hand has no
-// settings file, and the default tier would be a guess (on Linux that is the isolated host).
-func tierNeeded(r *Resolver, haveSaved bool, goos string) error {
+// settings file, and the default tier would be a guess (on Linux that is the isolated host). coLocated is what the message offers for a
+// co-located stack: a command that cannot work on one without its settings file says how to get the file instead.
+func tierNeeded(r *Resolver, haveSaved bool, goos, coLocated string) error {
 	if _, given := r.given("tier"); !given && !haveSaved && goos == "linux" {
-		return errors.New("this host has no settings file, so the tier cannot be told: pass --tier isolated (as the service account) or --tier co-located")
+		return errors.New("this host has no settings file, so the tier cannot be told: pass --tier isolated (as the service account) or " + coLocated)
 	}
 	return nil
 }
+
+// offerBothTiers is what tierNeeded offers for a co-located stack to the commands that find one without a settings file.
+const offerBothTiers = "--tier co-located"
 
 var plainArg = regexp.MustCompile(`^[A-Za-z0-9_+=.,:/\\@%-]+$`)
 
@@ -524,4 +530,28 @@ func quoteArg(arg string) string {
 var tierChoices = []ui.Choice{
 	{Name: string(config.TierCoLocated), Desc: "on this PC, next to the agent"},
 	{Name: string(config.TierIsolated), Desc: "a separate user, VM or host"},
+}
+
+// The steps of the install of each tier. The tier question shows those of the tier it offers first, so that the step column is there from
+// the first question; the flow of the tier that was chosen sets its own again.
+var (
+	colocatedInstallSteps = []string{"Environment", "Checks", "GitHub", "Start", "Owner", "Done"}
+	isolatedInstallSteps  = []string{"Checks", "Images", "GitHub", "Units", "Start", "Owner", "Done"}
+)
+
+// chooseTier asks which tier to install. On a full screen it first draws the steps and a page that says what each tier is and which to take.
+func chooseTier(r *Resolver, def config.Tier) (string, error) {
+	if r.screen.FullScreen() && r.asks("tier") {
+		steps := colocatedInstallSteps
+		if def == config.TierIsolated {
+			steps = isolatedInstallSteps
+		}
+		r.screen.Steps(steps...)
+		r.screen.Page("Where SuiteWard runs",
+			ui.Fields(
+				ui.KV{Key: string(config.TierCoLocated), Value: "On this PC, next to the coding agent: the simplest way to start, with reduced assurance. The agent can reach SuiteWard's key, its database and its secret."},
+				ui.KV{Key: string(config.TierIsolated), Value: "On a separate Linux host or account that the agent cannot reach. Full assurance. It needs an EL9 host, such as AlmaLinux."}),
+			ui.Para("Recommended: co-located to start."))
+	}
+	return r.Select("tier", "Installation tier", tierChoices, string(def))
 }

@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // ServiceAccount is the account the isolated stack runs as.
@@ -380,8 +382,11 @@ func (h *host) next(ctx context.Context) error {
 	return nil
 }
 
-// confirm asks a yes or no question: the flag, then the answers file, then a prompt. It never assumes a yes, and a run
-// that cannot ask (stdin is not a terminal) and has no answer fails.
+// yesNo are the answers of a yes or no question on a full screen: No is the default, so that Enter never says yes.
+var yesNo = []ui.Choice{{Name: "Yes"}, {Name: "No"}}
+
+// confirm asks a yes or no question: the flag, then the answers file, then a prompt (a choice between Yes and No on a full screen). It
+// never assumes a yes, and a run that cannot ask (stdin is not a terminal) and has no answer fails.
 func (r *Resolver) confirm(key, question string) (bool, error) {
 	v, ok := r.flags[key]
 	if !ok {
@@ -392,6 +397,13 @@ func (r *Resolver) confirm(key, question string) (bool, error) {
 	}
 	if !r.term.IsTerminal {
 		return false, fmt.Errorf("%s (pass --%s, or set %q in the answers file: stdin is not a terminal, so it cannot be asked)", question, key, key)
+	}
+	if r.screen.FullScreen() {
+		picked, err := r.screen.Select(question, yesNo, 1)
+		if err != nil {
+			return false, fmt.Errorf("read the answer for %s: %w", key, err)
+		}
+		return picked == 0, nil
 	}
 	line, err := r.screen.Prompt(question + " [y/N]: ")
 	if err != nil {

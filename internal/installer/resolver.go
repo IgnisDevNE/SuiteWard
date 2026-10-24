@@ -177,8 +177,14 @@ func (r *Resolver) ask(question string) (string, error) { return r.screen.Prompt
 // screen asks Value's typed question, "label (a or b) [def]: ", exactly as before. def is one of the choices' names; the answer is
 // the name of the one that was picked.
 func (r *Resolver) Select(key, label string, choices []ui.Choice, def string) (string, error) {
+	return r.selectAs(key, label, label+" ("+orList(choices)+")", choices, def)
+}
+
+// selectAs is Select for a question whose typed form was worded before it had choices: typed is the label that a plain screen asks Value
+// with, which a script that answers it keeps.
+func (r *Resolver) selectAs(key, label, typed string, choices []ui.Choice, def string) (string, error) {
 	if !r.asks(key) || !r.screen.FullScreen() {
-		return r.Value(key, label+" ("+orList(choices)+")", def)
+		return r.Value(key, typed, def)
 	}
 	i := slices.IndexFunc(choices, func(c ui.Choice) bool { return c.Name == def })
 	if i < 0 {
@@ -236,4 +242,12 @@ func (r *Resolver) MultiSelect(key string, m ui.Multi) ([]string, error) {
 		names[i] = m.Choices[p].Name
 	}
 	return names, nil
+}
+
+// explain starts the page of a question on a full screen that is going to ask it, that is when one of the keys is not answered: the
+// explanation is for the person at the terminal, so a flag, the answers file, a run with no terminal and a plain screen get none.
+func (r *Resolver) explain(keys []string, title string, blocks ...ui.Block) {
+	if r.screen.FullScreen() && slices.ContainsFunc(keys, r.asks) {
+		r.screen.Page(title, blocks...)
+	}
 }

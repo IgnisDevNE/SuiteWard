@@ -197,7 +197,7 @@ func (x *restoreRun) preflight(ctx context.Context) error {
 		return fmt.Errorf("look for the role %s: %w", appRole, err)
 	}
 	if !exists {
-		return fmt.Errorf("the application role %s does not exist in this database, and the dump records grants to it: install the release of the backup first, which creates it, then run the restore again (docs/backup.md, section 3)", appRole)
+		return fmt.Errorf("the application role %s does not exist in this database, and the dump records grants to it: install the release of the backup first, which creates it, then run the restore again", appRole)
 	}
 	return nil
 }
@@ -376,7 +376,7 @@ func (x *restoreRun) otherRelease(running string) error {
 	if x.doc.Unavailable {
 		madeBy = "the release of the image " + x.info.ImageDigest
 	}
-	return fmt.Errorf("this backup was made by %s and this instance runs %s: a restore needs the same release, because migrations only go forward. Install the release of the backup first%s, then run the restore again (docs/backup.md, section 3)", madeBy, running, install)
+	return fmt.Errorf("this backup was made by %s and this instance runs %s: a restore needs the same release, because migrations only go forward. Install the release of the backup first%s, then run the restore again", madeBy, running, install)
 }
 
 // dumpTail is how much of the end of a dump is searched for the line that ends it.
@@ -424,8 +424,12 @@ func tarReadable(path string) error {
 // ---- preview and confirmation ----
 
 func (x *restoreRun) preview() error {
-	x.showBackup()
-	x.showInstance()
+	if x.scr.FullScreen() {
+		x.previewPage()
+	} else {
+		x.showBackup()
+		x.showInstance()
+	}
 	x.warn()
 	if err := x.chooseSafetyKey(); err != nil {
 		return err
@@ -433,17 +437,36 @@ func (x *restoreRun) preview() error {
 	return x.confirm()
 }
 
-func (x *restoreRun) kv(label, value string) { x.scr.Say("  %-13s %s\n", label+":", value) }
+// previewPage is the page of the confirmation on a full screen: what it is, what the backup holds and what runs now. The warnings that
+// follow it stay when the window is too small for all of it, and the facts of the instance that runs go first.
+func (x *restoreRun) previewPage() {
+	source, facts := x.backupFacts(true)
+	instance := "This instance does not answer /status."
+	if now := x.instanceFacts(); now != nil {
+		parts := make([]string, len(now))
+		for i, kv := range now {
+			parts[i] = strings.ToLower(kv.Key) + " " + kv.Value
+		}
+		instance = "This instance runs: " + strings.Join(parts, ", ") + "."
+	}
+	x.scr.Page("Restore preview",
+		ui.Para("This is a confirmation: nothing changes until you confirm it."),
+		ui.Fields(append([]ui.KV{{Key: "Backup", Value: source}}, facts...)...),
+		ui.Para(instance))
+}
 
-func (x *restoreRun) showBackup() {
-	source := x.file
+// backupFacts is where the backup is and what it says of itself. A page, which has few rows for it, names the file and shortens the digest.
+func (x *restoreRun) backupFacts(compact bool) (source string, facts []ui.KV) {
+	source = x.file
 	if x.plaintext != "" {
 		source = x.plaintext
 	}
-	x.scr.Say("The backup %s holds:\n", source)
-	release := x.info.SuitewardVersion
-	if x.info.ImageDigest != "" {
-		release += " (" + x.info.ImageDigest + ")"
+	release, digest := x.info.SuitewardVersion, x.info.ImageDigest
+	if compact {
+		source, digest = filepath.Base(source), digest[:min(len(digest), len("sha256:")+12)]
+	}
+	if digest != "" {
+		release += " (" + digest + ")"
 	}
 	owner := cmp.Or(x.doc.owner(), "none enrolled")
 	repos := cmp.Or(strings.Join(x.doc.repositories(), ", "), "none")
@@ -451,29 +474,55 @@ func (x *restoreRun) showBackup() {
 	if x.doc.Unavailable {
 		owner, repos, schema = "not recorded", "not recorded", "not recorded"
 	}
-	x.kv("Made", x.info.CreatedAt.UTC().Format(time.RFC3339))
-	x.kv("Release", release)
-	x.kv("Instance", x.doc.Instance)
-	x.kv("Tier", cmp.Or(x.info.Tier, "not recorded"))
-	x.kv("Owner", owner)
-	x.kv("Repositories", repos)
-	x.kv("Schema", schema)
+	return source, []ui.KV{
+		{Key: "Made", Value: x.info.CreatedAt.UTC().Format(time.RFC3339)},
+		{Key: "Release", Value: release},
+		{Key: "Instance", Value: x.doc.Instance},
+		{Key: "Tier", Value: cmp.Or(x.info.Tier, "not recorded")},
+		{Key: "Owner", Value: owner},
+		{Key: "Repositories", Value: repos},
+		{Key: "Schema", Value: schema},
+	}
+}
+
+// instanceFacts is what the instance that is replaced runs, nil when its /status does not answer.
+func (x *restoreRun) instanceFacts() []ui.KV {
+	if x.current == nil {
+		return nil
+	}
+	return []ui.KV{
+		{Key: "Release", Value: x.current.Version},
+		{Key: "Instance", Value: x.current.Instance},
+		{Key: "Owner", Value: cmp.Or(x.current.owner(), "none enrolled")},
+		{Key: "Schema", Value: strconv.Itoa(x.current.SchemaVersion)},
+	}
+}
+
+func (x *restoreRun) listFacts(facts []ui.KV) {
+	for _, kv := range facts {
+		x.scr.Say("  %-13s %s\n", kv.Key+":", kv.Value)
+	}
+}
+
+func (x *restoreRun) showBackup() {
+	source, facts := x.backupFacts(false)
+	x.scr.Say("The backup %s holds:\n", source)
+	x.listFacts(facts)
 }
 
 func (x *restoreRun) showInstance() {
-	if x.current == nil {
+	now := x.instanceFacts()
+	if now == nil {
 		x.scr.Say("This instance does not answer /status.\n")
 		return
 	}
 	x.scr.Say("This instance runs:\n")
-	x.kv("Release", x.current.Version)
-	x.kv("Instance", x.current.Instance)
-	x.kv("Owner", cmp.Or(x.current.owner(), "none enrolled"))
-	x.kv("Schema", strconv.Itoa(x.current.SchemaVersion))
+	x.listFacts(now)
 }
 
 func (x *restoreRun) warn() {
-	x.scr.Warn("Restoring replaces the database and the artifacts of this instance with the backup's. What was approved, proposed or promoted after the backup is lost, and the default branch on GitHub may be ahead of the restored canonical (docs/backup.md, section 3).\n")
+	x.scr.Warn("Restoring replaces the database and the artifacts of this instance with the backup's. What was approved, proposed or promoted after the backup is lost, and the default branch on GitHub may be ahead of the restored canonical. " +
+		"To catch up after the restore, approve again what was approved after the backup: open a small pull request from the current default branch (a change outside the protected files), approve the revision its check names, and merge it (details: docs/backup.md).\n")
 	x.scr.Warn("Stop any other running instance that uses the same GitHub App before you go on: two instances would publish and promote for the same repositories.\n")
 	if x.plaintext != "" {
 		x.scr.Warn("This backup is a plaintext directory: it is not encrypted, and nothing verifies who made it or that it is untouched. Whoever could read %s could read the TOTP secret in it.\n", x.plaintext)

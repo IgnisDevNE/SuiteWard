@@ -122,7 +122,11 @@ func (k *keyInit) writeKit(ctx context.Context) error {
 		}
 		return err
 	}
-	k.r.screen.Warn(kitWarning+"\n", k.kit)
+	if k.r.term.IsTerminal { // the typed word below is what the page explains; with --yes nobody is asked
+		k.r.screen.Page("Keep the recovery kit",
+			ui.Para("This is a confirmation: SuiteWard cannot see whether you copied the kit, so type "+storedWord+" only once it is off this machine."))
+	}
+	k.r.screen.Critical(kitWarning+"\n", k.kit) // the most important text of this command: a red box on a full screen, the Warn it was in plain mode
 	if err := k.confirmStored(); err != nil {
 		return errors.Join(err, os.Remove(k.kit))
 	}
@@ -137,7 +141,11 @@ func (k *keyInit) confirmStored() error {
 		}
 		return nil
 	}
-	line, err := k.r.ask(fmt.Sprintf("Type %q once the kit is copied off this machine: ", storedWord))
+	prompt := fmt.Sprintf("Type %q once the kit is copied off this machine: ", storedWord)
+	if k.r.screen.FullScreen() { // the page above says that the word is a confirmation
+		prompt = fmt.Sprintf("Type %q to confirm that the kit is copied off this machine: ", storedWord)
+	}
+	line, err := k.r.ask(prompt)
 	switch {
 	case errors.Is(err, io.EOF):
 		line = ""

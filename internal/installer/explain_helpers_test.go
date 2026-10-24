@@ -89,8 +89,18 @@ type frameView struct {
 	rows        []string // the content column, without trailing spaces
 }
 
-// text is the content as one line of words, so that a sentence that wrapped reads as it was written.
-func (f frameView) text() string { return strings.Join(strings.Fields(strings.Join(f.rows, " ")), " ") }
+// text is the content as one line of words, so that a sentence that wrapped reads as it was written, also inside a box: its edges are not
+// words.
+func (f frameView) text() string {
+	var words []string
+	for _, r := range f.rows {
+		if strings.HasPrefix(r, "╭") || strings.HasPrefix(r, "╰") {
+			continue
+		}
+		words = append(words, strings.Fields(strings.Trim(r, "│ "))...)
+	}
+	return strings.Join(words, " ")
+}
 
 // row is the first row of the content that contains want, "" when there is none.
 func (f frameView) row(want string) string {

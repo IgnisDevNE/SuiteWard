@@ -400,3 +400,65 @@ func TestTheRecoveryKeyOfARestoreIsAskedOnAPageThatSaysWhatToPaste(t *testing.T)
 	mustSay(t, page, "recovery key of its instance", "last line of the recovery kit", "The input is hidden", "--kit PATH", "Recovery key: the last line of your recovery kit")
 	noIdentityIn(t, "the screen", run.output())
 }
+
+// The label of the hidden paste says that the input is hidden once: the screen adds "(input is hidden)" to every secret it asks for. The
+// label was worded before that, and said it twice; plain output loses the repeated words on purpose.
+func TestTheRecoveryKeyLabelSaysOnceThatTheInputIsHidden(t *testing.T) {
+	_, identity := testRecoveryKey(t)
+	const label = "Recovery key: the last line of your recovery kit, the private key (input is hidden): "
+	t.Run("plain", func(t *testing.T) {
+		u := restoreHarness(t)
+		env := u.env()
+		env.Term = Terminal{In: strings.NewReader(testInstance + "\n"), Out: &u.out, IsTerminal: true, ReadPassword: func() ([]byte, error) { return []byte(identity), nil }}
+		if err := Restore(liveContext(t), u.restoreArgs(aBackup(t, nil)), env); err != nil {
+			t.Fatal(err)
+		}
+		if out := u.out.String(); !strings.Contains(out, label) || strings.Contains(out, "(the input is hidden)") {
+			t.Errorf("the plain label is not %q:\n%s", label, out)
+		}
+	})
+	t.Run("full screen", func(t *testing.T) {
+		u := restoreHarness(t)
+		run := newScreenRun(termWidth, termHeight, testInstance+"\n", "\n")
+		env := run.on(u.env())
+		var page frameView
+		env.Term.ReadPassword = func() ([]byte, error) {
+			page = viewOf(t, run.output(), termWidth, termHeight)
+			return []byte(identity), nil
+		}
+		if err := Restore(liveContext(t), u.restoreArgs(aBackup(t, nil)), env); err != nil {
+			t.Fatal(err)
+		}
+		mustSay(t, page, strings.TrimSpace(label))
+		if strings.Contains(page.text(), "(the input is hidden)") {
+			t.Errorf("the label still says it twice:\n%s", page.dump())
+		}
+	})
+}
+
+// ---- a page says that nothing is removed until a confirmation only when one is asked ----
+
+func TestThePurgePageDoesNotPromiseAConfirmationWhereNothingAsks(t *testing.T) {
+	const promise = "Nothing is removed until you confirm"
+	for name, tc := range map[string]struct {
+		flags []string
+		title string
+	}{
+		"purge with --yes and --instance": {[]string{"--purge", "--yes", "--instance", testInstance}, "Remove everything of this instance"},
+		"uninstall with --yes":            {[]string{"--yes"}, "Remove the containers"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			run, err := uninstallOnScreen(t, []string{"\n"}, tc.flags...)
+			if err != nil {
+				t.Fatalf("Uninstall: %v\n%s", err, run.output())
+			}
+			out := run.output()
+			if !strings.Contains(out, tc.title) || !strings.Contains(out, testInstance) {
+				t.Errorf("the page of the removal is gone (title %q, instance %s):\n%s", tc.title, testInstance, out)
+			}
+			if strings.Contains(out, promise) {
+				t.Errorf("the page promises a confirmation that nothing asks for:\n%s", out)
+			}
+		})
+	}
+}

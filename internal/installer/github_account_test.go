@@ -113,10 +113,6 @@ func TestAnOrganizationGitHubDoesNotKnowIsRefusedBeforeTheBrowserOpens(t *testin
 	}{
 		{"no such account", func(g *fakeGitHub) { g.setUser("ghost", userMissing) }, "ghost", []string{"ghost", "no account"}, ""},
 		{"a user, not an organization", func(g *fakeGitHub) { g.setUser("alice", "User") }, "alice", []string{"alice", "not an organization", "personal"}, ""},
-		{"a rate limit is not a missing account", func(g *fakeGitHub) {
-			g.answer("GET /users/acme", http.StatusForbidden, "API rate limit exceeded for 10.0.0.1")
-		}, "acme", []string{"acme", "403"}, "no account"},
-		{"a server error is not a missing account", func(g *fakeGitHub) { g.answer("GET /users/acme", http.StatusBadGateway, "<html>bad gateway</html>") }, "acme", []string{"acme", "502"}, "no account"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -138,13 +134,68 @@ func TestAnOrganizationGitHubDoesNotKnowIsRefusedBeforeTheBrowserOpens(t *testin
 			if tc.not != "" && strings.Contains(err.Error(), tc.not) {
 				t.Errorf("the error says %q, which is not what GitHub answered: %v", tc.not, err)
 			}
-			for _, leaked := range []string{"rate limit exceeded", "bad gateway"} {
-				if strings.Contains(err.Error(), leaked) {
-					t.Errorf("the error carries text of GitHub's answer: %v", err)
-				}
-			}
 			if g.sawRequest("POST /app-manifests") || listenerURL.MatchString(out.String()) {
 				t.Errorf("the browser was opened for an account that was refused: %v\n%s", g.requests, out.String())
+			}
+		})
+	}
+}
+
+// failingUsers is an HTTP client for which the look-up of an account fails on the network.
+type failingUsers struct{ http.RoundTripper }
+
+func (f failingUsers) RoundTrip(r *http.Request) (*http.Response, error) {
+	if strings.HasPrefix(r.URL.Path, "/users/") {
+		return nil, errors.New("connection reset by peer")
+	}
+	return f.RoundTripper.RoundTrip(r)
+}
+
+// What GitHub answers to the look-up says nothing of the account when it is a rate limit, an error of GitHub or the network: the install
+// is not stopped for it. The conversion checks the owner of the App once it exists, and names it.
+func TestATransientFailureOfTheOrganizationLookupWarnsAndGoesOn(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(g *fakeGitHub, env *githubEnv)
+		why   string
+	}{
+		{"a rate limit", func(g *fakeGitHub, _ *githubEnv) {
+			g.answer("GET /users/acme", http.StatusForbidden, "API rate limit exceeded for 10.0.0.1")
+		}, "HTTP 403"},
+		{"too many requests", func(g *fakeGitHub, _ *githubEnv) {
+			g.answer("GET /users/acme", http.StatusTooManyRequests, "slow down")
+		}, "HTTP 429"},
+		{"an error of GitHub", func(g *fakeGitHub, _ *githubEnv) {
+			g.answer("GET /users/acme", http.StatusBadGateway, "<html>bad gateway</html>")
+		}, "HTTP 502"},
+		{"the network", func(g *fakeGitHub, env *githubEnv) {
+			env.HTTP = &http.Client{Transport: failingUsers{g.srv.Client().Transport}}
+		}, "connection reset by peer"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newFakeGitHub(t)
+			f := accountFlags()
+			f["github-account"] = "acme"
+			env, out := flowEnv(t, g, f, strings.NewReader(""), false)
+			tc.setup(g, &env)
+			res, err := withBrowser(t, env, out, "thecode1")
+			if err != nil || res.Account != "acme" {
+				t.Fatalf("resolveGitHub = %v, %v\n%s", res, err, out.String())
+			}
+			if !g.sawRequest("POST /app-manifests") {
+				t.Error("the App was not created")
+			}
+			text := out.String()
+			for _, want := range []string{"Could not check acme on GitHub (" + tc.why + ")", "continuing", "after the App is created"} {
+				if !strings.Contains(text, want) {
+					t.Errorf("the output lacks %q:\n%s", want, text)
+				}
+			}
+			for _, leaked := range []string{"rate limit exceeded", "bad gateway", "slow down"} {
+				if strings.Contains(text, leaked) {
+					t.Errorf("the output carries text of GitHub's answer:\n%s", text)
+				}
 			}
 		})
 	}

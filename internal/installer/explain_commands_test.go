@@ -196,7 +196,7 @@ func TestTheEndOfAnUpgradeSaysHowToGoBackOnItsTier(t *testing.T) {
 // Every message that pointed to a section of a document says what to do, and keeps the document as a reference for the details.
 func TestAMessageThatPointedToASectionOfADocumentSaysWhatToDo(t *testing.T) {
 	t.Run("a migration that failed after the backup", func(t *testing.T) {
-		err := withBackup(migratingError{errors.New("migrate failed")}, "/b/backup.tar.age", "")
+		err := withBackup(migratingError{errors.New("migrate failed")}, "/b/backup.tar.age", "", "")
 		text := err.Error()
 		// The steps of the way back are those of the tier: the message points to them instead of saying them in one line.
 		for _, want := range []string{"install the previous release and run `suiteward restore /b/backup.tar.age`", "everything after the backup is lost", "the steps: docs/backup.md, Going back after an upgrade"} {

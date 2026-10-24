@@ -236,11 +236,11 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
-		return withBackup(err, dir, "")
+		return withBackup(err, dir, "", "")
 	}
 	scr.Step(4)
 	if err := c.bringUp(ctx, func() error { return SaveSettings(t.settingsPath, c.s) }); err != nil {
-		return withBackup(err, dir, "")
+		return withBackup(err, dir, "", "")
 	}
 	scr.Step(5)
 	c.restartAfterReboot(ctx)

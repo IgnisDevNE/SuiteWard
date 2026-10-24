@@ -63,7 +63,7 @@ func TestTheQuestionsThatDefaultToYesAreAChoiceOnAFullScreen(t *testing.T) {
 // release: the instructions are those of docs/backup.md, as the closing line of the upgrade gives them.
 func TestAFailedMigrationOnTheIsolatedTierSaysToPutTheUnitsBack(t *testing.T) {
 	const path, units = "/b/suiteward-backup.tar.age", "/h/.config/containers/systemd"
-	err := withBackup(migratingError{errors.New("migrate failed")}, path, units)
+	err := withBackup(migratingError{errors.New("migrate failed")}, path, units, " --tier isolated")
 	text := err.Error()
 	if !strings.Contains(text, goBackIsolated(path, units, " --tier isolated")) {
 		t.Errorf("the message lacks the way back of the isolated tier:\n%s", text)

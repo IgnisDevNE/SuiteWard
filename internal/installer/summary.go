@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
@@ -30,13 +31,34 @@ func (s *summaryRows) add(key, value string) {
 // warnings. Upgrade when a builder needs more than the text of a warning.
 func (s *summaryRows) warn(text string) { *s = append(*s, ui.KV{Value: text}) }
 
+// interruptedKey is the key of the row that says a Ctrl-C ended the checks the summary was built with: showSummary shows what there is and
+// ends the command as interrupted.
+// shortcut: a second signal in the shape of a row, so that the builders, and the callers outside this change, keep returning rows only.
+// Upgrade with the first builder that has to return more than rows.
+const interruptedKey = "\x00interrupted"
+
 // addDoctor runs the checks of `suiteward doctor` against the instance the settings file describes, as the last step of an install or an
-// upgrade, and adds what they found: the Doctor row (the counts, or why doctor did not run), a warning with its fix for each result that
-// needs a look, and, when there is one, how to check again. It never fails the run: doctor reports, and a failed check is not a failed
-// install. again is the command that checks again.
+// upgrade, and adds what they found: the Doctor row (the counts, why doctor did not run, or that it was interrupted), a warning with its
+// fix for each result that needs a look, and, when there is something to look at, how to check again. A failed check is not a failed
+// install: it never fails the run. A Ctrl-C is the exception, as it is for doctor itself: one during the checks ends the command as
+// interrupted, and the checks it cancelled are not counted. One that came before them only skips them, as it skips the wait for the service.
+// again is the command that checks again.
+// shortcut: ui.Summary shows its last rows when the page is taller than the window, and cannot trim warnings as Page does, so many warnings
+// push the rows above them off a small window; Close keeps them all. Upgrade when ui.Summary trims (the polish task).
 func (s *summaryRows) addDoctor(ctx context.Context, env Env, settingsPath, again string) {
+	before := ctx.Err() != nil
 	var results []doctorResult
-	spinning(screenOn(env.Term.Out), "Checking the instance", func() { results = doctorChecks(ctx, env.Deps, env.httpGet(), settingsPath) })
+	if !before {
+		spinning(screenOn(env.Term.Out), "Checking the instance", func() { results = doctorChecks(ctx, env.Deps, env.httpGet(), settingsPath) })
+	}
+	if before || ctx.Err() != nil {
+		s.add("Doctor", "interrupted")
+		s.add("Check again", again)
+		if !before {
+			*s = append(*s, ui.KV{Key: interruptedKey})
+		}
+		return
+	}
 	if first := results[0]; first.Name == "settings" && !first.OK { // the first result is always the settings, and doctor stops at one it cannot read
 		s.add("Doctor", "not run: "+first.Detail+" — "+first.Fix)
 		s.add("Check again", again)
@@ -55,20 +77,41 @@ func (s *summaryRows) addDoctor(ctx context.Context, env Env, settingsPath, agai
 	}
 }
 
-// importRulesetFix is the fix of a result that needs a look. A repository whose protection lacks the checks that the ruleset requires is told
-// to import the ruleset file that the install wrote beside the settings, when the file is there: the file requires both checks, so it
-// replaces the instruction of the check, which would take two more lines of a page that is short of them.
+// What the ruleset file fixes, as the findings of a protection result name them: it requires the contract check and the test check, and that
+// branches are up to date.
+var rulesetFindings = []string{string(protection.MissingContractCheck), string(protection.MissingTestCheck), string(protection.NotUpToDate)}
+
+// What the evaluator says that an import does not fix: the setup instruction (no test check is configured yet) and the caveat of a ruleset
+// whose bypass list cannot be seen. A test passes the sentences of the real evaluator through importRulesetFix, so a rewording fails there.
+const (
+	setupInstructionMark = "suiteward enroll"
+	bypassCaveatMark     = "bypass list"
+)
+
+// importRulesetFix is the fix of a result that needs a look. A repository whose protection lacks what the ruleset requires is told to
+// import the ruleset file that the install wrote beside the settings, when the file is there. The import replaces the instruction of the
+// check, which would take two more lines of a page that is short of them, only when it is the whole fix: every finding is one the ruleset
+// fixes and the evaluator has no other instruction. Otherwise the import comes first and the evaluator's instructions stay.
 func importRulesetFix(r doctorResult, dir string) string {
 	repo, isProtection := strings.CutPrefix(r.Name, "protection.")
-	lacksChecks := strings.Contains(r.Detail, string(protection.MissingContractCheck)) || strings.Contains(r.Detail, string(protection.MissingTestCheck))
-	if !isProtection || r.OK || !lacksChecks {
+	codes, isFindings := strings.CutPrefix(r.Detail, "findings: ")
+	if !isProtection || r.OK || !isFindings {
+		return r.Fix
+	}
+	findings := strings.Split(codes, ", ")
+	fixed := func(code string) bool { return slices.Contains(rulesetFindings, code) }
+	if !slices.ContainsFunc(findings, fixed) {
 		return r.Fix
 	}
 	file := rulesetPathOf(dir, repo)
 	if _, err := os.Stat(file); err != nil {
 		return r.Fix // the install that wrote it may have been another one, or the file moved: the check's own fix is all there is
 	}
-	return "import the ruleset file " + file + " (in the repository's Settings, Rules, choose New ruleset, then Import a ruleset)"
+	imports := "import the ruleset file " + file + " (in the repository's Settings, Rules, choose New ruleset, then Import a ruleset)"
+	if slices.ContainsFunc(findings, func(code string) bool { return !fixed(code) }) || strings.Contains(r.Fix, setupInstructionMark) || strings.Contains(r.Fix, bypassCaveatMark) {
+		return imports + ". " + r.Fix
+	}
+	return imports
 }
 
 // rulesetPathOf is where the install writes the ruleset of repo (owner/name), as writeRuleset names it.

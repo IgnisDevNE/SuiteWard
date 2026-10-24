@@ -105,24 +105,25 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	}
 	s.BackupRecipient = inst.s.BackupRecipient
 	say("Backup written to %s.\n", dir)
+	scope := scopeFlags(r, true) // the tier and the settings file of this run, for the commands that a message names
 	scr.Step(3)
 	if err := pullMissing(ctx, scr, host.rt, postgres, image); err != nil {
 		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	scr.Step(4)
 	if err := replaceUnits(ctx, host, d, scr, params, plan.dbChanges()); err != nil {
-		return withBackup(err, dir, host.unitsDir)
+		return withBackup(err, dir, host.unitsDir, scope)
 	}
 	// Migrate ran: a release that crash-loops now gets the advice of a failure after the migration, the restore of the backup.
 	scr.Step(5)
 	if err := waitStable(ctx, env, scr, s.HTTPPort); err != nil {
-		return withBackup(migratingError{err}, dir, host.unitsDir)
+		return withBackup(migratingError{err}, dir, host.unitsDir, scope)
 	}
 	s.Image = image
 	if err := SaveSettings(host.settingsPath, s); err != nil {
-		return withBackup(migratingError{err}, dir, host.unitsDir)
+		return withBackup(migratingError{err}, dir, host.unitsDir, scope)
 	}
-	upgraded(scr, image, dir, goBackIsolated(dir, host.unitsDir, scopeFlags(r, true)), "suiteward doctor")
+	upgraded(scr, image, dir, goBackIsolated(dir, host.unitsDir, scope), "suiteward doctor")
 	sayOldEnvFile(out, host.envPath, st.oldEnv, false)
 	return showSummary(scr, func() []ui.KV {
 		return isolatedSummary(ctx, env, host, s, ui.KV{Key: "Release", Value: fmt.Sprintf("%s (was %s)", digestOf(image), digestOf(st.adopted.Image))})

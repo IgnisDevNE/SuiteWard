@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -366,17 +367,56 @@ func (pc *aPC) offer(plain bool, answers ...string) offered {
 func (pc *aPC) offerWith(ctx context.Context, plain bool, answers ...string) offered {
 	pc.t.Helper()
 	run := newScreenRun(100, 30, answers...)
-	env := run.on(Env{Deps: pc.deps(), Self: &pc.self})
+	return pc.offerOn(ctx, run, run.on(Env{Deps: pc.deps(), Self: &pc.self}), plain)
+}
+
+// offerOn runs the offer of the PC on a screen of the run, with the environment as the caller made it.
+func (pc *aPC) offerOn(ctx context.Context, run *screenRun, env Env, plain bool) offered {
+	pc.t.Helper()
 	scr, env, err := env.openConsole(ctx, plain)
 	if err != nil {
 		pc.t.Fatal(err)
 	}
 	var rows summaryRows
-	d := selfInstallStep(ctx, env, &rows)
+	d := offerSelf(ctx, env, &rows)
 	if err := scr.Close(); err != nil {
 		pc.t.Fatal(err)
 	}
 	return offered{run: run, rows: rows, d: d}
+}
+
+// refresh runs the refresh of the copy, which the install and the upgrade make whatever the screen, and returns what it wrote: the scrollback of a
+// full screen, the output of a plain one.
+func (pc *aPC) refresh(plain bool) string {
+	pc.t.Helper()
+	run := newScreenRun(100, 30)
+	env := run.on(Env{Deps: pc.deps(), Self: &pc.self})
+	scr, env, err := env.openConsole(liveContext(pc.t), plain)
+	if err != nil {
+		pc.t.Fatal(err)
+	}
+	refreshCopy(liveContext(pc.t), env)
+	if err := scr.Close(); err != nil {
+		pc.t.Fatal(err)
+	}
+	if plain {
+		return run.output()
+	}
+	return run.console.tail()
+}
+
+// terminalGone is the input of a terminal that goes away: it reads r, and then fails with err instead of ending.
+type terminalGone struct {
+	r   io.Reader
+	err error
+}
+
+func (e *terminalGone) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if errors.Is(err, io.EOF) {
+		err = e.err
+	}
+	return n, err
 }
 
 func (o offered) row(key string) string {
@@ -419,6 +459,9 @@ func TestTheOfferExplainsTheCopyAndThePathChangeBeforeItAsks(t *testing.T) {
 	if !strings.Contains(v.text(), "Copy suiteward.exe and add it to your PATH?") {
 		t.Errorf("the page does not ask the question:\n%s", v.dump())
 	}
+	if !strings.Contains(compact(v.text()), "1)Yes(default)") {
+		t.Errorf("the page does not mark Yes as the default:\n%s", v.dump())
+	}
 	if strings.Contains(v.text(), trimmed) {
 		t.Errorf("the page is trimmed at 100x30:\n%s", v.dump())
 	}
@@ -428,18 +471,24 @@ func TestTheOfferExplainsTheCopyAndThePathChangeBeforeItAsks(t *testing.T) {
 }
 
 func TestOnlyAYesCopiesTheProgramAndChangesThePath(t *testing.T) {
-	for _, answer := range []string{"2\n", "\n"} { // No, and Enter, which never says yes
-		pc := newPC(t)
-		o := pc.offer(false, answer)
-		if _, err := os.Stat(pc.target()); err == nil || len(pc.path.writes) != 0 || pc.path.announced != 0 {
-			t.Errorf("answer %q: the copy or the PATH changed (%v, %d writes, %d announced)", answer, err, len(pc.path.writes), pc.path.announced)
-		}
-		if len(o.rows) != 0 || o.d.Command != swCmd {
-			t.Errorf("answer %q: the rows are %v and the hints use %q, want nothing changed", answer, o.rows, o.d.Command)
-		}
-	}
 	pc := newPC(t)
-	o := pc.offer(false, "1\n")
+	o := pc.offer(false, "2\n") // No
+	if _, err := os.Stat(pc.target()); err == nil || len(pc.path.writes) != 0 || pc.path.announced != 0 {
+		t.Errorf("after a No the copy or the PATH changed (%v, %d writes, %d announced)", err, len(pc.path.writes), pc.path.announced)
+	}
+	if len(o.rows) != 0 || o.d.Command != swCmd {
+		t.Errorf("after a No the rows are %v and the hints use %q, want nothing changed", o.rows, o.d.Command)
+	}
+	// Enter takes Yes, the default: the owner decided that the offer is for the person who did not know of the PATH.
+	for _, answer := range []string{"1\n", "\n"} {
+		t.Run(strings.TrimSpace(answer), func(t *testing.T) { checkACopyThatWasAcceptedBy(t, answer) })
+	}
+}
+
+func checkACopyThatWasAcceptedBy(t *testing.T, answer string) {
+	t.Helper()
+	pc := newPC(t)
+	o := pc.offer(false, answer)
 	if readText(t, pc.target()) != "NEW BUILD" {
 		t.Errorf("the copy holds %q, want this program", readText(t, pc.target()))
 	}
@@ -472,6 +521,8 @@ func TestTheOfferIsMadeOnlyWhereItCanBeAnsweredAndHelps(t *testing.T) {
 			writeText(pc.t, pc.exe, "NEW BUILD")
 		},
 		"the shell finds this program as suiteward": func(pc *aPC, _ *Env, _ *bool) { pc.found = pc.exe },
+		"a run that was told not to ask":            func(_ *aPC, env *Env, _ *bool) { env.Unattended = true },
+		"a copy of an earlier install":              func(pc *aPC, _ *Env, _ *bool) { writeText(pc.t, pc.target(), "OLD BUILD") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			pc := newPC(t)
@@ -483,13 +534,16 @@ func TestTheOfferIsMadeOnlyWhereItCanBeAnsweredAndHelps(t *testing.T) {
 				t.Fatal(err)
 			}
 			var rows summaryRows
-			d := selfInstallStep(liveContext(t), env, &rows)
+			d := offerSelf(liveContext(t), env, &rows)
 			_ = scr.Close()
 			if len(run.in.shown) != 0 || len(rows) != 0 || d.Command != swCmd || len(pc.path.writes) != 0 {
 				t.Errorf("asked %d questions, rows %v, command %q, %d PATH writes; want nothing", len(run.in.shown), rows, d.Command, len(pc.path.writes))
 			}
-			if _, err := os.Stat(pc.target()); err == nil && !strings.Contains(name, "is the copy") {
+			if _, err := os.Stat(pc.target()); err == nil && !strings.Contains(name, "is the copy") && !strings.Contains(name, "earlier install") {
 				t.Error("a copy was made")
+			}
+			if strings.Contains(name, "earlier install") && readText(t, pc.target()) != "OLD BUILD" {
+				t.Errorf("the offer refreshed the copy, which is not its work: %q", readText(t, pc.target()))
 			}
 		})
 	}
@@ -505,40 +559,71 @@ func TestACancelledRunIsNotOfferedAnything(t *testing.T) {
 	}
 }
 
-func TestACopyOfAnEarlierInstallIsRefreshedWithoutAskingAndTheStalePartIsRemoved(t *testing.T) {
-	pc := newPC(t)
-	writeText(t, pc.target(), "OLD BUILD")
-	writeText(t, pc.target()+".old", "a copy that a running program held")
-	o := pc.offer(false, "1\n")
-	if o.asked() {
-		t.Error("the person who said yes to the copy was asked again")
-	}
-	if readText(t, pc.target()) != "NEW BUILD" {
-		t.Errorf("the copy holds %q, want this program", readText(t, pc.target()))
-	}
-	if _, err := os.Stat(pc.target() + ".old"); err == nil {
-		t.Error("the copy aside of an earlier run was left")
-	}
-	if len(pc.path.writes) != 0 {
-		t.Errorf("the PATH was written %d times: a refresh does not touch it", len(pc.path.writes))
-	}
-	if got := o.row("Command"); !strings.Contains(got, pc.target()) || !strings.Contains(got, "updated") {
-		t.Errorf("the Command row says %q, want the copy and that it was updated", got)
+// A copy that an earlier run made is the program of a person who said yes to it once: it is kept up to date by every successful install and
+// upgrade, whatever the screen and whatever the command line says, and it asks nothing and leaves the PATH alone.
+func TestACopyOfAnEarlierInstallIsRefreshedOnEveryScreenAndTheStalePartIsRemoved(t *testing.T) {
+	for name, plain := range map[string]bool{"a full screen": false, "a plain run": true} {
+		t.Run(name, func(t *testing.T) {
+			pc := newPC(t)
+			writeText(t, pc.target(), "OLD BUILD")
+			writeText(t, pc.target()+".old", "a copy that a running program held")
+			out := pc.refresh(plain)
+			if readText(t, pc.target()) != "NEW BUILD" {
+				t.Errorf("the copy holds %q, want this program", readText(t, pc.target()))
+			}
+			if _, err := os.Stat(pc.target() + ".old"); err == nil {
+				t.Error("the copy aside of an earlier run was left")
+			}
+			if len(pc.path.writes) != 0 {
+				t.Errorf("the PATH was written %d times: a refresh does not touch it", len(pc.path.writes))
+			}
+			if want := "Updated the copy of suiteward.exe: " + pc.target(); !strings.Contains(compact(out), compact(want)) {
+				t.Errorf("the output lacks %q:\n%s", want, out)
+			}
+		})
 	}
 }
 
-func TestARefreshOfACopyThatARunningProgramHoldsPutsItAsideAndTheNextRunRemovesIt(t *testing.T) {
+func TestARefreshOfACopyThatARunningProgramHoldsPutsItAsideAndTheNextRefreshRemovesIt(t *testing.T) {
 	pc := newPC(t)
 	writeText(t, pc.target(), "OLD BUILD")
 	pc.self.Rename = heldRename(pc.target())
-	pc.offer(false)
+	pc.refresh(true)
 	if readText(t, pc.target()) != "NEW BUILD" || readText(t, pc.target()+".old") != "OLD BUILD" {
 		t.Fatalf("the copy holds %q and the one aside %q", readText(t, pc.target()), readText(t, pc.target()+".old"))
 	}
 	pc.self.Rename = os.Rename
-	pc.offer(false) // the next run: the program that held the old copy has ended
+	pc.refresh(true) // the next run: the program that held the old copy has ended
 	if _, err := os.Stat(pc.target() + ".old"); err == nil {
 		t.Error("the next run left the copy aside")
+	}
+}
+
+func TestARefreshThatFailsIsAWarningAndTheCopyStaysAsItWas(t *testing.T) {
+	pc := newPC(t)
+	writeText(t, pc.target(), "OLD BUILD")
+	pc.self.Rename = func(oldpath, newpath string) error { return errors.New("rename: access is denied") }
+	out := pc.refresh(true)
+	if readText(t, pc.target()) != "OLD BUILD" {
+		t.Errorf("the copy holds %q after a refresh that failed", readText(t, pc.target()))
+	}
+	if !strings.Contains(compact(out), compact("The copy of suiteward.exe in "+pc.dir()+" was not updated")) || !strings.Contains(out, "access is denied") {
+		t.Errorf("the output does not say that the copy was not updated, where, and why:\n%s", out)
+	}
+}
+
+func TestARefreshOnlyTouchesACopyThatIsThereAndIsNotThisProgram(t *testing.T) {
+	pc := newPC(t)
+	if out := pc.refresh(true); strings.TrimSpace(out) != "" {
+		t.Errorf("a PC without a copy was told %q", out)
+	}
+	if _, err := os.Stat(pc.dir()); err == nil {
+		t.Error("a refresh made the folder of a copy that was not there")
+	}
+	pc.exe = pc.target() // this program is the copy
+	writeText(t, pc.exe, "NEW BUILD")
+	if out := pc.refresh(true); strings.TrimSpace(out) != "" || readText(t, pc.target()) != "NEW BUILD" {
+		t.Errorf("a program that is the copy was refreshed from itself: %q", out)
 	}
 }
 
@@ -598,6 +683,55 @@ func TestAFailedAnswerIsNotAYes(t *testing.T) {
 	o := pc.offer(false) // the input ends at the question
 	if _, err := os.Stat(pc.target()); err == nil || len(pc.path.writes) != 0 || o.d.Command != swCmd {
 		t.Errorf("the copy or the PATH changed without an answer (%v, %d writes, %q)", err, len(pc.path.writes), o.d.Command)
+	}
+	if len(o.warnings()) != 0 {
+		t.Errorf("an input that ended is no failure, got warnings %q", o.warnings())
+	}
+}
+
+func TestAnAnswerThatCannotBeReadIsAWarningAndNotAYes(t *testing.T) {
+	pc := newPC(t)
+	run := newScreenRun(100, 30)
+	env := run.on(Env{Deps: pc.deps(), Self: &pc.self})
+	env.Term.In = &terminalGone{r: strings.NewReader(""), err: errors.New("the terminal went away")}
+	o := pc.offerOn(liveContext(t), run, env, false)
+	if _, err := os.Stat(pc.target()); err == nil || len(pc.path.writes) != 0 {
+		t.Errorf("the copy or the PATH changed without an answer (%v, %d writes)", err, len(pc.path.writes))
+	}
+	if w := o.warnings(); len(w) != 1 || !strings.Contains(w[0], "could not be read") || !strings.Contains(w[0], "the terminal went away") {
+		t.Errorf("warnings = %q, want one that says the answer could not be read, and why", w)
+	}
+}
+
+// ---- another suiteward on the PATH ----
+
+func TestAnotherSuitewardOnThePathIsNamedOnThePageAndTheHintsKeepTheirName(t *testing.T) {
+	pc := newPC(t)
+	pc.found = filepath.Join(t.TempDir(), "Tools", "suiteward.exe") // what the shell runs for the name suiteward
+	writeText(t, pc.found, "ANOTHER BUILD")
+	o := pc.offer(false, "1\n")
+	v := o.run.question(t, 0)
+	text := compact(v.text())
+	for _, want := range []string{pc.found, "another suiteward", "after it", "still answers"} {
+		if !strings.Contains(text, compact(want)) {
+			t.Errorf("the page lacks %q:\n%s", want, v.dump())
+		}
+	}
+	if strings.Contains(v.text(), trimmed) {
+		t.Errorf("the page is trimmed at 100x30:\n%s", v.dump())
+	}
+	// The copy is made and its folder appended, behind the other program: the name still reaches the other one, and the hints say the path.
+	if readText(t, pc.target()) != "NEW BUILD" || !strings.HasSuffix(pc.path.value, ";"+pc.dir()) {
+		t.Errorf("the copy holds %q and the PATH is %q after a yes", readText(t, pc.target()), pc.path.value)
+	}
+	if o.d.Command != swCmd {
+		t.Errorf("the hints use %q although suiteward reaches another program, want %q", o.d.Command, swCmd)
+	}
+	if got := o.row("Command"); !strings.Contains(got, pc.target()) || !strings.Contains(got, "another suiteward") || !strings.Contains(got, pc.found) {
+		t.Errorf("the Command row says %q, want the copy and the other suiteward that comes first", got)
+	}
+	if got := o.row("This terminal (PowerShell)"); got != "" {
+		t.Errorf("the row for this terminal is %q: the line would not make the name reach the copy", got)
 	}
 }
 
@@ -714,6 +848,9 @@ func TestAPurgeOffersToRemoveTheCopyAndThePathEntry(t *testing.T) {
 	if !strings.Contains(v.text(), "Remove the copy and its PATH entry?") {
 		t.Errorf("the page does not ask the question:\n%s", v.dump())
 	}
+	if strings.Contains(text, "nextrun") {
+		t.Errorf("the page promises that a later run removes what is left:\n%s", v.dump())
+	}
 	if _, err := os.Stat(pc.target()); err == nil {
 		t.Error("the copy is still there after a yes")
 	}
@@ -816,8 +953,28 @@ func TestACopyThatARunningProgramHoldsIsRenamedAsideAndTheRunSaysSo(t *testing.T
 	if strings.Contains(pc.path.value, pc.dir()) {
 		t.Errorf("the PATH still holds the folder: %q", pc.path.value)
 	}
-	if out := compact(run.console.tail()); !strings.Contains(out, compact("renamed to "+pc.target()+".old")) || !strings.Contains(out, "nextrun") {
-		t.Errorf("the run does not say where the copy went and that the next run removes it:\n%s", run.output())
+	// Nothing promises that a later run removes the copy aside: the person is told to delete it, and where it is.
+	if out := compact(run.console.tail()); !strings.Contains(out, compact("renamed to "+pc.target()+".old")) || !strings.Contains(out, compact("delete it by hand: "+pc.target()+".old")) || strings.Contains(out, "nextrun") {
+		t.Errorf("the run does not say where the copy went and that it is to be deleted by hand, or it promises a next run:\n%s", run.console.tail())
+	}
+}
+
+func TestAnAnswerThatCannotBeReadAtThePurgeQuestionIsAWarningAndNotAYes(t *testing.T) {
+	pc := newPC(t).installed()
+	before := pc.path.value
+	h := purgeHarness(t)
+	h.f.env["LOCALAPPDATA"] = pc.local
+	run := newScreenRun(termWidth, termHeight)
+	env := run.on(h.newEnv())
+	env.Self = &pc.self
+	env.Term.In = &terminalGone{r: strings.NewReader(testInstance + "\n"), err: errors.New("the terminal went away")}
+	args := []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm", "--purge"}
+	_ = Uninstall(liveContext(t), args, env) // the wait for Enter at the end fails with the same terminal
+	if readText(t, pc.target()) != "NEW BUILD" || pc.path.value != before {
+		t.Errorf("the copy or the PATH changed without an answer (%q, %q)", readText(t, pc.target()), pc.path.value)
+	}
+	if out := run.console.tail(); !strings.Contains(out, "could not be read") || !strings.Contains(out, "the terminal went away") {
+		t.Errorf("the run does not say that the answer could not be read, and why:\n%s", out)
 	}
 }
 
@@ -886,8 +1043,54 @@ func TestAnUpgradeThatWasToldNotToAskStillRefreshesTheCopyOfAnEarlierInstall(t *
 	if len(pc.path.writes) != 0 || strings.Contains(c.out.String(), "Run suiteward from any terminal") {
 		t.Errorf("the PATH was written %d times or the copy was offered in a run that was told not to ask", len(pc.path.writes))
 	}
-	if want := "Command: " + pc.target() + " (updated)"; !strings.Contains(c.tail(), want) {
+	if want := "Updated the copy of suiteward.exe: " + pc.target(); !strings.Contains(c.tail(), want) {
 		t.Errorf("the scrollback lacks %q:\n%s", want, c.tail())
 	}
 	noRepeats(t, c.tail())
+}
+
+func TestAnInstallOnAPlainScreenRefreshesTheCopyOfAnEarlierInstallAndNeverOffersOne(t *testing.T) {
+	pc := newPC(t)
+	writeText(t, pc.target(), "OLD BUILD")
+	_, c, err := installOnPC(t, pc, "\n\n1\n", "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readText(t, pc.target()) != "NEW BUILD" || len(pc.path.writes) != 0 {
+		t.Errorf("the copy holds %q after %d PATH writes, want this program and the PATH alone", readText(t, pc.target()), len(pc.path.writes))
+	}
+	if want := "Updated the copy of suiteward.exe: " + pc.target(); !strings.Contains(c.out.String(), want) {
+		t.Errorf("the output lacks %q:\n%s", want, c.out.String())
+	}
+}
+
+func TestAnInstallOnAPlainScreenDoesNotOfferACopy(t *testing.T) {
+	pc := newPC(t)
+	_, c, err := installOnPC(t, pc, "\n\n1\n", "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(pc.target()); err == nil || len(pc.path.writes) != 0 || strings.Contains(c.out.String(), "Run suiteward from any terminal") {
+		t.Errorf("a plain run was offered the copy or made one (%v, %d PATH writes)", err, len(pc.path.writes))
+	}
+}
+
+func TestAnUpgradeThatFindsNothingToUpgradeStillRefreshesTheCopyOfAnEarlierInstall(t *testing.T) {
+	pc := newPC(t)
+	writeText(t, pc.target(), "OLD BUILD")
+	u := newUpgradeHarness(t, func(s *Settings) { s.Image = testImage })
+	u.restack(testImage, nil)
+	u.f.env["LOCALAPPDATA"] = pc.local
+	env := u.env()
+	env.Self = &pc.self
+	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--upgrade", "--backup-dir", u.backups, "--runtime", "podman", "--connection", "pm", "--image", testImage, "--yes"}
+	if err := Install(context.Background(), args, env); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(u.out.String(), "already on "+testDigest) {
+		t.Fatalf("the upgrade had something to do:\n%s", u.out.String())
+	}
+	if readText(t, pc.target()) != "NEW BUILD" {
+		t.Errorf("the copy holds %q, want this program", readText(t, pc.target()))
+	}
 }

@@ -181,7 +181,7 @@ func (c *colocatedInstall) commonSummary(ctx context.Context, rows *summaryRows)
 func (c *colocatedInstall) installSummary(ctx context.Context, t installTarget) []ui.KV {
 	var rows, self summaryRows
 	env := c.env
-	env.Deps = selfInstallStep(ctx, c.env, &self) // before the hints of the rows: after a copy on the PATH they name the program suiteward
+	env.Deps = offerSelf(ctx, c.env, &self) // before the hints of the rows: after a copy on the PATH they name the program suiteward
 	c.commonSummary(ctx, &rows)
 	rows.add("Owner", c.owner)
 	rows.add("Status", c.statusRow(ctx))
@@ -196,7 +196,7 @@ func (c *colocatedInstall) installSummary(ctx context.Context, t installTarget) 
 func (c *colocatedInstall) upgradeSummary(ctx context.Context, t installTarget) []ui.KV {
 	var rows, self summaryRows
 	env := c.env
-	env.Deps = selfInstallStep(ctx, c.env, &self)
+	env.Deps = offerSelf(ctx, c.env, &self)
 	c.commonSummary(ctx, &rows)
 	rows.add("Release", fmt.Sprintf("%s (was %s)", digestOf(c.image), digestOf(c.previous.Image)))
 	rows.add("Status", c.statusRow(ctx))

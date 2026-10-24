@@ -288,3 +288,76 @@ func TestThePlainRestoreOfABackupOfAnotherTierKeepsTheLongWarning(t *testing.T) 
 		t.Errorf("the plain output lacks the warning about the tier:\n%s", u.out.String())
 	}
 }
+
+// ---- the default of the test check ----
+
+// The check run that Enter takes is the only one with "test" in its name; with none or several, or with several runs and no such name,
+// nothing is highlighted and Enter is refused until the person has picked one with the arrows.
+func TestTheTestCheckDefaultIsTheOnlyRunWithTestInItsName(t *testing.T) {
+	for name, tc := range map[string]struct {
+		runs []string // listed in alphabetical order, capitals first
+		want string
+	}{
+		"in the last place":       {[]string{"lint", "unit-tests", "build"}, "unit-tests"},
+		"in whatever case":        {[]string{"build", "e2e-TESTS", "lint"}, "e2e-TESTS"},
+		"with another and a test": {[]string{"CI / test", "lint"}, "CI / test"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newFakeGitHub(t)
+			g.repos[0].checkRuns = tc.runs
+			env, in := keyedFlowEnv(t, g, without(existingFlags(t, nil), "test-check"), enter)
+			res, err := resolve(t, env)
+			if err != nil || res.TestChecks["acme/app"] != tc.want {
+				t.Fatalf("resolveGitHub = %v, %v, want %s (Enter takes the only run with test in its name)", res.TestChecks, err, tc.want)
+			}
+			if v := viewOf(t, in.shown[0], 100, 30); !strings.Contains(v.text(), "● "+tc.want+" (default)") || strings.Count(v.text(), "(default)") != 1 {
+				t.Errorf("the default is not the run with test in its name:\n%s", v.dump())
+			}
+		})
+	}
+}
+
+func TestTheTestCheckHasNoDefaultWhenNoneOrSeveralRunsHaveTestInTheirName(t *testing.T) {
+	for name, tc := range map[string]struct {
+		runs []string
+		want string // the first run in the list, one key down from none
+	}{
+		"none has test in its name": {[]string{"lint", "build"}, "build"},
+		"two have it":               {[]string{"unit-test", "e2e-test"}, "e2e-test"},
+		"two, in different cases":   {[]string{"unit-TEST", "e2e-test", "lint"}, "e2e-test"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newFakeGitHub(t)
+			g.repos[0].checkRuns = tc.runs
+			env, in := keyedFlowEnv(t, g, without(existingFlags(t, nil), "test-check"), enter, keyDown, enter)
+			res, err := resolve(t, env)
+			if err != nil || res.TestChecks["acme/app"] != tc.want {
+				t.Fatalf("resolveGitHub = %v, %v, want %s (the first run, picked with a key down)", res.TestChecks, err, tc.want)
+			}
+			if len(in.shown) < 3 {
+				t.Fatalf("Enter at the start was not refused: the question was read %d times, want 3", len(in.shown))
+			}
+			start := viewOf(t, in.shown[0], 100, 30)
+			if strings.Contains(start.text(), "●") || strings.Contains(start.text(), "(default)") {
+				t.Errorf("a run is highlighted or marked as the default:\n%s", start.dump())
+			}
+			if refused := viewOf(t, in.shown[1], 100, 30); !strings.Contains(refused.text(), "Pick one with the arrows.") {
+				t.Errorf("Enter was not refused with a note:\n%s", refused.dump())
+			}
+		})
+	}
+}
+
+// A single check run is the default, whatever its name, as before.
+func TestASingleCheckRunIsTheDefaultWhateverItsName(t *testing.T) {
+	g := newFakeGitHub(t)
+	g.repos[0].checkRuns = []string{"lint"}
+	env, in := keyedFlowEnv(t, g, without(existingFlags(t, nil), "test-check"), enter)
+	res, err := resolve(t, env)
+	if err != nil || res.TestChecks["acme/app"] != "lint" {
+		t.Fatalf("resolveGitHub = %v, %v, want lint", res.TestChecks, err)
+	}
+	if v := viewOf(t, in.shown[0], 100, 30); !strings.Contains(v.text(), "● lint (default)") {
+		t.Errorf("the single run is not the default:\n%s", v.dump())
+	}
+}

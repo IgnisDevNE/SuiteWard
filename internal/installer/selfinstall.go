@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -74,10 +75,20 @@ type UserPath interface {
 	Announce() error
 }
 
-// pathKey is an entry of a PATH value as it is compared: without case, which Windows ignores, and without a trailing separator.
+// percentVariable is a reference to an environment variable in an entry of a Path of the expandable kind: %LOCALAPPDATA%.
+var percentVariable = regexp.MustCompile(`%[^%;]+%`)
+
+// pathKey is an entry of a PATH value as it is compared: with the variables it names replaced by their value (a terminal reads
+// %LOCALAPPDATA%\SuiteWard\bin as the folder of the copy), without case, which Windows ignores, and without a trailing separator. Only the
+// comparison expands: the value keeps the text of its entries.
 func pathKey(entry string, getenv func(string) string) string {
-	_ = getenv
-	return strings.ToLower(strings.TrimRight(entry, `\/`))
+	expanded := percentVariable.ReplaceAllStringFunc(entry, func(ref string) string {
+		if value := getenv(strings.Trim(ref, "%")); value != "" {
+			return value
+		}
+		return ref // a variable that is not defined stays as it is written, as Windows leaves it
+	})
+	return strings.ToLower(strings.TrimRight(expanded, `\/`))
 }
 
 // addPathEntry appends dir to a PATH value unless it is there already. The other entries stay as they are, in their order.

@@ -101,8 +101,10 @@ func TestCommandNameQuotesAPathWithASpaceAndPowerShellNeedsTheCallOperatorForIt(
 	if got := commandName("windows", running(exe), notFound); got != "& "+quoted {
 		t.Errorf("on Windows commandName = %q, want %q", got, "& "+quoted)
 	}
-	plain := aProgram(t, filepath.Join(t.TempDir(), "downloads"), "suiteward.exe")
-	if got := commandName("windows", running(plain), notFound); got != realPath(t, plain) || strings.HasPrefix(got, "&") {
+	// A path with nothing to quote: one that does not exist is not resolved, so the temp directory of the machine (the runner of CI has a `~` in
+	// it, which is quoted) is not involved.
+	plain := `C:\Tools\suiteward.exe`
+	if got := commandName("windows", running(plain), notFound); got != plain {
 		t.Errorf("a path with nothing to quote is run as it is on Windows, got %q", got)
 	}
 }

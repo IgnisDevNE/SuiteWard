@@ -35,7 +35,7 @@ func TestAddingAFolderToAPathValue(t *testing.T) {
 		{"only a folder with the same name in front is another folder", `C:\Other\` + folderOnPath, `C:\Other\` + folderOnPath + `;` + folderOnPath, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got, changed := addPathEntry(c.path, folderOnPath)
+			got, changed := addPathEntry(c.path, folderOnPath, noEnv)
 			if got != c.want || changed != c.changed {
 				t.Errorf("addPathEntry(%q) = %q, %v; want %q, %v", c.path, got, changed, c.want, c.changed)
 			}
@@ -62,7 +62,7 @@ func TestRemovingAFolderFromAPathValue(t *testing.T) {
 		{"a folder that only starts with it", folderOnPath + `2`, folderOnPath + `2`, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got, changed := removePathEntry(c.path, folderOnPath)
+			got, changed := removePathEntry(c.path, folderOnPath, noEnv)
 			if got != c.want || changed != c.changed {
 				t.Errorf("removePathEntry(%q) = %q, %v; want %q, %v", c.path, got, changed, c.want, c.changed)
 			}
@@ -98,22 +98,22 @@ func TestTheUserPathKeepsItsKindWhenTheFolderIsAddedOrRemoved(t *testing.T) {
 	for _, expand := range []bool{true, false} {
 		p := &fakeUserPath{value: `C:\A;C:\B`, expand: expand, found: true}
 		self := SelfInstall{Path: p}
-		if changed, err := self.addToUserPath(folderOnPath); err != nil || !changed {
+		if changed, err := self.addToUserPath(folderOnPath, noEnv); err != nil || !changed {
 			t.Fatalf("expand=%v: addToUserPath = %v, %v", expand, changed, err)
 		}
 		if p.value != `C:\A;C:\B;`+folderOnPath || p.expand != expand {
 			t.Errorf("expand=%v: the Path is %q (expand %v) after the add", expand, p.value, p.expand)
 		}
-		if changed, err := self.addToUserPath(folderOnPath); err != nil || changed || len(p.writes) != 1 {
+		if changed, err := self.addToUserPath(folderOnPath, noEnv); err != nil || changed || len(p.writes) != 1 {
 			t.Errorf("expand=%v: a second add = %v, %v after %d writes; want no change", expand, changed, err, len(p.writes))
 		}
-		if changed, err := self.removeFromUserPath(folderOnPath); err != nil || !changed {
+		if changed, err := self.removeFromUserPath(folderOnPath, noEnv); err != nil || !changed {
 			t.Fatalf("expand=%v: removeFromUserPath = %v, %v", expand, changed, err)
 		}
 		if p.value != `C:\A;C:\B` || p.expand != expand {
 			t.Errorf("expand=%v: the Path is %q (expand %v) after the removal", expand, p.value, p.expand)
 		}
-		if changed, err := self.removeFromUserPath(folderOnPath); err != nil || changed || len(p.writes) != 2 {
+		if changed, err := self.removeFromUserPath(folderOnPath, noEnv); err != nil || changed || len(p.writes) != 2 {
 			t.Errorf("expand=%v: a second removal = %v, %v after %d writes; want no change", expand, changed, err, len(p.writes))
 		}
 	}
@@ -121,27 +121,27 @@ func TestTheUserPathKeepsItsKindWhenTheFolderIsAddedOrRemoved(t *testing.T) {
 
 func TestAUserWithoutAPathGetsOneOfTheExpandableKind(t *testing.T) {
 	p := &fakeUserPath{}
-	if changed, err := (SelfInstall{Path: p}).addToUserPath(folderOnPath); err != nil || !changed {
+	if changed, err := (SelfInstall{Path: p}).addToUserPath(folderOnPath, noEnv); err != nil || !changed {
 		t.Fatalf("addToUserPath = %v, %v", changed, err)
 	}
 	if p.value != folderOnPath || !p.expand {
 		t.Errorf("the new Path is %q (expand %v), want the folder, expandable as Windows makes it", p.value, p.expand)
 	}
-	if changed, err := (SelfInstall{Path: &fakeUserPath{}}).removeFromUserPath(folderOnPath); err != nil || changed {
+	if changed, err := (SelfInstall{Path: &fakeUserPath{}}).removeFromUserPath(folderOnPath, noEnv); err != nil || changed {
 		t.Errorf("removeFromUserPath of no Path = %v, %v; want nothing to do", changed, err)
 	}
 }
 
 func TestAFailedReadOrWriteOfTheUserPathChangesNothingAndSaysSo(t *testing.T) {
 	read := &fakeUserPath{value: `C:\A`, found: true, readErr: errors.New("registry: access denied")}
-	if _, err := (SelfInstall{Path: read}).addToUserPath(folderOnPath); err == nil || !strings.Contains(err.Error(), "access denied") || len(read.writes) != 0 {
+	if _, err := (SelfInstall{Path: read}).addToUserPath(folderOnPath, noEnv); err == nil || !strings.Contains(err.Error(), "access denied") || len(read.writes) != 0 {
 		t.Errorf("a failed read: err = %v after %d writes, want the error and no write", err, len(read.writes))
 	}
 	write := &fakeUserPath{value: `C:\A`, found: true, writeErr: errors.New("registry: key is locked")}
-	if _, err := (SelfInstall{Path: write}).addToUserPath(folderOnPath); err == nil || !strings.Contains(err.Error(), "key is locked") {
+	if _, err := (SelfInstall{Path: write}).addToUserPath(folderOnPath, noEnv); err == nil || !strings.Contains(err.Error(), "key is locked") {
 		t.Errorf("a failed write: err = %v, want the error", err)
 	}
-	if _, err := (SelfInstall{Path: write}).removeFromUserPath(`C:\A`); err == nil || !strings.Contains(err.Error(), "key is locked") {
+	if _, err := (SelfInstall{Path: write}).removeFromUserPath(`C:\A`, noEnv); err == nil || !strings.Contains(err.Error(), "key is locked") {
 		t.Errorf("a failed removal: err = %v, want the error", err)
 	}
 }
@@ -1191,3 +1191,6 @@ func TestTheOfferDefaultsToNoWhereAnotherSuitewardWouldShadowTheCopy(t *testing.
 		t.Errorf("Enter copied the program or changed the PATH (%v, %d writes, rows %v)", err, len(pc.path.writes), o.rows)
 	}
 }
+
+// noEnv is the environment of a test whose PATH entries name no variable.
+func noEnv(string) string { return "" }

@@ -80,13 +80,13 @@ func TestTheRegistryPathKeepsItsKindWhenTheFolderIsAddedOrRemoved(t *testing.T) 
 				t.Fatal(err)
 			}
 			self := SelfInstall{Path: registryPath{key: path}}
-			if changed, err := self.addToUserPath(folderOnPath); err != nil || !changed {
+			if changed, err := self.addToUserPath(folderOnPath, noEnv); err != nil || !changed {
 				t.Fatalf("addToUserPath = %v, %v", changed, err)
 			}
 			if value, kind := rawPath(t, k); value != c.initial+";"+folderOnPath || kind != c.want {
 				t.Errorf("after the add the Path is %q of kind %d, want %q of kind %d", value, kind, c.initial+";"+folderOnPath, c.want)
 			}
-			if changed, err := self.removeFromUserPath(folderOnPath); err != nil || !changed {
+			if changed, err := self.removeFromUserPath(folderOnPath, noEnv); err != nil || !changed {
 				t.Fatalf("removeFromUserPath = %v, %v", changed, err)
 			}
 			if value, kind := rawPath(t, k); value != c.initial || kind != c.want {
@@ -98,7 +98,7 @@ func TestTheRegistryPathKeepsItsKindWhenTheFolderIsAddedOrRemoved(t *testing.T) 
 
 func TestAUserWithoutAPathInTheRegistryGetsOneOfTheExpandableKind(t *testing.T) {
 	k, path := aUserKey(t)
-	if changed, err := (SelfInstall{Path: registryPath{key: path}}).addToUserPath(folderOnPath); err != nil || !changed {
+	if changed, err := (SelfInstall{Path: registryPath{key: path}}).addToUserPath(folderOnPath, noEnv); err != nil || !changed {
 		t.Fatalf("addToUserPath = %v, %v", changed, err)
 	}
 	if value, kind := rawPath(t, k); value != folderOnPath || kind != registry.EXPAND_SZ {

@@ -75,12 +75,15 @@ type UserPath interface {
 }
 
 // pathKey is an entry of a PATH value as it is compared: without case, which Windows ignores, and without a trailing separator.
-func pathKey(entry string) string { return strings.ToLower(strings.TrimRight(entry, `\/`)) }
+func pathKey(entry string, getenv func(string) string) string {
+	_ = getenv
+	return strings.ToLower(strings.TrimRight(entry, `\/`))
+}
 
 // addPathEntry appends dir to a PATH value unless it is there already. The other entries stay as they are, in their order.
-func addPathEntry(path, dir string) (string, bool) {
+func addPathEntry(path, dir string, getenv func(string) string) (string, bool) {
 	switch {
-	case slices.ContainsFunc(strings.Split(path, ";"), func(e string) bool { return pathKey(e) == pathKey(dir) }):
+	case slices.ContainsFunc(strings.Split(path, ";"), func(e string) bool { return pathKey(e, getenv) == pathKey(dir, getenv) }):
 		return path, false
 	case path == "":
 		return dir, true
@@ -91,9 +94,9 @@ func addPathEntry(path, dir string) (string, bool) {
 }
 
 // removePathEntry removes every entry of a PATH value that is dir. The other entries stay as they are, in their order.
-func removePathEntry(path, dir string) (string, bool) {
+func removePathEntry(path, dir string, getenv func(string) string) (string, bool) {
 	entries := strings.Split(path, ";")
-	kept := slices.DeleteFunc(slices.Clone(entries), func(e string) bool { return pathKey(e) == pathKey(dir) })
+	kept := slices.DeleteFunc(slices.Clone(entries), func(e string) bool { return pathKey(e, getenv) == pathKey(dir, getenv) })
 	if len(kept) == len(entries) {
 		return path, false
 	}
@@ -102,7 +105,7 @@ func removePathEntry(path, dir string) (string, bool) {
 
 // addToUserPath puts dir on the user's PATH, in the kind of value it has: a Path that does not exist yet is made of the expandable kind,
 // as Windows makes one. It says whether it changed the value; the programs that run are told by Announce.
-func (s SelfInstall) addToUserPath(dir string) (changed bool, err error) {
+func (s SelfInstall) addToUserPath(dir string, getenv func(string) string) (changed bool, err error) {
 	value, expand, found, err := s.Path.Read()
 	if err != nil {
 		return false, fmt.Errorf("read the PATH of this user: %w", err)
@@ -110,7 +113,7 @@ func (s SelfInstall) addToUserPath(dir string) (changed bool, err error) {
 	if !found {
 		expand = true
 	}
-	updated, changed := addPathEntry(value, dir)
+	updated, changed := addPathEntry(value, dir, getenv)
 	if !changed {
 		return false, nil
 	}
@@ -121,7 +124,7 @@ func (s SelfInstall) addToUserPath(dir string) (changed bool, err error) {
 }
 
 // removeFromUserPath takes dir off the user's PATH, keeping the kind of value it has.
-func (s SelfInstall) removeFromUserPath(dir string) (changed bool, err error) {
+func (s SelfInstall) removeFromUserPath(dir string, getenv func(string) string) (changed bool, err error) {
 	value, expand, found, err := s.Path.Read()
 	if err != nil {
 		return false, fmt.Errorf("read the PATH of this user: %w", err)
@@ -129,7 +132,7 @@ func (s SelfInstall) removeFromUserPath(dir string) (changed bool, err error) {
 	if !found {
 		return false, nil
 	}
-	updated, changed := removePathEntry(value, dir)
+	updated, changed := removePathEntry(value, dir, getenv)
 	if !changed {
 		return false, nil
 	}
@@ -299,7 +302,7 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 		rows.warn(fmt.Sprintf("suiteward.exe was not copied to %s: %v. SuiteWard works without it: run it by the path of this program, %s.", dir, err, exe))
 		return d
 	}
-	changed, err := s.addToUserPath(dir)
+	changed, err := s.addToUserPath(dir, d.Getenv)
 	if err != nil {
 		rows.warn(fmt.Sprintf("suiteward.exe was copied to %s, but its folder was not added to your PATH: %v. Add %s to the PATH of your user (Settings, Environment Variables) to run suiteward by name.", target, err, dir))
 		return d
@@ -335,12 +338,12 @@ func askYesNo(ctx context.Context, scr *ui.Screen, question string, def int) (ye
 }
 
 // onUserPath says whether dir is on the user's PATH.
-func (s SelfInstall) onUserPath(dir string) (bool, error) {
+func (s SelfInstall) onUserPath(dir string, getenv func(string) string) (bool, error) {
 	value, _, found, err := s.Path.Read()
 	if err != nil || !found {
 		return false, err
 	}
-	_, there := removePathEntry(value, dir)
+	_, there := removePathEntry(value, dir, getenv)
 	return there, nil
 }
 
@@ -358,7 +361,7 @@ func offerRemoveCopy(ctx context.Context, env Env) {
 	target := filepath.Join(dir, selfFile)
 	there := func(path string) bool { _, err := os.Stat(path); return err == nil }
 	hasCopy := there(target) || there(target+staleSuffix)
-	onPath, err := s.onUserPath(dir)
+	onPath, err := s.onUserPath(dir, d.Getenv)
 	if err != nil {
 		scr.Warn("The PATH of this user could not be read (%v), so whether it holds %s is not known.\n", err, dir)
 	}
@@ -384,7 +387,7 @@ func offerRemoveCopy(ctx context.Context, env Env) {
 		return
 	}
 	if onPath {
-		s.removeFromPath(scr, dir)
+		s.removeFromPath(scr, dir, d.Getenv)
 	}
 	if hasCopy {
 		s.removeCopy(scr, dir)
@@ -393,8 +396,8 @@ func offerRemoveCopy(ctx context.Context, env Env) {
 }
 
 // removeFromPath takes dir off the user's PATH and tells the programs that run.
-func (s SelfInstall) removeFromPath(scr *ui.Screen, dir string) {
-	changed, err := s.removeFromUserPath(dir)
+func (s SelfInstall) removeFromPath(scr *ui.Screen, dir string, getenv func(string) string) {
+	changed, err := s.removeFromUserPath(dir, getenv)
 	if err != nil {
 		scr.Warn("The folder %s was not removed from your PATH: %v. Remove it in Settings, Environment Variables.\n", dir, err)
 		return

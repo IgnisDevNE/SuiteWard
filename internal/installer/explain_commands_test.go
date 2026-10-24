@@ -158,10 +158,12 @@ func TestTheEndOfAnUpgradeSaysHowToGoBackOnItsTier(t *testing.T) {
 		if err := u.upgradeAt(false, "", "--yes"); err != nil {
 			t.Fatal(err)
 		}
-		text, path := goBackLine(u.out.String()), oneArchive(t, u.backups)
+		text, path, settings := goBackLine(u.out.String()), oneArchive(t, u.backups), " --settings "+u.settingsPath()
+		// Every command is scoped to this instance, as the engine of the start command and the doctor hint are: copied on a PC with a second
+		// instance, an unscoped `volume rm` or `uninstall` would reach the default one.
 		for _, want := range []string{
-			"`suiteward uninstall --yes`", "podman volume rm " + VolumeData + " " + VolumeDBData,
-			"`suiteward install --image " + oldImage + "`", "`suiteward restore " + path + "` with that kit", "migrations only go forward", pointer,
+			"`suiteward uninstall --yes" + settings + "`", "`podman --connection pm volume rm " + VolumeData + " " + VolumeDBData + "`",
+			"`suiteward install --image " + oldImage + settings + "`", "`suiteward restore " + path + settings + "` with that kit", "migrations only go forward", pointer,
 		} {
 			if !strings.Contains(text, want) {
 				t.Errorf("the line that says how to go back lacks %q:\n%s", want, text)
@@ -179,7 +181,7 @@ func TestTheEndOfAnUpgradeSaysHowToGoBackOnItsTier(t *testing.T) {
 		text, path := goBackLine(u.out.String()), oneArchive(t, u.backups)
 		for _, want := range []string{
 			unitsKeptBeside(path), "`systemctl --user daemon-reload`", "`systemctl --user stop suiteward.service`",
-			"`suiteward restore " + path + "` with that kit", "migrations only go forward", pointer,
+			"`suiteward restore " + path + " --tier isolated --settings " + settingsFile(u.home) + "` with that kit", "migrations only go forward", pointer,
 		} {
 			if !strings.Contains(text, want) {
 				t.Errorf("the line that says how to go back lacks %q:\n%s", want, text)

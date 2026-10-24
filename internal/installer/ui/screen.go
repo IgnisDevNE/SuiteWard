@@ -725,6 +725,11 @@ func (s *Screen) Secret(label string, read func() ([]byte, error)) ([]byte, erro
 	return secret, err
 }
 
+// HiddenLine is declared for its tests; it reads nothing yet.
+func (s *Screen) HiddenLine(ctx context.Context, label string, fallback func() ([]byte, error)) ([]byte, error) {
+	return nil, errors.New("HiddenLine is not implemented")
+}
+
 // Summary shows key/value rows and warnings on a screen with no step column. Full screen waits for Enter, so the screen can be read
 // before Close leaves it, and keeps the rows and warnings for Close to print on the normal screen (a second Summary replaces them):
 // do not Keep them as well. Plain mode prints "key: value" lines and then the warnings as given. It returns an error only when

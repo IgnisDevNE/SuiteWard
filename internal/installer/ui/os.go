@@ -34,13 +34,15 @@ func OSEnv(plain bool) Env {
 func OpenOS(ctx context.Context, in io.Reader, version string, plain bool) (*Screen, error) {
 	env := OSEnv(plain)
 	o := Options{Out: os.Stdout, In: in, Context: ctx, Version: version, Mode: env.Mode(), Color: env.Color(), Width: env.Width, Height: env.Height, InputIsTerminal: env.StdinTTY}
+	if env.StdinTTY { // a plain run at a terminal needs it too: a hidden line is read in key mode (no echo, Ctrl-C kept as a signal)
+		o.KeyInput = func() (func() error, error) { return enableKeys(os.Stdin) }
+	}
 	if o.Mode == ModeFull {
 		restore, err := enableVT(os.Stdout)
 		if err != nil {
 			o.Mode = ModePlain // shortcut: the reason is not reported, only that the console cannot draw; plain output still works
 		} else {
 			o.RestoreConsole = restore
-			o.KeyInput = func() (func() error, error) { return enableKeys(os.Stdin) }
 		}
 	}
 	return Open(o)

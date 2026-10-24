@@ -1,6 +1,10 @@
 package ui
 
-import "bufio"
+import (
+	"bufio"
+	"errors"
+	"io"
+)
 
 // key is one key press that Select and MultiSelect understand.
 type key int
@@ -76,4 +80,52 @@ func arrow(final byte) key {
 		return keyDown
 	}
 	return keyOther
+}
+
+// readHiddenLine reads the text of a line from r in key mode, where the terminal does no line editing: characters are taken as they
+// come, backspace (DEL or BS) drops the last character, Ctrl-U the whole line, an escape sequence (an arrow, Delete) and the other
+// control characters are not text, and CR, LF or CR LF ends the line. The last line may lack its newline; the end of the input before
+// any character is io.EOF. A Ctrl-C that arrives as a character is errCtrlC.
+func readHiddenLine(r *bufio.Reader) ([]byte, error) {
+	var line []byte
+	for {
+		b, err := r.ReadByte()
+		switch {
+		case errors.Is(err, io.EOF) && len(line) > 0:
+			return line, nil
+		case err != nil:
+			return nil, err
+		case b == '\r':
+			if r.Buffered() > 0 {
+				if next, _ := r.Peek(1); next[0] == '\n' { // buffered, so it cannot fail
+					_, _ = r.Discard(1)
+				}
+			}
+			return line, nil
+		case b == '\n':
+			return line, nil
+		case b == 0x03:
+			return nil, errCtrlC
+		case b == 0x7f || b == 0x08:
+			line = dropRune(line)
+		case b == 0x15:
+			line = line[:0]
+		case b == 0x1b:
+			readEscape(r)
+		case b >= 0x20:
+			line = append(line, b)
+		}
+	}
+}
+
+// dropRune removes the last character of b: its continuation bytes and the byte that starts it.
+func dropRune(b []byte) []byte {
+	for len(b) > 0 {
+		last := b[len(b)-1]
+		b = b[:len(b)-1]
+		if last&0xc0 != 0x80 {
+			break
+		}
+	}
+	return b
 }

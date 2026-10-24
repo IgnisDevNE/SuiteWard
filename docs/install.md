@@ -4,6 +4,8 @@ This guide installs SuiteWard with its installer, the `suiteward` binary: one gu
 
 You do not need this guide open to run the installer. On a full screen, every question has a page that says what it asks, the choices, which one is recommended and the default. This guide is the reference: the details behind those pages, and what the plain mode (a script, an agent, `--plain`) needs, because the explanations are for the full screen only.
 
+**Which release.** This guide describes the installer of phase M1.14. The release that carries it is not cut yet. `v0.4.0-alpha.1`, the release of phase M1.13, has the full screen but asks its questions by typing or by number, uses the default ports 8081 and 8091, runs setup on the terminal of the installer and has no `suiteward version`; where this guide says otherwise, it is the phase M1.14 behavior.
+
 Two rules apply to every command:
 
 - Pin one release. Replace `<tag>` with the release you install, everywhere it appears (the first release that has the installer is `v0.3.0-alpha.1`). Do not use a moving tag. Where a command names the image index digest of the release, replace `<index>` with it. The release notes name it, on the line `Index digest:`.
@@ -52,7 +54,7 @@ There are two ways to get it and check it: the one-line install on Linux and mac
 curl -fsSL https://github.com/IgnisDevNE/SuiteWard/releases/download/<tag>/install.sh | SUITEWARD_VERSION=<tag> sh
 ```
 
-Use the same `<tag>` twice, and always set `SUITEWARD_VERSION`. The script is the same file in every release and learns nothing from the address it came from. Without the variable it installs GitHub's latest release, which is never a pre-release. At the time of writing that is `v0.2.0`, which has no installer binaries, so the script stops and says to set `SUITEWARD_VERSION`. Use a release whose page lists `install.sh`: no release built before phase M1.13 has one, `v0.2.0` and the alpha pre-releases (`v0.3.0-alpha.1`, `v0.3.0-alpha.2`) included, and the alphas have four binaries. There is no one-line install on Windows: use 4.2.
+Use the same `<tag>` twice, and always set `SUITEWARD_VERSION`. The script is the same file in every release and learns nothing from the address it came from. Without the variable it installs GitHub's latest release, which is never a pre-release. At the time of writing that is `v0.2.0`, which has no installer binaries, so the script stops and says to set `SUITEWARD_VERSION`. Use a release whose page lists `install.sh`: `v0.4.0-alpha.1` is the first, and no release built before phase M1.13 has one, `v0.2.0` and the alpha pre-releases `v0.3.0-alpha.1` and `v0.3.0-alpha.2` included (those have four binaries). There is no one-line install on Windows: use 4.2.
 
 The script does this, and nothing else:
 

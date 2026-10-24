@@ -129,6 +129,16 @@ func TestThePlainRestoreKeepsItsPromptAndSaysWhatToDoAboutTheCanonicalAtTheEnd(t
 	}
 }
 
+// goBackLine is the line of the output that says how to go back, "" when there is none.
+func goBackLine(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "To go back, ") {
+			return line
+		}
+	}
+	return ""
+}
+
 // The line at the end of an upgrade that says how to go back names the first step of the tier. A restore alone cannot undo an upgrade that
 // migrated: the previous release must run first, and on a co-located stack that means removing the stack and its volumes, on an isolated one
 // putting the replaced units back.
@@ -139,7 +149,7 @@ func TestTheEndOfAnUpgradeSaysHowToGoBackOnItsTier(t *testing.T) {
 		if err := u.upgradeAt(false, "", "--yes"); err != nil {
 			t.Fatal(err)
 		}
-		text, path := u.out.String(), oneArchive(t, u.backups)
+		text, path := goBackLine(u.out.String()), oneArchive(t, u.backups)
 		for _, want := range []string{
 			"`suiteward uninstall --yes`", "podman volume rm " + VolumeData + " " + VolumeDBData,
 			"`suiteward install --image " + oldImage + "`", "`suiteward restore " + path + "` with that kit", "migrations only go forward", pointer,
@@ -157,7 +167,7 @@ func TestTheEndOfAnUpgradeSaysHowToGoBackOnItsTier(t *testing.T) {
 		if err := u.upgrade("--image", testDigest, "--yes"); err != nil {
 			t.Fatal(err)
 		}
-		text, path := u.out.String(), oneArchive(t, u.backups)
+		text, path := goBackLine(u.out.String()), oneArchive(t, u.backups)
 		for _, want := range []string{
 			unitsKeptBeside(path), "`systemctl --user daemon-reload`", "`systemctl --user stop suiteward.service`",
 			"`suiteward restore " + path + "` with that kit", "migrations only go forward", pointer,

@@ -140,7 +140,7 @@ func askedSettings(r *Resolver, base Settings) (Settings, error) {
 
 func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) error {
 	d, out, scr := env.Deps, env.Term.Out, r.screen
-	scr.Steps("Checks", "Images", "GitHub", "Units", "Start", "Owner", "Done")
+	scr.Steps(isolatedInstallSteps...)
 	s, err := askedSettings(r, s)
 	if err != nil {
 		return err

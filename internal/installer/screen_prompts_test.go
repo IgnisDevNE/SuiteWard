@@ -30,7 +30,7 @@ func lastFrame(out string) string { return out[strings.LastIndex(out, esc+"[1;1H
 // A question goes through the Screen, so that the answer joins it on the page: a terminal echoes what is typed at the cursor, which
 // the frame does not have.
 func TestResolverQuestionsAreAnsweredOnThePageOfAFullScreen(t *testing.T) {
-	scr, br, out := fullScreenOn(t, context.Background(), strings.NewReader("9000\ny\nenroll\n"))
+	scr, br, out := fullScreenOn(t, context.Background(), strings.NewReader("9000\n1\nenroll\n"))
 	term := Terminal{In: br, Out: scr, IsTerminal: true, ReadPassword: func() ([]byte, error) { return []byte("pw"), nil }}
 	r := newTestResolver(t, nil, nil, term)
 
@@ -43,7 +43,8 @@ func TestResolverQuestionsAreAnsweredOnThePageOfAFullScreen(t *testing.T) {
 	if line, err := r.ask("Type \"enroll\": "); err != nil || line != "enroll" {
 		t.Fatalf("ask = %q, %v", line, err)
 	}
-	for _, want := range []string{"HTTP port on 127.0.0.1 [8081]: 9000", "Remove the containers? [y/N]: y", `Type "enroll": enroll`} {
+	// A yes or no question is a choice on a full screen (Yes is the first row, which "1" picks), not the typed "[y/N]".
+	for _, want := range []string{"HTTP port on 127.0.0.1 [8081]: 9000", "Remove the containers?", "1) Yes", `Type "enroll": enroll`} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the page lacks the answered question %q", want)
 		}

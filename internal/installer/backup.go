@@ -105,7 +105,7 @@ func (e migratingError) Unwrap() error { return e.error }
 func withBackup(err error, path, unitsDir string) error {
 	var migrating migratingError
 	if errors.As(err, &migrating) {
-		return fmt.Errorf("%w\nThe backup is in %s. To go back, install the previous release and run `suiteward restore %s` with your recovery kit (the restore names the release to install); everything after the backup is lost (docs/backup.md, section 3)", err, path, quoteArg(path))
+		return fmt.Errorf("%w\nThe backup is in %s. To go back, install the previous release and run `suiteward restore %s` with your recovery kit (the restore names the release to install); everything after the backup is lost (%s)", err, path, quoteArg(path), goingBack)
 	}
 	advice := fmt.Sprintf("Migrate did not run, so the schema and the data are unchanged. The backup is in %s.", path)
 	var stopped stoppedError

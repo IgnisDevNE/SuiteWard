@@ -216,9 +216,10 @@ func TestTheDockerWarningIsOneWarningWithItsPointsOnTheScreenAndInTheScrollback(
 	if err := scr.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// A full screen has the same two points in fewer words, so that the smallest window still shows them above the question.
 	want := "! Docker is allowed on this PC, but Podman is strongly recommended.\n" +
-		"    - Docker's daemon runs as root (a rootful daemon): the containers are not isolated from whoever controls that daemon the way rootless Podman's are.\n" +
-		"    - Docker has no secret store outside Swarm, so the secrets (the database owner URL, the App key, the MCP token) live in named volumes that anyone who controls the Docker daemon can read.\n"
+		"    - Docker's daemon runs as root: its containers are not isolated from whoever controls it.\n" +
+		"    - Its secrets live in volumes that anyone who controls the daemon can read.\n"
 	if got := c.tail(); got != want {
 		t.Errorf("the scrollback holds\n%s\nwant\n%s", got, want)
 	}

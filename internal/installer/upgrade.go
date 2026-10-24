@@ -225,7 +225,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	}
 	scr.Step(5)
 	c.restartAfterReboot(ctx)
-	upgraded(scr, previous.Image, image, dir, doctor)
+	upgraded(scr, image, dir, goBackColocated(engine, previous.Image, dir, scopeFlags(r, false)), doctor)
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }
 
@@ -271,11 +271,41 @@ func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, di
 
 // upgraded prints the end of a successful upgrade: where the backup is, how to go back and what to run next. The two lines about the
 // backup are kept, so that they are still there when the screen has gone.
-func upgraded(scr *ui.Screen, previous, image, backupPath, doctor string) {
+func upgraded(scr *ui.Screen, image, backupPath, goBack, doctor string) {
 	scr.Say("Upgraded to %s.\n", digestOf(image))
 	scr.Keep("The backup is in %s. It holds the TOTP secret, encrypted to your recovery key: keep its kit off this machine.\n", backupPath)
-	scr.Keep("To go back, install the previous release %s and run `suiteward restore %s` with that kit (docs/backup.md, section 3; migrations only go forward).\n", digestOf(previous), quoteArg(backupPath))
+	scr.Keep("%s\n", goBack)
 	scr.Say("Check the instance with `%s`.\n", doctor)
+}
+
+// goingBack is where the steps of the way back after an upgrade are written down.
+const goingBack = "the steps: docs/backup.md, Going back after an upgrade"
+
+// goBackColocated is the way back after the upgrade of a co-located stack: a restore alone cannot undo an upgrade that migrated, so the stack
+// and its data volumes go first, and the previous release is installed before the backup is restored.
+func goBackColocated(engine, previousImage, backupPath, scope string) string {
+	return fmt.Sprintf("To go back, remove the stack and its data volumes (`suiteward uninstall --yes%[1]s`, then `%[2]s volume rm %[3]s %[4]s`), install the previous release (`suiteward install --image %[5]s%[1]s`), then run `suiteward restore %[6]s%[1]s` with that kit; migrations only go forward, so it must be the previous release (%[7]s).",
+		scope, engine, VolumeData, VolumeDBData, previousImage, quoteArg(backupPath), goingBack)
+}
+
+// goBackIsolated is the way back after the upgrade of an isolated host: the unit files that the upgrade replaced were kept beside the backup;
+// they go back, systemd reloads them and the service stops, and then the backup is restored.
+func goBackIsolated(backupPath, unitsDir, scope string) string {
+	return fmt.Sprintf("To go back, copy the unit files that this upgrade replaced, from %s to %s, then run `systemctl --user daemon-reload` and `systemctl --user stop suiteward.service`, and then `suiteward restore %s%s` with that kit; migrations only go forward, so the units must be the previous release's (%s).",
+		unitsKeptBeside(backupPath), unitsDir, quoteArg(backupPath), scope, goingBack)
+}
+
+// scopeFlags names the tier and the settings file of this run when they are not the defaults, for a command that a message tells the person
+// to run next: copied on a PC with a second instance, it must reach this one (the command line of this run, as enrollCommand takes it).
+func scopeFlags(r *Resolver, isolated bool) string {
+	flags := ""
+	if isolated {
+		flags += " --tier isolated"
+	}
+	if path, ok := r.flags["settings"]; ok {
+		flags += " --settings " + quoteArg(path)
+	}
+	return flags
 }
 
 // The wait for /status of a service the upgrade started: at most startWaitTries probes, and a deadline on the whole wait, because a
@@ -310,7 +340,7 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 			return false, refuse
 		}
 	}
-	const manual = "take the backup by hand instead (docs/backup.md, section 2), then upgrade"
+	const manual = "take the backup by hand instead (dump the database and copy the artifacts volume yourself; details: docs/backup.md, Appendix A), then upgrade"
 	if err := start(ctx); err != nil {
 		return false, fmt.Errorf("start the installed service: %w; %s", err, manual)
 	}

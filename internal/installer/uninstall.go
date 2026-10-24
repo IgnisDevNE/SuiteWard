@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // Uninstall is `suiteward uninstall [--purge] [--yes] [--instance ID]` for the co-located tier: it removes the three containers and keeps
@@ -159,9 +160,9 @@ func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, q
 	if !i.haveSettings {
 		settings = "none (there is no file at " + i.settingsPath + ")"
 	}
-	r.say("This is the instance %s on %s. Its settings file: %s.\n", shown, engineLine(i.rt.Engine()), settings)
+	showRemoval(r, purge, shown, engineLine(i.rt.Engine()), settings)
 	if purge {
-		r.say("%s\n", question)
+		r.screen.Critical("%s", question) // the line it always was in plain mode, a red box under the page on a full screen
 		if err := i.refuseUnnamed(ctx, r, id); err != nil {
 			return err
 		}
@@ -178,6 +179,24 @@ func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, q
 		return errors.New("nothing was removed")
 	}
 	return nil
+}
+
+// showRemoval says which instance is about to be removed: a page on a full screen, and the line it always printed otherwise. The page
+// says that nothing is removed before the confirmation only where a question is going to ask for it: --yes answers for the person.
+func showRemoval(r *Resolver, purge bool, id, engine, settings string) {
+	if !r.screen.FullScreen() {
+		r.say("This is the instance %s on %s. Its settings file: %s.\n", id, engine, settings)
+		return
+	}
+	title := "Remove the containers"
+	if purge {
+		title = "Remove everything of this instance"
+	}
+	blocks := []ui.Block{ui.Fields(ui.KV{Key: "Instance", Value: id}, ui.KV{Key: "Engine", Value: engine}, ui.KV{Key: "Settings", Value: settings})}
+	if yes, _ := r.yes(); r.term.IsTerminal && !yes { // a --yes that cannot be read is refused by the confirmation itself
+		blocks = append([]ui.Block{ui.Para("Nothing is removed until you confirm.")}, blocks...)
+	}
+	r.screen.Page(title, blocks...)
 }
 
 // refuseUnnamed refuses a purge by --yes of an instance that nothing names (its id is "unknown"), with no settings file, while its database volume is

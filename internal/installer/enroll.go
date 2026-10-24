@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // enrollTarget is the instance enroll works on: the engine that runs setup, the GitHub part of its settings and how to read
@@ -63,7 +64,8 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := tierNeeded(r, haveSaved, env.Deps.GOOS); err != nil {
+	// Enroll refuses a co-located stack with no settings file (colocatedEnrollTarget), so that is not what a host that has none is offered.
+	if err := tierNeeded(r, haveSaved, env.Deps.GOOS, "run `suiteward install --upgrade --tier co-located` first, which saves the settings file of a co-located stack"); err != nil {
 		return err
 	}
 	var target enrollTarget
@@ -156,16 +158,8 @@ func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) erro
 		return err
 	}
 	if enrolled != "" {
-		replaces := ""
-		if enrolled != unknownLogin && !strings.EqualFold(enrolled, owner) {
-			replaces = fmt.Sprintf("the owner %s with %s and ", enrolled, owner)
-		}
-		line, err := r.ask(fmt.Sprintf("An owner (%s) is already enrolled. Enrolling again replaces %sthe TOTP secret: the old authenticator entry stops working, and you scan a new one.\nType \"enroll\" to replace it: ", enrolled, replaces))
-		if err != nil && !errors.Is(err, io.EOF) {
-			return fmt.Errorf("read the confirmation: %w", err)
-		}
-		if line != "enroll" {
-			return errors.New("enrolling again was not confirmed: nothing was changed")
+		if err := confirmEnrollAgain(r, enrolled, owner); err != nil {
+			return err
 		}
 	}
 	checks, err := enrollChecks(r, t.github)
@@ -176,6 +170,29 @@ func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) erro
 		return err
 	}
 	r.screen.Check("%s is enrolled as the owner.\n", owner) // the page that enroll then holds for Enter
+	return nil
+}
+
+// confirmEnrollAgain is the typed word that replacing the TOTP secret of an enrolled owner needs. On a full screen it has a page that says
+// what is replaced and that the word is a confirmation; a plain screen asks the one question it always asked.
+func confirmEnrollAgain(r *Resolver, enrolled, owner string) error {
+	replaces := ""
+	if enrolled != unknownLogin && !strings.EqualFold(enrolled, owner) {
+		replaces = fmt.Sprintf("the owner %s with %s and ", enrolled, owner)
+	}
+	what := fmt.Sprintf("An owner (%s) is already enrolled. Enrolling again replaces %sthe TOTP secret: the old authenticator entry stops working, and you scan a new one.", enrolled, replaces)
+	prompt := what + "\nType \"enroll\" to replace it: "
+	if r.screen.FullScreen() {
+		r.screen.Page("Enroll the owner again", ui.Para(what), ui.Para("This is a confirmation: nothing changes until you type enroll."))
+		prompt = `Type "enroll" to confirm: `
+	}
+	line, err := r.ask(prompt)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read the confirmation: %w", err)
+	}
+	if line != "enroll" {
+		return errors.New("enrolling again was not confirmed: nothing was changed")
+	}
 	return nil
 }
 

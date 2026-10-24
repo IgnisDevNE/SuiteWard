@@ -230,18 +230,18 @@ func TestTheCopyIsWrittenIntoAFolderThatIsNotThereYet(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "suiteward_v0.4.0_windows_amd64.exe")
 	writeText(t, src, "NEW BUILD")
 	dir := filepath.Join(t.TempDir(), "SuiteWard", "bin")
-	got, err := (SelfInstall{Rename: os.Rename}).copyTo(src, dir)
-	if want := filepath.Join(dir, "suiteward.exe"); err != nil || got != want {
-		t.Fatalf("copyTo = %q, %v; want %q", got, err, want)
+	if err := (SelfInstall{Rename: os.Rename}).copyTo(src, dir); err != nil {
+		t.Fatal(err)
 	}
-	if readText(t, got) != "NEW BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe"}) {
-		t.Errorf("the folder holds %v and the copy %q, want only the copy, whole", names(t, dir), readText(t, got))
+	copied := filepath.Join(dir, "suiteward.exe")
+	if readText(t, copied) != "NEW BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe"}) {
+		t.Errorf("the folder holds %v and the copy %q, want only the copy, whole", names(t, dir), readText(t, copied))
 	}
 }
 
 func TestTheCopyReplacesACopyThatNothingRuns(t *testing.T) {
 	src, dir, target := copyOf(t, "OLD BUILD")
-	if _, err := (SelfInstall{Rename: os.Rename}).copyTo(src, dir); err != nil {
+	if err := (SelfInstall{Rename: os.Rename}).copyTo(src, dir); err != nil {
 		t.Fatal(err)
 	}
 	if readText(t, target) != "NEW BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe"}) {
@@ -252,7 +252,7 @@ func TestTheCopyReplacesACopyThatNothingRuns(t *testing.T) {
 func TestTheCopyPutsAsideACopyThatARunningProgramHolds(t *testing.T) {
 	src, dir, target := copyOf(t, "OLD BUILD")
 	writeText(t, target+".old", "OLDER BUILD, left by an earlier run")
-	if _, err := (SelfInstall{Rename: heldRename(target)}).copyTo(src, dir); err != nil {
+	if err := (SelfInstall{Rename: heldRename(target)}).copyTo(src, dir); err != nil {
 		t.Fatal(err)
 	}
 	if readText(t, target) != "NEW BUILD" || readText(t, target+".old") != "OLD BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe", "suiteward.exe.old"}) {
@@ -263,7 +263,7 @@ func TestTheCopyPutsAsideACopyThatARunningProgramHolds(t *testing.T) {
 func TestACopyAsideThatCannotBeRemovedStopsTheCopyAndChangesNothing(t *testing.T) {
 	src, dir, target := copyOf(t, "OLD BUILD")
 	writeText(t, filepath.Join(target+".old", "held"), "a directory cannot be removed while it holds a file")
-	_, err := (SelfInstall{Rename: heldRename(target)}).copyTo(src, dir)
+	err := (SelfInstall{Rename: heldRename(target)}).copyTo(src, dir)
 	if err == nil || !strings.Contains(err.Error(), "suiteward.exe.old") {
 		t.Fatalf("err = %v, want one that names the copy aside", err)
 	}
@@ -275,7 +275,7 @@ func TestACopyAsideThatCannotBeRemovedStopsTheCopyAndChangesNothing(t *testing.T
 func TestACopyThatCannotBeRenamedAwayStopsTheCopyAndLeavesNoTemporaryFile(t *testing.T) {
 	src, dir, target := copyOf(t, "OLD BUILD")
 	refuse := func(oldpath, newpath string) error { return errors.New("rename: access is denied") }
-	_, err := (SelfInstall{Rename: refuse}).copyTo(src, dir)
+	err := (SelfInstall{Rename: refuse}).copyTo(src, dir)
 	if err == nil || !strings.Contains(err.Error(), "access is denied") {
 		t.Fatalf("err = %v, want the refusal", err)
 	}
@@ -292,7 +292,7 @@ func TestTheOldCopyGoesBackWhenTheNewOneCannotTakeItsPlace(t *testing.T) {
 		}
 		return os.Rename(oldpath, newpath)
 	}
-	if _, err := (SelfInstall{Rename: rename}).copyTo(src, dir); err == nil {
+	if err := (SelfInstall{Rename: rename}).copyTo(src, dir); err == nil {
 		t.Fatal("copyTo succeeded although the new copy could not take its place")
 	}
 	if readText(t, target) != "OLD BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe"}) {
@@ -302,7 +302,7 @@ func TestTheOldCopyGoesBackWhenTheNewOneCannotTakeItsPlace(t *testing.T) {
 
 func TestAProgramThatCannotBeReadIsNotCopied(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "bin")
-	if _, err := (SelfInstall{Rename: os.Rename}).copyTo(filepath.Join(t.TempDir(), "gone.exe"), dir); err == nil {
+	if err := (SelfInstall{Rename: os.Rename}).copyTo(filepath.Join(t.TempDir(), "gone.exe"), dir); err == nil {
 		t.Error("copyTo succeeded without a program to copy")
 	}
 	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {

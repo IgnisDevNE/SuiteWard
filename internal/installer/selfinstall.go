@@ -148,32 +148,30 @@ func (s SelfInstall) folder(d Deps) (string, error) {
 	return filepath.Join(local, "SuiteWard", "bin"), nil
 }
 
-// copyTo writes the program at src to dir as suiteward.exe and returns that path: a temporary file in dir, renamed over the copy, so that
-// the copy is whole or as it was.
-func (s SelfInstall) copyTo(src, dir string) (target string, err error) {
+// copyTo writes the program at src to dir as suiteward.exe: a temporary file in dir, renamed over the copy, so that the copy is whole or as it was.
+func (s SelfInstall) copyTo(src, dir string) error {
 	in, err := os.Open(filepath.Clean(src))
 	if err != nil {
-		return "", fmt.Errorf("read the program: %w", err)
+		return fmt.Errorf("read the program: %w", err)
 	}
 	defer func() { _ = in.Close() }()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("create %s: %w", dir, err)
+		return fmt.Errorf("create %s: %w", dir, err)
 	}
 	staged, err := os.CreateTemp(dir, "suiteward-*.tmp")
 	if err != nil {
-		return "", fmt.Errorf("write the copy: %w", err)
+		return fmt.Errorf("write the copy: %w", err)
 	}
 	if _, err = io.Copy(staged, in); err == nil {
 		err = staged.Sync()
 	}
 	if err = errors.Join(err, staged.Close()); err != nil {
-		return "", errors.Join(fmt.Errorf("write the copy: %w", err), os.Remove(staged.Name()))
+		return errors.Join(fmt.Errorf("write the copy: %w", err), os.Remove(staged.Name()))
 	}
-	target = filepath.Join(dir, selfFile)
-	if err := s.place(staged.Name(), target); err != nil {
-		return "", errors.Join(err, os.Remove(staged.Name()))
+	if err := s.place(staged.Name(), filepath.Join(dir, selfFile)); err != nil {
+		return errors.Join(err, os.Remove(staged.Name()))
 	}
-	return target, nil
+	return nil
 }
 
 // place renames staged over target. A program that runs holds its file, which cannot be replaced but can be renamed: the copy goes aside
@@ -223,7 +221,7 @@ func refreshCopy(ctx context.Context, env Env) {
 	if _, err := os.Stat(target); err != nil || sameFile(exe, target) {
 		return // no copy, or this program is the copy
 	}
-	if _, err := s.copyTo(exe, dir); err != nil {
+	if err := s.copyTo(exe, dir); err != nil {
 		scr.Warn("The copy of suiteward.exe in %s was not updated: %v\n", dir, err)
 		return
 	}
@@ -288,7 +286,7 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 	case picked != 0:
 		return d
 	}
-	if _, err := s.copyTo(exe, dir); err != nil {
+	if err := s.copyTo(exe, dir); err != nil {
 		rows.warn(fmt.Sprintf("suiteward.exe was not copied to %s: %v. SuiteWard works without it: run it by the path of this program, %s.", dir, err, exe))
 		return d
 	}
@@ -326,9 +324,9 @@ func (s SelfInstall) onUserPath(dir string) (bool, error) {
 
 // offerRemoveCopy is the end of a purge on a full screen of a PC that has the copy of the program or its entry on the PATH: it asks whether to
 // remove them, unless the run was told not to ask (--yes). The default is No. What cannot be removed is a warning, because the purge it ends has worked.
-func offerRemoveCopy(ctx context.Context, env Env, unattended bool) {
+func offerRemoveCopy(ctx context.Context, env Env) {
 	d, s, scr := env.Deps, env.Self, screenOn(env.Term.Out)
-	if unattended || s == nil || !scr.FullScreen() || ctx.Err() != nil { // --yes: told not to ask, so the copy and the PATH are removed only by a person who answers
+	if s == nil || env.Unattended || !scr.FullScreen() || ctx.Err() != nil {
 		return
 	}
 	dir, err := s.folder(d)

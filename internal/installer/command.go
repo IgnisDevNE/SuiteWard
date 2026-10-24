@@ -53,8 +53,8 @@ type Env struct {
 	Version string
 	// Self is the copy of the program that a full screen offers on Windows; nil offers none. OSEnv sets it there.
 	Self *SelfInstall
-	// Unattended says that the command line answers for the person (--yes, an answers file): the copy of the program is then kept up to date
-	// where it exists, and never offered.
+	// Unattended says that the command line answers for the person (unattended): the copy of the program is then never offered or removed, and the
+	// one that exists is kept up to date.
 	Unattended bool
 	// OpenScreen opens the console of one command (ui.OpenOS on the process's console); nil means a plain one on Term.Out. A test replaces it.
 	OpenScreen func(ctx context.Context, in io.Reader, version string, plain bool) (*ui.Screen, error)
@@ -257,6 +257,13 @@ func parse(fs *flag.FlagSet, args []string, out io.Writer) (map[string]string, e
 	return flags, nil
 }
 
+// unattended says that the command line answers for the person: --yes, or an answers file. Such a run never offers the copy of the program or its
+// removal, which the person has to agree to.
+func unattended(flags map[string]string) bool {
+	_, answers := flags["answers"]
+	return answers || flags["yes"] == "true"
+}
+
 func parseFlags(fs *flag.FlagSet, args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -339,9 +346,7 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 			return err
 		}
 	}
-	if _, answered := flags["answers"]; answered || flags["yes"] == "true" { // nobody to ask, or told not to ask: the PATH is changed only by a person who answers
-		env.Unattended = true
-	}
+	env.Unattended = unattended(flags)
 	plain, err := wantsPlain(flags, answers)
 	if err != nil {
 		return err

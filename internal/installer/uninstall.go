@@ -35,6 +35,7 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	env.Unattended = unattended(flags)
 	if _, given := flags["instance"]; given && flags["purge"] != "true" {
 		return fmt.Errorf("%w: --instance is for --purge: it names the instance whose data a purge deletes", ErrUsage)
 	}
@@ -106,7 +107,7 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	if purge {
-		offerRemoveCopy(ctx, env, flags["yes"] == "true")
+		offerRemoveCopy(ctx, env)
 	}
 	return holdPage(scr)
 }

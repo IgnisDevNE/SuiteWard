@@ -129,29 +129,62 @@ func TestThePlainRestoreKeepsItsPromptAndSaysWhatToDoAboutTheCanonicalAtTheEnd(t
 	}
 }
 
+// The line at the end of an upgrade that says how to go back names the first step of the tier. A restore alone cannot undo an upgrade that
+// migrated: the previous release must run first, and on a co-located stack that means removing the stack and its volumes, on an isolated one
+// putting the replaced units back.
+func TestTheEndOfAnUpgradeSaysHowToGoBackOnItsTier(t *testing.T) {
+	const pointer = "the steps: docs/backup.md, Going back after an upgrade"
+	t.Run("co-located", func(t *testing.T) {
+		u := newUpgradeHarness(t, nil)
+		if err := u.upgradeAt(false, "", "--yes"); err != nil {
+			t.Fatal(err)
+		}
+		text, path := u.out.String(), oneArchive(t, u.backups)
+		for _, want := range []string{
+			"`suiteward uninstall --yes`", "podman volume rm " + VolumeData + " " + VolumeDBData,
+			"`suiteward install --image " + oldImage + "`", "`suiteward restore " + path + "` with that kit", "migrations only go forward", pointer,
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("the line that says how to go back lacks %q:\n%s", want, text)
+			}
+		}
+		if strings.Contains(text, "section 3") || strings.Contains(text, "systemctl") {
+			t.Errorf("the line is not the co-located one:\n%s", text)
+		}
+	})
+	t.Run("isolated", func(t *testing.T) {
+		u := newIsoUpgrade(t, nil)
+		if err := u.upgrade("--image", testDigest, "--yes"); err != nil {
+			t.Fatal(err)
+		}
+		text, path := u.out.String(), oneArchive(t, u.backups)
+		for _, want := range []string{
+			unitsKeptBeside(path), "`systemctl --user daemon-reload`", "`systemctl --user stop suiteward.service`",
+			"`suiteward restore " + path + "` with that kit", "migrations only go forward", pointer,
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("the line that says how to go back lacks %q:\n%s", want, text)
+			}
+		}
+		if strings.Contains(text, "section 3") || strings.Contains(text, "volume rm") {
+			t.Errorf("the line is not the isolated one:\n%s", text)
+		}
+	})
+}
+
 // Every message that pointed to a section of a document says what to do, and keeps the document as a reference for the details.
 func TestAMessageThatPointedToASectionOfADocumentSaysWhatToDo(t *testing.T) {
 	t.Run("a migration that failed after the backup", func(t *testing.T) {
 		err := withBackup(migratingError{errors.New("migrate failed")}, "/b/backup.tar.age", "")
 		text := err.Error()
-		for _, want := range []string{"install the previous release and run `suiteward restore /b/backup.tar.age`", "everything after the backup is lost", "details: docs/backup.md"} {
+		// The steps of the way back are those of the tier: the message points to them instead of saying them in one line.
+		for _, want := range []string{"install the previous release and run `suiteward restore /b/backup.tar.age`", "everything after the backup is lost", "the steps: docs/backup.md, Going back after an upgrade"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("the message lacks %q: %s", want, text)
 			}
 		}
 		if strings.Contains(text, "section 3") {
 			t.Errorf("the message points to a section: %s", text)
-		}
-	})
-	t.Run("the end of a successful upgrade", func(t *testing.T) {
-		var out bytes.Buffer
-		upgraded(screenOn(&out), oldImage, testImage, "/b/backup.tar.age", "suiteward doctor")
-		text := out.String()
-		if !strings.Contains(text, "migrations only go forward") || strings.Contains(text, "section 3") {
-			t.Errorf("the line that says how to go back:\n%s", text)
-		}
-		if !strings.Contains(text, "install the previous release "+digestOf(oldImage)) {
-			t.Errorf("the line does not name the release to install:\n%s", text)
 		}
 	})
 	t.Run("a backup that cannot be taken because the service does not start", func(t *testing.T) {

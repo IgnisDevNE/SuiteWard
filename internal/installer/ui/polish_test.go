@@ -153,3 +153,49 @@ func TestASummaryWhoseRowsDoNotFitKeepsTheKeyRows(t *testing.T) {
 		}
 	}
 }
+
+// A failure after a page that asked nothing has no question rule: the rule belongs to a question, and none was asked.
+func TestAFailureAfterAPageThatAskedNothingHasNoQuestionRule(t *testing.T) {
+	s, _ := openScreen(t, fullOptions(ColorNone), "\n")
+	s.Steps("Confirm", "Remove")
+	s.Page("Remove everything of this instance", Para("Nothing is removed until you confirm."))
+	s.Critical("This deletes the database.\n")
+	if !s.Fail("the purge was not confirmed") {
+		t.Fatal("Fail says that it showed nothing")
+	}
+	for _, l := range contentLines(snapshot(s)) {
+		if strings.Contains(l, "────") && !strings.HasPrefix(l, "╭") && !strings.HasPrefix(l, "╰") {
+			t.Errorf("the failure page draws a rule that sets a question apart, and none was asked: %q", l)
+		}
+	}
+}
+
+// A summary that fits is shown whole, with no row that says anything was cut.
+func TestASummaryThatFitsIsNotTrimmed(t *testing.T) {
+	s, _ := openScreen(t, fullOptions(ColorNone), "\n")
+	rows, warns := summaryDemo()
+	if err := s.Summary(rows, warns[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if text := strings.Join(summaryLines(snapshot(s)), "\n"); strings.Contains(text, trimRow) || !strings.Contains(text, "Check again") || !strings.Contains(text, "check1") {
+		t.Errorf("a summary that fits lost something:\n%s", text)
+	}
+}
+
+// AskDefault asks a short question and takes the default on Enter, as Ask does with the default in the question.
+func TestAskDefaultKeepsTheDefaultOutOfTheQuestion(t *testing.T) {
+	s, _, frames := openChunks(t, fullOptions(ColorNone), "\n", "other\n")
+	if got, err := s.AskDefault("Release image", "ghcr.io/x@sha256:aa"); err != nil || got != "ghcr.io/x@sha256:aa" {
+		t.Fatalf("AskDefault = %q, %v, want the default on Enter", got, err)
+	}
+	if got, err := s.AskDefault("Release image", "ghcr.io/x@sha256:aa"); err != nil || got != "other" {
+		t.Fatalf("AskDefault = %q, %v, want the typed answer", got, err)
+	}
+	f := (*frames)[0]
+	if text := strings.Join(contentLines(f), "\n"); !strings.Contains(text, "Release image:") || strings.Contains(text, "ghcr.io") {
+		t.Errorf("the question is not short:\n%s", text)
+	}
+	if hint := f.rows[len(f.rows)-2]; !strings.Contains(hint, "Enter takes the default") {
+		t.Errorf("the hint is %q, want it to say that Enter takes the default", hint)
+	}
+}

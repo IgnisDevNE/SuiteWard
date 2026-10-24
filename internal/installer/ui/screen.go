@@ -33,12 +33,13 @@
 //   - Keep: a line like Say that Close prints again on the normal screen, so it survives the alternate screen. Plain mode has nothing
 //     to repeat: the line is already in the output.
 //   - Summary: a screen of key/value rows and warnings, with no step column. Full screen waits for Enter so it can be read; its rows
-//     and warnings are kept for Close, and a second Summary replaces the first. Plain mode prints "key: value" lines and the warnings
-//     as given.
+//     and warnings are kept for Close, and a second Summary replaces the first. A summary taller than the window keeps its key rows (Tier,
+//     Instance, Status, Doctor) and trims its warnings from the end, then its other rows, behind a row that says so; Close prints all of
+//     them. Plain mode prints "key: value" lines and the warnings as given.
 //   - Wait: holds the page until Enter, for a command that ends on text that must be read (a Summary would replace it). Close prints
 //     the page as usual. Plain mode returns at once.
-//   - Fail: shows the error of a command that failed under the page it stopped on, with "failed" in the title bar and the step marked, and
-//     waits for Enter. Close does not print the error: the caller prints it, on stderr. Plain mode, an interrupt (a done context) and a
+//   - Fail: shows the error of a command that failed under the page it stopped on, with "failed" in the title bar and the step marked, in
+//     red, and waits for Enter. Close does not print the error: the caller prints it, on stderr. Plain mode, an interrupt (a done context) and a
 //     failed wait show nothing more and do not wait. On a terminal it first waits a moment for the signal of a Ctrl-C that
 //     killed a child process (a Windows console), so that the command ends as interrupted and no failure page is drawn.
 //   - Close: leaves the alternate screen, and prints on the normal screen what must not be lost: the Check, Warn and Keep lines of the
@@ -544,6 +545,15 @@ func (s *Screen) Ask(label, def string) (string, error) {
 	if def != "" {
 		prompt = fmt.Sprintf("%s [%s]: ", label, def)
 	}
+	return s.answer(prompt, label, def)
+}
+
+// AskDefault is Ask for a default that the page above the question already shows, as a long reference does: the question is "label: ",
+// and an empty answer is def all the same, which the hint line of the frame says. The caller draws the default, so it is for a full screen.
+func (s *Screen) AskDefault(label, def string) (string, error) { return s.answer(label+": ", label, def) }
+
+// answer asks prompt, and returns the trimmed answer, def when it is empty.
+func (s *Screen) answer(prompt, label, def string) (string, error) {
 	line, err := s.prompt(prompt, def != "")
 	if err != nil {
 		return "", fmt.Errorf("read the answer for %s: %w", label, err)

@@ -499,10 +499,10 @@ func checkACopyThatWasAcceptedBy(t *testing.T, answer string) {
 	if got := o.row("Command"); !strings.Contains(got, pc.target()) || !strings.Contains(got, "new terminals") {
 		t.Errorf("the Command row says %q, want the copy and that new terminals have suiteward", got)
 	}
-	if got, want := o.row("This terminal (PowerShell)"), `$env:Path += ";`+pc.dir()+`"`; got != want {
+	if got, want := o.row("This terminal (PowerShell)"), `$env:Path += ';`+pc.dir()+`'`; got != want {
 		t.Errorf("the This terminal (PowerShell) row says %q, want the line to run in PowerShell: %q", got, want)
 	}
-	if !slices.Contains(strings.Split(o.run.console.tail(), "\n"), `$env:Path += ";`+pc.dir()+`"`) {
+	if !slices.Contains(strings.Split(o.run.console.tail(), "\n"), `$env:Path += ';`+pc.dir()+`'`) {
 		t.Errorf("the scrollback has no line that is exactly the command for this terminal:\n%s", o.run.console.tail())
 	}
 	if o.d.Command != "suiteward" || o.d.command() != "suiteward" {
@@ -757,6 +757,21 @@ func installOnPC(t *testing.T, pc *aPC, stdin string, extra ...string) (*harness
 	return h, c, err
 }
 
+// The line for this terminal is run by PowerShell, in a string that does not expand: a $ or a backtick in the folder is text, and a quote
+// of the folder is doubled, so that the line does what it says whatever the name of the user.
+func TestTheLineForThisTerminalDoesNotExpandWhatTheFolderHolds(t *testing.T) {
+	pc := newPC(t)
+	pc.local = filepath.Join(pc.local, "me$HOME`whoami`'s")
+	o := pc.offer(false, "\n")
+	want := `$env:Path += ';` + strings.ReplaceAll(pc.dir(), "'", "''") + `'`
+	if !strings.Contains(want, "me$HOME`whoami`''s") {
+		t.Fatalf("the folder lost what the test gives it: %q", want)
+	}
+	if got := o.row("This terminal (PowerShell)"); got != want {
+		t.Errorf("the line for this terminal is %q, want %q", got, want)
+	}
+}
+
 func TestTheSummaryOfAnInstallOffersTheCopyAndSaysWhatToRunInThisTerminal(t *testing.T) {
 	pc := newPC(t)
 	h, c, err := installOnPC(t, pc, "\n\n1\n")
@@ -767,13 +782,13 @@ func TestTheSummaryOfAnInstallOffersTheCopyAndSaysWhatToRunInThisTerminal(t *tes
 	if readText(t, pc.target()) != "NEW BUILD" || !strings.HasSuffix(pc.path.value, ";"+pc.dir()) {
 		t.Fatalf("the program was not copied or the PATH not changed (%q): %s", pc.path.value, tail)
 	}
-	for _, want := range []string{"Command: " + pc.target(), `This terminal (PowerShell): $env:Path += ";` + pc.dir() + `"`} {
+	for _, want := range []string{"Command: " + pc.target(), `This terminal (PowerShell): $env:Path += ';` + pc.dir() + `'`} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("the scrollback lacks %q:\n%s", want, tail)
 		}
 	}
 	// The line for this terminal is a line of its own in the scrollback, to copy as it is.
-	if !slices.Contains(strings.Split(tail, "\n"), `$env:Path += ";`+pc.dir()+`"`) {
+	if !slices.Contains(strings.Split(tail, "\n"), `$env:Path += ';`+pc.dir()+`'`) {
 		t.Errorf("the scrollback has no line that is exactly the command for this terminal:\n%s", tail)
 	}
 	// What the summary tells the person to run after the copy is the command of a new terminal.

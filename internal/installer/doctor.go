@@ -48,9 +48,9 @@ func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, 
 	return 0
 }
 
-// doctorChecks runs every check of doctor and returns the results, drawing nothing: the install and the upgrade run it at their end,
-// under their own page. fetch reads an address of the local service: Doctor passes httpGet, an install the one of its Env, which a test
-// replaces.
+// doctorChecks runs every check of doctor and returns the results, the one of the settings first, and draws nothing: the install and the
+// upgrade run it at their end, under their own page. fetch reads an address of the local service: Doctor passes httpGet, an install the one
+// of its Env, which a test replaces.
 func doctorChecks(ctx context.Context, deps Deps, fetch func(context.Context, string) ([]byte, error), settingsPath string) []doctorResult {
 	d := &doctor{deps: deps, fetch: fetch, raw: map[string][]byte{}, units: map[string]map[string]string{}}
 	if err := deps.validate(); err != nil {

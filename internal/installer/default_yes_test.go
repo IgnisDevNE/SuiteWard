@@ -65,7 +65,7 @@ func TestAFailedMigrationOnTheIsolatedTierSaysToPutTheUnitsBack(t *testing.T) {
 	const path, units = "/b/suiteward-backup.tar.age", "/h/.config/containers/systemd"
 	err := withBackup(migratingError{errors.New("migrate failed")}, path, units)
 	text := err.Error()
-	if !strings.Contains(text, goBackIsolated(path, units, "")) {
+	if !strings.Contains(text, goBackIsolated(path, units, " --tier isolated")) {
 		t.Errorf("the message lacks the way back of the isolated tier:\n%s", text)
 	}
 	if strings.Contains(text, "install the previous release") {

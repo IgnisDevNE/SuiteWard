@@ -77,7 +77,7 @@ func TestTheStatusLineOfAPlainInstallInAPodmanMachineIsTheAddressWhenItAnswersFr
 				t.Errorf("the status line is %q, want %q:\n%s", got, tc.want, out)
 			}
 			read, enroll, check := strings.Index(out, "Read the status of the service"), strings.Index(out, "Setup was not run"), strings.Index(out, "Then check the instance")
-			if !(enroll < read && read < check) {
+			if enroll >= read || read >= check {
 				t.Errorf("the status line is not between the enrollment and the doctor line (%d, %d, %d):\n%s", enroll, read, check, out)
 			}
 		})

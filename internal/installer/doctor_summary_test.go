@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // The last thing an install or an upgrade does on a full screen is run doctor: its counts are a row of the summary, and each result that
@@ -75,8 +77,8 @@ func TestTheSummaryOfAnInstallRunsDoctorAndTheInstallStillEndsWell(t *testing.T)
 	}
 	for _, want := range []string{
 		"WARN owner.enrolled: no owner is enrolled yet — run suiteward enroll",
-		"FAIL protection.Acme/api: findings: missing-contract-check, missing-test-check — " + rulesetFix,
-		"FAIL protection.Acme/web: findings: missing-contract-check — " + rulesetFix,
+		"FAIL protection.Acme/api: findings: missing-contract-check, missing-test-check — import the ruleset file " + api, // the file requires both checks: it is the fix
+		"FAIL protection.Acme/web: findings: missing-contract-check — " + rulesetFix,                                      // no file: the instruction of the check
 	} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, tail)
@@ -228,5 +230,52 @@ func TestTheRulesetFileOfTheSummaryIsTheOneTheInstallWrites(t *testing.T) {
 	}
 	if got := rulesetPathOf(dir, "Acme/api"); got != written {
 		t.Errorf("the summary looks for %s, the install wrote %s", got, written)
+	}
+}
+
+// A summary that carries what doctor found still shows the rows a person needs on the smallest window. The page shows its last rows when it is
+// taller than the window, so what doctor adds has to be short: this is the case of the first install, two repositories without their
+// ruleset and an owner who is not enrolled, and the Status and Doctor rows stay.
+func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
+	f, s := colocated{checkOut: instanceChecks}.build(t)
+	dir, err := os.MkdirTemp("", "s") // a path as short as a real one: the page is short of rows
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := filepath.Join(dir, "settings.yaml")
+	if err := SaveSettings(path, s); err != nil {
+		t.Fatal(err)
+	}
+	for _, repo := range []string{"Acme/api", "Acme/web"} {
+		if _, err := writeRuleset(dir, repo, []byte("{}\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var rows summaryRows
+	for _, kv := range [][2]string{{"Tier", "co-located"}, {"Runtime", "Podman (rootless)"}, {"Instance", "v0.4.0-alpha.2"}, {"GitHub App", "1234 on Acme"},
+		{"Repositories", "Acme/api, Acme/web"}, {"Owner", "alice (enrolled now)"}, {"Status", "http://127.0.0.1:47081/status"}, {"Settings", path}} {
+		rows.add(kv[0], kv[1])
+	}
+	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}}
+	rows.addDoctor(context.Background(), env, path, doctorHint(path, true))
+
+	c := sizedConsole{termConsole: newTermConsole(&bytes.Buffer{}), w: 80, h: 24}
+	scr, err := c.open(liveContext(t), strings.NewReader("\n"), "v0", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := showSummary(scr, func() []ui.KV { return rows }); err != nil {
+		t.Fatal(err)
+	}
+	if err := scr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out := c.out.String()
+	page := pageText(t, out[:strings.LastIndex(out, leaveAlt)], 80, 24)
+	for _, want := range []string{"Status http://127.0.0.1:47081/status", "Doctor ", "failures", "Check again", "FAIL protection.Acme/api"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the summary page lacks %q at 80x24:\n%s", want, page)
+		}
 	}
 }

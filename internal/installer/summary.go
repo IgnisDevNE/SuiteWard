@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
@@ -38,8 +37,8 @@ func (s *summaryRows) warn(text string) { *s = append(*s, ui.KV{Value: text}) }
 func (s *summaryRows) addDoctor(ctx context.Context, env Env, settingsPath, again string) {
 	var results []doctorResult
 	spinning(screenOn(env.Term.Out), "Checking the instance", func() { results = doctorChecks(ctx, env.Deps, env.httpGet(), settingsPath) })
-	if i := slices.IndexFunc(results, func(r doctorResult) bool { return r.Name == "settings" && !r.OK }); i >= 0 {
-		s.add("Doctor", "not run: "+results[i].Detail+" — "+results[i].Fix) // it stops at the settings, which it needs to know the instance
+	if first := results[0]; first.Name == "settings" && !first.OK { // the first result is always the settings, and doctor stops at one it cannot read
+		s.add("Doctor", "not run: "+first.Detail+" — "+first.Fix)
 		s.add("Check again", again)
 		return
 	}
@@ -56,8 +55,9 @@ func (s *summaryRows) addDoctor(ctx context.Context, env Env, settingsPath, agai
 	}
 }
 
-// importRulesetFix is the fix of a result that needs a look. A repository whose protection lacks the checks that the ruleset requires is also
-// told to import the ruleset file that the install wrote beside the settings, when the file is there.
+// importRulesetFix is the fix of a result that needs a look. A repository whose protection lacks the checks that the ruleset requires is told
+// to import the ruleset file that the install wrote beside the settings, when the file is there: the file requires both checks, so it
+// replaces the instruction of the check, which would take two more lines of a page that is short of them.
 func importRulesetFix(r doctorResult, dir string) string {
 	repo, isProtection := strings.CutPrefix(r.Name, "protection.")
 	lacksChecks := strings.Contains(r.Detail, string(protection.MissingContractCheck)) || strings.Contains(r.Detail, string(protection.MissingTestCheck))
@@ -68,7 +68,7 @@ func importRulesetFix(r doctorResult, dir string) string {
 	if _, err := os.Stat(file); err != nil {
 		return r.Fix // the install that wrote it may have been another one, or the file moved: the check's own fix is all there is
 	}
-	return r.Fix + " The install wrote the ruleset that requires both: import the ruleset file " + file + " (in the repository's Settings, Rules, choose New ruleset, then Import a ruleset)."
+	return "import the ruleset file " + file + " (in the repository's Settings, Rules, choose New ruleset, then Import a ruleset)"
 }
 
 // rulesetPathOf is where the install writes the ruleset of repo (owner/name), as writeRuleset names it.

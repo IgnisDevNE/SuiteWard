@@ -107,7 +107,7 @@ func withBackup(err error, path, unitsDir string) error {
 	switch {
 	case errors.As(err, &migrating) && unitsDir != "":
 		// The isolated tier runs the release its units name: they go back first, and the restore compares them with the backup's release.
-		return fmt.Errorf("%w\nThe backup is in %s; everything after it is lost. %s", err, path, goBackIsolated(path, unitsDir, ""))
+		return fmt.Errorf("%w\nThe backup is in %s; everything after it is lost. %s", err, path, goBackIsolated(path, unitsDir, " --tier isolated"))
 	case errors.As(err, &migrating):
 		return fmt.Errorf("%w\nThe backup is in %s. To go back, install the previous release and run `suiteward restore %s` with your recovery kit (the restore names the release to install); everything after the backup is lost (%s)", err, path, quoteArg(path), goingBack)
 	}

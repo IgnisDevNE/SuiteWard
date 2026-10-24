@@ -144,19 +144,21 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 		}
 	}()
 
+	redraw := func() {} // the page is drawn again before each question about the paste, so that the questions do not pile up on it
 	if scr := env.R.screen; scr.FullScreen() {
+		// What the user acts on comes first, and the explanation last: a page that is too long loses the end of it.
 		blocks := []ui.Block{
-			ui.Para("Open the address below in the browser of this machine, review the App on GitHub and approve it. The installer continues by itself when GitHub answers."),
+			ui.Para("Open the address below in the browser of this machine and approve the App on GitHub. The installer continues by itself; if the browser shows an error after GitHub, it offers to paste the address after " + spoken(env.PasteAfter) + "."),
 			ui.Fields(ui.KV{Key: "Address", Value: "http://" + addr + "/"}, ui.KV{Key: "App name", Value: name}),
-			ui.Para("Note the App name, in case the installer cannot finish and the App has to be deleted on GitHub. You may rename it there."),
 		}
 		if env.Tier == config.TierIsolated {
 			port := addr[strings.LastIndex(addr, ":")+1:]
-			blocks = append(blocks,
-				ui.Para("This host is isolated: from your PC, forward the port first, then open the address on the PC (the browser reaches the listener through the forward)."),
-				ui.Para("aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\""+port+"\"],\"localPortNumber\":[\""+port+"\"]}'"))
+			blocks = append(blocks, ui.Para("Isolated host: forward the port from your PC first, then open the address on the PC.\n"+
+				"aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\""+port+"\"],\"localPortNumber\":[\""+port+"\"]}'"))
 		}
-		scr.Page("Create the GitHub App", blocks...)
+		blocks = append(blocks, ui.Para("Note the App name: if the installer cannot finish, the App has to be deleted on GitHub. You may rename it there."))
+		redraw = func() { scr.Page("Create the GitHub App", blocks...) }
+		redraw()
 	} else {
 		ghSay(env.Out, "Create the GitHub App: open this address in the browser of this machine and approve the App on GitHub. The App is named %s unless you rename it there; note the name, in case the installer cannot finish and the App has to be deleted.\n  http://%s/\n", name, addr)
 		if env.Tier == config.TierIsolated {
@@ -168,7 +170,7 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 
 	ctx, cancel := context.WithTimeout(ctx, env.ManifestWait)
 	defer cancel()
-	code, err := waitForCode(ctx, env, codes, state)
+	code, err := waitForCode(ctx, env, codes, state, redraw)
 	if err != nil {
 		return "", "", err
 	}
@@ -182,8 +184,8 @@ var errNoMoreInput = errors.New("no more input")
 // when the callback came would take the answer to the next question (the Resolver's reader is shared, and a read cannot be given up),
 // or need an Enter to end it. After PasteAfter without an answer, a terminal is offered the paste of the code, or of the address the
 // browser ended on (askPaste); the offer comes again after each Enter that keeps waiting. A callback that comes while it is open is
-// taken when it ends.
-func waitForCode(ctx context.Context, env githubEnv, codes <-chan string, state string) (string, error) {
+// taken when it ends. redraw draws the page again, so that the questions do not pile up on it.
+func waitForCode(ctx context.Context, env githubEnv, codes <-chan string, state string, redraw func()) (string, error) {
 	canPaste := env.R.term.IsTerminal
 	for {
 		if !canPaste {
@@ -204,7 +206,7 @@ func waitForCode(ctx context.Context, env githubEnv, codes <-chan string, state 
 			return "", waitError(ctx, env.ManifestWait)
 		case <-late.C:
 		}
-		code, err := askPaste(ctx, env, codes, state)
+		code, err := askPaste(ctx, env, codes, state, redraw)
 		switch {
 		case errors.Is(err, errNoMoreInput):
 			canPaste = false
@@ -218,22 +220,26 @@ func waitForCode(ctx context.Context, env githubEnv, codes <-chan string, state 
 
 // askPaste asks, hidden, for the code or the address that the browser ended on, until it gets a good one. An answer with nothing in it
 // is no paste: it is the callback if that has come, and otherwise the wish to keep waiting, which is no code and no error.
-// The code is a credential until it is converted: it is read with no echo, and neither the terminal nor the frame shows it.
-func askPaste(ctx context.Context, env githubEnv, codes <-chan string, state string) (string, error) {
-	const label = "No answer from GitHub yet. If your browser is on another machine, paste the address it shows after GitHub redirects (or the code in it); otherwise press Enter to keep waiting"
+// The code is a credential until it is converted: it is read with no echo, and neither the terminal nor the frame shows it. The read is
+// the screen's HiddenLine, which Ctrl-C and the end of the wait (ctx) stop; the question is short, because the page it is under must
+// keep the address and the command in sight on a small screen.
+func askPaste(ctx context.Context, env githubEnv, codes <-chan string, state string, redraw func()) (string, error) {
+	label := "No answer from GitHub yet. Paste the address, or press Enter (also if the browser says SuiteWard received the answer)"
 	for {
-		secret, err := env.R.screen.Secret(label, env.R.term.ReadPassword)
+		redraw()
+		secret, err := env.R.screen.HiddenLine(ctx, label, env.R.term.ReadPassword)
 		switch {
+		case ctx.Err() != nil: // Ctrl-C, or the time is over, as the read saw it or after it
+			return "", waitError(ctx, env.ManifestWait)
 		case errors.Is(err, io.EOF):
 			ghSay(env.Out, "No more input: waiting for GitHub's callback only.\n")
 			return "", errNoMoreInput
 		case err != nil:
-			return "", fmt.Errorf("read the pasted code: %w", err)
-		case ctx.Err() != nil: // the read cannot be given up, so the time may be over when it ends
-			return "", waitError(ctx, env.ManifestWait)
+			return "", fmt.Errorf("read the pasted address: %w", err)
 		}
 		line := strings.TrimSpace(string(secret))
 		if line == "" {
+			redraw()
 			select {
 			case code := <-codes:
 				return code, nil
@@ -245,8 +251,19 @@ func askPaste(ctx context.Context, env githubEnv, codes <-chan string, state str
 		if perr == nil {
 			return code, nil
 		}
-		ghSay(env.Out, "That was refused: %v\n", perr)
+		label = fmt.Sprintf("That was refused: %v. Paste the address again, or press Enter", perr)
 	}
+}
+
+// spoken is a duration as the pages say it: whole minutes in words, anything else as Go writes it.
+func spoken(d time.Duration) string {
+	switch {
+	case d == time.Minute:
+		return "1 minute"
+	case d > time.Minute && d%time.Minute == 0:
+		return fmt.Sprintf("%d minutes", d/time.Minute)
+	}
+	return d.String()
 }
 
 func waitError(ctx context.Context, wait time.Duration) error {

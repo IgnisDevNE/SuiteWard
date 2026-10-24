@@ -89,11 +89,11 @@ func TestManifestPasteIsAReadThatTheRunCanEnd(t *testing.T) {
 			done := startManifestWith(liveContext(t), env, "acme")
 			waitForListener(t, out)
 			waitForText(t, out, "No answer from GitHub yet")
-			go func() { _, _ = io.WriteString(pw, "pasted-code\r") }()
-			if res := awaitFor(t, done, 3*time.Second); res.err != nil || res.code != "pasted-code" {
+			go func() { _, _ = io.WriteString(pw, "pastedcode1\r") }()
+			if res := awaitFor(t, done, 3*time.Second); res.err != nil || res.code != "pastedcode1" {
 				t.Fatalf("result = %+v\n%s", res, out.String())
 			}
-			if strings.Contains(out.String(), "pasted-code") {
+			if strings.Contains(out.String(), "pastedcode1") {
 				t.Errorf("what was pasted reached the output:\n%s", out.String())
 			}
 			keys.balanced(t)

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func TestTerminalScriptRemovesItselfFirstAndHoldsOnlyTheCommand(t *testing.T) {
 			t.Errorf("the script mentions %q: it holds the command line and nothing the command prints", leaked)
 		}
 	}
-	if clear, end := strings.Index(script, "clear"), strings.LastIndex(script, "exit"); clear < 0 || end < clear || !strings.Contains(script, `\033[3J`) {
+	if cleared, end := strings.Index(script, "clear"), strings.LastIndex(script, "exit"); cleared < 0 || end < cleared || !strings.Contains(script, `\033[3J`) {
 		t.Errorf("the script does not clear the screen and its scrollback before it ends:\n%s", script)
 	}
 }
@@ -92,27 +93,43 @@ func TestTerminalScriptRunsTheCommandWithEveryArgumentIntactAndLeavesItsExitCode
 		t.Fatal(err)
 	}
 	t.Setenv("SUITEWARD_TEST_HELPER", "record")
-	t.Setenv("SUITEWARD_TEST_RECORD", filepath.ToSlash(filepath.Join(dir, "args")))
 	t.Setenv("SUITEWARD_TEST_EXIT", "3")
-	cmd := exec.Command(sh, "setup.command")
+	t.Setenv("MSYS_NO_PATHCONV", "1") // Git's shell on Windows would turn /suiteward into a path of its own
+	cmd := commandContext(context.Background(), sh, "setup.command")
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader("\n") // the Enter that closes the window
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the script failed: %v\n%s", err, out)
+	// The script ends with the exit code of the command, which is 3 here.
+	out, err := cmd.Output()
+	if exitCodeOf(err) != 3 {
+		t.Fatalf("the script ended with %v, want exit code 3\n%s", err, out)
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "args"))
-	if err != nil {
-		t.Fatal(err)
+	var got []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if arg, ok := strings.CutPrefix(line, "arg="); ok {
+			got = append(got, arg)
+		}
 	}
-	if want := strings.Join(tricky, "\n") + "\n"; string(got) != want {
-		t.Errorf("the command got %q, want %q", got, want)
+	if !slices.Equal(got, tricky) {
+		t.Errorf("the command got %q, want %q", got, tricky)
 	}
-	if code, err := os.ReadFile(filepath.Join(dir, "exit")); err != nil || strings.TrimSpace(string(code)) != "3" {
+	if code, err := os.ReadFile(filepath.Clean(filepath.Join(dir, "exit"))); err != nil || strings.TrimSpace(string(code)) != "3" {
 		t.Errorf("the exit code the script left is %q, %v; want 3", code, err)
 	}
 	if _, err := os.Stat(script); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the script is still there: %v", err)
 	}
+}
+
+// exitCodeOf is the exit code a command ended with: 0 for no error, -1 for an error that is not an exit.
+func exitCodeOf(err error) int {
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return 0
+	case errors.As(err, &exit):
+		return exit.ExitCode()
+	}
+	return -1
 }
 
 func exeSuffix() string {
@@ -132,13 +149,16 @@ func linkOrCopyTestBinary(t *testing.T, path string) {
 	if os.Link(exe, path) == nil {
 		return
 	}
-	src, err := os.Open(exe)
+	src, err := os.Open(filepath.Clean(exe))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer src.Close()
-	dst, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o500) // a file made read-only can still be written through the handle that made it
+	defer func() { _ = src.Close() }()
+	dst, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dst.Chmod(0o700); err != nil { // the copy has to run
 		t.Fatal(err)
 	}
 	if _, err := io.Copy(dst, src); err != nil {

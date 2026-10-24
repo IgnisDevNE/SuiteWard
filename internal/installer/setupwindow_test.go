@@ -120,7 +120,7 @@ func TestSetupInAWindowRunsTheCommandOfExecTTYAndTellsNoSecret(t *testing.T) {
 		t.Fatalf("the window ran %+v, want %s %v: the command ExecTTY would run, engine flags included", win.started, wantName, wantArgs)
 	}
 	for _, text := range []string{strings.Join(win.started[0].args, "\n"), c.out.String()} {
-		if strings.Contains(text, "otpauth") {
+		if strings.Contains(text, "otpauth://totp") || strings.Contains(text, "secret=") {
 			t.Errorf("the secret's URI is in what the installer built or printed:\n%s", text)
 		}
 	}

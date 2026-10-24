@@ -42,7 +42,7 @@ func TestWindowScriptHoldsNoDataAndClearsTheScreenBeforeItEnds(t *testing.T) {
 			t.Errorf("the script lacks %q:\n%s", want, windowScript)
 		}
 	}
-	if pause, clear, end := strings.Index(windowScript, "Read-Host"), strings.Index(windowScript, "Clear-Host"), strings.Index(windowScript, "exit $code"); pause < 0 || clear < pause || end < clear {
+	if pause, cleared, end := strings.Index(windowScript, "Read-Host"), strings.Index(windowScript, "Clear-Host"), strings.Index(windowScript, "exit $code"); pause < 0 || cleared < pause || end < cleared {
 		t.Errorf("the script must wait for Enter, then clear, then exit with the code of setup:\n%s", windowScript)
 	}
 	if !strings.Contains(windowScript, "$code = 1") {

@@ -37,7 +37,7 @@ func TestMain(m *testing.M) {
 	case "fail":
 		fmt.Fprint(os.Stderr, "something went wrong")
 		os.Exit(3)
-	case "record": // the arguments after "--", one per line, into the file named by SUITEWARD_TEST_RECORD; the exit code is SUITEWARD_TEST_EXIT
+	case "record": // stdout: each argument after "--" on a line of its own, after "arg="; the exit code is SUITEWARD_TEST_EXIT
 		args := os.Args
 		for i, a := range args {
 			if a == "--" {
@@ -45,9 +45,8 @@ func TestMain(m *testing.M) {
 				break
 			}
 		}
-		if err := os.WriteFile(os.Getenv("SUITEWARD_TEST_RECORD"), []byte(strings.Join(args, "\n")+"\n"), 0o600); err != nil {
-			fmt.Fprint(os.Stderr, err)
-			os.Exit(99)
+		for _, a := range args {
+			fmt.Println("arg=" + a)
 		}
 		code, _ := strconv.Atoi(os.Getenv("SUITEWARD_TEST_EXIT"))
 		os.Exit(code)

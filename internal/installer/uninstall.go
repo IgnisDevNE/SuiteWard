@@ -35,6 +35,9 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	if flags["yes"] == "true" { // told not to ask: the copy of the program and the PATH are removed only by a person who answers
+		env.Self = nil
+	}
 	if _, given := flags["instance"]; given && flags["purge"] != "true" {
 		return fmt.Errorf("%w: --instance is for --purge: it names the instance whose data a purge deletes", ErrUsage)
 	}
@@ -104,6 +107,9 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	}
 	if err := removeStack(ctx, r, rt, purge, tokenFile, settingsPath); err != nil {
 		return err
+	}
+	if purge {
+		offerRemoveCopy(ctx, env)
 	}
 	return holdPage(scr)
 }

@@ -274,3 +274,6 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir string)
 	d.Command = selfName
 	return d
 }
+
+// offerRemoveCopy is the end of a purge on a full screen of a PC that has the copy of the program or its entry on the PATH: it asks whether to remove them.
+func offerRemoveCopy(ctx context.Context, env Env) {}

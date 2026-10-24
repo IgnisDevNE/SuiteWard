@@ -663,3 +663,165 @@ func TestARunThatCannotBeAnsweredNeverTouchesThePath(t *testing.T) {
 		})
 	}
 }
+
+// ---- the purge ----
+
+// installed is the PC after the offer was taken: the copy is there and its folder is on the PATH.
+func (pc *aPC) installed() *aPC {
+	writeText(pc.t, pc.target(), "NEW BUILD")
+	pc.path.value = `C:\Windows\system32;` + pc.dir() + `;C:\Tools`
+	return pc
+}
+
+// purgeOn runs uninstall of the stack of a harness on a full screen of this PC, whose terminal types the answers.
+func purgeOn(t *testing.T, pc *aPC, answers []string, flags ...string) (*screenRun, error) {
+	t.Helper()
+	h := purgeHarness(t)
+	h.f.env["LOCALAPPDATA"] = pc.local
+	run := newScreenRun(termWidth, termHeight, answers...)
+	env := run.on(h.newEnv())
+	env.Self = &pc.self
+	args := append([]string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm"}, flags...)
+	return run, Uninstall(liveContext(t), args, env)
+}
+
+func TestAPurgeOffersToRemoveTheCopyAndThePathEntry(t *testing.T) {
+	pc := newPC(t).installed()
+	run, err := purgeOn(t, pc, []string{testInstance + "\n", "1\n", "\n"}, "--purge")
+	if err != nil {
+		t.Fatalf("Uninstall: %v\n%s", err, run.output())
+	}
+	v := run.question(t, 1)
+	if !strings.HasPrefix(v.rows[0], "Remove the suiteward command") {
+		t.Errorf("the page is titled %q, want \"Remove the suiteward command\":\n%s", v.rows[0], v.dump())
+	}
+	text := compact(v.text())
+	for _, want := range []string{pc.target(), pc.dir(), "user PATH"} {
+		if !strings.Contains(text, compact(want)) {
+			t.Errorf("the page lacks %q:\n%s", want, v.dump())
+		}
+	}
+	if !strings.Contains(v.text(), "Remove the copy and its PATH entry?") {
+		t.Errorf("the page does not ask the question:\n%s", v.dump())
+	}
+	if _, err := os.Stat(pc.target()); err == nil {
+		t.Error("the copy is still there after a yes")
+	}
+	if want := `C:\Windows\system32;C:\Tools`; pc.path.value != want || !pc.path.expand || pc.path.announced != 1 {
+		t.Errorf("the PATH is %q (expand %v, announced %d times), want %q announced once", pc.path.value, pc.path.expand, pc.path.announced, want)
+	}
+	if _, err := os.Stat(pc.dir()); err == nil {
+		t.Error("the folder of the copy is left although it is empty")
+	}
+}
+
+func TestAPurgeThatIsNotAnsweredWithAYesKeepsTheCopyAndThePath(t *testing.T) {
+	for name, answer := range map[string]string{"No": "2\n", "Enter": "\n"} {
+		t.Run(name, func(t *testing.T) {
+			pc := newPC(t).installed()
+			before := pc.path.value
+			if run, err := purgeOn(t, pc, []string{testInstance + "\n", answer, "\n"}, "--purge"); err != nil {
+				t.Fatalf("Uninstall: %v\n%s", err, run.output())
+			}
+			if readText(t, pc.target()) != "NEW BUILD" || pc.path.value != before || len(pc.path.writes) != 0 {
+				t.Errorf("the copy or the PATH changed without a yes (%q, %q)", readText(t, pc.target()), pc.path.value)
+			}
+		})
+	}
+}
+
+func TestAPurgeOffersOnlyWhatIsThere(t *testing.T) {
+	for name, c := range map[string]struct {
+		set        func(pc *aPC)
+		asked      bool
+		copyThere  bool // after the purge
+		pathWrites int
+	}{
+		"nothing of it":       {func(pc *aPC) {}, false, false, 0},
+		"the copy only":       {func(pc *aPC) { writeText(pc.t, pc.target(), "NEW BUILD") }, true, false, 0},
+		"the PATH entry only": {func(pc *aPC) { pc.path.value += ";" + pc.dir() }, true, false, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pc := newPC(t)
+			c.set(pc)
+			run, err := purgeOn(t, pc, []string{testInstance + "\n", "1\n", "\n"}, "--purge")
+			if err != nil {
+				t.Fatalf("Uninstall: %v\n%s", err, run.output())
+			}
+			if asked := strings.Contains(run.output(), "Remove the suiteward command"); asked != c.asked {
+				t.Errorf("the page was shown: %v, want %v", asked, c.asked)
+			}
+			if _, err := os.Stat(pc.target()); (err == nil) != c.copyThere {
+				t.Errorf("the copy after the purge: %v", err)
+			}
+			if want := `C:\Windows\system32;C:\Tools`; pc.path.value != want || len(pc.path.writes) != c.pathWrites {
+				t.Errorf("the PATH is %q after %d writes, want %q after %d", pc.path.value, len(pc.path.writes), want, c.pathWrites)
+			}
+		})
+	}
+}
+
+func TestAPurgeThatCannotBeAnsweredOrIsNotFullScreenNeverRemovesThem(t *testing.T) {
+	for name, flags := range map[string][]string{
+		"--yes":   {"--purge", "--yes", "--instance", testInstance},
+		"--plain": {"--purge", "--plain"},
+		"a keep":  {}, // uninstall without --purge removes the containers and keeps the rest
+	} {
+		t.Run(name, func(t *testing.T) {
+			pc := newPC(t).installed()
+			before := pc.path.value
+			answers := []string{testInstance + "\n", "1\n", "1\n", "\n"}
+			if name == "a keep" {
+				answers = []string{"1\n", "1\n", "\n"}
+			}
+			run, err := purgeOn(t, pc, answers, flags...)
+			if err != nil {
+				t.Fatalf("Uninstall: %v\n%s", err, run.output())
+			}
+			if readText(t, pc.target()) != "NEW BUILD" || pc.path.value != before || strings.Contains(run.output(), "Remove the suiteward command") {
+				t.Errorf("the copy or the PATH was dealt with in a run with %s (%q, %q)", name, readText(t, pc.target()), pc.path.value)
+			}
+		})
+	}
+}
+
+// A copy that a running program holds cannot be deleted. The test makes the copy a directory with a file in it, which os.Remove refuses as
+// Windows refuses a running program, and which can be renamed as a running program can.
+func TestACopyThatARunningProgramHoldsIsRenamedAsideAndTheRunSaysSo(t *testing.T) {
+	pc := newPC(t).installed()
+	if err := os.Remove(pc.target()); err != nil {
+		t.Fatal(err)
+	}
+	writeText(t, filepath.Join(pc.target(), "held"), "a running program")
+	run, err := purgeOn(t, pc, []string{testInstance + "\n", "1\n", "\n"}, "--purge")
+	if err != nil {
+		t.Fatalf("Uninstall: %v\n%s", err, run.output())
+	}
+	if _, err := os.Stat(pc.target()); err == nil {
+		t.Error("the copy is still under its name")
+	}
+	if _, err := os.Stat(pc.target() + ".old"); err != nil {
+		t.Errorf("the copy was not put aside: %v", err)
+	}
+	if strings.Contains(pc.path.value, pc.dir()) {
+		t.Errorf("the PATH still holds the folder: %q", pc.path.value)
+	}
+	if out := compact(run.output()); !strings.Contains(out, compact("renamed to "+pc.target()+".old")) || !strings.Contains(out, "nextrun") {
+		t.Errorf("the run does not say where the copy went and that the next run removes it:\n%s", run.output())
+	}
+}
+
+func TestAPathThatCannotBeChangedIsAWarningAndTheCopyIsStillRemoved(t *testing.T) {
+	pc := newPC(t).installed()
+	pc.path.writeErr = errors.New("registry: access denied")
+	run, err := purgeOn(t, pc, []string{testInstance + "\n", "1\n", "\n"}, "--purge")
+	if err != nil {
+		t.Fatalf("a PATH that could not be changed failed the purge: %v", err)
+	}
+	if _, err := os.Stat(pc.target()); err == nil {
+		t.Error("the copy was kept because the PATH could not be changed")
+	}
+	if out := compact(run.output()); !strings.Contains(out, "accessdenied") || !strings.Contains(out, compact(pc.dir())) {
+		t.Errorf("the run does not say that the PATH was not changed, why and which folder:\n%s", run.output())
+	}
+}

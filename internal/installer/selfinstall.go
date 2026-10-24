@@ -200,9 +200,13 @@ func (s SelfInstall) place(staged, target string) error {
 	return nil
 }
 
-// refreshCopy keeps the copy of the program that an earlier run made up to date. The install and the upgrade call it once they have succeeded,
-// on every screen and whatever the command line says: the copy exists because its owner said yes to it, so this asks nothing and leaves the PATH
-// alone. It also removes the copy that a run before put aside. A failure is a warning, because the install it follows has worked.
+// devBuild says that the running program is a development build, which carries no release: the build version is "dev", or not given.
+func (e Env) devBuild() bool { return cmp.Or(e.Version, "dev") == "dev" }
+
+// refreshCopy keeps the copy of the program that an earlier run made up to date. An upgrade calls it once it has succeeded, on every screen and
+// whatever the command line says: the copy exists because its owner said yes to it, so this asks nothing and leaves the PATH alone. An install
+// never calls it, since it may be any build and a copy is not replaced in silence, and a development build leaves the copy as it is and says so.
+// It also removes the copy that a run before put aside. A failure is a warning, because the upgrade it follows has worked.
 func refreshCopy(ctx context.Context, env Env) {
 	d, s, scr := env.Deps, env.Self, screenOn(env.Term.Out)
 	if s == nil || ctx.Err() != nil {
@@ -221,6 +225,10 @@ func refreshCopy(ctx context.Context, env Env) {
 	if _, err := os.Stat(target); err != nil || sameFile(exe, target) {
 		return // no copy, or this program is the copy
 	}
+	if env.devBuild() {
+		scr.Keep("Note: this is a development build: the copy at %s is left as it is.\n", target)
+		return
+	}
 	if err := s.copyTo(exe, dir); err != nil {
 		scr.Warn("The copy of suiteward.exe in %s was not updated: %v\n", dir, err)
 		return
@@ -229,12 +237,12 @@ func refreshCopy(ctx context.Context, env Env) {
 }
 
 // offerSelf is the part of the end of an install or an upgrade that offers the copy of the program, on a full screen of a PC that has none and
-// of a person who answers (not env.Unattended): it explains the copy and the PATH entry and asks. It returns the Deps the rest of the summary
-// builds its hints with: after a copy that the name suiteward reaches they name the program suiteward. A failure is a warning in the summary,
-// because the install it ends has worked.
+// of a person who answers (not env.Unattended), when the program is a release: a development build is not offered as the command. It explains the
+// copy and the PATH entry and asks. It returns the Deps the rest of the summary builds its hints with: after a copy that the name suiteward
+// reaches they name the program suiteward. A failure is a warning in the summary, because the install it ends has worked.
 func offerSelf(ctx context.Context, env Env, rows *summaryRows) Deps {
 	d, s, scr := env.Deps, env.Self, screenOn(env.Term.Out)
-	if s == nil || env.Unattended || !scr.FullScreen() || ctx.Err() != nil {
+	if s == nil || env.Unattended || env.devBuild() || !scr.FullScreen() || ctx.Err() != nil {
 		return d
 	}
 	exe, err := s.Executable()
@@ -262,7 +270,7 @@ func offerSelf(ctx context.Context, env Env, rows *summaryRows) Deps {
 // offerCopy explains the copy of the program and the PATH entry, asks, and on a yes makes both. The default is Yes: the offer is for the person
 // who does not know that the commands need the PATH, and an input that ended or a Ctrl-C is a No. other is the program that the shell runs for
 // the name suiteward, when there is one: the folder of the copy goes at the end of the PATH, so that program keeps the name, the page says so,
-// and the hints keep naming the path.
+// the hints keep naming the path, and the default is No, because the copy would not be the command that the person asked for.
 func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other string) Deps {
 	d, s, scr := env.Deps, env.Self, screenOn(env.Term.Out)
 	target := filepath.Join(dir, selfFile)
@@ -276,7 +284,11 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 		blocks = append(blocks, ui.Para("New terminals find suiteward by name. This terminal keeps the PATH it started with: the summary shows the one line that fixes it here."))
 	}
 	scr.Page("Run suiteward from any terminal", blocks...)
-	picked, err := scr.Select("Copy suiteward.exe and add it to your PATH?", yesNo, 0)
+	def := 0 // Yes
+	if other != "" {
+		def = 1 // No
+	}
+	picked, err := scr.Select("Copy suiteward.exe and add it to your PATH?", yesNo, def)
 	switch {
 	case ctx.Err() != nil || errors.Is(err, io.EOF): // Ctrl-C, or an input that ended: no answer is not a yes
 		return d
@@ -414,10 +426,15 @@ func (s SelfInstall) removeCopy(scr *ui.Screen, dir string) {
 	}
 }
 
-// installSelf is what the end of a successful install or upgrade of the co-located tier does about the copy of the program, before its summary is
-// built: the copy that exists is refreshed on every screen, and a person on a full screen is offered one. The summary shows what the offer left in
-// copyRows and builds its hints with the name it left in the Deps.
+// installSelf is what the end of a successful install of the co-located tier does about the copy of the program, before its summary is built: a
+// person on a full screen who has no copy is offered one. A copy that exists is left as it is. The summary shows what the offer left in copyRows
+// and builds its hints with the name it left in the Deps.
 func (c *colocatedInstall) installSelf(ctx context.Context) {
-	refreshCopy(ctx, c.env)
 	c.env.Deps = offerSelf(ctx, c.env, &c.copyRows)
+}
+
+// upgradeSelf is installSelf for an upgrade, which first refreshes the copy that exists, on every screen.
+func (c *colocatedInstall) upgradeSelf(ctx context.Context) {
+	refreshCopy(ctx, c.env)
+	c.installSelf(ctx)
 }

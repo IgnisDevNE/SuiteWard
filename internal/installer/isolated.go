@@ -684,7 +684,7 @@ func chooseImage(cmd string, r *Resolver, installedDigest string, neverStarted f
 			return "", err
 		}
 		if !never {
-			return "", fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", digest, installedDigest)
+			return "", fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `%s install --upgrade`", digest, installedDigest, cmd)
 		}
 		say("Replacing the installed image %s with %s: this stack never completed a start, so this is a retry, not an upgrade.\n", installedDigest, digest)
 	}

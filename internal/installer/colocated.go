@@ -375,7 +375,7 @@ type colocatedInstall struct {
 
 	machineUser string // the rootless user of the Podman machine, once it has been looked up
 
-	copyRows summaryRows // what the offer of the copy of the program says in the summary (installSelf)
+	copyRows summaryRows // what the offer of the copy of the program says in the summary (installSelf, upgradeSelf)
 }
 
 // secretState is what the stack already has of its database secrets, read before anything is changed.

@@ -252,7 +252,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	scr.Step(5)
 	c.restartAfterReboot(ctx)
 	upgraded(scr, image, dir, goBackColocated(env.Deps.command(), engine, previous.Image, dir, scopeFlags(r, false)), doctor)
-	c.installSelf(ctx)
+	c.upgradeSelf(ctx)
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }
 

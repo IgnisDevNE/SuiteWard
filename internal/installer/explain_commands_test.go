@@ -77,6 +77,15 @@ func TestTheRestorePageStillShowsTheInstanceAndTheReleaseAt80x24(t *testing.T) {
 	mustSay(t, v, "This is a confirmation", "This instance runs", "ahead of the restored canonical", "Type the instance id "+testInstance+" to confirm")
 }
 
+// A fact is shown whole or not at all: "Safety backup" without the key it names is worse than none.
+func TestTheRestorePageDoesNotShowTheSafetyBackupWithoutItsKeyAt80x24(t *testing.T) {
+	run, _ := restoreOnScreen(t, 80, 24, config.TierCoLocated)
+	v := run.question(t, 0)
+	if strings.Contains(v.text(), "Safety backup") && !strings.Contains(v.text(), "SHA256:") {
+		t.Errorf("the page names the safety backup and cuts the key it is encrypted to:\n%s", v.dump())
+	}
+}
+
 // With a warning about the tier too, the explanation is trimmed before the warnings, and never the title or the question.
 func TestTheRestorePageKeepsItsTitleItsWarningAndItsQuestionAt80x24(t *testing.T) {
 	run, _ := restoreOnScreen(t, 80, 24, config.TierIsolated)

@@ -41,6 +41,17 @@ func selectLongDemo(def, downs int) func(*testing.T, ColorLevel) frame {
 	}
 }
 
+// highlightedRows is the rows of the content that show the highlight of the list, as the name of the check run.
+func highlightedRows(lines []string) []string {
+	var rows []string
+	for _, l := range lines {
+		if strings.HasPrefix(l, "● ") {
+			rows = append(rows, strings.TrimSpace(strings.TrimSuffix(l, "(default)"))) // the default row says so
+		}
+	}
+	return rows
+}
+
 // A list taller than the page scrolls around its highlight, and the title of the page and the label of the question stay: the highlight is
 // never out of sight, wherever it starts and whichever way it goes round.
 func TestALongSelectKeepsTheHighlightTheLabelAndTheTitleInSight(t *testing.T) {
@@ -51,28 +62,19 @@ func TestALongSelectKeepsTheHighlightTheLabelAndTheTitleInSight(t *testing.T) {
 			for i, f := range *frames {
 				lines := contentLines(f)
 				text := strings.Join(lines, "\n")
-				for _, want := range []string{"Test check", "Required test check for acme/app"} {
-					if !strings.Contains(text, want) {
-						t.Errorf("frame %d lacks %q:\n%s", i, want, text)
-					}
+				if !strings.Contains(text, "Test check") || !strings.Contains(text, "Required test check for acme/app") {
+					t.Errorf("frame %d lacks the title or the label:\n%s", i, text)
 				}
-				var marked []string
-				for _, l := range lines {
-					if strings.HasPrefix(l, "● ") {
-						marked = append(marked, strings.TrimSpace(strings.TrimSuffix(l, "(default)"))) // the default row says so
-					}
-				}
-				at := (def + i + n) % n // the row the highlight is on after i presses; from no row the first press goes to row 0
+				at := (def + i) % n // the row the highlight is on after i presses; from no row the first press goes to row 0
 				if def < 0 {
 					at = (i - 1 + n) % n
 				}
-				switch want := fmt.Sprintf("● CI / job%02d", at+1); {
-				case def < 0 && i == 0:
-					if len(marked) != 0 {
-						t.Errorf("frame 0 highlights %q although nothing is", marked)
-					}
-				case len(marked) != 1 || marked[0] != want:
-					t.Errorf("frame %d highlights %q, want only %q:\n%s", i, marked, want, text)
+				want := []string{fmt.Sprintf("● CI / job%02d", at+1)}
+				if def < 0 && i == 0 {
+					want = nil // nothing is highlighted before the first press
+				}
+				if got := highlightedRows(lines); !slices.Equal(got, want) {
+					t.Errorf("frame %d highlights %q, want %q:\n%s", i, got, want, text)
 				}
 			}
 		})

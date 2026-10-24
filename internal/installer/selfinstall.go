@@ -339,13 +339,10 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 // answer is Yes. A Ctrl-C and an input that ended are a No: no answer is not a yes. So is a question that could not be read, which err reports.
 func askYesNo(ctx context.Context, scr *ui.Screen, question string, def int) (yes bool, err error) {
 	picked, err := scr.Select(question, yesNo, def)
-	switch {
-	case ctx.Err() != nil || errors.Is(err, io.EOF):
-		return false, nil
-	case err != nil:
+	if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
 		return false, fmt.Errorf("the answer could not be read: %w", err)
 	}
-	return picked == 0, nil
+	return err == nil && ctx.Err() == nil && picked == 0, nil
 }
 
 // onUserPath says whether dir is on the user's PATH.

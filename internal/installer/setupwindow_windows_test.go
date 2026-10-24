@@ -4,7 +4,6 @@ package installer
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -162,8 +161,8 @@ func TestCtrlCWhileTheWindowWaitsEndsItAndRemovesItsDirectory(t *testing.T) {
 }
 
 // hiddenPowerShell makes startConsoleWindow start the real PowerShell with the real script but with no window: CREATE_NO_WINDOW in place of
-// CREATE_NEW_CONSOLE, the Enter of the window read from stdin, and what PowerShell prints written to out. No test opens a window. It
-// returns where the starter said that the exit code goes.
+// CREATE_NEW_CONSOLE, the Enter of the window read from stdin, and what PowerShell and the engine print written to out. No test
+// opens a window. It returns where the starter said that the exit code goes.
 func hiddenPowerShell(t *testing.T, stdin, out *os.File) (exitFile *string) {
 	t.Helper()
 	exitFile = new(string)
@@ -187,68 +186,76 @@ func hiddenPowerShell(t *testing.T, stdin, out *os.File) (exitFile *string) {
 	return exitFile
 }
 
-// The real script, in the real PowerShell and with no window: the engine gets every argument as it was, text that PowerShell would read as
-// code included, and the code it ends with is left for the installer before the window waits for Enter, then read from there.
-func TestWindowScriptRunsTheEngineWithEveryArgumentIntactAndLeavesItsExitCode(t *testing.T) {
+// runHiddenWindow runs the real window script with no window, with the test binary as the engine (the helper "record", which prints its
+// arguments and ends with code). It returns what the script had left in the exit file before it waited for Enter, the arguments the engine
+// printed, and how the wait ended once the Enter was pressed.
+func runHiddenWindow(t *testing.T, args []string, code string) (left string, got []string, waitErr error) {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("SUITEWARD_TEST_HELPER", "record")
+	t.Setenv("SUITEWARD_TEST_EXIT", code)
+	enter, typed, err := os.Pipe() // the Enter that closes the window, which the test presses once it has seen the exit file
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = enter.Close(); _ = typed.Close() }()
+	out, err := os.Create(filepath.Clean(filepath.Join(t.TempDir(), "powershell.txt")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = out.Close() }()
+	exitFile := hiddenPowerShell(t, enter, out)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	wait, err := startConsoleWindow(ctx, exe, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for strings.TrimSpace(left) == "" { // the exit file is there before the Enter, and whole once it has text
+		data, err := os.ReadFile(filepath.Clean(*exitFile))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		if left = string(data); ctx.Err() != nil {
+			shown, _ := os.ReadFile(out.Name())
+			t.Fatalf("the script left no exit code: %v\n%s", ctx.Err(), shown)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	printed, err := os.ReadFile(out.Name()) // the engine has ended: it printed its arguments before the script left its code
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(printed), "\n") {
+		if arg, ok := strings.CutPrefix(line, "arg="); ok {
+			got = append(got, arg)
+		}
+	}
+	if _, err := typed.WriteString("\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(left), got, wait()
+}
+
+// The real script, in the real PowerShell and with no window: the engine gets every argument as it was, text that PowerShell would read as
+// code included, and the code it ends with is left for the installer before the window waits for Enter, then read from there.
+func TestWindowScriptRunsTheEngineWithEveryArgumentIntactAndLeavesItsExitCode(t *testing.T) {
 	args := []string{"--", "setup", "--owner", "alice", "--test-check", "acme/app=CI / test",
 		"--test-check", `acme/lib=CI / test (ubuntu, "go 1.27") $HOME & 'x' ; ` + "`whoami`", "--dir", `C:\Program Files\SuiteWard\`, "--empty", ""}
 	for code, wantErr := range map[string]string{"0": "", "3": "exit code 3"} {
 		t.Run("exit code "+code, func(t *testing.T) {
-			dir := t.TempDir()
-			argsFile := filepath.Join(dir, "args.json")
-			t.Setenv("SUITEWARD_TEST_HELPER", "args-file")
-			t.Setenv("SUITEWARD_TEST_ARGS_FILE", argsFile)
-			t.Setenv("SUITEWARD_TEST_EXIT", code)
-			enter, typed, err := os.Pipe() // the Enter that closes the window, which the test presses once it has seen the exit file
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = enter.Close(); _ = typed.Close() }()
-			out, err := os.Create(filepath.Join(dir, "powershell.txt"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = out.Close() }()
-			exitFile := hiddenPowerShell(t, enter, out)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancel()
-			wait, err := startConsoleWindow(ctx, exe, args)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for left := ""; strings.TrimSpace(left) == ""; { // the exit file is there before the Enter, whole once it has text
-				data, err := os.ReadFile(filepath.Clean(*exitFile))
-				if err != nil && !errors.Is(err, os.ErrNotExist) {
-					t.Fatal(err)
-				}
-				if left = string(data); ctx.Err() != nil {
-					shown, _ := os.ReadFile(out.Name())
-					t.Fatalf("the script left no exit code: %v\n%s", ctx.Err(), shown)
-				}
-				time.Sleep(10 * time.Millisecond)
-			}
-			if left, _ := os.ReadFile(filepath.Clean(*exitFile)); strings.TrimSpace(string(left)) != code {
+			left, got, err := runHiddenWindow(t, args, code)
+			if left != code {
 				t.Errorf("the script left the exit code %q, want %s", left, code)
 			}
-			if _, err := typed.WriteString("\r\n"); err != nil {
-				t.Fatal(err)
+			if (err == nil) != (wantErr == "") || (err != nil && !strings.Contains(err.Error(), wantErr)) {
+				t.Errorf("wait = %v, want %q", err, wantErr)
 			}
-			err = wait()
-			if wantErr == "" && err != nil || wantErr != "" && (err == nil || !strings.Contains(err.Error(), wantErr)) {
-				shown, _ := os.ReadFile(out.Name())
-				t.Errorf("wait = %v, want %q\n%s", err, wantErr, shown)
-			}
-			var got []string
-			data, err := os.ReadFile(filepath.Clean(argsFile))
-			if err != nil {
-				t.Fatalf("the engine left no arguments: %v", err)
-			}
-			if err := json.Unmarshal(data, &got); err != nil || !slices.Equal(got, args[1:]) {
-				t.Errorf("the engine got %q, want %q (%v)", got, args[1:], err)
+			if !slices.Equal(got, args[1:]) {
+				t.Errorf("the engine got %q, want %q", got, args[1:])
 			}
 		})
 	}

@@ -487,9 +487,14 @@ func chooseAccount(ctx context.Context, env githubEnv) (string, error) {
 			err = checkAppOwner(ctx, env, account, !haveCode)
 		}
 		var refused accountRefused
-		if err == nil {
+		var failed lookupFailed
+		switch {
+		case err == nil:
 			return account, nil
-		} else if !errors.As(err, &refused) || !typed {
+		case errors.As(err, &failed): // nothing is known of the account: the conversion checks its owner after the App is made
+			env.R.screen.Warn("Could not check %s on GitHub (%s); continuing: GitHub's answer is checked after the App is created.\n", account, failed)
+			return account, nil
+		case !errors.As(err, &refused) || !typed:
 			return "", err
 		}
 		ghSay(env.Out, "%s\n", refused)
@@ -538,24 +543,33 @@ func checkAppOwner(ctx context.Context, env githubEnv, account string, lookup bo
 	return lookupOrganization(ctx, env, account)
 }
 
-// lookupOrganization asks GitHub, with no authentication, whether login is an organization. Only 404 says that there is no such
-// account; a rate limit, an error of GitHub or the network is an error that names the status and no text of the answer.
+// lookupFailed is why the look-up of an organization says nothing about it: a rate limit, an error of GitHub, the network, an answer
+// that is no account. It stops nothing: the conversion checks the owner of the App once it exists.
+type lookupFailed string
+
+func (e lookupFailed) Error() string { return string(e) }
+
+// lookupOrganization asks GitHub, with no authentication, whether login is an organization. Only 404 and an account that is no
+// organization refuse it; whatever else cannot be decided is a lookupFailed, which names the status and no text of the answer.
 // shortcut: an unauthenticated call is limited to 60 an hour per address, and whether the user may create Apps in the organization is
 // not asked: the conversion refuses an App that another account owns. Upgrade when the flow holds a token before this point.
 func lookupOrganization(ctx context.Context, env githubEnv, login string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(env.APIURL, "/")+"/users/"+url.PathEscape(login), nil)
 	if err != nil {
-		return fmt.Errorf("build the request that looks up the organization %s", login)
+		return fmt.Errorf("build the request that looks up the organization %s: %w", login, err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	resp, err := env.HTTP.Do(req)
 	if err != nil {
-		var urlErr *url.Error
+		if ctx.Err() != nil { // Ctrl-C is not a failure of GitHub
+			return ctx.Err()
+		}
+		var urlErr *url.Error // its text names the URL
 		if errors.As(err, &urlErr) {
 			err = urlErr.Err
 		}
-		return fmt.Errorf("look up the organization %s on GitHub: %w", login, err)
+		return lookupFailed(err.Error())
 	}
 	defer func() { _ = resp.Body.Close() }() // the answer is read below; a close error cannot change it
 	switch resp.StatusCode {
@@ -563,13 +577,13 @@ func lookupOrganization(ctx context.Context, env githubEnv, login string) error 
 	case http.StatusNotFound:
 		return accountRefused("GitHub has no account named " + login)
 	default:
-		return fmt.Errorf("could not look up the organization %s on GitHub: HTTP %d (run the installer again later)", login, resp.StatusCode)
+		return lookupFailed(fmt.Sprintf("HTTP %d", resp.StatusCode))
 	}
 	var out struct {
 		Type string `json:"type"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxConversionAnswer)).Decode(&out); err != nil {
-		return fmt.Errorf("the answer of GitHub about %s is not an account object", login)
+		return lookupFailed("an answer that is not an account")
 	}
 	if out.Type != "Organization" {
 		return accountRefused(login + " is a personal account, not an organization (answer personal to create the App under your own account)")

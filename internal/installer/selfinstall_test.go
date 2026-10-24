@@ -449,8 +449,11 @@ func TestOnlyAYesCopiesTheProgramAndChangesThePath(t *testing.T) {
 	if got := o.row("Command"); !strings.Contains(got, pc.target()) || !strings.Contains(got, "new terminals") {
 		t.Errorf("the Command row says %q, want the copy and that new terminals have suiteward", got)
 	}
-	if got, want := o.row("This terminal"), `$env:Path += ";`+pc.dir()+`"`; got != want {
-		t.Errorf("the This terminal row says %q, want the line to run in PowerShell: %q", got, want)
+	if got, want := o.row("This terminal (PowerShell)"), `$env:Path += ";`+pc.dir()+`"`; got != want {
+		t.Errorf("the This terminal (PowerShell) row says %q, want the line to run in PowerShell: %q", got, want)
+	}
+	if !slices.Contains(strings.Split(o.run.console.tail(), "\n"), `$env:Path += ";`+pc.dir()+`"`) {
+		t.Errorf("the scrollback has no line that is exactly the command for this terminal:\n%s", o.run.console.tail())
 	}
 	if o.d.Command != "suiteward" || o.d.command() != "suiteward" {
 		t.Errorf("the hints after the copy use %q, want suiteward", o.d.Command)
@@ -546,8 +549,8 @@ func TestACopyThatFailsIsAWarningAndTheRunGoesOn(t *testing.T) {
 	if w := o.warnings(); len(w) != 1 || !strings.Contains(w[0], "was not copied") || !strings.Contains(w[0], pc.exe) {
 		t.Errorf("warnings = %q, want one that says the copy failed and names the program to run", w)
 	}
-	if len(pc.path.writes) != 0 || o.d.Command != swCmd || o.row("This terminal") != "" {
-		t.Errorf("the PATH changed or the hints were renamed after a copy that failed (%d writes, %q, %q)", len(pc.path.writes), o.d.Command, o.row("This terminal"))
+	if len(pc.path.writes) != 0 || o.d.Command != swCmd || o.row("This terminal (PowerShell)") != "" {
+		t.Errorf("the PATH changed or the hints were renamed after a copy that failed (%d writes, %q, %q)", len(pc.path.writes), o.d.Command, o.row("This terminal (PowerShell)"))
 	}
 }
 
@@ -573,8 +576,8 @@ func TestProgramsThatWereNotToldOfThePathAreAWarningNotAFailure(t *testing.T) {
 	if w := o.warnings(); len(w) != 1 || !strings.Contains(w[0], "not told") || !strings.Contains(w[0], "timed out") {
 		t.Errorf("warnings = %q, want one that says the programs were not told", w)
 	}
-	if o.d.Command != "suiteward" || o.row("This terminal") == "" {
-		t.Errorf("the PATH was changed, so the hints use %q and the row says %q", o.d.Command, o.row("This terminal"))
+	if o.d.Command != "suiteward" || o.row("This terminal (PowerShell)") == "" {
+		t.Errorf("the PATH was changed, so the hints use %q and the row says %q", o.d.Command, o.row("This terminal (PowerShell)"))
 	}
 }
 
@@ -628,10 +631,14 @@ func TestTheSummaryOfAnInstallOffersTheCopyAndSaysWhatToRunInThisTerminal(t *tes
 	if readText(t, pc.target()) != "NEW BUILD" || !strings.HasSuffix(pc.path.value, ";"+pc.dir()) {
 		t.Fatalf("the program was not copied or the PATH not changed (%q): %s", pc.path.value, tail)
 	}
-	for _, want := range []string{"Command: " + pc.target(), `This terminal: $env:Path += ";` + pc.dir() + `"`} {
+	for _, want := range []string{"Command: " + pc.target(), `This terminal (PowerShell): $env:Path += ";` + pc.dir() + `"`} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("the scrollback lacks %q:\n%s", want, tail)
 		}
+	}
+	// The line for this terminal is a line of its own in the scrollback, to copy as it is.
+	if !slices.Contains(strings.Split(tail, "\n"), `$env:Path += ";`+pc.dir()+`"`) {
+		t.Errorf("the scrollback has no line that is exactly the command for this terminal:\n%s", tail)
 	}
 	// What the summary tells the person to run after the copy is the command of a new terminal.
 	if want := "Check again: suiteward doctor --settings " + quoteArg(h.settingsPath()); !strings.Contains(tail, want) {
@@ -854,4 +861,32 @@ func TestAnEnvThatOffersTheCopyWithoutWhatItNeedsIsRefusedBeforeAnythingRuns(t *
 			}
 		})
 	}
+}
+
+// An upgrade that was told not to ask (--yes) asks nothing about the copy, but the copy of an earlier install is the program of this
+// release's person: it is kept up to date, so that suiteward on the PATH is not the release the stack has left behind.
+func TestAnUpgradeThatWasToldNotToAskStillRefreshesTheCopyOfAnEarlierInstall(t *testing.T) {
+	pc := newPC(t)
+	writeText(t, pc.target(), "OLD BUILD")
+	u := newUpgradeHarness(t, nil)
+	u.f.env["LOCALAPPDATA"] = pc.local
+	u.first("exec -i suiteward /suiteward check --json", instanceChecks)
+	c := newTermConsole(&u.out)
+	env := u.env()
+	env.OpenScreen = c.open
+	env.Self = &pc.self
+	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--upgrade", "--backup-dir", u.backups, "--runtime", "podman", "--connection", "pm", "--image", testImage, "--yes"}
+	if err := Install(liveContext(t), args, env); err != nil {
+		t.Fatal(err)
+	}
+	if readText(t, pc.target()) != "NEW BUILD" {
+		t.Errorf("the copy holds %q, want this program", readText(t, pc.target()))
+	}
+	if len(pc.path.writes) != 0 || strings.Contains(c.out.String(), "Run suiteward from any terminal") {
+		t.Errorf("the PATH was written %d times or the copy was offered in a run that was told not to ask", len(pc.path.writes))
+	}
+	if want := "Command: " + pc.target() + " (updated)"; !strings.Contains(c.tail(), want) {
+		t.Errorf("the scrollback lacks %q:\n%s", want, c.tail())
+	}
+	noRepeats(t, c.tail())
 }

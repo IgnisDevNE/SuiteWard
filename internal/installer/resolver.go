@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -170,3 +171,83 @@ func nonEmpty(key, label string, secret []byte) ([]byte, error) {
 // ask prints a question and reads one line of the terminal. A flag or the answers file never answers it, so it is for the choices
 // that only the person at the terminal makes. The end of the input is io.EOF.
 func (r *Resolver) ask(question string) (string, error) { return r.screen.Prompt(question) }
+
+// Select resolves a choice among a few answers as Value resolves a text one: the flag, then the answers file, then the default when
+// there is no terminal to ask. At a full screen it lists the choices (name and description) to be picked with the arrow keys; a plain
+// screen asks Value's typed question, "label (a or b) [def]: ", exactly as before. def is one of the choices' names; the answer is
+// the name of the one that was picked.
+func (r *Resolver) Select(key, label string, choices []ui.Choice, def string) (string, error) {
+	return r.selectAs(key, label, label+" ("+orList(choices)+")", choices, def)
+}
+
+// selectAs is Select for a question whose typed form was worded before it had choices: typed is the label that a plain screen asks Value
+// with, which a script that answers it keeps.
+func (r *Resolver) selectAs(key, label, typed string, choices []ui.Choice, def string) (string, error) {
+	if !r.asks(key) || !r.screen.FullScreen() {
+		return r.Value(key, typed, def)
+	}
+	i := slices.IndexFunc(choices, func(c ui.Choice) bool { return c.Name == def })
+	if i < 0 {
+		return "", fmt.Errorf("the default %q of %s is not one of its choices", def, key)
+	}
+	picked, err := r.screen.Select(label, choices, i)
+	if err != nil {
+		return "", err
+	}
+	return choices[picked].Name, nil
+}
+
+// orList is the names of the choices as a sentence: "a or b", "a, b or c".
+func orList(choices []ui.Choice) string {
+	names := make([]string, len(choices))
+	for i, c := range choices {
+		names[i] = c.Name
+	}
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
+}
+
+// MultiSelect resolves a multiple choice as Select resolves a single one: the flag, then the answers file, then the defaults when there
+// is no terminal to ask. A plain screen asks Value's typed question, "label (hint) [defaults]: ", word for word and without a list of its
+// own (the flow prints the list it printed before); at a full screen the rows are picked with the keys (space toggles). The flag, the
+// answers file, the defaults and the typed answer are the numbers (from 1) or the names of the rows, comma-separated. The answer is the
+// names of the rows that were picked: in the order typed, or in the order of the list when they were picked with the keys.
+func (r *Resolver) MultiSelect(key string, m ui.Multi) ([]string, error) {
+	if err := m.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", key, err)
+	}
+	var picked []int
+	var err error
+	if r.asks(key) && r.screen.FullScreen() {
+		picked, err = r.screen.MultiSelect(m)
+	} else {
+		defaults := make([]string, len(m.Defaults))
+		for i, d := range m.Defaults {
+			defaults[i] = m.Choices[d].Name
+		}
+		var answer string
+		if answer, err = r.Value(key, m.TypedLabel(), strings.Join(defaults, ",")); err == nil {
+			if picked, err = m.Parse(answer); err != nil {
+				err = fmt.Errorf("%s: %w", m.Label, err)
+			}
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(picked))
+	for i, p := range picked {
+		names[i] = m.Choices[p].Name
+	}
+	return names, nil
+}
+
+// explain starts the page of a question on a full screen that is going to ask it, that is when one of the keys is not answered: the
+// explanation is for the person at the terminal, so a flag, the answers file, a run with no terminal and a plain screen get none.
+func (r *Resolver) explain(keys []string, title string, blocks ...ui.Block) {
+	if r.screen.FullScreen() && slices.ContainsFunc(keys, r.asks) {
+		r.screen.Page(title, blocks...)
+	}
+}

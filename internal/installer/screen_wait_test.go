@@ -96,7 +96,7 @@ func TestEveryCommandEndsOnAPageThatWaitsForEnter(t *testing.T) {
 			env := Env{Deps: h.deps(), Term: Terminal{In: in, Out: &bytes.Buffer{}}, PortFree: func(int) error { return nil }, Sleep: func(time.Duration) {}, OpenScreen: c.open}
 			return installHost(ctx, []string{"--yes", "--metadata-rule", "no"}, env)
 		}},
-		{"enroll", 2, func(t *testing.T, c *termConsole, in io.Reader) error { // one Enter ends setup's page of the real terminal
+		{"enroll", 3, func(t *testing.T, c *termConsole, in io.Reader) error { // one Enter starts setup, one ends its page of the real terminal
 			h := enrollHarness(t, statusNoOwner)
 			env := h.newEnv()
 			env.Term = Terminal{In: in, Out: &h.out, IsTerminal: true, ReadPassword: func() ([]byte, error) { return nil, nil }}

@@ -216,9 +216,10 @@ func TestTheDockerWarningIsOneWarningWithItsPointsOnTheScreenAndInTheScrollback(
 	if err := scr.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// A full screen has the same two points in fewer words, so that the smallest window still shows them above the question.
 	want := "! Docker is allowed on this PC, but Podman is strongly recommended.\n" +
-		"    - Docker's daemon runs as root (a rootful daemon): the containers are not isolated from whoever controls that daemon the way rootless Podman's are.\n" +
-		"    - Docker has no secret store outside Swarm, so the secrets (the database owner URL, the App key, the MCP token) live in named volumes that anyone who controls the Docker daemon can read.\n"
+		"    - Docker's daemon runs as root: its containers are not isolated from whoever controls it.\n" +
+		"    - Its secrets live in volumes that anyone who controls the daemon can read.\n"
 	if got := c.tail(); got != want {
 		t.Errorf("the scrollback holds\n%s\nwant\n%s", got, want)
 	}
@@ -240,7 +241,10 @@ func TestTheSummaryOfAnInstallWithoutGitHubWaitsForTheServiceToAnswer(t *testing
 	run := func(t *testing.T, refusals int) (tail string, asked int) {
 		t.Helper()
 		h := newHarness(t, "linux")
-		h.status = func(context.Context, string) ([]byte, error) {
+		h.status = func(_ context.Context, address string) ([]byte, error) {
+			if !strings.HasSuffix(address, "/status") { // the reads of doctor at the end of the install are not the wait
+				return nil, errors.New("connection refused")
+			}
 			if asked++; asked <= refusals {
 				return nil, errors.New("connection refused")
 			}
@@ -256,13 +260,13 @@ func TestTheSummaryOfAnInstallWithoutGitHubWaitsForTheServiceToAnswer(t *testing
 		return c.tail(), asked
 	}
 
-	if tail, _ := run(t, 3); !strings.Contains(tail, "Instance: v0.2.0\n") {
-		t.Errorf("the summary has no Instance row although the service answered a few seconds in:\n%s", tail)
+	if tail, _ := run(t, 3); !strings.Contains(tail, "Release: v0.2.0\n") {
+		t.Errorf("the summary has no Release row although the service answered a few seconds in:\n%s", tail)
 	}
 	// A service that never answers is waited for as long as the install waits for it with GitHub, and the summary still comes.
 	tail, asked := run(t, 1000)
-	if strings.Contains(tail, "Instance:") || !strings.Contains(tail, "Status: ") {
-		t.Errorf("the summary of a service that does not answer has an Instance row or lacks the rest:\n%s", tail)
+	if strings.Contains(tail, "Instance:") || strings.Contains(tail, "Release:") || !strings.Contains(tail, "Status: ") {
+		t.Errorf("the summary of a service that does not answer has an Instance or a Release row or lacks the rest:\n%s", tail)
 	}
 	if asked != statusTries {
 		t.Errorf("/status was asked %d times, want %d", asked, statusTries)
@@ -287,8 +291,8 @@ func TestTheSummaryOfAnUpgradeWaitsForTheServiceToAnswer(t *testing.T) {
 	if err := Install(liveContext(t), args, env); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(c.tail(), "Instance: v0.2.0\n") {
-		t.Errorf("the summary has no Instance row although the service answered a few tries in:\n%s", c.tail())
+	if !strings.Contains(c.tail(), "Instance: "+testInstance+"\n") || !strings.Contains(c.tail(), "Release: v0.2.0\n") {
+		t.Errorf("the summary has no Instance and Release rows although the service answered a few tries in:\n%s", c.tail())
 	}
 }
 
@@ -331,8 +335,10 @@ func TestAServiceThatNeverAnswersIsWaitedForOnceByAnInstallWithGitHub(t *testing
 	h := newHarness(t, "linux")
 	h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
 	asked := 0
-	h.status = func(context.Context, string) ([]byte, error) {
-		asked++
+	h.status = func(_ context.Context, address string) ([]byte, error) {
+		if strings.HasSuffix(address, "/status") { // the reads of doctor at the end of the install are not the wait
+			asked++
+		}
 		return nil, errors.New("connection refused")
 	}
 	c := newTermConsole(&bytes.Buffer{})

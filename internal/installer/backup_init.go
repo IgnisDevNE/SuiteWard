@@ -52,7 +52,7 @@ func BackupInit(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := inst.needSettings(); err != nil {
+	if err := inst.needSettings(env.Deps.command()); err != nil {
 		return err
 	}
 	k := &keyInit{r: r, env: env, inst: &inst, kit: flags["kit"], replace: flags["replace"] == "true", yes: flags["yes"] == "true"}
@@ -91,7 +91,7 @@ type keyInit struct {
 func (k *keyInit) keys(ctx context.Context) error {
 	if old := k.inst.s.BackupRecipient; old != "" {
 		if !k.replace {
-			return fmt.Errorf("a recovery key is set already (%s): the backups made with it need its kit. To replace it with a new key, run `suiteward backup init --replace`", archive.Fingerprint(old))
+			return fmt.Errorf("a recovery key is set already (%s): the backups made with it need its kit. To replace it with a new key, run `%s backup init --replace`", archive.Fingerprint(old), k.env.Deps.command())
 		}
 		k.replaced = archive.Fingerprint(old)
 	}
@@ -122,7 +122,11 @@ func (k *keyInit) writeKit(ctx context.Context) error {
 		}
 		return err
 	}
-	k.r.screen.Warn(kitWarning+"\n", k.kit)
+	if k.r.term.IsTerminal { // the typed word below is what the page explains; with --yes nobody is asked
+		k.r.screen.Page("Keep the recovery kit",
+			ui.Para("This is a confirmation: SuiteWard cannot see whether you copied the kit, so type "+storedWord+" only once it is off this machine."))
+	}
+	k.r.screen.Critical(kitWarning+"\n", k.kit) // the most important text of this command: a red box on a full screen, the Warn it was in plain mode
 	if err := k.confirmStored(); err != nil {
 		return errors.Join(err, os.Remove(k.kit))
 	}
@@ -137,7 +141,11 @@ func (k *keyInit) confirmStored() error {
 		}
 		return nil
 	}
-	line, err := k.r.ask(fmt.Sprintf("Type %q once the kit is copied off this machine: ", storedWord))
+	prompt := fmt.Sprintf("Type %q once the kit is copied off this machine: ", storedWord)
+	if k.r.screen.FullScreen() { // the page above says that the word is a confirmation
+		prompt = fmt.Sprintf("Type %q to confirm that the kit is copied off this machine: ", storedWord)
+	}
+	line, err := k.r.ask(prompt)
 	switch {
 	case errors.Is(err, io.EOF):
 		line = ""
@@ -172,7 +180,7 @@ func (k *keyInit) kept() {
 	if k.replaced != "" {
 		scr.Keep("The backups made with the key %s still need its kit: keep that one too.\n", k.replaced)
 	}
-	scr.Say("Backups are now encrypted to this key: `suiteward backup`, and `suiteward install --upgrade`.\n")
+	scr.Say("Backups are now encrypted to this key: `%s backup`, and `%s install --upgrade`.\n", k.env.Deps.command(), k.env.Deps.command())
 }
 
 func (k *keyInit) summary() []ui.KV {

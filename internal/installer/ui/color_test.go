@@ -12,6 +12,7 @@ func TestNearest256(t *testing.T) {
 		{"green #3DD6A0", green, 79},
 		{"muted #8FA3B5", muted, 109},
 		{"amber #F2C46D", amber, 221},
+		{"red #F26B6B", red, 203},
 		{"black", rgb{0, 0, 0}, 16},
 		{"white", rgb{255, 255, 255}, 231},
 		{"a gray on the ramp", rgb{128, 128, 128}, 244},

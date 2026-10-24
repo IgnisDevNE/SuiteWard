@@ -1,40 +1,58 @@
 // Package ui draws the installer as a full-screen "window" in the SuiteWard colors, or as plain lines.
 //
 // A Screen is the console of one installer run. It is an io.Writer, so code that prints with fmt.Fprintf to a writer keeps working, and
-// it has the calls of a screen: a step list (Steps, Step), lines (Say, Check, Warn, Keep), questions (Ask, Prompt, Choose, Secret),
-// live lines (Progress, Spin) and a Summary. In full-screen mode it draws on the alternate screen: a frame with a title bar, the step
-// column, a content column and a hint line. In plain mode it writes only text, with no escape sequence, and the lines of Say and Write
-// are exactly what the caller wrote.
+// it has the calls of a screen: a step list (Steps, Step), pages (Page), lines (Say, Check, Warn, Critical, Keep), questions (Ask, Prompt,
+// Choose, Select, MultiSelect, Secret, HiddenLine), live lines (Progress, Spin) and a Summary. In full-screen mode it draws on the alternate screen: a
+// frame with a title bar, the step column, a content column and a hint line. In plain mode it writes only text, with no escape sequence,
+// and the lines of Say and Write are exactly what the caller wrote.
 //
 // What the two modes do with the calls:
 //
 //   - Say, Write: the text as given. Full screen splits it into lines (a pending line without its newline is kept, and the cursor
 //     parks at its end), drops control characters, and lets a carriage return overwrite the pending line: the next character that is
 //     written replaces it, and a newline right after the carriage return, even in the next write, ends it as it is.
-//   - Check, Warn: a line with a glyph (✓ and !); plain mode prints the text as given (a newline is added when missing), without the
-//     glyph. Close prints every one again, with its glyph, whatever step it was written in, like a Keep line.
+//   - Check, Warn: a line with a glyph (✓ and !), Warn in the warning amber; plain mode prints the text as given (a newline is added when
+//     missing), without the glyph. Close prints every one again, with its glyph, whatever step it was written in, like a Keep line.
+//   - Critical: a Warn for the few warnings that nothing may hide among the others (the recovery kit): a red box on a full screen, the
+//     text as a Warn in plain mode. Close prints it again like a Warn.
+//   - Page: a clean page of the step for one question: a title and paragraphs and label/value blocks (Para, Fields), then the question,
+//     set apart from them by a rule. The step list and the Check, Warn, Critical and Keep lines of the page before it stay. Full screen
+//     only: plain mode writes nothing, so the output of a script or an agent does not change.
 //   - Steps, Step: the step column and "step i of N"; plain mode prints nothing, so a flow's plain output is unchanged. A new step
 //     starts a clean page.
+//   - Choose, Select: a numbered question that is answered by typing the number. Select, on a full screen whose terminal can be put in key
+//     mode (Options.KeyInput), draws the choices with a highlighted row instead: the up and down arrows move it, Enter picks, and the
+//     answer replaces the list on the question's line. Plain mode, and a screen that cannot read keys, ask Select by number as Choose.
+//     A default of -1 is no default: nothing is highlighted and Enter is refused, with a note, until an arrow has picked a row.
+//   - MultiSelect: Select with a checkbox per row: the arrows move, space toggles, Enter confirms, within the Min and Max of the caller.
+//     Where keys cannot be read it asks by typing, "numbers or names, comma-separated"; Resolver.MultiSelect asks a plain screen the typed
+//     question of Resolver.Value. Ask, and Choose, say in the hint line that Enter takes the default.
+//   - HiddenLine: a question whose answer is not shown, read with the console in key mode (no echo, Ctrl-C kept as a signal) so that the
+//     context ends it; the typed text is never drawn, even in plain mode. Where key mode is not available it reads through the caller's no-echo
+//     reader, as Secret does.
 //   - Progress, Spin: one live row per label; plain mode prints a line only when the label or the status text changes.
 //   - Keep: a line like Say that Close prints again on the normal screen, so it survives the alternate screen. Plain mode has nothing
 //     to repeat: the line is already in the output.
 //   - Summary: a screen of key/value rows and warnings, with no step column. Full screen waits for Enter so it can be read; its rows
-//     and warnings are kept for Close, and a second Summary replaces the first. Plain mode prints "key: value" lines and the warnings
-//     as given.
+//     and warnings are kept for Close, and a second Summary replaces the first. A summary taller than the window keeps its key rows (Tier,
+//     Instance, Status, Doctor) and trims its warnings from the end, then its other rows, behind a row that says so; Close prints all of
+//     them. Plain mode prints "key: value" lines and the warnings as given.
 //   - Wait: holds the page until Enter, for a command that ends on text that must be read (a Summary would replace it). Close prints
 //     the page as usual. Plain mode returns at once.
-//   - Fail: shows the error of a command that failed under the page it stopped on, with "failed" in the title bar and the step marked, and
-//     waits for Enter. Close does not print the error: the caller prints it, on stderr. Plain mode, an interrupt (a done context) and a
-//     failed wait show nothing more and do not wait.
+//   - Fail: shows the error of a command that failed under the page it stopped on, with "failed" in the title bar and the step marked, in
+//     red, and waits for Enter. Close does not print the error: the caller prints it, on stderr. Plain mode, an interrupt (a done context) and a
+//     failed wait show nothing more and do not wait. On a terminal it first waits a moment for the signal of a Ctrl-C that
+//     killed a child process (a Windows console), so that the command ends as interrupted and no failure page is drawn.
 //   - Close: leaves the alternate screen, and prints on the normal screen what must not be lost: the Check, Warn and Keep lines of the
 //     pages that are gone, then the current page in the order it was written (only its Check, Warn and Keep lines when a Summary was
 //     shown), then the Summary. So a failure leaves the page it stopped on, and every check and warning of the run, in the scrollback.
 //   - Suspend: while suspended, every call that writes text writes it straight to the terminal, as plain mode does, and the screen
 //     keeps none of it: a child's output (setup prints a TOTP secret) is not redrawn after Resume or repeated by Close.
 //
-// Questions must go through Ask, Prompt, Choose and Secret so that the answer joins its question on the page; they read from the input
-// that was passed to Open, and nothing else may write to the terminal while one is open. A prompt ends with the context's error when
-// Options.Context is done. Display calls ignore a failed write, as the installer's say does; the first failure comes back from Close.
+// Questions must go through Ask, Prompt, Choose, Select, MultiSelect, Secret and HiddenLine so that the answer joins its question on the page; they
+// read from the input that was passed to Open, and nothing else may write to the terminal while one is open. A prompt ends with the
+// context's error when Options.Context is done. Display calls ignore a failed write, as the installer's say does; the first failure
+// comes back from Close.
 //
 // A Screen is safe for concurrent use, except that prompts must be asked from one goroutine at a time. Close is not called by a panic
 // on another goroutine: the deferred Close of the goroutine that opened the screen does not run then, and the terminal stays on the
@@ -80,15 +98,19 @@ type Options struct {
 	Height  int
 	// RestoreConsole undoes what the OS needed for escape sequences. Optional. Close calls it, and so does Open when it fails.
 	RestoreConsole func() error
-	// Context ends a prompt: Ask, Prompt, Choose, Summary and Wait return the context's error as soon as it is done. Optional; nil never
+	// Context ends a prompt: Ask, Prompt, Choose, Select, Summary and Wait return the context's error as soon as it is done. Optional; nil never
 	// ends one. Pass the context that SIGINT cancels (cmd/suiteward traps it with signal.NotifyContext), or Ctrl-C does nothing at a
 	// prompt until Enter. The read that was pending is abandoned in its goroutine and may still take a line from the input, so the
-	// process is expected to exit and the input is not read again. Secret cannot be interrupted this way: its reader is the caller's.
+	// process is expected to exit and the input is not read again. Secret cannot be interrupted this way: its reader is the caller's; HiddenLine can.
 	Context context.Context
 	// InputIsTerminal says that In is a terminal. On a Windows console, Ctrl-C ends the pending read with the end of the input before
 	// the signal cancels Context, so a read that ends in an error waits a moment (interruptGrace) for the context and returns its
 	// error, which is what lets the command report an interrupt. The end of an input that is not a terminal is the end of the input.
 	InputIsTerminal bool
+	// KeyInput puts the terminal's input in per-key mode for one Select or HiddenLine: a key press is read when it is made, nothing is echoed, and an
+	// arrow arrives as an escape sequence. Ctrl-C must stay a signal that cancels Context, not a character. restore puts the previous
+	// mode back and is called once, when the Select ends, whatever the way. Optional; nil, or an error, makes Select ask by number.
+	KeyInput func() (restore func() error, err error)
 }
 
 // Choice is one numbered answer of Choose.
@@ -108,25 +130,32 @@ type Screen struct {
 	color   ColorLevel
 	w, h    int
 	restore func() error
-	err     error // the first write or restore failure
+	keys    func() (func() error, error) // Options.KeyInput
+	err     error                        // the first write or restore failure
 
 	full, suspended, closed bool
-	terminal                bool // the input is a terminal (Options.InputIsTerminal)
+	terminal                bool   // the input is a terminal (Options.InputIsTerminal)
+	selN                    int    // the rows of the Select list that is open (they end the page): the arrow keys move its highlight; 0 with none
+	selNote                 string // why the Enter of that list was refused: no row is highlighted yet
+	hasDef                  bool   // the open question has a default: Enter takes it
+	paged, apart            bool   // Page opened the page; its first question is not asked yet, and is set apart
 
 	steps []string
 	cur   int // the current step, 1-based; 0 with no steps
 	items []item
 	// partial is the line that has no newline yet; it is the last row of the page and holds the cursor.
 	partial   string
-	pendingCR bool // the last character written was a carriage return: the line is overwritten by the next one, or ended by a newline
-	keeping   bool // the items that Write commits now are Keep lines
-	secret    bool // a hidden prompt is open
+	pendingCR bool       // the last character written was a carriage return: the line is overwritten by the next one, or ended by a newline
+	keeping   bool       // the items that Write commits now are Keep lines
+	secret    bool       // a hidden prompt is open
+	multi     *multiList // a MultiSelect list is open
 	spinning  bool
 	spinText  string
 	spinFor   time.Duration
 	summary   bool
-	waiting   bool   // Wait is reading the Enter that ends it
-	failure   string // Fail is showing this error under the page, and reading the Enter that ends it
+	waiting   bool            // Wait is reading the Enter that ends it
+	givenUp   <-chan struct{} // closed when a read that its call gave up on (a HiddenLine whose deadline passed) ends; nil when none is pending
+	failure   string          // Fail is showing this error under the page, and reading the Enter that ends it
 	rows      []KV
 	warns     []string
 	// history is the Check, Warn and Keep lines of the pages that are gone, as Close prints them: the pages before the current one.
@@ -153,7 +182,7 @@ func Open(o Options) (*Screen, error) {
 	}
 	s := &Screen{
 		out: o.Out, in: bufio.NewReader(o.In), ctx: ctx, version: oneLine(o.Version), color: o.Color, w: o.Width, h: o.Height,
-		restore: o.RestoreConsole, full: o.Mode == ModeFull, terminal: o.InputIsTerminal, plainBars: map[string]string{},
+		restore: o.RestoreConsole, keys: o.KeyInput, full: o.Mode == ModeFull, terminal: o.InputIsTerminal, plainBars: map[string]string{},
 	}
 	if s.full {
 		s.write(enterAltScreen)
@@ -241,6 +270,9 @@ func (s *Screen) mark(kind itemKind, text string) {
 		return
 	}
 	text = clean(strings.TrimSuffix(text, "\n"))
+	if kind != itemCheck {
+		s.setOff(kind)
+	}
 	s.add(item{kind: kind, text: text})
 	s.draw()
 }
@@ -301,6 +333,7 @@ func (s *Screen) Step(n int) {
 func (s *Screen) newPage() {
 	s.archive(s.items)
 	s.items, s.partial, s.pendingCR, s.spinning, s.plainSpin = nil, "", false, false, ""
+	s.paged, s.apart = false, false
 	clear(s.plainBars)
 }
 
@@ -375,30 +408,83 @@ func (s *Screen) readAnswer() (string, error) {
 
 // readLine reads one answer without the lock held, so that the screen stays usable while it waits, and gives up with the context's
 // error when the context is done: the read goes on in its goroutine, abandoned (see Options.Context).
-func (s *Screen) readLine() (string, error) {
+func (s *Screen) readLine() (string, error) { return awaiting(s, s.readAnswer) }
+
+// awaiting is readLine for any read of the input: it calls read in a goroutine and gives up with the context's error when the context is
+// done, or soon after a read that failed on a terminal (afterTerminalError). The caller holds no lock.
+func awaiting[T any](s *Screen, read func() (T, error)) (T, error) {
+	return awaitingUntil(s, nil, read)
+}
+
+// awaitingUntil is awaiting that also gives up with the error of extra, the context of one call, when that is done. A nil extra has none.
+// A read that is given up for extra is not ended: it stays pending in its goroutine, and the screen remembers it (givenUp), so that no
+// other read starts beside it on the one buffered input: the next question waits for it to end, and a wait for Enter takes its end as
+// the Enter it waits for. A read that is given up for the screen's own context is not remembered: nothing is read again after that.
+func awaitingUntil[T any](s *Screen, extra context.Context, read func() (T, error)) (T, error) {
+	var zero T
+	var extraDone <-chan struct{} // nil, which no select takes, without a context of the call
+	if extra != nil {
+		if err := extra.Err(); err != nil {
+			return zero, err
+		}
+		extraDone = extra.Done()
+	}
 	if err := s.ctx.Err(); err != nil {
-		return "", err
+		return zero, err
 	}
-	if s.ctx.Done() == nil { // a context that is never done needs no goroutine
-		return s.readAnswer()
+	if pending := s.pendingGivenUp(); pending != nil {
+		select {
+		case <-pending:
+			s.settleGivenUp(pending)
+		case <-s.ctx.Done():
+			return zero, s.ctx.Err()
+		case <-extraDone:
+			return zero, extra.Err()
+		}
 	}
-	type answer struct {
-		line string
-		err  error
+	if s.ctx.Done() == nil && extraDone == nil { // a context that is never done needs no goroutine
+		return read()
 	}
-	got := make(chan answer, 1)
+	type result struct {
+		v   T
+		err error
+	}
+	got := make(chan result, 1)
+	ended := make(chan struct{})
 	go func() {
-		line, err := s.readAnswer()
-		got <- answer{line, err}
+		v, err := read()
+		got <- result{v, err}
+		close(ended)
 	}()
 	select {
-	case a := <-got:
-		if a.err != nil && s.terminal {
-			return "", s.afterTerminalError(a.err)
+	case r := <-got:
+		if r.err != nil && s.terminal {
+			return zero, s.afterTerminalError(r.err)
 		}
-		return a.line, a.err
+		return r.v, r.err
 	case <-s.ctx.Done():
-		return "", s.ctx.Err()
+		return zero, s.ctx.Err()
+	case <-extraDone:
+		s.mu.Lock()
+		s.givenUp = ended
+		s.mu.Unlock()
+		return zero, extra.Err()
+	}
+}
+
+// pendingGivenUp is the read that a call gave up on and that has not ended, as the channel that closes when it does; nil when none.
+func (s *Screen) pendingGivenUp() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.givenUp
+}
+
+// settleGivenUp forgets the read that was given up, which has ended.
+func (s *Screen) settleGivenUp(ended <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.givenUp == ended {
+		s.givenUp = nil
 	}
 }
 
@@ -408,28 +494,47 @@ var interruptGrace = 250 * time.Millisecond
 
 // afterTerminalError is the context's error when the context is done within interruptGrace, and err otherwise.
 func (s *Screen) afterTerminalError(err error) error {
+	if s.interrupted() {
+		return s.ctx.Err()
+	}
+	return err
+}
+
+// interrupted waits up to interruptGrace for the context to be done, and reports whether it is. A context that is never done is not waited
+// for.
+func (s *Screen) interrupted() bool {
+	done := s.ctx.Done()
+	if done == nil {
+		return false
+	}
 	timer := time.NewTimer(interruptGrace)
 	defer timer.Stop()
 	select {
-	case <-s.ctx.Done():
-		return s.ctx.Err()
+	case <-done:
+		return true
 	case <-timer.C:
-		return err
+		return false
 	}
 }
 
 // Prompt prints text exactly as given, without a newline, and reads one line: the answer, trimmed. Full screen parks the cursor after
 // the text and then shows the answer on that line; the end of the input is io.EOF, and a done context is its error.
-func (s *Screen) Prompt(text string) (string, error) {
+func (s *Screen) Prompt(text string) (string, error) { return s.prompt(text, false) }
+
+// prompt is Prompt; hasDef says that the question has a default, which the hint line of the frame tells Enter takes.
+func (s *Screen) prompt(text string, hasDef bool) (string, error) {
 	s.mu.Lock()
+	s.setApart()
+	s.hasDef = hasDef
 	s.emit(text)
 	s.mu.Unlock()
 	line, err := s.readLine()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hasDef = false
 	if err != nil {
 		return "", err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.drawing() {
 		s.emit(line + "\n") // a terminal echoes the typed line itself; the frame has to draw it
 	}
@@ -442,7 +547,18 @@ func (s *Screen) Ask(label, def string) (string, error) {
 	if def != "" {
 		prompt = fmt.Sprintf("%s [%s]: ", label, def)
 	}
-	line, err := s.Prompt(prompt)
+	return s.answer(prompt, label, def)
+}
+
+// AskDefault is Ask for a default that the page above the question already shows, as a long reference does: the question is "label: ",
+// and an empty answer is def all the same, which the hint line of the frame says. The caller draws the default, so it is for a full screen.
+func (s *Screen) AskDefault(label, def string) (string, error) {
+	return s.answer(label+": ", label, def)
+}
+
+// answer asks prompt, and returns the trimmed answer, def when it is empty.
+func (s *Screen) answer(prompt, label, def string) (string, error) {
+	line, err := s.prompt(prompt, def != "")
 	if err != nil {
 		return "", fmt.Errorf("read the answer for %s: %w", label, err)
 	}
@@ -453,18 +569,22 @@ func (s *Screen) Ask(label, def string) (string, error) {
 }
 
 // Choose prints the label and the numbered choices with the default marked, then asks for a number until it gets one: typing the
-// number of a choice answers it and an empty line takes the default. It returns the index of the choice, 0-based. An invalid answer
-// is explained and asked again; the end of the input is an error that wraps io.EOF.
+// number of a choice answers it and an empty line takes the default. A def of -1 is no default: an empty line is asked again. It
+// returns the index of the choice, 0-based. An invalid answer is explained and asked again; the end of the input is an error that
+// wraps io.EOF.
 func (s *Screen) Choose(label string, choices []Choice, def int) (int, error) {
-	if len(choices) == 0 || def < 0 || def >= len(choices) {
-		return 0, fmt.Errorf("choose %q needs a default among its %d choices, got %d", label, len(choices), def)
+	if err := checkChoices("choose", label, choices, def); err != nil {
+		return 0, err
 	}
 	s.mu.Lock()
 	s.listChoices(label, choices, def)
 	s.mu.Unlock()
-	prompt := fmt.Sprintf("Choose [%d]: ", def+1)
+	prompt := "Choose: "
+	if def >= 0 {
+		prompt = fmt.Sprintf("Choose [%d]: ", def+1)
+	}
 	for {
-		line, err := s.Prompt(prompt)
+		line, err := s.prompt(prompt, def >= 0)
 		if err != nil {
 			return 0, fmt.Errorf("read the choice for %s: %w", label, err)
 		}
@@ -475,10 +595,167 @@ func (s *Screen) Choose(label string, choices []Choice, def int) (int, error) {
 	}
 }
 
-// parseChoice reads an answer of n choices: empty is the default, otherwise a number from 1 to n.
+// checkChoices refuses a list that has no choice, or a default that is neither one of them nor -1 (none): a bug of the caller.
+func checkChoices(verb, label string, choices []Choice, def int) error {
+	if len(choices) == 0 || def < -1 || def >= len(choices) {
+		return fmt.Errorf("%s %q needs a default among its %d choices, or -1 for none, got %d", verb, label, len(choices), def)
+	}
+	return nil
+}
+
+// Select asks like Choose with the arrow keys: the list is drawn with the default highlighted, the up and down arrows move the highlight
+// (past an end it goes round) and Enter picks it. The answer replaces the list on the question's line, as Ask leaves its answer. It
+// returns the index of the choice, 0-based. The terminal is put in key mode (Options.KeyInput) for the length of the call and back
+// whatever the way out, a done context included. Plain mode, a screen with no way to read keys and a terminal that cannot be put in key
+// mode ask by number, exactly as Choose does. The end of the input is an error that wraps io.EOF.
+// A def of -1 is no default: nothing is highlighted, a down arrow highlights the first row and an up arrow the last, and an Enter before
+// that is refused with a note. A numbered question asks again on an empty answer.
+// A list longer than the page scrolls with the highlight, as MultiSelect's does.
+// shortcut: space and Esc do nothing; upgrade when a question needs one.
+func (s *Screen) Select(label string, choices []Choice, def int) (idx int, err error) {
+	if err := checkChoices("select", label, choices, def); err != nil {
+		return 0, err
+	}
+	if err := s.ctx.Err(); err != nil {
+		return 0, fmt.Errorf("read the choice for %s: %w", label, err)
+	}
+	restore := s.enterKeys()
+	if restore == nil {
+		return s.Choose(label, choices, def)
+	}
+	defer func() { // the one place the console is put back, so an abandoned read never has to
+		if rerr := restore(); rerr != nil { // a terminal left in key mode must be reported, whatever the choice was
+			idx, err = 0, errors.Join(err, fmt.Errorf("put the terminal input back: %w", rerr))
+		}
+	}()
+
+	n, cur := len(choices), def
+	s.openSelect(label, choices, def)
+	if err := s.readKeys("the choice for "+label, func(k key) bool {
+		switch k {
+		case keyUp:
+			cur = (max(cur, 0) + n - 1) % n // from no row, the last
+			s.moveSelect(n, cur)
+		case keyDown:
+			cur = (cur + 1) % n // from no row, the first
+			s.moveSelect(n, cur)
+		case keyEnter:
+			if cur < 0 {
+				s.refuseSelect()
+				return false
+			}
+			return true
+		}
+		return false
+	}); err != nil {
+		s.closeSelect(0, "")
+		return 0, err
+	}
+	s.closeSelect(n, oneLine(label)+": "+oneLine(choices[cur].Name))
+	return cur, nil
+}
+
+// enterKeys puts the terminal in key mode for a Select and returns the call that puts it back. It returns nil where keys cannot be read
+// (plain mode, a suspended screen, a screen with no way to put the terminal in key mode, a terminal that refuses): the caller asks by
+// typing.
+// shortcut: the reason a terminal refuses is not reported, only that the keys cannot be read; the typed question still works.
+func (s *Screen) enterKeys() func() error {
+	s.mu.Lock()
+	drawing := s.drawing()
+	s.mu.Unlock()
+	if !drawing {
+		return nil
+	}
+	return s.enterInput()
+}
+
+// enterInput puts the terminal in key mode, whatever the mode of the screen, and returns the call that puts it back; nil where it cannot
+// be done. A hidden line needs it in plain mode as well: a plain run at a terminal is still echoed.
+func (s *Screen) enterInput() func() error {
+	s.mu.Lock()
+	keys := s.keys
+	s.mu.Unlock()
+	if keys == nil {
+		return nil
+	}
+	restore, err := keys()
+	if err != nil {
+		return nil
+	}
+	return restore
+}
+
+// readKeys reads key presses until handle returns true. what names the question in the error that ends it: the input that ends, a done
+// context, or a Ctrl-C that arrived as a character (see errCtrlC). Space, Esc and the keys that have no meaning are handle's to ignore.
+func (s *Screen) readKeys(what string, handle func(k key) (done bool)) error {
+	for {
+		k, err := awaiting(s, func() (key, error) { return readKey(s.in) })
+		switch {
+		case err != nil:
+			return fmt.Errorf("read %s: %w", what, err)
+		case k == keyCtrlC:
+			return fmt.Errorf("read %s: %w", what, s.afterTerminalError(errCtrlC))
+		case handle(k):
+			return nil
+		}
+	}
+}
+
+// errCtrlC is the end of a Select by a Ctrl-C that arrived as a character and that no signal followed (see afterTerminalError). A
+// terminal that keeps its signals raises one for the context to follow instead, so this is only a terminal that cannot: the command
+// fails, and does not report an interrupt.
+var errCtrlC = errors.New("interrupted by Ctrl-C, which reached the program as a key and not as a signal")
+
+// openSelect draws the question and the list with the default highlighted.
+func (s *Screen) openSelect(label string, choices []Choice, def int) {
+	names, nameW := choiceNames(choices)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.setApart()
+	s.selN = len(choices)
+	s.add(item{kind: itemText, text: oneLine(label)})
+	for i, c := range choices {
+		s.add(item{kind: itemChoice, num: i + 1, text: names[i], desc: oneLine(c.Desc), pad: nameW, def: i == def, radio: true, sel: i == def})
+	}
+	s.draw()
+}
+
+// refuseSelect says that an Enter was refused because no row is highlighted yet.
+func (s *Screen) refuseSelect() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selNote = "Pick one with the arrows."
+	s.draw()
+}
+
+// moveSelect highlights row to of the n that end the page: nothing else writes while a question is open.
+func (s *Screen) moveSelect(n, to int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selNote = ""
+	rows := s.items[len(s.items)-n:]
+	for i := range rows {
+		rows[i].sel = i == to
+	}
+	s.draw()
+}
+
+// closeSelect ends the key list. With a picked answer it replaces the question and its n rows with one line; with none, the list stays
+// as it was drawn, like a numbered question that was cut short.
+func (s *Screen) closeSelect(n int, answer string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selN, s.selNote = 0, ""
+	if answer != "" {
+		s.items = append(s.items[:len(s.items)-n-1], item{kind: itemText, text: answer})
+	}
+	s.draw()
+}
+
+// parseChoice reads an answer of n choices: empty is the default (and nothing when there is none, def -1), otherwise a number from 1 to n.
 func parseChoice(line string, def, n int) (int, bool) {
 	if line == "" {
-		return def, true
+		return def, def >= 0
 	}
 	k, err := strconv.Atoi(line)
 	if err != nil || k < 1 || k > n {
@@ -487,23 +764,30 @@ func parseChoice(line string, def, n int) (int, bool) {
 	return k - 1, true
 }
 
-func (s *Screen) listChoices(label string, choices []Choice, def int) {
-	names := make([]string, len(choices))
-	nameW := 0
+// choiceNames is the names of the choices as one line each, and the width of the widest.
+func choiceNames(choices []Choice) (names []string, width int) {
+	names = make([]string, len(choices))
 	for i, c := range choices {
 		names[i] = oneLine(c.Name)
-		nameW = max(nameW, utf8.RuneCountInString(names[i]))
+		width = max(width, utf8.RuneCountInString(names[i]))
 	}
+	return names, width
+}
+
+// listChoices writes the label and the numbered choices, with the defaults marked; the caller holds the lock.
+func (s *Screen) listChoices(label string, choices []Choice, defs ...int) {
+	names, nameW := choiceNames(choices)
 	if !s.drawing() {
 		s.write(label + "\n")
 		for i, c := range choices {
-			s.write(choiceLine(i+1, nameW, c.Name, c.Desc, i == def) + "\n")
+			s.write(choiceLine(i+1, nameW, c.Name, c.Desc, slices.Contains(defs, i)) + "\n")
 		}
 		return
 	}
+	s.setApart()
 	s.add(item{kind: itemText, text: oneLine(label)})
 	for i, c := range choices {
-		s.add(item{kind: itemChoice, num: i + 1, text: names[i], desc: oneLine(c.Desc), pad: nameW, def: i == def})
+		s.add(item{kind: itemChoice, num: i + 1, text: names[i], desc: oneLine(c.Desc), pad: nameW, def: slices.Contains(defs, i)})
 	}
 	s.draw()
 }
@@ -525,6 +809,7 @@ func (s *Screen) Secret(label string, read func() ([]byte, error)) ([]byte, erro
 		return nil, fmt.Errorf("the secret %s needs a reader that does not echo", label)
 	}
 	s.mu.Lock()
+	s.setApart()
 	s.secret = true
 	s.emit(label + " (input is hidden): ")
 	s.mu.Unlock()
@@ -534,6 +819,50 @@ func (s *Screen) Secret(label string, read func() ([]byte, error)) ([]byte, erro
 	s.emit("\n")
 	s.mu.Unlock()
 	return secret, err
+}
+
+// HiddenLine asks for a line that is not shown, such as a code the user pastes: it prints "label (input is hidden): ", reads up to Enter
+// with nothing echoed, in the frame or by the terminal, and ends the line. The terminal is put in key mode (Options.KeyInput) for the
+// length of the call, whatever the mode of the screen, and back whatever the way out: a read with no line editing and no echo, the
+// signals kept, so that Ctrl-C cancels the screen's context. The read ends with that context and with ctx, the context of the call (a
+// deadline), as a Select does, and the typed text is dropped: the read that was pending is abandoned in its goroutine (see
+// Options.Context). One that ends for ctx stays on the input until the user presses Enter, so the next question waits for it to end and
+// a wait for Enter takes that Enter as its own: no two reads share the input, and what the read took is never drawn. Backspace deletes a
+// character, Ctrl-U the line, and an arrow or another escape sequence is not text. The returned
+// bytes are the line as typed, without its newline; the end of the input before any character is an error that wraps io.EOF. A terminal
+// that cannot be put in key mode, and a screen that was opened without a way to, read through fallback, the caller's own no-echo reader
+// (term.ReadPassword), which cannot be interrupted, as Secret does; with no fallback the question is an error and is not asked.
+func (s *Screen) HiddenLine(ctx context.Context, label string, fallback func() ([]byte, error)) (line []byte, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("read %s: %w", label, err)
+	}
+	if err := s.ctx.Err(); err != nil {
+		return nil, fmt.Errorf("read %s: %w", label, err)
+	}
+	restore := s.enterInput()
+	if restore == nil {
+		return s.Secret(label, fallback)
+	}
+	defer func() { // the one place the console is put back, so an abandoned read never has to
+		if rerr := restore(); rerr != nil { // a terminal left in key mode must be reported, whatever the answer was
+			line, err = nil, errors.Join(err, fmt.Errorf("put the terminal input back: %w", rerr))
+		}
+	}()
+	s.mu.Lock()
+	s.setApart()
+	s.emit(label + " (input is hidden): ")
+	s.mu.Unlock()
+	line, err = awaitingUntil(s, ctx, func() ([]byte, error) { return readHiddenLine(s.in) })
+	if errors.Is(err, errCtrlC) {
+		err = s.afterTerminalError(errCtrlC)
+	}
+	s.mu.Lock()
+	s.emit("\n")
+	s.mu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", label, err)
+	}
+	return line, nil
 }
 
 // Summary shows key/value rows and warnings on a screen with no step column. Full screen waits for Enter, so the screen can be read
@@ -588,10 +917,18 @@ func (s *Screen) Wait() error {
 
 // Fail shows the error of a command that failed under the page the command stopped on, with "failed" in the title bar and the current step
 // marked, and waits for Enter so that it can be read before Close leaves the alternate screen. It reports whether it showed the error:
-// plain mode, a suspended or closed screen and a done context (Ctrl-C) show nothing and do not wait. A wait that fails (Ctrl-C at the page,
+// plain mode, a suspended or closed screen and a done context (Ctrl-C) show nothing and do not wait. On a terminal Fail first waits up to
+// interruptGrace for the context: a Windows console delivers a Ctrl-C to the child process before the signal reaches this one, so the
+// error of a child that it killed arrives first, and no failure page is drawn for an interrupt. A wait that fails (Ctrl-C at the page,
 // the end of the input) only ends it: the error is the command's own, and the caller prints it after Close, which does not repeat it.
 func (s *Screen) Fail(text string) bool {
-	if s.ctx.Err() != nil {
+	s.mu.Lock()
+	drawing := s.drawing()
+	s.mu.Unlock()
+	if s.ctx.Err() != nil || !drawing {
+		return false
+	}
+	if s.terminal && s.interrupted() { // the signal of a Ctrl-C can follow the child's error: wait for it, as a prompt does
 		return false
 	}
 	s.mu.Lock()
@@ -610,8 +947,18 @@ func (s *Screen) Fail(text string) bool {
 	return true
 }
 
-// waitForEnter reads the line that ends a wait, without the lock held; the end of the input ends it too.
+// waitForEnter reads the line that ends a wait, without the lock held; the end of the input ends it too. A read that a call gave up on
+// (see awaitingUntil) is still pending on the input: the Enter that ends it is the Enter of this wait, and no second read is started.
 func (s *Screen) waitForEnter() error {
+	if pending := s.pendingGivenUp(); pending != nil {
+		select {
+		case <-pending:
+			s.settleGivenUp(pending)
+			return nil
+		case <-s.ctx.Done():
+			return fmt.Errorf("wait for Enter: %w", s.ctx.Err())
+		}
+	}
 	if _, err := s.readLine(); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("wait for Enter: %w", err)
 	}

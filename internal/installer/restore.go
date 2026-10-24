@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -197,7 +198,7 @@ func (x *restoreRun) preflight(ctx context.Context) error {
 		return fmt.Errorf("look for the role %s: %w", appRole, err)
 	}
 	if !exists {
-		return fmt.Errorf("the application role %s does not exist in this database, and the dump records grants to it: install the release of the backup first, which creates it, then run the restore again (docs/backup.md, section 3)", appRole)
+		return fmt.Errorf("the application role %s does not exist in this database, and the dump records grants to it: install the release of the backup first, which creates it, then run the restore again", appRole)
 	}
 	return nil
 }
@@ -283,7 +284,10 @@ func (x *restoreRun) readIdentity() (*age.HybridIdentity, error) {
 	if x.kit != "" {
 		kit, err = readKit(x.kit)
 	} else {
-		kit, err = x.r.Secret("recovery-key", "Recovery key: the last line of your recovery kit, the private key (the input is hidden)")
+		x.r.explain([]string{"recovery-key"}, "Open the backup",
+			ui.Para("A backup is encrypted to the recovery key of its instance. Paste the last line of the recovery kit that was saved when that key was made: it is the private key. "+
+				"The input is hidden and nothing of it is kept. To read the kit from a file instead, run the restore again with --kit PATH."))
+		kit, err = x.r.Secret("recovery-key", "Recovery key: the last line of your recovery kit, the private key")
 	}
 	if err != nil {
 		return nil, err
@@ -370,13 +374,13 @@ func (x *restoreRun) checkRelease(ctx context.Context) error {
 func (x *restoreRun) otherRelease(running string) error {
 	install := ""
 	if x.info.ImageDigest != "" {
-		install = " (`suiteward install --image " + releaseImageRepo + "@" + x.info.ImageDigest + "`)"
+		install = " (`" + x.env.Deps.command() + " install --image " + releaseImageRepo + "@" + x.info.ImageDigest + "`)"
 	}
 	madeBy := "SuiteWard " + x.info.SuitewardVersion
 	if x.doc.Unavailable {
 		madeBy = "the release of the image " + x.info.ImageDigest
 	}
-	return fmt.Errorf("this backup was made by %s and this instance runs %s: a restore needs the same release, because migrations only go forward. Install the release of the backup first%s, then run the restore again (docs/backup.md, section 3)", madeBy, running, install)
+	return fmt.Errorf("this backup was made by %s and this instance runs %s: a restore needs the same release, because migrations only go forward. Install the release of the backup first%s, then run the restore again", madeBy, running, install)
 }
 
 // dumpTail is how much of the end of a dump is searched for the line that ends it.
@@ -424,26 +428,65 @@ func tarReadable(path string) error {
 // ---- preview and confirmation ----
 
 func (x *restoreRun) preview() error {
-	x.showBackup()
-	x.showInstance()
-	x.warn()
-	if err := x.chooseSafetyKey(); err != nil {
-		return err
+	var fingerprint string
+	var err error
+	if x.scr.FullScreen() { // the key of the safety backup is a fact of the page, and a refusal for want of one comes before it
+		if fingerprint, err = x.chooseSafetyKey(); err != nil {
+			return err
+		}
+		x.previewPage(fingerprint)
+		x.warn()
+	} else {
+		x.showBackup()
+		x.showInstance()
+		x.warn()
+		if fingerprint, err = x.chooseSafetyKey(); err != nil {
+			return err
+		}
+		x.scr.Say("The state of this instance is backed up first, encrypted to the recovery key %s.\n", fingerprint)
+	}
+	if x.current == nil {
+		x.scr.Warn("This instance does not answer /status, so that backup records its status as unavailable, with the reason.\n")
 	}
 	return x.confirm()
 }
 
-func (x *restoreRun) kv(label, value string) { x.scr.Say("  %-13s %s\n", label+":", value) }
+// previewOrder is the order of the facts on the page of the confirmation. A window that is too small trims the page from its end, so the
+// facts that say what is being replaced by what come first.
+var previewOrder = []string{"Instance", "Release", "Owner", "Repositories", "Tier", "Made", "Schema", "Safety backup", "Backup"}
 
-func (x *restoreRun) showBackup() {
-	source := x.file
+// previewPage is the page of the confirmation on a full screen: what it is, what runs now, and what the backup holds. The warnings that
+// follow it outlast it when the window is too small for all of it.
+func (x *restoreRun) previewPage(safetyKey string) {
+	source, facts := x.backupFacts(true)
+	facts = append(facts, ui.KV{Key: "Backup", Value: source}, ui.KV{Key: "Safety backup", Value: "the state that is replaced, encrypted to " + safetyKey})
+	slices.SortStableFunc(facts, func(a, b ui.KV) int { return slices.Index(previewOrder, a.Key) - slices.Index(previewOrder, b.Key) })
+	instance := "This instance does not answer /status."
+	if now := x.instanceFacts(); now != nil {
+		parts := make([]string, len(now))
+		for i, kv := range now {
+			parts[i] = strings.ToLower(kv.Key) + " " + kv.Value
+		}
+		instance = "This instance runs: " + strings.Join(parts, ", ") + "."
+	}
+	x.scr.Page("Restore preview",
+		ui.Para("This is a confirmation: nothing is replaced before it."),
+		ui.Para(instance+" The backup holds:"),
+		ui.Fields(facts...))
+}
+
+// backupFacts is where the backup is and what it says of itself. A page, which has few rows for it, names the file and shortens the digest.
+func (x *restoreRun) backupFacts(compact bool) (source string, facts []ui.KV) {
+	source = x.file
 	if x.plaintext != "" {
 		source = x.plaintext
 	}
-	x.scr.Say("The backup %s holds:\n", source)
-	release := x.info.SuitewardVersion
-	if x.info.ImageDigest != "" {
-		release += " (" + x.info.ImageDigest + ")"
+	release, digest := x.info.SuitewardVersion, x.info.ImageDigest
+	if compact {
+		source, digest = filepath.Base(source), digest[:min(len(digest), len("sha256:")+12)]
+	}
+	if digest != "" {
+		release += " (" + digest + ")"
 	}
 	owner := cmp.Or(x.doc.owner(), "none enrolled")
 	repos := cmp.Or(strings.Join(x.doc.repositories(), ", "), "none")
@@ -451,29 +494,54 @@ func (x *restoreRun) showBackup() {
 	if x.doc.Unavailable {
 		owner, repos, schema = "not recorded", "not recorded", "not recorded"
 	}
-	x.kv("Made", x.info.CreatedAt.UTC().Format(time.RFC3339))
-	x.kv("Release", release)
-	x.kv("Instance", x.doc.Instance)
-	x.kv("Tier", cmp.Or(x.info.Tier, "not recorded"))
-	x.kv("Owner", owner)
-	x.kv("Repositories", repos)
-	x.kv("Schema", schema)
+	return source, []ui.KV{
+		{Key: "Made", Value: x.info.CreatedAt.UTC().Format(time.RFC3339)},
+		{Key: "Release", Value: release},
+		{Key: "Instance", Value: x.doc.Instance},
+		{Key: "Tier", Value: cmp.Or(x.info.Tier, "not recorded")},
+		{Key: "Owner", Value: owner},
+		{Key: "Repositories", Value: repos},
+		{Key: "Schema", Value: schema},
+	}
+}
+
+// instanceFacts is what the instance that is replaced runs, nil when its /status does not answer.
+func (x *restoreRun) instanceFacts() []ui.KV {
+	if x.current == nil {
+		return nil
+	}
+	return []ui.KV{
+		{Key: "Release", Value: x.current.Version},
+		{Key: "Instance", Value: x.current.Instance},
+		{Key: "Owner", Value: cmp.Or(x.current.owner(), "none enrolled")},
+		{Key: "Schema", Value: strconv.Itoa(x.current.SchemaVersion)},
+	}
+}
+
+func (x *restoreRun) listFacts(facts []ui.KV) {
+	for _, kv := range facts {
+		x.scr.Say("  %-13s %s\n", kv.Key+":", kv.Value)
+	}
+}
+
+func (x *restoreRun) showBackup() {
+	source, facts := x.backupFacts(false)
+	x.scr.Say("The backup %s holds:\n", source)
+	x.listFacts(facts)
 }
 
 func (x *restoreRun) showInstance() {
-	if x.current == nil {
+	now := x.instanceFacts()
+	if now == nil {
 		x.scr.Say("This instance does not answer /status.\n")
 		return
 	}
 	x.scr.Say("This instance runs:\n")
-	x.kv("Release", x.current.Version)
-	x.kv("Instance", x.current.Instance)
-	x.kv("Owner", cmp.Or(x.current.owner(), "none enrolled"))
-	x.kv("Schema", strconv.Itoa(x.current.SchemaVersion))
+	x.listFacts(now)
 }
 
 func (x *restoreRun) warn() {
-	x.scr.Warn("Restoring replaces the database and the artifacts of this instance with the backup's. What was approved, proposed or promoted after the backup is lost, and the default branch on GitHub may be ahead of the restored canonical (docs/backup.md, section 3).\n")
+	x.scr.Warn("Restoring replaces the database and the artifacts of this instance with the backup's. What was approved, proposed or promoted after the backup is lost, and the default branch on GitHub may be ahead of the restored canonical.\n")
 	x.scr.Warn("Stop any other running instance that uses the same GitHub App before you go on: two instances would publish and promote for the same repositories.\n")
 	if x.plaintext != "" {
 		x.scr.Warn("This backup is a plaintext directory: it is not encrypted, and nothing verifies who made it or that it is untouched. Whoever could read %s could read the TOTP secret in it.\n", x.plaintext)
@@ -485,14 +553,18 @@ func (x *restoreRun) warn() {
 		x.scr.Warn("This backup is of another instance (%s) than the one that runs here (%s): after the restore this instance is the backup's, and the authenticator entry of the backup is the one that works.\n", x.doc.Instance, x.current.Instance)
 	}
 	if tier := string(x.inst.s.Tier); x.info.Tier != "" && x.info.Tier != tier {
-		x.scr.Warn("The backup was made on the %s tier and this instance is on the %s tier: the owner's enrollment records its tier, and /status says so after the restore.\n", x.info.Tier, tier)
+		if x.scr.FullScreen() { // one row: the page has few of them for the facts above the warnings, and the plain lines keep the reason
+			x.scr.Warn("Backup tier: %s; this instance: %s.\n", x.info.Tier, tier)
+		} else {
+			x.scr.Warn("The backup was made on the %s tier and this instance is on the %s tier: the owner's enrollment records its tier, and /status says so after the restore.\n", x.info.Tier, tier)
+		}
 	}
 }
 
 // chooseSafetyKey decides how the state that is replaced is backed up, before the confirmation: a refusal then changes nothing. The state
 // is always backed up, whether or not the service answers, because the database is healthy (the restore checks) and its dump and the
-// volume can be taken. The key is the settings' own, else the one of the kit that opens this backup.
-func (x *restoreRun) chooseSafetyKey() error {
+// volume can be taken. The key is the settings' own, else the one of the kit that opens this backup. It returns the fingerprint of the key.
+func (x *restoreRun) chooseSafetyKey() (string, error) {
 	var recipient string
 	switch {
 	case x.inst.s.BackupRecipient != "":
@@ -500,18 +572,14 @@ func (x *restoreRun) chooseSafetyKey() error {
 	case x.identity != nil:
 		recipient = x.identity.Recipient().String()
 	default:
-		return errors.New("the state of this instance is backed up, encrypted, before it is replaced, and this instance has no recovery key (a plaintext backup has none to borrow): run `suiteward backup init` first, then run the restore again")
+		return "", errors.New("the state of this instance is backed up, encrypted, before it is replaced, and this instance has no recovery key (a plaintext backup has none to borrow): run `" + x.env.Deps.command() + " backup init` first, then run the restore again")
 	}
 	key, err := archive.ParseRecipient(recipient)
 	if err != nil {
-		return err
+		return "", err
 	}
 	x.safetyKey = key
-	x.scr.Say("The state of this instance is backed up first, encrypted to the recovery key %s.\n", archive.Fingerprint(recipient))
-	if x.current == nil {
-		x.scr.Warn("This instance does not answer /status, so that backup records its status as unavailable, with the reason.\n")
-	}
-	return nil
+	return archive.Fingerprint(recipient), nil
 }
 
 // confirm is the owner typing the instance id of the backup, or --yes with --instance where nobody can type.
@@ -621,7 +689,7 @@ func (x *restoreRun) waitForService(ctx context.Context) (statusDoc, error) {
 // is a restore that did not take; an integrity check that failed means the artifacts and the database do not come from one moment.
 func (x *restoreRun) compare(context.Context) error {
 	x.stage = stageCheck
-	problems, notes := compareStatus(x.doc, x.after)
+	problems, notes := compareStatus(x.env.Deps.command(), x.doc, x.after)
 	for _, note := range notes {
 		x.scr.Warn("%s\n", note)
 	}
@@ -636,7 +704,7 @@ func (x *restoreRun) compare(context.Context) error {
 	return nil
 }
 
-func compareStatus(backup, after statusDoc) (problems, notes []string) {
+func compareStatus(cmd string, backup, after statusDoc) (problems, notes []string) {
 	if !backup.Unavailable { // a backup that records no status has nothing to be compared with but the integrity
 		if after.Version != backup.Version {
 			problems = append(problems, fmt.Sprintf("the service runs %s, the backup is of %s", after.Version, backup.Version))
@@ -654,7 +722,7 @@ func compareStatus(backup, after statusDoc) (problems, notes []string) {
 		case "failed":
 			problems = append(problems, g.Repo+": the integrity check failed, so the artifacts and the database do not come from the same moment")
 		default:
-			notes = append(notes, g.Repo+": the integrity check has not passed yet (it runs when the service starts, after each promotion and every hour): look at `suiteward doctor` in a moment")
+			notes = append(notes, g.Repo+": the integrity check has not passed yet (it runs when the service starts, after each promotion and every hour): look at `"+cmd+" doctor` in a moment")
 		}
 	}
 	return problems, notes
@@ -669,9 +737,9 @@ func (x *restoreRun) failed(err error) error {
 		stageStart:     "the database and the artifacts are the backup's, but the service did not come up",
 		stageCheck:     "the database and the artifacts are the backup's, and the service runs, but it does not match",
 	}[x.stage]
-	advice := fmt.Sprintf("The restore stopped here: %s.\nTo get the service back: %s.\nTo run the restore again: suiteward restore %s.", state, x.inst.restore.recovery, x.source())
+	advice := fmt.Sprintf("The restore stopped here: %s.\nTo get the service back: %s.\nTo run the restore again: %s restore %s.", state, x.inst.restore.recovery, x.env.Deps.command(), x.source())
 	if x.safety != "" {
-		advice += fmt.Sprintf("\nTo go back to the state before the restore: suiteward restore %s, with the recovery kit of that backup.", quoteArg(x.safety))
+		advice += fmt.Sprintf("\nTo go back to the state before the restore: %s restore %s, with the recovery kit of that backup.", x.env.Deps.command(), quoteArg(x.safety))
 	}
 	return fmt.Errorf("%w\n%s", err, advice)
 }
@@ -688,23 +756,28 @@ func listTar(r io.Reader) error {
 	}
 }
 
+// canonicalBehind is what a restore leaves behind: the canonical it restored can be behind the default branch on GitHub.
+const canonicalBehind = "The restored canonical may be behind the default branch on GitHub: to bring it level, open one corrective pull request from the current default branch (any small change outside the protected files), approve the revision its check names, and merge it (details: docs/backup.md)."
+
 func (x *restoreRun) finish() {
 	x.scr.Say("Restored the backup of the instance %s (%s) into this instance.\n", x.doc.Instance, x.info.SuitewardVersion)
 	x.scr.Keep("The credentials of this installation are not in a backup, so they are as they were: the database passwords and the MCP token. The owner's TOTP enrollment is the backup's.\n")
-	x.scr.Say("Check the instance with `suiteward doctor`.\n")
+	if !x.scr.FullScreen() { // a full screen has it on the summary page, which Close keeps
+		x.scr.Keep("%s\n", canonicalBehind)
+	}
+	x.scr.Say("Check the instance with `%s doctor`.\n", x.env.Deps.command())
 	if x.inst.s.BackupRecipient == "" {
-		x.scr.Warn("No recovery key is set on this instance: run `suiteward backup init` to back it up.\n")
+		x.scr.Warn("No recovery key is set on this instance: run `%s backup init` to back it up.\n", x.env.Deps.command())
 	}
 }
 
 func (x *restoreRun) summary() []ui.KV {
-	rows := []ui.KV{
+	rows := summaryRows{
 		{Key: "Restored", Value: x.source()},
 		{Key: "Instance", Value: x.doc.Instance},
 		{Key: "Release", Value: x.after.Version},
 	}
-	if x.safety != "" {
-		rows = append(rows, ui.KV{Key: "Backup before", Value: x.safety})
-	}
+	rows.add("Backup before", x.safety)
+	rows.warn(canonicalBehind)
 	return rows
 }

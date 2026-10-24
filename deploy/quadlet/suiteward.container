@@ -1,4 +1,4 @@
-# The SuiteWard service. Outbound only: both published ports (8081 HTTP, 8091 MCP) are bound to the host's loopback, so they are reached from the host only.
+# The SuiteWard service. Outbound only: both published ports (HTTP and MCP) are bound to the host's loopback, so they are reached from the host only.
 # suiteward-migrate.service runs first (Requires/After) and waits for the database itself; serve never migrates and never sees the owner URL.
 [Unit]
 Description=SuiteWard
@@ -14,9 +14,9 @@ Image=ghcr.io/ignisdevne/suiteward@sha256:<digest>
 ContainerName=suiteward
 Network=suiteward.network
 # The container listens on all its interfaces; the host side is loopback only.
-PublishPort=127.0.0.1:8081:8080
+PublishPort=127.0.0.1:27081:8080
 # The MCP listener (image default SUITEWARD_MCP_ADDR=0.0.0.0:8090); it still needs its bearer token.
-PublishPort=127.0.0.1:8091:8090
+PublishPort=127.0.0.1:27091:8090
 # The application role URL (never the owner URL), the GitHub App key and the MCP token are podman secrets mounted as files; they are never environment variables.
 Secret=suiteward-database-url,type=mount,target=/run/secrets/database-url,uid=65532,mode=0400
 Environment=SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url

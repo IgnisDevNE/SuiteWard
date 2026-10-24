@@ -55,7 +55,7 @@ func guardDefaultSettings(t installTarget, runtimeName, connection string) error
 // installColocated is the co-located install: choose and check everything first, then bring the stack up.
 func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget) error {
 	scr := r.screen
-	scr.Steps("Environment", "Checks", "GitHub", "Start", "Owner", "Done")
+	scr.Steps(colocatedInstallSteps...)
 	rt, connection, err := openRuntime(ctx, r, env, t.saved, true)
 	if err != nil {
 		return err
@@ -74,29 +74,19 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 			return err
 		}
 		if !sameImage(want, previous.Image) {
-			return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", want, previous.Image)
+			return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `%s install --upgrade`", want, previous.Image, env.Deps.command())
 		}
 	}
 	s, err := chooseSettings(r, base, rt.Name(), connection)
 	if err != nil {
 		return err
 	}
-	// The installed image is kept by a re-run; a fresh install takes the release this binary carries (a development build
-	// carries none, and then --image is required).
-	defaultImage := previous.Image
-	if embedded, ok := ReleaseImage(); defaultImage == "" && ok {
-		defaultImage = embedded
-	}
-	asked, err := r.Value("image", "Release image (pinned by digest)", defaultImage)
-	if err != nil {
-		return err
-	}
-	image, err := parseImage(asked)
+	image, err := askImage(r, previous)
 	if err != nil {
 		return err
 	}
 	s.Image = image
-	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(r, false)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
+	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(env.Deps.command(), r, false)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
 			return err
@@ -138,7 +128,7 @@ func openRuntime(ctx context.Context, r *Resolver, env Env, saved Settings, conf
 	name := r.preset("runtime", saved.Runtime) // only an install asks which runtime to use
 	var err error
 	if confirm {
-		if name, err = r.Value("runtime", "Container runtime (podman recommended, docker discouraged)", saved.Runtime); err != nil {
+		if name, err = chooseRuntime(r, saved.Runtime); err != nil {
 			return nil, "", err
 		}
 	}
@@ -171,6 +161,20 @@ func openRuntime(ctx context.Context, r *Resolver, env Env, saved Settings, conf
 	return rt, connection, nil
 }
 
+// runtimeChoices are the answers of the runtime question.
+var runtimeChoices = []ui.Choice{
+	{Name: RuntimePodman, Desc: "recommended: rootless"},
+	{Name: RuntimeDocker, Desc: "discouraged: root daemon, secrets in volumes"},
+}
+
+// chooseRuntime asks which runtime to use: a page and a choice on a full screen, the typed question it always was on a plain one.
+func chooseRuntime(r *Resolver, def string) (string, error) {
+	r.explain([]string{"runtime"}, "Container runtime",
+		ui.Para("SuiteWard runs its database and its service in containers. Podman is recommended: it runs them rootless, with the secrets in its own store. "+
+			"Docker works too, but its daemon runs as root and keeps the secrets in volumes that anyone who controls the daemon can read, so choosing it asks for a typed yes."))
+	return r.selectAs("runtime", "Container runtime", "Container runtime (podman recommended, docker discouraged)", runtimeChoices, def)
+}
+
 // engineLine describes the engine a command works with: "Podman 5.8.2 (rootless)".
 func engineLine(e Engine) string {
 	daemon := "a rootful daemon"
@@ -185,6 +189,12 @@ func engineLine(e Engine) string {
 func chooseSettings(r *Resolver, base Settings, runtimeName, connection string) (Settings, error) {
 	s := base
 	s.Tier, s.Runtime, s.Connection = config.TierCoLocated, runtimeName, connection
+	r.explain([]string{"http-port", "mcp-port"}, "Ports",
+		ui.Para("SuiteWard listens on two ports, both only on 127.0.0.1: nothing outside this PC can reach them."),
+		ui.Fields(
+			ui.KV{Key: "HTTP", Value: fmt.Sprintf("Offered: %d. Serves /status and the local change report page.", base.HTTPPort)},
+			ui.KV{Key: "MCP", Value: fmt.Sprintf("Offered: %d. Your coding agent's client connects to it with the token.", base.MCPPort)}),
+		ui.Para("Change a port only if something else on this PC uses it: the installer refuses a port that is busy."))
 	var err error
 	if s.HTTPPort, err = r.Int("http-port", "HTTP port on 127.0.0.1", base.HTTPPort); err != nil {
 		return Settings{}, err
@@ -194,6 +204,38 @@ func chooseSettings(r *Resolver, base Settings, runtimeName, connection string) 
 	}
 	s.JobTimeout = r.preset("job-timeout", base.JobTimeout)
 	return s, s.Validate()
+}
+
+// askImage asks for the release image. The installed one is kept by a re-run; a fresh install takes the release this binary carries (a
+// development build carries none, and then --image is required).
+func askImage(r *Resolver, previous stackInstalled) (string, error) {
+	defaultImage, keep := previous.Image, "Enter keeps the image that is installed."
+	if defaultImage == "" {
+		if embedded, ok := ReleaseImage(); ok {
+			defaultImage, keep = embedded, "Enter keeps the release this binary carries."
+		} else {
+			keep = "This build carries no release image, so give one: " + releaseImageRepo + "@sha256:<64 hex>."
+		}
+	}
+	// A full screen that asks gives the default, a long reference, in a row of the page and asks short: in the prompt it wrapped until the
+	// cursor stood alone on a row.
+	shown := defaultImage != "" && r.screen.FullScreen() && r.asks("image")
+	blocks := []ui.Block{ui.Para("SuiteWard runs from one container image, pinned by its digest so that exactly the release you chose runs. " + keep)}
+	if shown {
+		blocks = append(blocks, ui.Fields(ui.KV{Key: "Default", Value: defaultImage}))
+	}
+	r.explain([]string{"image"}, "Release image", blocks...)
+	var asked string
+	var err error
+	if shown {
+		asked, err = r.screen.AskDefault("Release image", defaultImage) // the Default row and the hint line say what Enter does
+	} else {
+		asked, err = r.Value("image", "Release image (pinned by digest)", defaultImage)
+	}
+	if err != nil {
+		return "", err
+	}
+	return parseImage(asked)
 }
 
 // preflight does everything that can fail without changing anything, so a refusal leaves a running stack alone.
@@ -344,6 +386,8 @@ type colocatedInstall struct {
 	keepDB, keepServe bool
 
 	machineUser string // the rootless user of the Podman machine, once it has been looked up
+
+	copyRows summaryRows // what the offer of the copy of the program says in the summary (installSelf, upgradeSelf)
 }
 
 // secretState is what the stack already has of its database secrets, read before anything is changed.
@@ -853,24 +897,30 @@ func connectionUser(ctx context.Context, p *Podman, connection string) (string, 
 // finish runs setup, or says how, prints the next steps and, on a full screen, ends with the summary.
 func (c *colocatedInstall) finish(ctx context.Context, scr *ui.Screen, t installTarget) error {
 	c.say("The MCP token for a client is in %s (it is not printed).\n", c.tokenFile)
-	c.say("Read the status of the service: %s\n", c.statusHint(ctx))
 	if c.s.GitHub.AppID == 0 {
+		c.say("Read the status of the service: %s\n", c.statusHint(ctx)) // nothing has waited for the service: it may not answer from this PC yet
 		c.say("GitHub is not configured. Run the install again with --github yes (or the GitHub values) to set it up, then enroll the owner.\n")
 	} else {
 		if err := c.enroll(ctx, c.readStatus); err != nil {
 			return err
 		}
-		c.say("Then check the instance with `%s`.\n", doctorHint(t.settingsPath, t.defaultPath))
+		c.say("Read the status of the service: %s\n", c.statusHint(ctx)) // after the enrollment, which waited for the service to answer
+		c.say("Then check the instance with `%s`.\n", doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
 	}
 	scr.Step(6)
+	c.installSelf(ctx)
 	return showSummary(scr, func() []ui.KV { return c.installSummary(ctx, t) })
 }
 
-// statusHint is the command that reads /status of the service: inside the Podman machine when the port is published there.
+// statusHint is what reads /status of the service: the address when this PC reaches it, otherwise the command that reads it inside the
+// Podman machine that publishes the port, which does not always answer from the PC (WSL's port forwarding).
 func (c *colocatedInstall) statusHint(ctx context.Context) string {
 	curl := fmt.Sprintf("curl -s http://127.0.0.1:%d/status", c.s.HTTPPort)
 	if !c.inMachine() {
 		return curl
+	}
+	if c.answersHere(ctx) {
+		return statusURL(c.s.HTTPPort)
 	}
 	user, err := c.lookUpMachineUser(ctx)
 	if err != nil {

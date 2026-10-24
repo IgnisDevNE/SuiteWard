@@ -33,24 +33,33 @@ import (
 // full screen the results are lines of the screen, ended by the counts ("N ok, N warnings, N failures"), and the caller holds the page
 // until Enter (doctorCommand). The exit code is 0 when everything passed and 1 otherwise. Doctor only reads: it never creates, starts, stops or removes anything.
 func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, jsonOut bool) int {
-	d := &doctor{deps: deps, raw: map[string][]byte{}, units: map[string]map[string]string{}}
-	if err := deps.validate(); err != nil {
-		d.fail("settings", err.Error(), "this is a bug of the installer: report it")
-	} else {
-		d.deps.Exec = boundExec(deps.Exec)
-		scr := screenOn(out)
-		if !jsonOut {
-			scr.Steps("Doctor")
-		}
-		spinning(scr, "Checking the instance", func() { d.run(ctx, settingsPath) })
+	scr := screenOn(out)
+	if !jsonOut {
+		scr.Steps("Doctor")
 	}
-	if err := writeDoctor(out, d.results, jsonOut); err != nil {
+	var results []doctorResult
+	spinning(scr, "Checking the instance", func() { results = doctorChecks(ctx, deps, httpGet, settingsPath) })
+	if err := writeDoctor(out, results, jsonOut); err != nil {
 		return 1 // a failed write to the output cannot be reported anywhere else
 	}
-	if slices.ContainsFunc(d.results, func(r doctorResult) bool { return !r.OK }) {
+	if slices.ContainsFunc(results, func(r doctorResult) bool { return !r.OK }) {
 		return 1
 	}
 	return 0
+}
+
+// doctorChecks runs every check of doctor and returns the results, the one of the settings first, and draws nothing: the install and the
+// upgrade run it at their end, under their own page. fetch reads an address of the local service: Doctor passes httpGet, an install the one
+// of its Env, which a test replaces.
+func doctorChecks(ctx context.Context, deps Deps, fetch func(context.Context, string) ([]byte, error), settingsPath string) []doctorResult {
+	d := &doctor{deps: deps, fetch: fetch, raw: map[string][]byte{}, units: map[string]map[string]string{}}
+	if err := deps.validate(); err != nil {
+		d.fail("settings", err.Error(), "this is a bug of the installer: report it")
+		return d.results
+	}
+	d.deps.Exec = boundExec(deps.Exec)
+	d.run(ctx, settingsPath)
+	return d.results
 }
 
 // doctorResult is one line of `suiteward doctor`: the JSON keys are those of `suiteward check --json`, whose results are
@@ -63,37 +72,55 @@ type doctorResult struct {
 	Warning bool   `json:"warning,omitempty"` // a passing result that needs a look; it does not change the exit code
 }
 
+// needsALook says that a result is not a plain pass: a failure, or a pass that doctor warns about.
+func (r doctorResult) needsALook() bool { return !r.OK || r.Warning }
+
+// line is how a result that needs a look is written: WARN for a pass that needs a look, FAIL for a failure.
+func (r doctorResult) line() string {
+	label := "FAIL"
+	if r.OK {
+		label = "WARN"
+	}
+	return label + " " + r.Name + ": " + r.Detail + " — " + r.Fix
+}
+
+// doctorCounts is how many results passed, how many passed with a warning (counted apart) and how many failed.
+func doctorCounts(results []doctorResult) (passed, warned, failed int) {
+	for _, r := range results {
+		switch {
+		case !r.needsALook():
+			passed++
+		case r.OK:
+			warned++
+		default:
+			failed++
+		}
+	}
+	return passed, warned, failed
+}
+
 func writeDoctor(w io.Writer, results []doctorResult, jsonOut bool) error {
 	if jsonOut {
 		return json.NewEncoder(w).Encode(results)
 	}
 	if scr, ok := w.(*ui.Screen); ok && scr.FullScreen() { // the checks are lines of the screen, and Close keeps every one of them
-		var passed, warned, failed int // a warning is a pass that needs a look: it is counted apart
 		for _, r := range results {
-			switch {
-			case r.OK && r.Warning:
-				warned++
-				scr.Warn("WARN %s: %s — %s\n", r.Name, r.Detail, r.Fix)
-			case r.OK:
-				passed++
+			if r.needsALook() {
+				scr.Warn("%s\n", r.line())
+			} else {
 				scr.Check("%s", r.Name)
-			default:
-				failed++
-				scr.Warn("FAIL %s: %s — %s\n", r.Name, r.Detail, r.Fix)
 			}
 		}
+		passed, warned, failed := doctorCounts(results)
 		scr.Say("\n%d ok, %d warnings, %d failures\n", passed, warned, failed)
 		return nil
 	}
 	var b strings.Builder
 	for _, r := range results {
-		switch {
-		case r.OK && r.Warning:
-			b.WriteString("WARN " + r.Name + ": " + r.Detail + " — " + r.Fix + "\n")
-		case r.OK:
+		if r.needsALook() {
+			b.WriteString(r.line() + "\n")
+		} else {
 			b.WriteString("ok " + r.Name + "\n")
-		default:
-			b.WriteString("FAIL " + r.Name + ": " + r.Detail + " — " + r.Fix + "\n")
 		}
 	}
 	_, err := io.WriteString(w, b.String())
@@ -144,6 +171,7 @@ type machineEntry struct {
 
 type doctor struct {
 	deps    Deps
+	fetch   func(context.Context, string) ([]byte, error) // GET of an address of the local service
 	s       Settings
 	rt      Runtime
 	why     string // the check that failed when rt is nil
@@ -192,9 +220,9 @@ func (d *doctor) run(ctx context.Context, settingsPath string) {
 	}
 	s, err := LoadSettings(settingsPath)
 	if err != nil {
-		fix := "fix the file named above, or write it again with `suiteward install`"
+		fix := "fix the file named above, or write it again with `" + d.deps.command() + " install`"
 		if errors.Is(err, ErrNoSettings) {
-			fix = "run `suiteward install` first: it writes the settings file doctor reads"
+			fix = "run `" + d.deps.command() + " install` first: it writes the settings file doctor reads"
 		}
 		d.fail("settings", err.Error(), fix)
 		return
@@ -460,7 +488,7 @@ func (d *doctor) checkRestart(ctx context.Context) {
 		}
 	}
 	if len(problems) > 0 {
-		fix := "remove the containers with `suiteward uninstall` (the data stays), then run `suiteward install`, which creates them with the restart policy the release defines (an install leaves a running, healthy container as it is)"
+		fix := "remove the containers with `" + d.deps.command() + " uninstall` (the data stays), then run `" + d.deps.command() + " install`, which creates them with the restart policy the release defines (an install leaves a running, healthy container as it is)"
 		if d.s.Runtime == RuntimePodman {
 			fix = restartEnableFix
 			if d.viaSSH {
@@ -585,7 +613,7 @@ func (d *doctor) checkPins(ctx context.Context) {
 		image, err = dockerPins(d.raw)
 	}
 	if err != nil {
-		d.fail("pins", err.Error(), "install the release again with `suiteward install --upgrade`, or undo the edit it names")
+		d.fail("pins", err.Error(), "install the release again with `"+d.deps.command()+" install --upgrade`, or undo the edit it names")
 		return
 	}
 	d.pass("pins", detail+image)
@@ -731,7 +759,7 @@ func (d *doctor) get(ctx context.Context, path string) ([]byte, error) {
 	if d.viaSSH {
 		return d.machineSSH(ctx, "curl -fsS -m 5 "+address)
 	}
-	return httpGet(ctx, address)
+	return d.fetch(ctx, address)
 }
 
 func (d *doctor) checkPorts(ctx context.Context) {

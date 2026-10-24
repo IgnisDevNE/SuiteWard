@@ -224,7 +224,7 @@ func changesSection(r Revision) []string {
 	}
 	if r.ReportURL != "" {
 		parts = append(parts, "[Full change report]("+r.ReportURL+")",
-			"This link opens on the machine that runs this SuiteWard instance; on the isolated tier, through a port forward of the HTTP port.")
+			"This link opens on the machine that runs this SuiteWard instance; on the isolated tier, through a port forward of the HTTP port. Ctrl+click (Cmd+click on a Mac, or middle-click) the link to open it in a new tab.")
 	}
 	return parts
 }

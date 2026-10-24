@@ -10,7 +10,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +35,7 @@ const Usage = `usage: suiteward install [flags]
        suiteward restore <backup.tar.age> [--kit PATH] [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
        suiteward restore --plaintext-dir DIR [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
        suiteward doctor [--json] [--settings PATH] [--plain]
+       suiteward version
 `
 
 // Env is what the install commands need from the machine; tests replace it.
@@ -48,6 +51,11 @@ type Env struct {
 	// Version is shown in the title bar of the full screen ("installer <Version>"); empty reads "dev". The caller that knows the build version
 	// (app.Run) sets it.
 	Version string
+	// Self is the copy of the program that a full screen offers on Windows; nil offers none. OSEnv sets it there.
+	Self *SelfInstall
+	// Unattended says that the command line answers for the person (unattended): the copy of the program is then never offered or removed, and the
+	// one that exists is kept up to date.
+	Unattended bool
 	// OpenScreen opens the console of one command (ui.OpenOS on the process's console); nil means a plain one on Term.Out. A test replaces it.
 	OpenScreen func(ctx context.Context, in io.Reader, version string, plain bool) (*ui.Screen, error)
 }
@@ -64,6 +72,8 @@ func OSEnv(stdout io.Writer) Env {
 	term := OSTerminal()
 	term.Out = stdout
 	env := Env{Deps: OSDeps(), Term: term, PortFree: loopbackFree, Sleep: time.Sleep}
+	env.Deps.Command = commandName(runtime.GOOS, os.Executable, exec.LookPath)
+	env.Self = osSelfInstall()
 	if stdout == io.Writer(os.Stdout) { // the full screen takes over the process's console, so only the real stdout may ask for it
 		env.OpenScreen = ui.OpenOS
 	}
@@ -118,6 +128,9 @@ func (e Env) validate() error {
 	}
 	if e.PortFree == nil || e.Sleep == nil {
 		return errors.New("the installer needs PortFree and Sleep")
+	}
+	if s := e.Self; s != nil && (s.Executable == nil || s.LookPath == nil || s.Rename == nil || s.Path == nil) {
+		return errors.New("the installer needs Executable, LookPath, Rename and Path to offer the copy of the program")
 	}
 	return nil
 }
@@ -184,8 +197,8 @@ var installFlags = []struct{ name, usage string }{
 	{"runtime", "podman (recommended) or docker"},
 	{"connection", "the Podman connection, or the Docker context (default: the rootless Podman machine, or Docker Desktop's)"},
 	{"image", "the release image pinned by digest, ghcr.io/ignisdevne/suiteward@sha256:<64 hex> (default: the installed image, else the release this binary carries; a development build needs it)"},
-	{"http-port", "loopback port of the HTTP listener (default 8081)"},
-	{"mcp-port", "loopback port of the MCP listener (default 8091)"},
+	{"http-port", "loopback port of the HTTP listener (default 27081)"},
+	{"mcp-port", "loopback port of the MCP listener (default 27091)"},
 	{"job-timeout", "a Go duration for SUITEWARD_JOB_TIMEOUT (serve only)"},
 	{"github", "yes: create the GitHub App now (manifest flow), no: skip GitHub, new-app: create a new App although the settings name one (the old App stays on GitHub)"},
 	{"github-account", `the account that owns the new App: "personal" or an organization login`},
@@ -244,6 +257,13 @@ func parse(fs *flag.FlagSet, args []string, out io.Writer) (map[string]string, e
 	return flags, nil
 }
 
+// unattended says that the command line answers for the person: --yes, or an answers file. Such a run never offers the copy of the program or its
+// removal, which the person has to agree to.
+func unattended(flags map[string]string) bool {
+	_, answers := flags["answers"]
+	return answers || flags["yes"] == "true"
+}
+
 func parseFlags(fs *flag.FlagSet, args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -297,13 +317,13 @@ func settingsPathFrom(flags map[string]string) (path string, isDefault bool, err
 
 // loadSaved reads the settings of an earlier install. None yet is not an error for the default file, but a file the command line
 // names (named) must exist: a mistyped path would otherwise run the command on defaults, which are not an instance.
-func loadSaved(path string, named bool) (Settings, bool, error) {
+func loadSaved(cmd, path string, named bool) (Settings, bool, error) {
 	saved, err := LoadSettings(path)
 	switch {
 	case err == nil:
 		return saved, true, nil
 	case errors.Is(err, ErrNoSettings) && named:
-		return Settings{}, false, fmt.Errorf("--settings names %s, which does not exist: %w (nothing was changed; check the path: only `suiteward install` makes a settings file)", path, ErrNoSettings)
+		return Settings{}, false, fmt.Errorf("--settings names %s, which does not exist: %w (nothing was changed; check the path: only `%s install` makes a settings file)", path, ErrNoSettings, cmd)
 	case errors.Is(err, ErrNoSettings):
 		return DefaultSettings(), false, nil
 	}
@@ -326,6 +346,7 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 			return err
 		}
 	}
+	env.Unattended = unattended(flags)
 	plain, err := wantsPlain(flags, answers)
 	if err != nil {
 		return err
@@ -348,20 +369,20 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	upgrade := flags["upgrade"] == "true"
-	saved, haveSaved, err := loadSaved(settingsPath, upgrade && !defaultPath) // an install makes the file: only an upgrade needs it to be there
+	saved, haveSaved, err := loadSaved(env.Deps.command(), settingsPath, upgrade && !defaultPath) // an install makes the file: only an upgrade needs it to be there
 	if err != nil {
 		return err
 	}
 	if _, given := r.given("backup-recipient"); given && !upgrade {
-		return errors.New("--backup-recipient (backup_recipient) is for --upgrade: to set the recovery key of this instance, run `suiteward backup init`")
+		return fmt.Errorf("--backup-recipient (backup_recipient) is for --upgrade: to set the recovery key of this instance, run `%s backup init`", env.Deps.command())
 	}
 	var tier string
 	if upgrade { // an upgrade works on what is installed: it never asks which tier
-		if err := tierNeeded(r, haveSaved, env.Deps.GOOS); err != nil {
+		if err := tierNeeded(r, haveSaved, env.Deps.GOOS, coLocatedTierFlag); err != nil {
 			return err
 		}
 		tier = r.preset("tier", string(saved.Tier))
-	} else if tier, err = r.Value("tier", "Installation tier (co-located or isolated)", string(saved.Tier)); err != nil {
+	} else if tier, err = chooseTier(r, saved.Tier); err != nil {
 		return err
 	}
 	switch config.Tier(tier) {
@@ -481,9 +502,22 @@ const dockerWarning = `Docker is allowed on this PC, but Podman is strongly reco
   - Docker has no secret store outside Swarm, so the secrets (the database owner URL, the App key, the MCP token) live in named volumes that anyone who controls the Docker daemon can read.
 `
 
+// dockerWarningShort is the same two risks for a full screen, in the few rows that the smallest window leaves above the question: a typed
+// yes must be an informed one there too.
+const dockerWarningShort = `Docker is allowed on this PC, but Podman is strongly recommended.
+  - Docker's daemon runs as root: its containers are not isolated from whoever controls it.
+  - Its secrets live in volumes that anyone who controls the daemon can read.
+`
+
 // confirmDocker prints the warning and requires an explicit yes. The warning is one Warn: the full screen wraps its lines and keeps it.
 func confirmDocker(r *Resolver) error {
-	r.screen.Warn("%s", dockerWarning)
+	r.explain([]string{"accept-docker"}, "Docker is not recommended",
+		ui.Para("This is a confirmation: typing yes accepts the risks below."))
+	warning := dockerWarning
+	if r.screen.FullScreen() {
+		warning = dockerWarningShort
+	}
+	r.screen.Warn("%s", warning)
 	answer, err := r.Value("accept-docker", "Type yes to use Docker anyway", "no")
 	if err != nil {
 		return err
@@ -495,13 +529,17 @@ func confirmDocker(r *Resolver) error {
 }
 
 // tierNeeded refuses a command that works on what is installed when it cannot tell the tier: a host installed by hand has no
-// settings file, and the default tier would be a guess (on Linux that is the isolated host).
-func tierNeeded(r *Resolver, haveSaved bool, goos string) error {
+// settings file, and the default tier would be a guess (on Linux that is the isolated host). coLocated is what the message offers for a
+// co-located stack: a command that cannot work on one without its settings file says how to get the file instead.
+func tierNeeded(r *Resolver, haveSaved bool, goos, coLocated string) error {
 	if _, given := r.given("tier"); !given && !haveSaved && goos == "linux" {
-		return errors.New("this host has no settings file, so the tier cannot be told: pass --tier isolated (as the service account) or --tier co-located")
+		return errors.New("this host has no settings file, so the tier cannot be told: pass --tier isolated (as the service account) or " + coLocated)
 	}
 	return nil
 }
+
+// coLocatedTierFlag is what tierNeeded offers for a co-located stack to the commands that can work on one without a settings file.
+const coLocatedTierFlag = "--tier co-located"
 
 var plainArg = regexp.MustCompile(`^[A-Za-z0-9_+=.,:/\\@%-]+$`)
 
@@ -517,4 +555,34 @@ func quoteArg(arg string) string {
 		return `"` + arg + `"`
 	}
 	return "'" + arg + "'"
+}
+
+// tierChoices are the answers of the tier question.
+var tierChoices = []ui.Choice{
+	{Name: string(config.TierCoLocated), Desc: "on this PC, next to the agent"},
+	{Name: string(config.TierIsolated), Desc: "a separate user, VM or host"},
+}
+
+// The steps of the install of each tier. The tier question shows those of the tier it offers first, so that the step column is there from
+// the first question; the flow of the tier that was chosen sets its own again.
+var (
+	colocatedInstallSteps = []string{"Environment", "Checks", "GitHub", "Start", "Owner", "Done"}
+	isolatedInstallSteps  = []string{"Checks", "Images", "GitHub", "Units", "Start", "Owner", "Done"}
+)
+
+// chooseTier asks which tier to install. On a full screen it first draws the steps and a page that says what each tier is and which to take.
+func chooseTier(r *Resolver, def config.Tier) (string, error) {
+	if r.screen.FullScreen() && r.asks("tier") {
+		steps := colocatedInstallSteps
+		if def == config.TierIsolated {
+			steps = isolatedInstallSteps
+		}
+		r.screen.Steps(steps...)
+		r.screen.Page("Where SuiteWard runs",
+			ui.Fields(
+				ui.KV{Key: string(config.TierCoLocated), Value: "On this PC, next to the coding agent: the simplest way to start, with reduced assurance. The agent can reach SuiteWard's key, its database and its secret."},
+				ui.KV{Key: string(config.TierIsolated), Value: "On a separate Linux host or account that the agent cannot reach. Full assurance. It needs an EL9 host, such as AlmaLinux."}),
+			ui.Para("Recommended: co-located to start."))
+	}
+	return r.Select("tier", "Installation tier", tierChoices, string(def))
 }

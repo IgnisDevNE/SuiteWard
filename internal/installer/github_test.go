@@ -496,7 +496,7 @@ func TestResolveGitHubRulesetFileIsPrivate(t *testing.T) {
 	}
 }
 
-// ttyRuntime is a Runtime where only ExecTTY exists: any other call panics on the nil embedded interface.
+// ttyRuntime is a Runtime where only ExecTTY and its command line exist: any other call panics on the nil embedded interface.
 type ttyRuntime struct {
 	Runtime
 	container string
@@ -511,12 +511,17 @@ func (r *ttyRuntime) ExecTTY(_ context.Context, container string, argv []string)
 	return r.err
 }
 
+// ExecTTYCommand is the command line of an engine with a connection, as the real runtimes make it.
+func (r *ttyRuntime) ExecTTYCommand(container string, argv []string) (string, []string) {
+	return "podman", append([]string{"--connection", "pm", "exec", "-it", container}, argv...)
+}
+
 func TestRunSetupPassesTheTerminalThroughAndCapturesNothing(t *testing.T) {
 	withTerminal(t, true)
 	rt := &ttyRuntime{}
 	var out strings.Builder
 	checks := map[string]string{"acme/lib": "build", "acme/app": "CI / test"}
-	if err := runSetup(context.Background(), rt, "alice", checks, &out); err != nil {
+	if err := runSetup(context.Background(), "suiteward", rt, "alice", checks, &out); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"/suiteward", "setup", "--owner", "alice", "--test-check", "acme/app=CI / test", "--test-check", "acme/lib=build"}
@@ -550,14 +555,14 @@ func TestRunSetupRefusesWhatSetupWouldRefuse(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			rt := &ttyRuntime{}
-			if err := runSetup(context.Background(), rt, tc.owner, tc.checks, io.Discard); err == nil || rt.calls != 0 {
+			if err := runSetup(context.Background(), "suiteward", rt, tc.owner, tc.checks, io.Discard); err == nil || rt.calls != 0 {
 				t.Fatalf("runSetup = %v after %d calls", err, rt.calls)
 			}
 		})
 	}
 	t.Run("a failure of setup is returned", func(t *testing.T) {
 		rt := &ttyRuntime{err: errors.New("exit status 1")}
-		if err := runSetup(context.Background(), rt, "alice", map[string]string{"acme/app": "CI"}, io.Discard); !errors.Is(err, rt.err) {
+		if err := runSetup(context.Background(), "suiteward", rt, "alice", map[string]string{"acme/app": "CI"}, io.Discard); !errors.Is(err, rt.err) {
 			t.Fatalf("runSetup = %v", err)
 		}
 	})

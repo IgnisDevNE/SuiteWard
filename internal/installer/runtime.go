@@ -86,6 +86,9 @@ type Runtime interface {
 	Run(ctx context.Context, spec RunSpec) error
 	Exec(ctx context.Context, container string, argv []string, stdin io.Reader) ([]byte, error)
 	ExecTTY(ctx context.Context, container string, argv []string) error // the real terminal, nothing captured
+	// ExecTTYCommand is the command ExecTTY runs: the program and its arguments, engine flags included. A caller that runs setup in a
+	// terminal of its own runs this and not a line of its own, so the engine's flags stay in one place.
+	ExecTTYCommand(container string, argv []string) (name string, args []string)
 	State(ctx context.Context, container string) (ContainerState, error)
 	Inspect(ctx context.Context, container string) ([]byte, error) // the JSON of `inspect --type container`, for the adoption guard
 	// ExportVolume writes a tarball of the volume to the new file path, readable only by its owner where the system allows it. The

@@ -127,7 +127,7 @@ func TestRenderUnitsGolden(t *testing.T) {
 		"[Unit]", "Description=SuiteWard", "Wants=network-online.target", "After=network-online.target",
 		"Requires=suiteward-migrate.service", "After=suiteward-migrate.service", "StartLimitIntervalSec=0",
 		"[Container]", "Image=" + releaseImagePrefix + testDigest, "ContainerName=suiteward", "Network=suiteward.network",
-		"PublishPort=127.0.0.1:8081:8080", "PublishPort=127.0.0.1:8091:8090",
+		"PublishPort=127.0.0.1:27081:8080", "PublishPort=127.0.0.1:27091:8090",
 		"Secret=suiteward-database-url,type=mount,target=/run/secrets/database-url,uid=65532,mode=0400",
 		"Environment=SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url",
 		"Secret=suiteward-github-app-key,type=mount,target=/run/secrets/github-app-key,uid=65532,mode=0400",
@@ -135,7 +135,7 @@ func TestRenderUnitsGolden(t *testing.T) {
 		"Secret=suiteward-mcp-token,type=mount,target=/run/secrets/mcp-token,uid=65532,mode=0400",
 		"Environment=SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token",
 		"EnvironmentFile=%h/.config/suiteward/github.env", "Environment=SUITEWARD_INSTALLATION_TIER=isolated",
-		"Environment=SUITEWARD_REPORT_BASE_URL=http://127.0.0.1:8081",
+		"Environment=SUITEWARD_REPORT_BASE_URL=http://127.0.0.1:27081",
 		"Volume=suiteward-data.volume:/data", "ReadOnly=true", "DropCapability=ALL", "NoNewPrivileges=true",
 		"PodmanArgs=--memory=256m --stop-timeout=45",
 		"[Service]", "Restart=always", "RestartSec=5", "[Install]", "WantedBy=default.target",
@@ -211,7 +211,7 @@ func TestRenderUnitsPortsTierAndTimeout(t *testing.T) {
 		}
 	}
 	for _, line := range serve {
-		if strings.Contains(line, ":8081:") || strings.Contains(line, ":8091:") || strings.HasSuffix(line, "=isolated") {
+		if strings.Contains(line, ":27081:") || strings.Contains(line, ":27091:") || strings.HasSuffix(line, "=isolated") {
 			t.Errorf("a default survived: %s", line)
 		}
 	}
@@ -273,7 +273,7 @@ func TestRenderRefusesATemplateThatLostAnAnchor(t *testing.T) {
 		templates[name] = raw
 	}
 	for name, anchor := range map[string]string{
-		"suiteward.container":         "PublishPort=127.0.0.1:8091:8090\n",
+		"suiteward.container":         "PublishPort=127.0.0.1:27091:8090\n",
 		"suiteward-migrate.container": "Image=" + releaseImagePrefix + "sha256:<digest>\n",
 	} {
 		broken := map[string][]byte{}

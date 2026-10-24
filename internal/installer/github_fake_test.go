@@ -99,7 +99,11 @@ type fakeGitHub struct {
 	installType           string
 	repos                 []fakeRepo
 	override              map[string]fakeAnswer // "METHOD path" -> the answer given instead of the fake's own
+	userTypes             map[string]string     // GET /users/{login}: the type of a login ("User", "Organization", userMissing); an organization when absent
 }
+
+// userMissing is the type of a login that GitHub has no account for: GET /users/{login} answers 404.
+const userMissing = "missing"
 
 // fakeAnswer replaces what the fake says to one request.
 type fakeAnswer struct {
@@ -119,6 +123,7 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /app-manifests/{code}/conversions", g.convert)
+	mux.HandleFunc("GET /users/{login}", g.user)
 	mux.HandleFunc("GET /app", g.app)
 	mux.HandleFunc("GET /app/installations", g.installations)
 	mux.HandleFunc("POST /app/installations/{id}/access_tokens", g.token)
@@ -184,6 +189,39 @@ func (g *fakeGitHub) convert(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// user is GET /users/{login}, the unauthenticated answer the installer asks to know that an organization exists.
+func (g *fakeGitHub) user(w http.ResponseWriter, r *http.Request) {
+	login := r.PathValue("login")
+	g.mu.Lock()
+	typ := g.userTypes[login]
+	g.mu.Unlock()
+	switch typ {
+	case userMissing:
+		http.NotFound(w, r)
+		return
+	case "":
+		typ = "Organization"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"login": login, "type": typ})
+}
+
+// setUser makes GET /users/{login} answer typ (User, Organization or userMissing).
+func (g *fakeGitHub) setUser(login, typ string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.userTypes == nil {
+		g.userTypes = map[string]string{}
+	}
+	g.userTypes[login] = typ
+}
+
+// changeRepos changes the repositories while a flow runs: the handlers read them under the same lock.
+func (g *fakeGitHub) changeRepos(change func(repos []fakeRepo)) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	change(g.repos)
+}
+
 func (g *fakeGitHub) app(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	status := g.appStatus
@@ -231,7 +269,10 @@ func (g *fakeGitHub) token(w http.ResponseWriter, r *http.Request) {
 
 func (g *fakeGitHub) installationRepos(w http.ResponseWriter, _ *http.Request) {
 	list := []any{}
-	for _, repo := range g.repos {
+	g.mu.Lock()
+	repos := slices.Clone(g.repos)
+	g.mu.Unlock()
+	for _, repo := range repos {
 		list = append(list, map[string]any{"full_name": repo.name})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"total_count": len(list), "repositories": list})
@@ -239,6 +280,8 @@ func (g *fakeGitHub) installationRepos(w http.ResponseWriter, _ *http.Request) {
 
 func (g *fakeGitHub) find(r *http.Request) (fakeRepo, bool) {
 	name := r.PathValue("owner") + "/" + r.PathValue("name")
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	for _, repo := range g.repos {
 		if repo.name == name {
 			return repo, true

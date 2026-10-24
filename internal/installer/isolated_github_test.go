@@ -74,7 +74,7 @@ func (g *isoGitHub) run() error {
 	term.Out = &g.out
 	r := newTestResolver(g.t, nil, answers, term)
 	// What Install does: the saved settings of an earlier run, as the isolated tier.
-	s, _, err := loadSaved(settingsFile(g.home), false)
+	s, _, err := loadSaved("suiteward", settingsFile(g.home), false)
 	if err != nil {
 		g.t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestInstallIsolatedRunsSetupOnATerminalAndNeverCapturesIt(t *testing.T) {
 		t.Errorf("the warning about terminal recording is missing:\n%s", g.out.String())
 	}
 	// The stability wait before it reads /readyz as well; the guard reads /status only once.
-	if status := slices.DeleteFunc(slices.Clone(g.asked), func(a string) bool { return strings.HasSuffix(a, "/readyz") }); len(status) != 1 || !strings.HasSuffix(status[0], ":8081/status") {
+	if status := slices.DeleteFunc(slices.Clone(g.asked), func(a string) bool { return strings.HasSuffix(a, "/readyz") }); len(status) != 1 || !strings.HasSuffix(status[0], ":27081/status") {
 		t.Errorf("the guard must read /status of the service on its HTTP port first: %v", g.asked)
 	}
 	(&fakeEngine{calls: g.f.calls, tty: g.f.tty}).assertNoSecret(t, appKeyPEM(t))

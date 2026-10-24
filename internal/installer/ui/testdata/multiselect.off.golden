@@ -1,0 +1,32 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ◆ SuiteWard installer v1.2.3                                     step 3 of 4 │
+├──────────────────┬───────────────────────────────────────────────────────────┤
+│ ✓ Welcome        │ Repositories                                              │
+│ ✓ GitHub         │                                                           │
+│ ● Protection     │ The App can reach these repositories. SuiteWard protects  │
+│ ○ Finish         │ the ones you pick.                                        │
+│                  │                                                           │
+│                  │ ───────────────────────────────────────────────────────── │
+│                  │ Repositories to protect                                   │
+│                  │   [x] acme/api     private                                │
+│                  │   [x] acme/web     public, the website                    │
+│                  │ > [ ] acme/docs    public                                 │
+│                  │   [ ] acme/infra   private                                │
+│                  │ ! Pick between 1 and 2.                                   │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+│                  │                                                           │
+├──────────────────┴───────────────────────────────────────────────────────────┤
+│ ↑/↓ move · Space toggle · Enter confirm · Ctrl-C quit                        │
+╰──────────────────────────────────────────────────────────────────────────────╯

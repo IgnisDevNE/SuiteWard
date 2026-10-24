@@ -39,9 +39,9 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		return err
 	}
 	if !st.found {
-		return ErrNothingInstalled
+		return nothingInstalled(env.Deps.command())
 	}
-	err = refuseUnfinishedInstall(pendingAppPath(host.settingsPath), func() (GitHub, error) {
+	err = refuseUnfinishedInstall(env.Deps.command(), pendingAppPath(host.settingsPath), func() (GitHub, error) {
 		if s.GitHub.AppID != 0 {
 			return s.GitHub, nil
 		}
@@ -57,7 +57,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	if err != nil {
 		return err
 	}
-	if err := refuseChangedSettings(asked, s, installCommand(r, true)); err != nil {
+	if err := refuseChangedSettings(asked, s, installCommand(env.Deps.command(), r, true)); err != nil {
 		return err
 	}
 	say := func(format string, args ...any) { _, _ = fmt.Fprintf(out, format, args...) }
@@ -71,7 +71,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	params.NoGitHub = st.adopted.NoGitHub
 	plan := upgradePlan{oldImage: st.adopted.Image, newImage: image, oldDB: st.adopted.DBImage, newDB: postgres}
 	if _, statErr := os.Stat(host.settingsPath); plan.current() && statErr == nil {
-		say("Nothing to upgrade: already on %s. Check the instance with `suiteward doctor`.\n", digestOf(image))
+		say("Nothing to upgrade: already on %s. Check the instance with `%s doctor`.\n", digestOf(image), env.Deps.command())
 		return holdPage(scr)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
@@ -105,34 +105,35 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	}
 	s.BackupRecipient = inst.s.BackupRecipient
 	say("Backup written to %s.\n", dir)
+	scope := scopeFlags(r, true) // the tier and the settings file of this run, for the commands that a message names
 	scr.Step(3)
 	if err := pullMissing(ctx, scr, host.rt, postgres, image); err != nil {
 		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	scr.Step(4)
 	if err := replaceUnits(ctx, host, d, scr, params, plan.dbChanges()); err != nil {
-		return withBackup(err, dir, host.unitsDir)
+		return withBackup(env.Deps.command(), err, dir, host.unitsDir, scope)
 	}
 	// Migrate ran: a release that crash-loops now gets the advice of a failure after the migration, the restore of the backup.
 	scr.Step(5)
 	if err := waitStable(ctx, env, scr, s.HTTPPort); err != nil {
-		return withBackup(migratingError{err}, dir, host.unitsDir)
+		return withBackup(env.Deps.command(), migratingError{err}, dir, host.unitsDir, scope)
 	}
 	s.Image = image
 	if err := SaveSettings(host.settingsPath, s); err != nil {
-		return withBackup(migratingError{err}, dir, host.unitsDir)
+		return withBackup(env.Deps.command(), migratingError{err}, dir, host.unitsDir, scope)
 	}
-	upgraded(scr, st.adopted.Image, image, dir, "suiteward doctor")
+	upgraded(scr, image, dir, goBackIsolated(env.Deps.command(), dir, host.unitsDir, scope), env.Deps.command()+" doctor")
 	sayOldEnvFile(out, host.envPath, st.oldEnv, false)
 	return showSummary(scr, func() []ui.KV {
-		return isolatedSummary(ctx, env, host, s, ui.KV{Key: "Release", Value: fmt.Sprintf("%s (was %s)", digestOf(image), digestOf(st.adopted.Image))})
+		return isolatedSummary(ctx, env, host, s, ui.KV{Key: "Image", Value: fmt.Sprintf("%s (was %s)", digestOf(image), digestOf(st.adopted.Image))})
 	})
 }
 
 // installCommand is the command that installs again, as the messages of the installer name it: the tier and the settings file
 // are named when they are not the defaults (see enrollCommand).
-func installCommand(r *Resolver, isolated bool) string {
-	command := "suiteward install"
+func installCommand(cmd string, r *Resolver, isolated bool) string {
+	command := cmd + " install"
 	if isolated {
 		command += " --tier isolated"
 	}

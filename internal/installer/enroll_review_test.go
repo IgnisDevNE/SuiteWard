@@ -47,6 +47,9 @@ func TestSetupRefusesTheContractCheckAsATestCheck(t *testing.T) {
 	})
 }
 
+// Enroll refuses the co-located tier when there is no settings file, so the message does not offer it as a flag of enroll: it names the
+// isolated tier and the `install --upgrade --tier co-located` that makes the file (on Linux without settings, `install --upgrade` alone asks
+// for the tier too).
 func TestEnrollOnLinuxWithoutSettingsNeedsTheTier(t *testing.T) {
 	withTerminal(t, true)
 	useDefaultConfigDir(t)
@@ -54,7 +57,7 @@ func TestEnrollOnLinuxWithoutSettingsNeedsTheTier(t *testing.T) {
 	h.status = statusIs(statusNoOwner)
 	term, _ := fakeTerminal(true, "")
 	code, stderr := h.enrollWith(term, "--owner", "alice")
-	if code != 1 || !strings.Contains(stderr, "pass --tier isolated") || !strings.Contains(stderr, "--tier co-located") || len(h.f.tty) != 0 {
+	if code != 1 || !strings.Contains(stderr, "pass --tier isolated") || !strings.Contains(stderr, "`suiteward install --upgrade --tier co-located`") || strings.Contains(stderr, "or --tier co-located") || len(h.f.tty) != 0 {
 		t.Fatalf("exit %d, stderr %q, setup %v", code, stderr, h.f.tty)
 	}
 }
@@ -73,7 +76,7 @@ func TestEnrollCommandNamesTheSettingsFlagOnlyAndQuotesIt(t *testing.T) {
 		"the answers file":   {nil, map[string]string{"settings": "/elsewhere/s.yaml"}, false, "suiteward enroll"}, // the command line of the run is the flags'
 	} {
 		r := newTestResolver(t, c.flags, c.answers, term)
-		if got := enrollCommand(r, c.isolated); got != c.want {
+		if got := enrollCommand("suiteward", r, c.isolated); got != c.want {
 			t.Errorf("%s: got %q, want %q", name, got, c.want)
 		}
 	}

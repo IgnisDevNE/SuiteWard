@@ -123,7 +123,7 @@ func TestWithBackupAdviseByHowFarTheUpgradeGot(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := withBackup(tc.err, "/backups/one.tar.age", tc.unitsDir)
+			err := withBackup("suiteward", tc.err, "/backups/one.tar.age", tc.unitsDir, "")
 			if !errors.Is(err, cause) {
 				t.Errorf("the cause was lost: %v", err)
 			}

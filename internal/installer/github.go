@@ -1264,56 +1264,143 @@ func keepProtection(scr *ui.Screen, lines []string) {
 	scr.Keep("Run the checks again at any time with suiteward doctor.\n")
 }
 
-// runSetup runs `suiteward setup` in the serving container with the real terminal passed through. Setup prints the TOTP
-// enrollment URI and secret there, so nothing is captured or logged, and the user is told to stop session recording first.
+// runSetup runs `suiteward setup` in the serving container on a real terminal. Setup prints the TOTP enrollment URI and secret there,
+// so nothing is captured or logged, and the user is told to stop session recording first. A full screen explains what happens before,
+// and says how it went after. On Windows and macOS, outside an SSH session, setup runs in a window of its own while the installer waits
+// on its screen; everywhere else it takes the terminal of the installer.
 func runSetup(ctx context.Context, rt Runtime, owner string, checks map[string]string, out io.Writer) error {
-	if !ghLoginPattern.MatchString(owner) {
-		return fmt.Errorf("owner %q is not a GitHub login", owner)
-	}
-	if len(checks) == 0 {
-		return errors.New("setup needs the test check of at least one repository")
-	}
-	repos := make([]string, 0, len(checks))
-	for repo, check := range checks {
-		if !repositoryName.MatchString(repo) || strings.TrimSpace(check) == "" {
-			return fmt.Errorf("the test check %q of %q is not a repository (owner/name) with a check name", check, repo)
-		}
-		if strings.TrimSpace(check) == protection.ContractCheck {
-			return fmt.Errorf("the test check of %s is %s, SuiteWard's own check, not the project's test check", repo, protection.ContractCheck)
-		}
-		if len(check) > appowner.MaxTestCheckBytes { // the limit setup enforces, so setup does not refuse after the container is entered
-			return fmt.Errorf("the test check of %s is longer than %d bytes", repo, appowner.MaxTestCheckBytes)
-		}
-		repos = append(repos, repo)
+	argv, err := setupArgv(owner, checks)
+	if err != nil {
+		return err
 	}
 	// Setup prints the TOTP enrollment URI and secret on its terminal: with no real terminal here, that output would go
 	// to a pipe or a file that a coding agent could read, so the installer does not run it.
 	if !setupTerminal() {
 		return errors.New("setup needs a real terminal on stdin and stdout: run the installer from your own terminal, not through a pipe, a script or a coding agent")
 	}
+	scr := screenOn(out)
+	window := setupMachine.setupWindow(scr.FullScreen())
+	// The window closes itself when setup ends on Windows, and Terminal keeps it open, cleared, on macOS.
+	closes := setupMachine.goos == "windows"
+	if err := explainSetup(scr, owner, window != nil, closes); err != nil {
+		return err
+	}
+	note := ""
+	if window != nil {
+		started, err := setupInWindow(ctx, rt, scr, window, argv, closes)
+		if started {
+			return afterSetup(scr, err)
+		}
+		note = fmt.Sprintf("Setup could not open a window of its own (%v), so it runs in this terminal.\n", err)
+	}
+	return setupHere(ctx, rt, scr, out, argv, note)
+}
+
+// setupArgv is the command line of setup for the owner and the test check of each repository, in the order of the repositories, after
+// the refusals that setup would make itself: the installer makes them before the container is entered.
+func setupArgv(owner string, checks map[string]string) ([]string, error) {
+	if !ghLoginPattern.MatchString(owner) {
+		return nil, fmt.Errorf("owner %q is not a GitHub login", owner)
+	}
+	if len(checks) == 0 {
+		return nil, errors.New("setup needs the test check of at least one repository")
+	}
+	repos := make([]string, 0, len(checks))
+	for repo, check := range checks {
+		if !repositoryName.MatchString(repo) || strings.TrimSpace(check) == "" {
+			return nil, fmt.Errorf("the test check %q of %q is not a repository (owner/name) with a check name", check, repo)
+		}
+		if strings.TrimSpace(check) == protection.ContractCheck {
+			return nil, fmt.Errorf("the test check of %s is %s, SuiteWard's own check, not the project's test check", repo, protection.ContractCheck)
+		}
+		if len(check) > appowner.MaxTestCheckBytes { // the limit setup enforces, so setup does not refuse after the container is entered
+			return nil, fmt.Errorf("the test check of %s is longer than %d bytes", repo, appowner.MaxTestCheckBytes)
+		}
+		repos = append(repos, repo)
+	}
 	sort.Strings(repos)
 	argv := []string{"/suiteward", "setup", "--owner", owner}
 	for _, repo := range repos {
 		argv = append(argv, "--test-check", repo+"="+checks[repo])
 	}
-	// The child needs the real terminal, and what it prints is not the screen's to keep or to draw again: the screen is left, and the
-	// warning is the first thing the user reads there.
-	scr := screenOn(out)
+	return argv, nil
+}
+
+// explainSetup is the page before setup on a full screen: what happens, and that the installer never holds the secret. It waits for Enter,
+// because the next thing the user sees is setup. Ctrl-C there starts nothing; the end of the input is an Enter, and setup asks again.
+func explainSetup(scr *ui.Screen, owner string, window, closes bool) error {
+	if !scr.FullScreen() {
+		return nil
+	}
+	where, prompt := "Setup takes over this terminal, and the installer comes back when you press Enter after it.", "Press Enter to start setup: "
+	if window {
+		then := "it clears itself."
+		if closes {
+			then = "it clears itself and closes."
+		}
+		where, prompt = "Setup opens in a separate window and this one waits for it. In that window, press Enter after the code is accepted: "+then, "Press Enter to open setup in a new window: "
+	}
+	scr.Page("Enroll the owner",
+		ui.Para(fmt.Sprintf("Next, setup enrolls %s as the owner of this instance, the only account whose approvals count. It shows a TOTP secret once, as text: an otpauth:// link and the same secret in base32. Add it to your authenticator app, by typing the key or pasting the link, then confirm with a code from the app.", owner)),
+		ui.Para("The installer never sees the secret and keeps no copy of it: setup runs in the container and writes it straight to the terminal."),
+		ui.Para("Stop any screen or terminal recording first, and make sure no coding agent can read the terminal where the secret shows."),
+		ui.Para(where))
+	if _, err := scr.Prompt(prompt); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("wait for Enter before setup: %w", err)
+	}
+	return nil
+}
+
+// setupInWindow runs setup in a window of its own and waits for the window on a page of the installer. started is false when no window
+// opened, and then setup has not run.
+func setupInWindow(ctx context.Context, rt Runtime, scr *ui.Screen, open windowStarter, argv []string, closes bool) (started bool, err error) {
+	name, args := rt.ExecTTYCommand(ContainerServe, argv)
+	wait, err := open(ctx, name, args)
+	if err != nil {
+		return false, err
+	}
+	goesOn := "when setup ends"
+	if closes { // the installer reads the end of the window, which waits for Enter after setup
+		goesOn = "when the setup window closes"
+	}
+	scr.Page("Enroll the owner",
+		ui.Para("Setup is open in another window. Follow it there: add the secret to your authenticator app and enter the code it shows."),
+		ui.Para("This window goes on "+goesOn+". Ctrl-C stops waiting; close the setup window yourself if it stays open."))
+	return true, working(scr, "waiting for the owner enrollment in the other window (Ctrl-C to cancel)", wait)
+}
+
+// setupHere hands the terminal to setup. The child needs the real terminal, and what it prints is not the screen's to keep or to draw
+// again: the screen is left, and the warning is the first thing the user reads there.
+func setupHere(ctx context.Context, rt Runtime, scr *ui.Screen, out io.Writer, argv []string, note string) error {
 	scr.Suspend()
-	defer scr.Resume()
+	if note != "" {
+		ghSay(out, "\n%s", note)
+	}
 	ghSay(out, "\nSetup enrolls you as the owner and prints a TOTP enrollment URI and secret, only on this terminal. Stop any session recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log setup's output.\n")
 	execErr := rt.ExecTTY(ctx, ContainerServe, argv)
 	var waitErr error
 	if scr.FullScreen() { // the screen comes back when this returns, so the secret stays on the terminal until the user has copied it
 		_, waitErr = scr.Prompt("\nPress Enter to return to the installer: ")
 	}
-	if execErr != nil {
-		return fmt.Errorf("setup failed: %w", execErr) // whatever became of the wait
+	scr.Resume() // the page that follows draws nothing on a screen that is still suspended
+	if err := afterSetup(scr, execErr); err != nil {
+		return err // whatever became of the wait
 	}
 	// The owner is enrolled: Ctrl-C or the end of the input at the wait only skips it, and must not report the enrollment as failed.
 	if waitErr != nil && !errors.Is(waitErr, io.EOF) && !errors.Is(waitErr, context.Canceled) {
 		return fmt.Errorf("wait for Enter after setup: %w", waitErr)
 	}
+	return nil
+}
+
+// afterSetup is the page the screen comes back to, so that it is not the question that was asked before setup ran, and the error of a
+// setup that did not end well.
+func afterSetup(scr *ui.Screen, err error) error {
+	if err != nil {
+		scr.Page("Setup did not finish", ui.Para("This run did not see setup finish. If the owner is not enrolled, run suiteward enroll to try again."))
+		return fmt.Errorf("setup failed: %w", err)
+	}
+	scr.Page("Setup finished", ui.Para("The TOTP secret was shown only in the terminal of setup: the installer did not see it, keep it or log it. From now on an approval of this instance needs the code your authenticator shows."))
 	return nil
 }
 

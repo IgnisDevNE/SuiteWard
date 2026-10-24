@@ -827,3 +827,31 @@ func TestAPathThatCannotBeChangedIsAWarningAndTheCopyIsStillRemoved(t *testing.T
 		t.Errorf("the run does not say that the PATH was not changed, why and which folder:\n%s", run.output())
 	}
 }
+
+// ---- the environment ----
+
+func TestAnEnvThatOffersTheCopyWithoutWhatItNeedsIsRefusedBeforeAnythingRuns(t *testing.T) {
+	pc := newPC(t)
+	for name, broken := range map[string]func(s *SelfInstall){
+		"no way to find the program":      func(s *SelfInstall) { s.Executable = nil },
+		"no way to look the name up":      func(s *SelfInstall) { s.LookPath = nil },
+		"no way to rename a file":         func(s *SelfInstall) { s.Rename = nil },
+		"no PATH of the user to change":   func(s *SelfInstall) { s.Path = nil },
+		"nothing at all of what it needs": func(s *SelfInstall) { *s = SelfInstall{} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, "linux")
+			self := pc.self
+			broken(&self)
+			env := h.newEnv()
+			env.Self = &self
+			err := Install(context.Background(), []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath()}, env)
+			if err == nil || !strings.Contains(err.Error(), "copy of the program") {
+				t.Errorf("Install = %v, want a refusal that names the copy of the program", err)
+			}
+			if len(h.f.calls) != 0 {
+				t.Errorf("%d calls of the engine were made before the refusal", len(h.f.calls))
+			}
+		})
+	}
+}

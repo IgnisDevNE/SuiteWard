@@ -1280,12 +1280,14 @@ func runSetup(ctx context.Context, rt Runtime, owner string, checks map[string]s
 	}
 	scr := screenOn(out)
 	window := setupMachine.setupWindow(scr.FullScreen())
-	if err := explainSetup(scr, owner, window != nil); err != nil {
+	// The window closes itself when setup ends on Windows, and Terminal keeps it open, cleared, on macOS.
+	closes := setupMachine.goos == "windows"
+	if err := explainSetup(scr, owner, window != nil, closes); err != nil {
 		return err
 	}
 	note := ""
 	if window != nil {
-		started, err := setupInWindow(ctx, rt, scr, window, argv)
+		started, err := setupInWindow(ctx, rt, scr, window, argv, closes)
 		if started {
 			return afterSetup(scr, err)
 		}
@@ -1326,13 +1328,17 @@ func setupArgv(owner string, checks map[string]string) ([]string, error) {
 
 // explainSetup is the page before setup on a full screen: what happens, and that the installer never holds the secret. It waits for Enter,
 // because the next thing the user sees is setup. Ctrl-C there starts nothing; the end of the input is an Enter, and setup asks again.
-func explainSetup(scr *ui.Screen, owner string, window bool) error {
+func explainSetup(scr *ui.Screen, owner string, window, closes bool) error {
 	if !scr.FullScreen() {
 		return nil
 	}
 	where, prompt := "Setup takes over this terminal, and the installer comes back when you press Enter after it.", "Press Enter to start setup: "
 	if window {
-		where, prompt = "Setup opens in a separate window and this one waits for it. In that window, press Enter after the code is accepted: it clears itself and closes.", "Press Enter to open setup in a new window: "
+		then := "it clears itself."
+		if closes {
+			then = "it clears itself and closes."
+		}
+		where, prompt = "Setup opens in a separate window and this one waits for it. In that window, press Enter after the code is accepted: "+then, "Press Enter to open setup in a new window: "
 	}
 	scr.Page("Enroll the owner",
 		ui.Para(fmt.Sprintf("Next, setup enrolls %s as the owner of this instance, the only account whose approvals count. It shows a TOTP secret once, as text: an otpauth:// link and the same secret in base32. Add it to your authenticator app, by typing the key or pasting the link, then confirm with a code from the app.", owner)),
@@ -1347,15 +1353,19 @@ func explainSetup(scr *ui.Screen, owner string, window bool) error {
 
 // setupInWindow runs setup in a window of its own and waits for the window on a page of the installer. started is false when no window
 // opened, and then setup has not run.
-func setupInWindow(ctx context.Context, rt Runtime, scr *ui.Screen, open windowStarter, argv []string) (started bool, err error) {
+func setupInWindow(ctx context.Context, rt Runtime, scr *ui.Screen, open windowStarter, argv []string, closes bool) (started bool, err error) {
 	name, args := rt.ExecTTYCommand(ContainerServe, argv)
 	wait, err := open(ctx, name, args)
 	if err != nil {
 		return false, err
 	}
+	goesOn := "when setup ends"
+	if closes { // the installer reads the end of the window, which waits for Enter after setup
+		goesOn = "when the setup window closes"
+	}
 	scr.Page("Enroll the owner",
 		ui.Para("Setup is open in another window. Follow it there: add the secret to your authenticator app and enter the code it shows."),
-		ui.Para("This window goes on when setup ends. Ctrl-C stops waiting; close the setup window yourself if it stays open."))
+		ui.Para("This window goes on "+goesOn+". Ctrl-C stops waiting; close the setup window yourself if it stays open."))
 	return true, working(scr, "waiting for the owner enrollment in the other window (Ctrl-C to cancel)", wait)
 }
 
@@ -1363,7 +1373,6 @@ func setupInWindow(ctx context.Context, rt Runtime, scr *ui.Screen, open windowS
 // again: the screen is left, and the warning is the first thing the user reads there.
 func setupHere(ctx context.Context, rt Runtime, scr *ui.Screen, out io.Writer, argv []string, note string) error {
 	scr.Suspend()
-	defer scr.Resume()
 	if note != "" {
 		ghSay(out, "\n%s", note)
 	}

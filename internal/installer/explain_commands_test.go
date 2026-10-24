@@ -293,3 +293,26 @@ func TestTheOtherCommandsOfAHostWithNoSettingsStillOfferBothTiers(t *testing.T) 
 		})
 	}
 }
+
+// ---- the hidden paste of the recovery key ----
+
+// Without --kit a terminal is asked to paste the private key. The page says what to paste and that it is hidden; the key itself is never drawn.
+func TestTheRecoveryKeyOfARestoreIsAskedOnAPageThatSaysWhatToPaste(t *testing.T) {
+	_, identity := testRecoveryKey(t)
+	u := restoreHarness(t)
+	run := newScreenRun(termWidth, termHeight, testInstance+"\n", "\n")
+	env := run.on(u.env())
+	var page frameView
+	env.Term.ReadPassword = func() ([]byte, error) {
+		page = viewOf(t, run.output(), termWidth, termHeight)
+		return []byte(identity), nil
+	}
+	if err := Restore(liveContext(t), u.restoreArgs(aBackup(t, nil)), env); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, run.output())
+	}
+	if !strings.HasPrefix(page.rows[0], "Open the backup") {
+		t.Errorf("the page of the hidden paste is titled %q, want \"Open the backup\"", page.rows[0])
+	}
+	mustSay(t, page, "recovery key of its instance", "last line of the recovery kit", "The input is hidden", "--kit PATH", "Recovery key: the last line of your recovery kit")
+	noIdentityIn(t, "the screen", run.output())
+}

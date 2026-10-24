@@ -78,6 +78,15 @@ type UserPath interface {
 // percentVariable is a reference to an environment variable in an entry of a Path of the expandable kind: %LOCALAPPDATA%.
 var percentVariable = regexp.MustCompile(`%[^%;]+%`)
 
+// pathEnv is the environment that the entries of a user Path are compared with: Windows expands the variables of a Path of the expandable kind
+// (REG_EXPAND_SZ) and takes one of the plain kind as it is written.
+func pathEnv(expand bool, getenv func(string) string) func(string) string {
+	if expand {
+		return getenv
+	}
+	return func(string) string { return "" }
+}
+
 // pathKey is an entry of a PATH value as it is compared: with the variables it names replaced by their value (a terminal reads
 // %LOCALAPPDATA%\SuiteWard\bin as the folder of the copy), without case, which Windows ignores, and without a trailing separator. Only the
 // comparison expands: the value keeps the text of its entries.
@@ -124,7 +133,7 @@ func (s SelfInstall) addToUserPath(dir string, getenv func(string) string) (chan
 	if !found {
 		expand = true
 	}
-	updated, changed := addPathEntry(value, dir, getenv)
+	updated, changed := addPathEntry(value, dir, pathEnv(expand, getenv))
 	if !changed {
 		return false, nil
 	}
@@ -143,7 +152,7 @@ func (s SelfInstall) removeFromUserPath(dir string, getenv func(string) string) 
 	if !found {
 		return false, nil
 	}
-	updated, changed := removePathEntry(value, dir, getenv)
+	updated, changed := removePathEntry(value, dir, pathEnv(expand, getenv))
 	if !changed {
 		return false, nil
 	}
@@ -347,11 +356,11 @@ func askYesNo(ctx context.Context, scr *ui.Screen, question string, def int) (ye
 
 // onUserPath says whether dir is on the user's PATH.
 func (s SelfInstall) onUserPath(dir string, getenv func(string) string) (bool, error) {
-	value, _, found, err := s.Path.Read()
+	value, expand, found, err := s.Path.Read()
 	if err != nil || !found {
 		return false, err
 	}
-	_, there := removePathEntry(value, dir, getenv)
+	_, there := removePathEntry(value, dir, pathEnv(expand, getenv))
 	return there, nil
 }
 

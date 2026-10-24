@@ -285,3 +285,29 @@ func TestPlainSetupIsUnchangedOnWindows(t *testing.T) {
 		t.Errorf("plain output = %q after %d windows; want %q and none", out.String(), len(win.started), want)
 	}
 }
+
+// Through the whole command: the window runs the command line of the real runtime (its connection flag included), nothing goes through
+// the terminal of the installer, and the page the command ends on says that the owner is enrolled, once.
+func TestEnrollOnWindowsRunsSetupInAWindowWithTheEnginesCommand(t *testing.T) {
+	h := enrollHarness(t, statusNoOwner)
+	win := newFakeWindow()
+	withSetupMachine(t, "windows", nil, win.start)
+	c := newTermConsole(&bytes.Buffer{})
+	env := h.newEnv()
+	env.Term = Terminal{In: strings.NewReader("\n\n"), Out: &h.out, IsTerminal: true, ReadPassword: func() ([]byte, error) { return nil, nil }}
+	env.OpenScreen = c.open
+	var stderr bytes.Buffer
+	if code := Main(liveContext(t), []string{"enroll", "--settings", h.settingsPath(), "--owner", "alice"}, env, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	if len(h.f.tty) != 0 || len(win.started) != 1 {
+		t.Fatalf("setup took the terminal %d times and opened %d windows; want none and one", len(h.f.tty), len(win.started))
+	}
+	want := "--connection pm exec -it suiteward /suiteward setup --owner alice --test-check Acme/api=CI / test --test-check Acme/web=CI / web"
+	if got := win.started[0].name + " " + strings.Join(win.started[0].args, " "); got != "podman "+want {
+		t.Errorf("the window ran %q, want %q", got, "podman "+want)
+	}
+	if tail := c.tail(); strings.Count(tail, "alice is enrolled as the owner.") != 1 {
+		t.Errorf("the scrollback must say once that the owner is enrolled:\n%s", tail)
+	}
+}

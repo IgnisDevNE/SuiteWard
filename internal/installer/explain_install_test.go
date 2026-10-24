@@ -83,7 +83,7 @@ func TestDockerKeepsItsWarningAndTheTypedYesOnAPageOfItsOwn(t *testing.T) {
 	if !strings.HasPrefix(v.rows[0], "Docker is not recommended") {
 		t.Errorf("the page of the Docker confirmation is titled %q", v.rows[0])
 	}
-	mustSay(t, v, "This is a confirmation", "by typing yes", "a rootful daemon", "named volumes", "Type yes to use Docker anyway")
+	mustSay(t, v, "This is a confirmation", "by typing yes", "daemon runs as root", "in volumes", "Type yes to use Docker anyway")
 	if !strings.Contains(run.output(), "Using Docker") {
 		t.Errorf("the install did not go on with Docker after the typed yes:\n%s", run.output())
 	}
@@ -96,6 +96,25 @@ func TestDockerKeepsItsWarningAndTheTypedYesOnAPageOfItsOwn(t *testing.T) {
 		t.Fatalf("Install = %v, want the refusal", err)
 	}
 	h.mustNotMutate()
+}
+
+// The typed yes must be an informed one at the smallest window too: when the page does not fit, the explanation goes and the warning stays,
+// with the two risks in it, above the prompt.
+func TestTheDockerWarningIsStillThereAtTheSmallestWindow(t *testing.T) {
+	h := dockerHarness(t, "linux")
+	run := newScreenRun(60, 20, "2\n", "yes\n", "\n")
+	args := installArgs(h, "--image", testImage, "--http-port", "27081", "--mcp-port", "27091", "--github", "no", "--tier", "co-located")
+	if err := Install(liveContext(t), args, run.on(h.newEnv())); err != nil {
+		t.Fatalf("Install: %v\n%s", err, run.output())
+	}
+	v := run.question(t, 1)
+	if !strings.HasPrefix(v.rows[0], "Docker is not recommended") {
+		t.Errorf("the page of the Docker confirmation is titled %q", v.rows[0])
+	}
+	mustSay(t, v, "daemon runs as root", "in volumes", "Type yes to use Docker anyway")
+	if at, prompt := strings.Index(v.text(), "daemon runs as root"), strings.Index(v.text(), "Type yes to use Docker anyway"); at < 0 || at > prompt {
+		t.Errorf("the risks are not above the prompt:\n%s", v.dump())
+	}
 }
 
 func TestThePortsAreExplainedOnOnePageBeforeTheTwoQuestions(t *testing.T) {

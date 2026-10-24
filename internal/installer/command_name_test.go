@@ -35,11 +35,11 @@ func aProgram(t *testing.T, dir, name string) string {
 // realPath is the path commandName shows for an executable: with its links resolved.
 func realPath(t *testing.T, path string) string {
 	t.Helper()
-	real, err := filepath.EvalSymlinks(path)
+	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return real
+	return resolved
 }
 
 func running(path string) func() (string, error) { return func() (string, error) { return path, nil } }

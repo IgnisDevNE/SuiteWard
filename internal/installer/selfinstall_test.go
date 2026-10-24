@@ -166,7 +166,7 @@ func TestTheCopyLivesInTheLocalApplicationDataOfTheUser(t *testing.T) {
 
 func readText(t *testing.T, path string) string {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path))
 	if errors.Is(err, os.ErrNotExist) {
 		return "(no such file)"
 	}
@@ -204,7 +204,7 @@ func heldRename(target string) func(string, string) error {
 	held := true
 	return func(oldpath, newpath string) error {
 		if held && newpath == target {
-			return errors.New("rename: Access is denied.")
+			return errors.New("rename: access is denied")
 		}
 		if oldpath == target {
 			held = false
@@ -213,98 +213,100 @@ func heldRename(target string) func(string, string) error {
 	}
 }
 
-func TestTheCopyIsWrittenWholeOrNotAtAll(t *testing.T) {
-	t.Run("into a folder that is not there yet", func(t *testing.T) {
-		src := filepath.Join(t.TempDir(), "suiteward_v0.4.0_windows_amd64.exe")
-		writeText(t, src, "NEW BUILD")
-		dir := filepath.Join(t.TempDir(), "SuiteWard", "bin")
-		got, err := (SelfInstall{Rename: os.Rename}).copyTo(src, dir)
-		if want := filepath.Join(dir, "suiteward.exe"); err != nil || got != want {
-			t.Fatalf("copyTo = %q, %v; want %q", got, err, want)
+// copyOf is the one copy of a test: the program at src, a folder with the copy in it, and the path of the copy.
+func copyOf(t *testing.T, installed string) (src, dir, target string) {
+	t.Helper()
+	src, dir = filepath.Join(t.TempDir(), "x.exe"), t.TempDir()
+	target = filepath.Join(dir, "suiteward.exe")
+	writeText(t, src, "NEW BUILD")
+	if installed != "" {
+		writeText(t, target, installed)
+	}
+	return src, dir, target
+}
+
+func TestTheCopyIsWrittenIntoAFolderThatIsNotThereYet(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "suiteward_v0.4.0_windows_amd64.exe")
+	writeText(t, src, "NEW BUILD")
+	dir := filepath.Join(t.TempDir(), "SuiteWard", "bin")
+	got, err := (SelfInstall{Rename: os.Rename}).copyTo(src, dir)
+	if want := filepath.Join(dir, "suiteward.exe"); err != nil || got != want {
+		t.Fatalf("copyTo = %q, %v; want %q", got, err, want)
+	}
+	if readText(t, got) != "NEW BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe"}) {
+		t.Errorf("the folder holds %v and the copy %q, want only the copy, whole", names(t, dir), readText(t, got))
+	}
+}
+
+func TestTheCopyReplacesACopyThatNothingRuns(t *testing.T) {
+	src, dir, target := copyOf(t, "OLD BUILD")
+	if _, err := (SelfInstall{Rename: os.Rename}).copyTo(src, dir); err != nil {
+		t.Fatal(err)
+	}
+	if readText(t, target) != "NEW BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe"}) {
+		t.Errorf("the folder holds %v after the copy was replaced", names(t, dir))
+	}
+}
+
+func TestTheCopyPutsAsideACopyThatARunningProgramHolds(t *testing.T) {
+	src, dir, target := copyOf(t, "OLD BUILD")
+	writeText(t, target+".old", "OLDER BUILD, left by an earlier run")
+	if _, err := (SelfInstall{Rename: heldRename(target)}).copyTo(src, dir); err != nil {
+		t.Fatal(err)
+	}
+	if readText(t, target) != "NEW BUILD" || readText(t, target+".old") != "OLD BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe", "suiteward.exe.old"}) {
+		t.Errorf("the folder holds %v: the copy %q, the one aside %q", names(t, dir), readText(t, target), readText(t, target+".old"))
+	}
+}
+
+func TestACopyAsideThatCannotBeRemovedStopsTheCopyAndChangesNothing(t *testing.T) {
+	src, dir, target := copyOf(t, "OLD BUILD")
+	writeText(t, filepath.Join(target+".old", "held"), "a directory cannot be removed while it holds a file")
+	_, err := (SelfInstall{Rename: heldRename(target)}).copyTo(src, dir)
+	if err == nil || !strings.Contains(err.Error(), "suiteward.exe.old") {
+		t.Fatalf("err = %v, want one that names the copy aside", err)
+	}
+	if readText(t, target) != "OLD BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe", "suiteward.exe.old"}) {
+		t.Errorf("the folder holds %v, the copy %q: nothing may change", names(t, dir), readText(t, target))
+	}
+}
+
+func TestACopyThatCannotBeRenamedAwayStopsTheCopyAndLeavesNoTemporaryFile(t *testing.T) {
+	src, dir, target := copyOf(t, "OLD BUILD")
+	refuse := func(oldpath, newpath string) error { return errors.New("rename: access is denied") }
+	_, err := (SelfInstall{Rename: refuse}).copyTo(src, dir)
+	if err == nil || !strings.Contains(err.Error(), "access is denied") {
+		t.Fatalf("err = %v, want the refusal", err)
+	}
+	if readText(t, target) != "OLD BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe"}) {
+		t.Errorf("the folder holds %v, the copy %q: the temporary file must be gone and the copy as it was", names(t, dir), readText(t, target))
+	}
+}
+
+func TestTheOldCopyGoesBackWhenTheNewOneCannotTakeItsPlace(t *testing.T) {
+	src, dir, target := copyOf(t, "OLD BUILD")
+	rename := func(oldpath, newpath string) error {
+		if newpath == target && oldpath != target+".old" {
+			return errors.New("rename: access is denied") // the new file never gets there
 		}
-		if readText(t, got) != "NEW BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe"}) {
-			t.Errorf("the folder holds %v and the copy %q, want only the copy, whole", names(t, dir), readText(t, got))
-		}
-	})
-	t.Run("over a copy that nothing runs", func(t *testing.T) {
-		src, dir := filepath.Join(t.TempDir(), "x.exe"), t.TempDir()
-		writeText(t, src, "NEW BUILD")
-		writeText(t, filepath.Join(dir, "suiteward.exe"), "OLD BUILD")
-		if _, err := (SelfInstall{Rename: os.Rename}).copyTo(src, dir); err != nil {
-			t.Fatal(err)
-		}
-		if readText(t, filepath.Join(dir, "suiteward.exe")) != "NEW BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe"}) {
-			t.Errorf("the folder holds %v after the copy was replaced", names(t, dir))
-		}
-	})
-	t.Run("over a copy that a running program holds", func(t *testing.T) {
-		src, dir := filepath.Join(t.TempDir(), "x.exe"), t.TempDir()
-		target := filepath.Join(dir, "suiteward.exe")
-		writeText(t, src, "NEW BUILD")
-		writeText(t, target, "OLD BUILD")
-		writeText(t, target+".old", "OLDER BUILD, left by an earlier run")
-		if _, err := (SelfInstall{Rename: heldRename(target)}).copyTo(src, dir); err != nil {
-			t.Fatal(err)
-		}
-		if readText(t, target) != "NEW BUILD" || readText(t, target+".old") != "OLD BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe", "suiteward.exe.old"}) {
-			t.Errorf("the folder holds %v: the copy %q, the one aside %q", names(t, dir), readText(t, target), readText(t, target+".old"))
-		}
-	})
-	t.Run("a copy aside that cannot be removed", func(t *testing.T) {
-		src, dir := filepath.Join(t.TempDir(), "x.exe"), t.TempDir()
-		target := filepath.Join(dir, "suiteward.exe")
-		writeText(t, src, "NEW BUILD")
-		writeText(t, target, "OLD BUILD")
-		writeText(t, filepath.Join(target+".old", "held"), "a directory cannot be removed while it holds a file")
-		_, err := (SelfInstall{Rename: heldRename(target)}).copyTo(src, dir)
-		if err == nil || !strings.Contains(err.Error(), "suiteward.exe.old") {
-			t.Fatalf("err = %v, want one that names the copy aside", err)
-		}
-		if readText(t, target) != "OLD BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe", "suiteward.exe.old"}) {
-			t.Errorf("the folder holds %v, the copy %q: nothing may change", names(t, dir), readText(t, target))
-		}
-	})
-	t.Run("a copy that cannot be renamed away", func(t *testing.T) {
-		src, dir := filepath.Join(t.TempDir(), "x.exe"), t.TempDir()
-		target := filepath.Join(dir, "suiteward.exe")
-		writeText(t, src, "NEW BUILD")
-		writeText(t, target, "OLD BUILD")
-		refuse := func(oldpath, newpath string) error { return errors.New("rename: Access is denied.") }
-		_, err := (SelfInstall{Rename: refuse}).copyTo(src, dir)
-		if err == nil || !strings.Contains(err.Error(), "Access is denied") {
-			t.Fatalf("err = %v, want the refusal", err)
-		}
-		if readText(t, target) != "OLD BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe"}) {
-			t.Errorf("the folder holds %v, the copy %q: the temporary file must be gone and the copy as it was", names(t, dir), readText(t, target))
-		}
-	})
-	t.Run("a copy that goes back when the new one cannot take its place", func(t *testing.T) {
-		src, dir := filepath.Join(t.TempDir(), "x.exe"), t.TempDir()
-		target := filepath.Join(dir, "suiteward.exe")
-		writeText(t, src, "NEW BUILD")
-		writeText(t, target, "OLD BUILD")
-		rename := func(oldpath, newpath string) error {
-			if newpath == target && oldpath != target+".old" {
-				return errors.New("rename: Access is denied.") // the new file never gets there
-			}
-			return os.Rename(oldpath, newpath)
-		}
-		if _, err := (SelfInstall{Rename: rename}).copyTo(src, dir); err == nil {
-			t.Fatal("copyTo succeeded although the new copy could not take its place")
-		}
-		if readText(t, target) != "OLD BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe"}) {
-			t.Errorf("the folder holds %v, the copy %q: the old copy must be back, alone", names(t, dir), readText(t, target))
-		}
-	})
-	t.Run("a program that cannot be read", func(t *testing.T) {
-		dir := filepath.Join(t.TempDir(), "bin")
-		if _, err := (SelfInstall{Rename: os.Rename}).copyTo(filepath.Join(t.TempDir(), "gone.exe"), dir); err == nil {
-			t.Error("copyTo succeeded without a program to copy")
-		}
-		if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
-			t.Errorf("the folder holds %v after a copy that failed", names(t, dir))
-		}
-	})
+		return os.Rename(oldpath, newpath)
+	}
+	if _, err := (SelfInstall{Rename: rename}).copyTo(src, dir); err == nil {
+		t.Fatal("copyTo succeeded although the new copy could not take its place")
+	}
+	if readText(t, target) != "OLD BUILD" || !slices.Equal(names(t, dir), []string{"suiteward.exe"}) {
+		t.Errorf("the folder holds %v, the copy %q: the old copy must be back, alone", names(t, dir), readText(t, target))
+	}
+}
+
+func TestAProgramThatCannotBeReadIsNotCopied(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "bin")
+	if _, err := (SelfInstall{Rename: os.Rename}).copyTo(filepath.Join(t.TempDir(), "gone.exe"), dir); err == nil {
+		t.Error("copyTo succeeded without a program to copy")
+	}
+	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
+		t.Errorf("the folder holds %v after a copy that failed", names(t, dir))
+	}
 }
 
 // ---- the offer ----
@@ -806,7 +808,7 @@ func TestACopyThatARunningProgramHoldsIsRenamedAsideAndTheRunSaysSo(t *testing.T
 	if strings.Contains(pc.path.value, pc.dir()) {
 		t.Errorf("the PATH still holds the folder: %q", pc.path.value)
 	}
-	if out := compact(run.output()); !strings.Contains(out, compact("renamed to "+pc.target()+".old")) || !strings.Contains(out, "nextrun") {
+	if out := compact(run.console.tail()); !strings.Contains(out, compact("renamed to "+pc.target()+".old")) || !strings.Contains(out, "nextrun") {
 		t.Errorf("the run does not say where the copy went and that the next run removes it:\n%s", run.output())
 	}
 }
@@ -821,7 +823,7 @@ func TestAPathThatCannotBeChangedIsAWarningAndTheCopyIsStillRemoved(t *testing.T
 	if _, err := os.Stat(pc.target()); err == nil {
 		t.Error("the copy was kept because the PATH could not be changed")
 	}
-	if out := compact(run.output()); !strings.Contains(out, "accessdenied") || !strings.Contains(out, compact(pc.dir())) {
+	if out := compact(run.console.tail()); !strings.Contains(out, "accessdenied") || !strings.Contains(out, compact(pc.dir())) {
 		t.Errorf("the run does not say that the PATH was not changed, why and which folder:\n%s", run.output())
 	}
 }

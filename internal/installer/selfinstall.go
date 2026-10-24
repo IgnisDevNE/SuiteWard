@@ -33,8 +33,8 @@ func commandName(goos string, executable func() (string, error), lookPath func(s
 	if found, err := lookPath(selfName); err == nil && sameFile(found, exe) { // exec.ErrDot is an error: a shell does not run a file of the current folder by its name
 		return selfName
 	}
-	if real, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = real
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
 	}
 	name := quoteArg(exe)
 	if goos == "windows" && name != exe {
@@ -275,5 +275,97 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir string)
 	return d
 }
 
-// offerRemoveCopy is the end of a purge on a full screen of a PC that has the copy of the program or its entry on the PATH: it asks whether to remove them.
-func offerRemoveCopy(ctx context.Context, env Env) {}
+// onUserPath says whether dir is on the user's PATH.
+func (s SelfInstall) onUserPath(dir string) (bool, error) {
+	value, _, found, err := s.Path.Read()
+	if err != nil || !found {
+		return false, err
+	}
+	_, there := removePathEntry(value, dir)
+	return there, nil
+}
+
+// offerRemoveCopy is the end of a purge on a full screen of a PC that has the copy of the program or its entry on the PATH: it asks whether to
+// remove them, unless the run was told not to ask (--yes). The default is No. What cannot be removed is a warning, because the purge it ends has worked.
+func offerRemoveCopy(ctx context.Context, env Env, unattended bool) {
+	d, s, scr := env.Deps, env.Self, screenOn(env.Term.Out)
+	if unattended || s == nil || !scr.FullScreen() || ctx.Err() != nil { // --yes: told not to ask, so the copy and the PATH are removed only by a person who answers
+		return
+	}
+	dir, err := s.folder(d)
+	if err != nil {
+		return // this user has no folder of local data, so no copy of the program was ever put there
+	}
+	target := filepath.Join(dir, selfFile)
+	there := func(path string) bool { _, err := os.Stat(path); return err == nil }
+	hasCopy := there(target) || there(target+staleSuffix)
+	onPath, err := s.onUserPath(dir)
+	if err != nil {
+		scr.Warn("The PATH of this user could not be read (%v), so whether it holds %s is not known.\n", err, dir)
+	}
+	if !hasCopy && !onPath {
+		return
+	}
+	var found []ui.KV
+	if hasCopy {
+		found = append(found, ui.KV{Key: "Copy", Value: target})
+	}
+	if onPath {
+		found = append(found, ui.KV{Key: "User PATH entry", Value: dir})
+	}
+	scr.Page("Remove the suiteward command",
+		ui.Para("An install of this PC put the suiteward command where a terminal finds it: a copy of the installer, and its folder on your user PATH. The instance itself is gone."),
+		ui.Fields(found...),
+		ui.Para("A copy that a program is running is renamed aside, and the next run of the installer removes it."))
+	if picked, err := scr.Select("Remove the copy and its PATH entry?", yesNo, 1); err != nil || picked != 0 {
+		return // an interrupt, an input that ended or a No: nothing is removed
+	}
+	if onPath {
+		s.removeFromPath(scr, dir)
+	}
+	if hasCopy {
+		s.removeCopy(scr, dir)
+	}
+	_ = os.Remove(dir) // only when it is empty: the folder of the copy has nothing else in it
+}
+
+// removeFromPath takes dir off the user's PATH and tells the programs that run.
+func (s SelfInstall) removeFromPath(scr *ui.Screen, dir string) {
+	changed, err := s.removeFromUserPath(dir)
+	if err != nil {
+		scr.Warn("The folder %s was not removed from your PATH: %v. Remove it in Settings, Environment Variables.\n", dir, err)
+		return
+	}
+	if changed {
+		if err := s.Path.Announce(); err != nil {
+			scr.Warn("Your PATH was changed, but the programs that run were not told (%v): a new terminal may need you to sign out and in again.\n", err)
+		}
+		scr.Say("Removed %s from your PATH.\n", dir)
+	}
+}
+
+// removeCopy deletes the copy, and the one that an earlier run put aside. A copy that a running program holds cannot be deleted, but it can be
+// renamed: it goes aside, where the next run removes it, or the person does.
+func (s SelfInstall) removeCopy(scr *ui.Screen, dir string) {
+	target := filepath.Join(dir, selfFile)
+	stale := target + staleSuffix
+	err := os.Remove(target)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) { // held
+		if rmErr := os.Remove(stale); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+			scr.Warn("%s is in use (%v) and so is %s, where it would go: close the terminals that run suiteward and delete both by hand.\n", target, err, stale)
+			return
+		}
+		if renameErr := s.Rename(target, stale); renameErr != nil {
+			scr.Warn("%s could not be removed (%v) nor renamed: close the terminals that run suiteward and delete it by hand.\n", target, renameErr)
+			return
+		}
+		scr.Say("%s is in use, so it was renamed to %s: the next run of the installer removes it, or you can delete it by hand.\n", target, stale)
+		return
+	}
+	if err == nil {
+		scr.Say("Removed %s.\n", target)
+	}
+	if rmErr := os.Remove(stale); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+		scr.Warn("%s could not be removed (%v): delete it by hand.\n", stale, rmErr)
+	}
+}

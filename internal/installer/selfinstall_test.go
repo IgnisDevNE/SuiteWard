@@ -35,7 +35,7 @@ func TestAddingAFolderToAPathValue(t *testing.T) {
 		{"only a folder with the same name in front is another folder", `C:\Other\` + folderOnPath, `C:\Other\` + folderOnPath + `;` + folderOnPath, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got, changed := addPathEntry(c.path, folderOnPath)
+			got, changed := addPathEntry(c.path, folderOnPath, noEnv)
 			if got != c.want || changed != c.changed {
 				t.Errorf("addPathEntry(%q) = %q, %v; want %q, %v", c.path, got, changed, c.want, c.changed)
 			}
@@ -62,7 +62,7 @@ func TestRemovingAFolderFromAPathValue(t *testing.T) {
 		{"a folder that only starts with it", folderOnPath + `2`, folderOnPath + `2`, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got, changed := removePathEntry(c.path, folderOnPath)
+			got, changed := removePathEntry(c.path, folderOnPath, noEnv)
 			if got != c.want || changed != c.changed {
 				t.Errorf("removePathEntry(%q) = %q, %v; want %q, %v", c.path, got, changed, c.want, c.changed)
 			}
@@ -98,22 +98,22 @@ func TestTheUserPathKeepsItsKindWhenTheFolderIsAddedOrRemoved(t *testing.T) {
 	for _, expand := range []bool{true, false} {
 		p := &fakeUserPath{value: `C:\A;C:\B`, expand: expand, found: true}
 		self := SelfInstall{Path: p}
-		if changed, err := self.addToUserPath(folderOnPath); err != nil || !changed {
+		if changed, err := self.addToUserPath(folderOnPath, noEnv); err != nil || !changed {
 			t.Fatalf("expand=%v: addToUserPath = %v, %v", expand, changed, err)
 		}
 		if p.value != `C:\A;C:\B;`+folderOnPath || p.expand != expand {
 			t.Errorf("expand=%v: the Path is %q (expand %v) after the add", expand, p.value, p.expand)
 		}
-		if changed, err := self.addToUserPath(folderOnPath); err != nil || changed || len(p.writes) != 1 {
+		if changed, err := self.addToUserPath(folderOnPath, noEnv); err != nil || changed || len(p.writes) != 1 {
 			t.Errorf("expand=%v: a second add = %v, %v after %d writes; want no change", expand, changed, err, len(p.writes))
 		}
-		if changed, err := self.removeFromUserPath(folderOnPath); err != nil || !changed {
+		if changed, err := self.removeFromUserPath(folderOnPath, noEnv); err != nil || !changed {
 			t.Fatalf("expand=%v: removeFromUserPath = %v, %v", expand, changed, err)
 		}
 		if p.value != `C:\A;C:\B` || p.expand != expand {
 			t.Errorf("expand=%v: the Path is %q (expand %v) after the removal", expand, p.value, p.expand)
 		}
-		if changed, err := self.removeFromUserPath(folderOnPath); err != nil || changed || len(p.writes) != 2 {
+		if changed, err := self.removeFromUserPath(folderOnPath, noEnv); err != nil || changed || len(p.writes) != 2 {
 			t.Errorf("expand=%v: a second removal = %v, %v after %d writes; want no change", expand, changed, err, len(p.writes))
 		}
 	}
@@ -121,27 +121,27 @@ func TestTheUserPathKeepsItsKindWhenTheFolderIsAddedOrRemoved(t *testing.T) {
 
 func TestAUserWithoutAPathGetsOneOfTheExpandableKind(t *testing.T) {
 	p := &fakeUserPath{}
-	if changed, err := (SelfInstall{Path: p}).addToUserPath(folderOnPath); err != nil || !changed {
+	if changed, err := (SelfInstall{Path: p}).addToUserPath(folderOnPath, noEnv); err != nil || !changed {
 		t.Fatalf("addToUserPath = %v, %v", changed, err)
 	}
 	if p.value != folderOnPath || !p.expand {
 		t.Errorf("the new Path is %q (expand %v), want the folder, expandable as Windows makes it", p.value, p.expand)
 	}
-	if changed, err := (SelfInstall{Path: &fakeUserPath{}}).removeFromUserPath(folderOnPath); err != nil || changed {
+	if changed, err := (SelfInstall{Path: &fakeUserPath{}}).removeFromUserPath(folderOnPath, noEnv); err != nil || changed {
 		t.Errorf("removeFromUserPath of no Path = %v, %v; want nothing to do", changed, err)
 	}
 }
 
 func TestAFailedReadOrWriteOfTheUserPathChangesNothingAndSaysSo(t *testing.T) {
 	read := &fakeUserPath{value: `C:\A`, found: true, readErr: errors.New("registry: access denied")}
-	if _, err := (SelfInstall{Path: read}).addToUserPath(folderOnPath); err == nil || !strings.Contains(err.Error(), "access denied") || len(read.writes) != 0 {
+	if _, err := (SelfInstall{Path: read}).addToUserPath(folderOnPath, noEnv); err == nil || !strings.Contains(err.Error(), "access denied") || len(read.writes) != 0 {
 		t.Errorf("a failed read: err = %v after %d writes, want the error and no write", err, len(read.writes))
 	}
 	write := &fakeUserPath{value: `C:\A`, found: true, writeErr: errors.New("registry: key is locked")}
-	if _, err := (SelfInstall{Path: write}).addToUserPath(folderOnPath); err == nil || !strings.Contains(err.Error(), "key is locked") {
+	if _, err := (SelfInstall{Path: write}).addToUserPath(folderOnPath, noEnv); err == nil || !strings.Contains(err.Error(), "key is locked") {
 		t.Errorf("a failed write: err = %v, want the error", err)
 	}
-	if _, err := (SelfInstall{Path: write}).removeFromUserPath(`C:\A`); err == nil || !strings.Contains(err.Error(), "key is locked") {
+	if _, err := (SelfInstall{Path: write}).removeFromUserPath(`C:\A`, noEnv); err == nil || !strings.Contains(err.Error(), "key is locked") {
 		t.Errorf("a failed removal: err = %v, want the error", err)
 	}
 }
@@ -499,10 +499,10 @@ func checkACopyThatWasAcceptedBy(t *testing.T, answer string) {
 	if got := o.row("Command"); !strings.Contains(got, pc.target()) || !strings.Contains(got, "new terminals") {
 		t.Errorf("the Command row says %q, want the copy and that new terminals have suiteward", got)
 	}
-	if got, want := o.row("This terminal (PowerShell)"), `$env:Path += ";`+pc.dir()+`"`; got != want {
+	if got, want := o.row("This terminal (PowerShell)"), `$env:Path += ';`+pc.dir()+`'`; got != want {
 		t.Errorf("the This terminal (PowerShell) row says %q, want the line to run in PowerShell: %q", got, want)
 	}
-	if !slices.Contains(strings.Split(o.run.console.tail(), "\n"), `$env:Path += ";`+pc.dir()+`"`) {
+	if !slices.Contains(strings.Split(o.run.console.tail(), "\n"), `$env:Path += ';`+pc.dir()+`'`) {
 		t.Errorf("the scrollback has no line that is exactly the command for this terminal:\n%s", o.run.console.tail())
 	}
 	if o.d.Command != "suiteward" || o.d.command() != "suiteward" {
@@ -757,6 +757,21 @@ func installOnPC(t *testing.T, pc *aPC, stdin string, extra ...string) (*harness
 	return h, c, err
 }
 
+// The line for this terminal is run by PowerShell, in a string that does not expand: a $ or a backtick in the folder is text, and a quote
+// of the folder is doubled, so that the line does what it says whatever the name of the user.
+func TestTheLineForThisTerminalDoesNotExpandWhatTheFolderHolds(t *testing.T) {
+	pc := newPC(t)
+	pc.local = filepath.Join(pc.local, "me$HOME`whoami`'s")
+	o := pc.offer(false, "\n")
+	want := `$env:Path += ';` + strings.ReplaceAll(pc.dir(), "'", "''") + `'`
+	if !strings.Contains(want, "me$HOME`whoami`''s") {
+		t.Fatalf("the folder lost what the test gives it: %q", want)
+	}
+	if got := o.row("This terminal (PowerShell)"); got != want {
+		t.Errorf("the line for this terminal is %q, want %q", got, want)
+	}
+}
+
 func TestTheSummaryOfAnInstallOffersTheCopyAndSaysWhatToRunInThisTerminal(t *testing.T) {
 	pc := newPC(t)
 	h, c, err := installOnPC(t, pc, "\n\n1\n")
@@ -767,13 +782,13 @@ func TestTheSummaryOfAnInstallOffersTheCopyAndSaysWhatToRunInThisTerminal(t *tes
 	if readText(t, pc.target()) != "NEW BUILD" || !strings.HasSuffix(pc.path.value, ";"+pc.dir()) {
 		t.Fatalf("the program was not copied or the PATH not changed (%q): %s", pc.path.value, tail)
 	}
-	for _, want := range []string{"Command: " + pc.target(), `This terminal (PowerShell): $env:Path += ";` + pc.dir() + `"`} {
+	for _, want := range []string{"Command: " + pc.target(), `This terminal (PowerShell): $env:Path += ';` + pc.dir() + `'`} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("the scrollback lacks %q:\n%s", want, tail)
 		}
 	}
 	// The line for this terminal is a line of its own in the scrollback, to copy as it is.
-	if !slices.Contains(strings.Split(tail, "\n"), `$env:Path += ";`+pc.dir()+`"`) {
+	if !slices.Contains(strings.Split(tail, "\n"), `$env:Path += ';`+pc.dir()+`'`) {
 		t.Errorf("the scrollback has no line that is exactly the command for this terminal:\n%s", tail)
 	}
 	// What the summary tells the person to run after the copy is the command of a new terminal.
@@ -1174,5 +1189,78 @@ func TestTheOfferDefaultsToNoWhereAnotherSuitewardWouldShadowTheCopy(t *testing.
 	}
 	if _, err := os.Stat(pc.target()); err == nil || len(pc.path.writes) != 0 || len(o.rows) != 0 || o.d.Command != swCmd {
 		t.Errorf("Enter copied the program or changed the PATH (%v, %d writes, rows %v)", err, len(pc.path.writes), o.rows)
+	}
+}
+
+// noEnv is the environment of a test whose PATH entries name no variable.
+func noEnv(string) string { return "" }
+
+// ---- an entry that names the folder by a variable ----
+
+// A Path of the expandable kind may hold the folder as %LOCALAPPDATA%\SuiteWard\bin, which a terminal reads as the folder that this program
+// adds. It is the same folder: it is not added a second time, it is taken off by a purge, and the text of the value stays as it was stored.
+func TestAnEntryThatNamesTheFolderByAVariableIsTheSameFolder(t *testing.T) {
+	const named = `%LOCALAPPDATA%\SuiteWard\bin`
+	for _, entry := range []string{named, `%localappdata%\suiteward\BIN\`} {
+		if got, changed := addPathEntry(`C:\A;`+entry, folderOnPath, localAppData); got != `C:\A;`+entry || changed {
+			t.Errorf("addPathEntry with the entry %q = %q, %v; want it left as it is", entry, got, changed)
+		}
+		if got, changed := removePathEntry(`%SystemRoot%\system32;`+entry+`;C:\B`, folderOnPath, localAppData); got != `%SystemRoot%\system32;C:\B` || !changed {
+			t.Errorf("removePathEntry with the entry %q = %q, %v; want the other entries as they were stored", entry, got, changed)
+		}
+	}
+	// A variable that is not defined stays as it is written: that entry is another folder.
+	other := `%NOWHERE%\SuiteWard\bin`
+	if got, changed := addPathEntry(other, folderOnPath, localAppData); got != other+";"+folderOnPath || !changed {
+		t.Errorf("addPathEntry with an undefined variable = %q, %v; want the folder added", got, changed)
+	}
+}
+
+// localAppData is the environment of a test whose folder is under C:\Users\me\AppData\Local.
+func localAppData(name string) string {
+	if strings.EqualFold(name, "LOCALAPPDATA") { // a Windows variable has no case
+		return `C:\Users\me\AppData\Local`
+	}
+	return ""
+}
+
+// Windows expands the variables of a Path of the expandable kind (REG_EXPAND_SZ) and takes one of the plain kind (REG_SZ) as it is written,
+// so that %LOCALAPPDATA%\SuiteWard\bin there is not the folder of the copy: it is not looked for, and the folder is added.
+func TestAPathOfThePlainKindIsNotExpandedWhenTheFolderIsLookedFor(t *testing.T) {
+	const named = `%LOCALAPPDATA%\SuiteWard\bin`
+	for _, expand := range []bool{true, false} {
+		p := &fakeUserPath{value: `C:\A;` + named, expand: expand, found: true}
+		self := SelfInstall{Path: p}
+		if there, err := self.onUserPath(folderOnPath, localAppData); err != nil || there != expand {
+			t.Errorf("expand=%v: onUserPath = %v, %v; want %v", expand, there, err, expand)
+		}
+		changed, err := self.addToUserPath(folderOnPath, localAppData)
+		if want := `C:\A;` + named + `;` + folderOnPath; err != nil || changed == expand || (!expand && p.value != want) {
+			t.Errorf("expand=%v: addToUserPath = %v, %v and the PATH %q; want it added only to the plain kind: %q", expand, changed, err, p.value, want)
+		}
+	}
+	p := &fakeUserPath{value: named, expand: false, found: true}
+	if changed, err := (SelfInstall{Path: p}).removeFromUserPath(folderOnPath, localAppData); err != nil || changed {
+		t.Errorf("removeFromUserPath of the plain kind = %v, %v; want the entry of that odd name left", changed, err)
+	}
+}
+
+func TestAnAcceptedCopyDoesNotAddAFolderThatThePathNamesByAVariable(t *testing.T) {
+	pc := newPC(t)
+	pc.path.value = `C:\Windows\system32;%LOCALAPPDATA%\SuiteWard\bin;C:\Tools`
+	pc.offer(false, "\n")
+	if readText(t, pc.target()) != "NEW BUILD" || len(pc.path.writes) != 0 || pc.path.announced != 0 {
+		t.Errorf("the PATH was written (%q, %d writes, announced %d times), want the entry that is there left as it is", pc.path.value, len(pc.path.writes), pc.path.announced)
+	}
+}
+
+func TestAPurgeRemovesTheEntryThatNamesTheFolderByAVariable(t *testing.T) {
+	pc := newPC(t).installed()
+	pc.path.value = `%SystemRoot%\system32;%LOCALAPPDATA%\SuiteWard\bin;C:\Tools`
+	if run, err := purgeOn(t, pc, []string{testInstance + "\n", "1\n", "\n"}, "--purge"); err != nil {
+		t.Fatalf("Uninstall: %v\n%s", err, run.output())
+	}
+	if want := `%SystemRoot%\system32;C:\Tools`; pc.path.value != want || pc.path.announced != 1 {
+		t.Errorf("the PATH is %q (announced %d times), want %q announced once", pc.path.value, pc.path.announced, want)
 	}
 }

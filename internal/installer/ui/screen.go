@@ -135,7 +135,7 @@ type Screen struct {
 
 	full, suspended, closed bool
 	terminal                bool   // the input is a terminal (Options.InputIsTerminal)
-	selecting               bool   // a Select list is open: the arrow keys move its highlight
+	selN                    int    // the rows of the Select list that is open (they end the page): the arrow keys move its highlight; 0 with none
 	selNote                 string // why the Enter of that list was refused: no row is highlighted yet
 	hasDef                  bool   // the open question has a default: Enter takes it
 	paged, apart            bool   // Page opened the page; its first question is not asked yet, and is set apart
@@ -610,7 +610,8 @@ func checkChoices(verb, label string, choices []Choice, def int) error {
 // mode ask by number, exactly as Choose does. The end of the input is an error that wraps io.EOF.
 // A def of -1 is no default: nothing is highlighted, a down arrow highlights the first row and an up arrow the last, and an Enter before
 // that is refused with a note. A numbered question asks again on an empty answer.
-// shortcut: space and Esc do nothing; a list longer than the page shows its last rows; upgrade when a question needs one.
+// A list longer than the page scrolls with the highlight, as MultiSelect's does.
+// shortcut: space and Esc do nothing; upgrade when a question needs one.
 func (s *Screen) Select(label string, choices []Choice, def int) (idx int, err error) {
 	if err := checkChoices("select", label, choices, def); err != nil {
 		return 0, err
@@ -711,7 +712,7 @@ func (s *Screen) openSelect(label string, choices []Choice, def int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.setApart()
-	s.selecting = true
+	s.selN = len(choices)
 	s.add(item{kind: itemText, text: oneLine(label)})
 	for i, c := range choices {
 		s.add(item{kind: itemChoice, num: i + 1, text: names[i], desc: oneLine(c.Desc), pad: nameW, def: i == def, radio: true, sel: i == def})
@@ -744,7 +745,7 @@ func (s *Screen) moveSelect(n, to int) {
 func (s *Screen) closeSelect(n int, answer string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.selecting, s.selNote = false, ""
+	s.selN, s.selNote = 0, ""
 	if answer != "" {
 		s.items = append(s.items[:len(s.items)-n-1], item{kind: itemText, text: answer})
 	}

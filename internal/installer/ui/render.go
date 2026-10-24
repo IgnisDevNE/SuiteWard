@@ -172,7 +172,7 @@ func (s *Screen) frame() frame {
 		hint = "Enter to confirm"
 	case s.multi != nil:
 		hint = "↑/↓ move · Space toggle · Enter confirm · Ctrl-C quit"
-	case s.selecting:
+	case s.selN > 0:
 		hint = "↑/↓ to choose · Enter to confirm · Ctrl-C to quit"
 	case cursor >= 0 && s.hasDef:
 		hint = "Enter takes the default · Ctrl-C to quit"
@@ -283,7 +283,8 @@ func (s *Screen) contentRows(width int) pageRows {
 		}
 	}
 	p := pageRows{cursor: -1, tail: -1}
-	for i, it := range s.items {
+	listed := s.items[:len(s.items)-s.selN] // the rows of an open Select list are drawn below, as a window of the list
+	for i, it := range listed {
 		if it.kind == itemRule && p.tail < 0 {
 			p.tail = len(p.rows)
 		}
@@ -300,6 +301,11 @@ func (s *Screen) contentRows(width int) pageRows {
 			}
 		}
 		p.rows = append(p.rows, rows...)
+	}
+	if s.selN > 0 {
+		choices := s.items[len(listed):]
+		cur := slices.IndexFunc(choices, func(it item) bool { return it.sel })
+		p.rows = append(p.rows, s.listRows(len(p.rows), len(choices), cur, func(i int) row { return s.choiceRow(choices[i], width) })...)
 	}
 	if s.selNote != "" {
 		p.rows = append(p.rows, s.markedRows(warnGlyph, toneAmber, toneAmber, s.selNote, width)...)

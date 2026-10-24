@@ -221,18 +221,6 @@ func TestTheDoctorRowOfAHealthyInstanceHasNoWarningsAndNothingToCheckAgain(t *te
 	}
 }
 
-// The summary names the ruleset file by the name writeRuleset gives it: the two spellings are one.
-func TestTheRulesetFileOfTheSummaryIsTheOneTheInstallWrites(t *testing.T) {
-	dir := t.TempDir()
-	written, err := writeRuleset(dir, "Acme/api", []byte("{}\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := rulesetPathOf(dir, "Acme/api"); got != written {
-		t.Errorf("the summary looks for %s, the install wrote %s", got, written)
-	}
-}
-
 // A summary that carries what doctor found still shows the rows a person needs on the smallest window. The page keeps its key rows and trims
 // the warnings from the end when it is taller than the window: this is the case of the first install, two repositories without their
 // ruleset and an owner who is not enrolled, and the Status and Doctor rows stay, with the first warning.

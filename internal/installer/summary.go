@@ -101,7 +101,7 @@ func importRulesetFix(r doctorResult, dir string) string {
 	if !slices.ContainsFunc(findings, fixed) {
 		return r.Fix
 	}
-	file := rulesetPathOf(dir, repo)
+	file := rulesetPath(dir, repo)
 	if _, err := os.Stat(file); err != nil {
 		return r.Fix // the install that wrote it may have been another one, or the file moved: the check's own fix is all there is
 	}
@@ -110,14 +110,6 @@ func importRulesetFix(r doctorResult, dir string) string {
 		return imports + ". " + r.Fix
 	}
 	return imports
-}
-
-// rulesetPathOf is where the install writes the ruleset of repo (owner/name), as writeRuleset names it.
-// shortcut: the name is spelled here and in writeRuleset, which another change owns; a test pins the two together. Upgrade when ruleset.go
-// exports its naming.
-func rulesetPathOf(dir, repo string) string {
-	owner, name, _ := strings.Cut(repo, "/")
-	return filepath.Join(dir, "suiteward-ruleset-"+owner+"-"+name+".json")
 }
 
 func (s *summaryRows) addGitHub(gh GitHub) {

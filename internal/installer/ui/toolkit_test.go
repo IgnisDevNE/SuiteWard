@@ -14,6 +14,8 @@ import (
 //	testdata/page-60x20.*.golden        and in the smallest window: the title, the critical box and the question stay
 //	testdata/multiselect.*.golden       a multiple choice with the cursor on the third row and the note of a pick that was refused
 //	testdata/multiselect-long.*.golden  a list longer than the page, scrolled to its cursor
+//	testdata/select-long-default.*.golden  a Select of 25 rows (80x24) with the first highlighted: the title, the label and the first rows
+//	testdata/select-long-none.*.golden     the same with no default and one arrow down: the first row is highlighted and still in sight
 //
 // The "off" frames show the layout without color; the "truecolor" ones show which element is which tone.
 
@@ -93,6 +95,7 @@ func TestToolkitGoldens(t *testing.T) {
 	demos := map[string]func(*testing.T, ColorLevel) frame{
 		"page": pageDemo(80, 32), "page-80x24": pageDemo(80, 24), "page-60x20": pageDemo(60, 20),
 		"multiselect": multiDemo, "multiselect-long": multiLongDemo,
+		"select-long-default": selectLongDemo(0, 0), "select-long-none": selectLongDemo(-1, 1),
 	}
 	for name, color := range map[string]ColorLevel{"off": ColorNone, "truecolor": ColorTrue} {
 		for demo, build := range demos {

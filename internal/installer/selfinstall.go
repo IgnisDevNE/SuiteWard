@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -74,13 +75,35 @@ type UserPath interface {
 	Announce() error
 }
 
-// pathKey is an entry of a PATH value as it is compared: without case, which Windows ignores, and without a trailing separator.
-func pathKey(entry string) string { return strings.ToLower(strings.TrimRight(entry, `\/`)) }
+// percentVariable is a reference to an environment variable in an entry of a Path of the expandable kind: %LOCALAPPDATA%.
+var percentVariable = regexp.MustCompile(`%[^%;]+%`)
+
+// pathEnv is the environment that the entries of a user Path are compared with: Windows expands the variables of a Path of the expandable kind
+// (REG_EXPAND_SZ) and takes one of the plain kind as it is written.
+func pathEnv(expand bool, getenv func(string) string) func(string) string {
+	if expand {
+		return getenv
+	}
+	return func(string) string { return "" }
+}
+
+// pathKey is an entry of a PATH value as it is compared: with the variables it names replaced by their value (a terminal reads
+// %LOCALAPPDATA%\SuiteWard\bin as the folder of the copy), without case, which Windows ignores, and without a trailing separator. Only the
+// comparison expands: the value keeps the text of its entries.
+func pathKey(entry string, getenv func(string) string) string {
+	expanded := percentVariable.ReplaceAllStringFunc(entry, func(ref string) string {
+		if value := getenv(strings.Trim(ref, "%")); value != "" {
+			return value
+		}
+		return ref // a variable that is not defined stays as it is written, as Windows leaves it
+	})
+	return strings.ToLower(strings.TrimRight(expanded, `\/`))
+}
 
 // addPathEntry appends dir to a PATH value unless it is there already. The other entries stay as they are, in their order.
-func addPathEntry(path, dir string) (string, bool) {
+func addPathEntry(path, dir string, getenv func(string) string) (string, bool) {
 	switch {
-	case slices.ContainsFunc(strings.Split(path, ";"), func(e string) bool { return pathKey(e) == pathKey(dir) }):
+	case slices.ContainsFunc(strings.Split(path, ";"), func(e string) bool { return pathKey(e, getenv) == pathKey(dir, getenv) }):
 		return path, false
 	case path == "":
 		return dir, true
@@ -91,9 +114,9 @@ func addPathEntry(path, dir string) (string, bool) {
 }
 
 // removePathEntry removes every entry of a PATH value that is dir. The other entries stay as they are, in their order.
-func removePathEntry(path, dir string) (string, bool) {
+func removePathEntry(path, dir string, getenv func(string) string) (string, bool) {
 	entries := strings.Split(path, ";")
-	kept := slices.DeleteFunc(slices.Clone(entries), func(e string) bool { return pathKey(e) == pathKey(dir) })
+	kept := slices.DeleteFunc(slices.Clone(entries), func(e string) bool { return pathKey(e, getenv) == pathKey(dir, getenv) })
 	if len(kept) == len(entries) {
 		return path, false
 	}
@@ -102,7 +125,7 @@ func removePathEntry(path, dir string) (string, bool) {
 
 // addToUserPath puts dir on the user's PATH, in the kind of value it has: a Path that does not exist yet is made of the expandable kind,
 // as Windows makes one. It says whether it changed the value; the programs that run are told by Announce.
-func (s SelfInstall) addToUserPath(dir string) (changed bool, err error) {
+func (s SelfInstall) addToUserPath(dir string, getenv func(string) string) (changed bool, err error) {
 	value, expand, found, err := s.Path.Read()
 	if err != nil {
 		return false, fmt.Errorf("read the PATH of this user: %w", err)
@@ -110,7 +133,7 @@ func (s SelfInstall) addToUserPath(dir string) (changed bool, err error) {
 	if !found {
 		expand = true
 	}
-	updated, changed := addPathEntry(value, dir)
+	updated, changed := addPathEntry(value, dir, pathEnv(expand, getenv))
 	if !changed {
 		return false, nil
 	}
@@ -121,7 +144,7 @@ func (s SelfInstall) addToUserPath(dir string) (changed bool, err error) {
 }
 
 // removeFromUserPath takes dir off the user's PATH, keeping the kind of value it has.
-func (s SelfInstall) removeFromUserPath(dir string) (changed bool, err error) {
+func (s SelfInstall) removeFromUserPath(dir string, getenv func(string) string) (changed bool, err error) {
 	value, expand, found, err := s.Path.Read()
 	if err != nil {
 		return false, fmt.Errorf("read the PATH of this user: %w", err)
@@ -129,7 +152,7 @@ func (s SelfInstall) removeFromUserPath(dir string) (changed bool, err error) {
 	if !found {
 		return false, nil
 	}
-	updated, changed := removePathEntry(value, dir)
+	updated, changed := removePathEntry(value, dir, pathEnv(expand, getenv))
 	if !changed {
 		return false, nil
 	}
@@ -288,21 +311,18 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 	if other != "" {
 		def = 1 // No
 	}
-	picked, err := scr.Select("Copy suiteward.exe and add it to your PATH?", yesNo, def)
-	switch {
-	case ctx.Err() != nil || errors.Is(err, io.EOF): // Ctrl-C, or an input that ended: no answer is not a yes
-		return d
-	case err != nil:
-		rows.warn("suiteward.exe was not copied to a folder on your PATH: the answer could not be read: " + err.Error())
-		return d
-	case picked != 0:
+	yes, err := askYesNo(ctx, scr, "Copy suiteward.exe and add it to your PATH?", def)
+	if err != nil {
+		rows.warn("suiteward.exe was not copied to a folder on your PATH: " + err.Error())
+	}
+	if !yes {
 		return d
 	}
 	if err := s.copyTo(exe, dir); err != nil {
 		rows.warn(fmt.Sprintf("suiteward.exe was not copied to %s: %v. SuiteWard works without it: run it by the path of this program, %s.", dir, err, exe))
 		return d
 	}
-	changed, err := s.addToUserPath(dir)
+	changed, err := s.addToUserPath(dir, d.Getenv)
 	if err != nil {
 		rows.warn(fmt.Sprintf("suiteward.exe was copied to %s, but its folder was not added to your PATH: %v. Add %s to the PATH of your user (Settings, Environment Variables) to run suiteward by name.", target, err, dir))
 		return d
@@ -316,7 +336,7 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 		rows.add("Command", target+" (the shell finds another suiteward first: "+other+")")
 		return d
 	}
-	line := `$env:Path += ";` + dir + `"`
+	line := `$env:Path += ';` + strings.ReplaceAll(dir, "'", "''") + `'` // a string that does not expand: a $ or a backtick in dir is text
 	rows.add("Command", target+" (new terminals find it as suiteward)")
 	rows.add("This terminal (PowerShell)", line)
 	scr.Keep("%s\n", line) // a line of its own in the scrollback, to copy as it is
@@ -324,13 +344,23 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 	return d
 }
 
+// askYesNo asks a question with the arrow keys, Yes in the first row and the default the row def names (0 Yes, 1 No), and says whether the
+// answer is Yes. A Ctrl-C and an input that ended are a No: no answer is not a yes. So is a question that could not be read, which err reports.
+func askYesNo(ctx context.Context, scr *ui.Screen, question string, def int) (yes bool, err error) {
+	picked, err := scr.Select(question, yesNo, def)
+	if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
+		return false, fmt.Errorf("the answer could not be read: %w", err)
+	}
+	return err == nil && ctx.Err() == nil && picked == 0, nil
+}
+
 // onUserPath says whether dir is on the user's PATH.
-func (s SelfInstall) onUserPath(dir string) (bool, error) {
-	value, _, found, err := s.Path.Read()
+func (s SelfInstall) onUserPath(dir string, getenv func(string) string) (bool, error) {
+	value, expand, found, err := s.Path.Read()
 	if err != nil || !found {
 		return false, err
 	}
-	_, there := removePathEntry(value, dir)
+	_, there := removePathEntry(value, dir, pathEnv(expand, getenv))
 	return there, nil
 }
 
@@ -348,7 +378,7 @@ func offerRemoveCopy(ctx context.Context, env Env) {
 	target := filepath.Join(dir, selfFile)
 	there := func(path string) bool { _, err := os.Stat(path); return err == nil }
 	hasCopy := there(target) || there(target+staleSuffix)
-	onPath, err := s.onUserPath(dir)
+	onPath, err := s.onUserPath(dir, d.Getenv)
 	if err != nil {
 		scr.Warn("The PATH of this user could not be read (%v), so whether it holds %s is not known.\n", err, dir)
 	}
@@ -366,18 +396,15 @@ func offerRemoveCopy(ctx context.Context, env Env) {
 		ui.Para("An install of this PC put the suiteward command where a terminal finds it: a copy of the installer, and its folder on your user PATH. The instance itself is gone."),
 		ui.Fields(found...),
 		ui.Para("A copy that a program is running is renamed aside, to suiteward.exe.old: delete that file by hand."))
-	picked, err := scr.Select("Remove the copy and its PATH entry?", yesNo, 1)
-	switch {
-	case ctx.Err() != nil || errors.Is(err, io.EOF): // Ctrl-C, or an input that ended: no answer is not a yes
-		return
-	case err != nil:
-		scr.Warn("The suiteward command was not removed: the answer could not be read: %v\n", err)
-		return
-	case picked != 0:
+	yes, err := askYesNo(ctx, scr, "Remove the copy and its PATH entry?", 1)
+	if err != nil {
+		scr.Warn("The suiteward command was not removed: %v\n", err)
+	}
+	if !yes {
 		return
 	}
 	if onPath {
-		s.removeFromPath(scr, dir)
+		s.removeFromPath(scr, dir, d.Getenv)
 	}
 	if hasCopy {
 		s.removeCopy(scr, dir)
@@ -386,8 +413,8 @@ func offerRemoveCopy(ctx context.Context, env Env) {
 }
 
 // removeFromPath takes dir off the user's PATH and tells the programs that run.
-func (s SelfInstall) removeFromPath(scr *ui.Screen, dir string) {
-	changed, err := s.removeFromUserPath(dir)
+func (s SelfInstall) removeFromPath(scr *ui.Screen, dir string, getenv func(string) string) {
+	changed, err := s.removeFromUserPath(dir, getenv)
 	if err != nil {
 		scr.Warn("The folder %s was not removed from your PATH: %v. Remove it in Settings, Environment Variables.\n", dir, err)
 		return

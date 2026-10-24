@@ -1002,6 +1002,7 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 	if scr.FullScreen() { // before the lines below: a page that comes after them takes them off the screen
 		scr.Page("Import the rulesets", ui.Para("Import the file of each repository on GitHub, as below. If an older SuiteWard ruleset (of an earlier App) is already there, delete it first: both would apply."))
 	}
+	files := make(map[string]string, len(repos)) // where each ruleset is, for the page that is drawn again
 	for _, r := range repos {
 		data, err := rulesetJSON(res.AppID, res.TestChecks[r.name])
 		if err != nil {
@@ -1011,6 +1012,7 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		if err != nil {
 			return nil, fmt.Errorf("write the ruleset of %s: %w", r.name, err)
 		}
+		files[r.name] = path
 		scr.Keep("\nRuleset for %s: %s\n", r.name, path) // the file and how to import it are needed after the page of this step is gone
 		if r.private {
 			scr.Warn("Warning: %s is a private repository. On GitHub Free, rules are not enforced on private repositories, so SuiteWard cannot protect it until the repository is a public repository or the account is on a paid plan (Team). The install continues, and /status will report enforcement-unavailable.\n", r.name)
@@ -1035,7 +1037,7 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		return nil, fmt.Errorf("compose the GitHub reader: %w", err)
 	}
 	if pausing {
-		return pauseForImport(ctx, scr, reader, res, repos)
+		return pauseForImport(ctx, scr, env.WebURL, reader, res, repos, files)
 	}
 	results, lines := readProtections(ctx, reader, res, repos)
 	keepProtection(scr, lines)
@@ -1046,7 +1048,7 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 // repository that is not protected yet, or whose protection cannot be read, is shown with what is missing and the same two choices are
 // offered again; enforcement that is unavailable ends it, as no import can change that. Skipping goes on with a warning: the
 // results are what the last check found, or unknown when there was none.
-func pauseForImport(ctx context.Context, scr *ui.Screen, reader *github.Reader, res GitHubResult, repos []repoInfo) (map[string]protection.Result, error) {
+func pauseForImport(ctx context.Context, scr *ui.Screen, webURL string, reader *github.Reader, res GitHubResult, repos []repoInfo, files map[string]string) (map[string]protection.Result, error) {
 	choices := []ui.Choice{
 		{Name: "I imported it, check now", Desc: "check on GitHub"},
 		{Name: "Skip, import later", Desc: "go on without it"},
@@ -1065,10 +1067,7 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, reader *github.Reader, 
 			keepProtection(scr, lines)
 			return results, nil
 		}
-		scr.Say("\nNot enforced yet:\n") // not kept, and short: the files and the steps above stay in sight, and only the check that ends the step is kept in full
-		for _, r := range repos {
-			scr.Say("%s", unfinishedLine(r.name, results[r.name]))
-		}
+		importAgain(scr, webURL, repos, files, results)
 	}
 	if results == nil {
 		results = make(map[string]protection.Result, len(repos))
@@ -1084,6 +1083,23 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, reader *github.Reader, 
 	}
 	scr.Warn("The rulesets of %s are not imported or not checked yet: import the files named above on GitHub, then run suiteward doctor to check the protection.\n", strings.Join(open, ", "))
 	return results, nil
+}
+
+// importAgain draws the page of the import again for the repositories that may still be fixed by it: what is missing, how to import, and
+// the file and the rules page of each. A page that only went on from the one before would push the files off the screen, where the
+// user needs them again; what it says is not kept (the files were, with the first page, and only the check that ends the step is).
+func importAgain(scr *ui.Screen, webURL string, repos []repoInfo, files map[string]string, results map[string]protection.Result) {
+	var missing, where []string
+	for _, r := range repos {
+		if kind := results[r.name].Kind; kind == protection.KindFindings || kind == protection.KindUnknown {
+			missing = append(missing, strings.TrimSpace(unfinishedLine(r.name, results[r.name])))
+			where = append(where, r.name+"\n  file: "+files[r.name]+"\n  rules page: "+webURL+"/"+r.name+"/settings/rules")
+		}
+	}
+	scr.Page("Import the rulesets",
+		ui.Para("Not enforced yet:\n"+strings.Join(missing, "\n")),
+		ui.Para("Import the file of each repository on GitHub: open its rules page, choose New ruleset, then Import a ruleset, select the file and create the ruleset. If an older SuiteWard ruleset (of an earlier App) is already there, delete it first."),
+		ui.Para(strings.Join(where, "\n")))
 }
 
 // awaitingImport says that an import may still fix a repository: its protection has findings, or could not be read.

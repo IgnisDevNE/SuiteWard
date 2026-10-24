@@ -147,7 +147,7 @@ func (g *githubInstall) githubFlow(ctx context.Context, r *Resolver, settingsDir
 	stored, recorded := false, false
 	existing := g.s.GitHub
 	res, err := g.env.githubFlow()(ctx, githubEnv{
-		R: r, Out: g.out, Tier: g.s.Tier, SettingsDir: settingsDir, ManifestPort: port, Existing: &existing, Pending: g.pending,
+		R: r, Out: g.out, Command: g.env.Deps.command(), Tier: g.s.Tier, SettingsDir: settingsDir, ManifestPort: port, Existing: &existing, Pending: g.pending,
 		RecordApp: func(_ context.Context, app PendingApp) error {
 			if err := savePendingApp(g.pendingPath, app); err != nil {
 				return err
@@ -299,8 +299,8 @@ func parseEnrolledOwner(body []byte) (string, error) {
 
 // enrollCommand is the command that enrolls the owner again, as the messages of the installer name it: the tier and the
 // settings file are named when they are not the defaults.
-func enrollCommand(r *Resolver, isolated bool) string {
-	command := "suiteward enroll"
+func enrollCommand(cmd string, r *Resolver, isolated bool) string {
+	command := cmd + " enroll"
 	if isolated {
 		command += " --tier isolated"
 	}
@@ -329,7 +329,7 @@ func (g *githubInstall) enroll(ctx context.Context, status func(context.Context)
 		g.owner = notEnrolled
 		scr.Warn("Note: no owner is enrolled, and this run does not know the owner login or the test checks. Turn off any session recording of a real terminal, then enroll the owner:\n  %s\n", command)
 	case setupTerminal():
-		if err := runSetup(ctx, g.rt, g.setupOwner, g.setupChecks, g.out); err != nil {
+		if err := runSetup(ctx, g.env.Deps.command(), g.rt, g.setupOwner, g.setupChecks, g.out); err != nil {
 			return fmt.Errorf("the stack is running, but enrolling the owner failed: %w", err)
 		}
 		g.owner = g.setupOwner + " (enrolled now)"

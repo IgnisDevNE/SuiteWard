@@ -30,6 +30,9 @@ type Deps struct {
 	Getenv      func(string) string
 	// UserSID is the Windows SID of the current user, which restrictPath grants; only a Windows run asks for it.
 	UserSID func() (string, error)
+	// Command is how a command of the installer names this program in a hint: "suiteward" where the shell finds the program by that name,
+	// else the quoted path of the executable (commandName). Empty reads "suiteward". OSEnv sets it; a test that does not care leaves it out.
+	Command string
 }
 
 // validate refuses a Deps with a missing function: a nil one would fail later, at the first container command.

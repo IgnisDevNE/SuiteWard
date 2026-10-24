@@ -60,12 +60,12 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
-	saved, haveSaved, err := loadSaved(settingsPath, !defaultPath)
+	saved, haveSaved, err := loadSaved(env.Deps.command(), settingsPath, !defaultPath)
 	if err != nil {
 		return err
 	}
 	// Enroll refuses a co-located stack with no settings file (colocatedEnrollTarget), so that is not what a host that has none is offered.
-	if err := tierNeeded(r, haveSaved, env.Deps.GOOS, "run `suiteward install --upgrade --tier co-located` first, which saves the settings file of a co-located stack"); err != nil {
+	if err := tierNeeded(r, haveSaved, env.Deps.GOOS, "run `"+env.Deps.command()+" install --upgrade --tier co-located` first, which saves the settings file of a co-located stack"); err != nil {
 		return err
 	}
 	var target enrollTarget
@@ -93,7 +93,7 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 func colocatedEnrollTarget(ctx context.Context, r *Resolver, env Env, t installTarget) (enrollTarget, error) {
 	if !t.haveSaved { // enrolling again replaces the TOTP secret: not of an instance that defaults picked
 		return enrollTarget{}, fmt.Errorf("there is no settings file at %s, so nothing says which instance this is, and enrolling again replaces its TOTP secret: "+
-			"run `suiteward install --upgrade`, which converts the stack and saves the settings file, or pass --settings with the file of the instance; nothing was changed", t.settingsPath)
+			"run `%s install --upgrade`, which converts the stack and saves the settings file, or pass --settings with the file of the instance; nothing was changed", t.settingsPath, env.Deps.command())
 	}
 	rt, connection, err := openRuntime(ctx, r, env, t.saved, false)
 	if err != nil {
@@ -107,7 +107,7 @@ func colocatedEnrollTarget(ctx context.Context, r *Resolver, env Env, t installT
 		return enrollTarget{}, err
 	}
 	if !previous.Known {
-		return enrollTarget{}, ErrNothingInstalled
+		return enrollTarget{}, nothingInstalled(env.Deps.command())
 	}
 	s := base
 	s.Tier, s.Runtime, s.Connection = config.TierCoLocated, rt.Name(), connection
@@ -127,7 +127,7 @@ func isolatedEnrollTarget(ctx context.Context, s Settings, env Env) (enrollTarge
 		return enrollTarget{}, err
 	}
 	if !st.found {
-		return enrollTarget{}, ErrNothingInstalled
+		return enrollTarget{}, nothingInstalled(env.Deps.command())
 	}
 	if s.GitHub.AppID == 0 {
 		if s.GitHub, err = readGitHubEnvFile(host.envPath); err != nil {
@@ -162,11 +162,11 @@ func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) erro
 			return err
 		}
 	}
-	checks, err := enrollChecks(r, t.github)
+	checks, err := enrollChecks(env.Deps.command(), r, t.github)
 	if err != nil {
 		return err
 	}
-	if err := runSetup(ctx, t.rt, owner, checks, env.Term.Out); err != nil {
+	if err := runSetup(ctx, env.Deps.command(), t.rt, owner, checks, env.Term.Out); err != nil {
 		return err
 	}
 	r.screen.Check("%s is enrolled as the owner.\n", owner) // the page that enroll then holds for Enter
@@ -197,9 +197,9 @@ func confirmEnrollAgain(r *Resolver, enrolled, owner string) error {
 }
 
 // enrollChecks is the test check of each repository of the instance: from --test-check, else from the saved settings, else asked.
-func enrollChecks(r *Resolver, gh GitHub) (map[string]string, error) {
+func enrollChecks(cmd string, r *Resolver, gh GitHub) (map[string]string, error) {
 	if len(gh.Repositories) == 0 {
-		return nil, errors.New("GitHub is not configured on this instance, so there is no repository to enroll for: run `suiteward install --github yes` first")
+		return nil, fmt.Errorf("GitHub is not configured on this instance, so there is no repository to enroll for: run `%s install --github yes` first", cmd)
 	}
 	value, _ := r.given("test-check")
 	listed, isList, err := parseTestCheckList(value)

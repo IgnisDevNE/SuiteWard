@@ -116,7 +116,7 @@ func waitForExitCode(ctx context.Context, file string) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-limit.C:
-			return fmt.Errorf("setup did not end within %s: finish it in its window, or run suiteward enroll again", setupWaitLimit)
+			return fmt.Errorf("%w (%s)", errSetupTimeout, setupWaitLimit)
 		case <-tick.C:
 		}
 	}
@@ -198,3 +198,6 @@ func shellEnv(before, after []string) string {
 	}
 	return b.String()
 }
+
+// errSetupTimeout is the end of the wait for a setup window that did not end in time.
+var errSetupTimeout = errors.New("setup did not end within the time allowed")

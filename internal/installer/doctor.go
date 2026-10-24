@@ -220,9 +220,9 @@ func (d *doctor) run(ctx context.Context, settingsPath string) {
 	}
 	s, err := LoadSettings(settingsPath)
 	if err != nil {
-		fix := "fix the file named above, or write it again with `suiteward install`"
+		fix := "fix the file named above, or write it again with `" + d.deps.command() + " install`"
 		if errors.Is(err, ErrNoSettings) {
-			fix = "run `suiteward install` first: it writes the settings file doctor reads"
+			fix = "run `" + d.deps.command() + " install` first: it writes the settings file doctor reads"
 		}
 		d.fail("settings", err.Error(), fix)
 		return
@@ -488,7 +488,7 @@ func (d *doctor) checkRestart(ctx context.Context) {
 		}
 	}
 	if len(problems) > 0 {
-		fix := "remove the containers with `suiteward uninstall` (the data stays), then run `suiteward install`, which creates them with the restart policy the release defines (an install leaves a running, healthy container as it is)"
+		fix := "remove the containers with `" + d.deps.command() + " uninstall` (the data stays), then run `" + d.deps.command() + " install`, which creates them with the restart policy the release defines (an install leaves a running, healthy container as it is)"
 		if d.s.Runtime == RuntimePodman {
 			fix = restartEnableFix
 			if d.viaSSH {
@@ -613,7 +613,7 @@ func (d *doctor) checkPins(ctx context.Context) {
 		image, err = dockerPins(d.raw)
 	}
 	if err != nil {
-		d.fail("pins", err.Error(), "install the release again with `suiteward install --upgrade`, or undo the edit it names")
+		d.fail("pins", err.Error(), "install the release again with `"+d.deps.command()+" install --upgrade`, or undo the edit it names")
 		return
 	}
 	d.pass("pins", detail+image)

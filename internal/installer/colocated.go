@@ -74,7 +74,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 			return err
 		}
 		if !sameImage(want, previous.Image) {
-			return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", want, previous.Image)
+			return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `%s install --upgrade`", want, previous.Image, env.Deps.command())
 		}
 	}
 	s, err := chooseSettings(r, base, rt.Name(), connection)
@@ -86,7 +86,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	s.Image = image
-	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(r, false)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
+	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(env.Deps.command(), r, false)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
 			return err
@@ -374,6 +374,8 @@ type colocatedInstall struct {
 	keepDB, keepServe bool
 
 	machineUser string // the rootless user of the Podman machine, once it has been looked up
+
+	copyRows summaryRows // what the offer of the copy of the program says in the summary (installSelf, upgradeSelf)
 }
 
 // secretState is what the stack already has of its database secrets, read before anything is changed.
@@ -891,9 +893,10 @@ func (c *colocatedInstall) finish(ctx context.Context, scr *ui.Screen, t install
 			return err
 		}
 		c.say("Read the status of the service: %s\n", c.statusHint(ctx)) // after the enrollment, which waited for the service to answer
-		c.say("Then check the instance with `%s`.\n", doctorHint(t.settingsPath, t.defaultPath))
+		c.say("Then check the instance with `%s`.\n", doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
 	}
 	scr.Step(6)
+	c.installSelf(ctx)
 	return showSummary(scr, func() []ui.KV { return c.installSummary(ctx, t) })
 }
 

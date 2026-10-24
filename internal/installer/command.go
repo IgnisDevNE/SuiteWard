@@ -10,7 +10,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -49,6 +51,11 @@ type Env struct {
 	// Version is shown in the title bar of the full screen ("installer <Version>"); empty reads "dev". The caller that knows the build version
 	// (app.Run) sets it.
 	Version string
+	// Self is the copy of the program that a full screen offers on Windows; nil offers none. OSEnv sets it there.
+	Self *SelfInstall
+	// Unattended says that the command line answers for the person (unattended): the copy of the program is then never offered or removed, and the
+	// one that exists is kept up to date.
+	Unattended bool
 	// OpenScreen opens the console of one command (ui.OpenOS on the process's console); nil means a plain one on Term.Out. A test replaces it.
 	OpenScreen func(ctx context.Context, in io.Reader, version string, plain bool) (*ui.Screen, error)
 }
@@ -65,6 +72,8 @@ func OSEnv(stdout io.Writer) Env {
 	term := OSTerminal()
 	term.Out = stdout
 	env := Env{Deps: OSDeps(), Term: term, PortFree: loopbackFree, Sleep: time.Sleep}
+	env.Deps.Command = commandName(runtime.GOOS, os.Executable, exec.LookPath)
+	env.Self = osSelfInstall()
 	if stdout == io.Writer(os.Stdout) { // the full screen takes over the process's console, so only the real stdout may ask for it
 		env.OpenScreen = ui.OpenOS
 	}
@@ -119,6 +128,9 @@ func (e Env) validate() error {
 	}
 	if e.PortFree == nil || e.Sleep == nil {
 		return errors.New("the installer needs PortFree and Sleep")
+	}
+	if s := e.Self; s != nil && (s.Executable == nil || s.LookPath == nil || s.Rename == nil || s.Path == nil) {
+		return errors.New("the installer needs Executable, LookPath, Rename and Path to offer the copy of the program")
 	}
 	return nil
 }
@@ -245,6 +257,13 @@ func parse(fs *flag.FlagSet, args []string, out io.Writer) (map[string]string, e
 	return flags, nil
 }
 
+// unattended says that the command line answers for the person: --yes, or an answers file. Such a run never offers the copy of the program or its
+// removal, which the person has to agree to.
+func unattended(flags map[string]string) bool {
+	_, answers := flags["answers"]
+	return answers || flags["yes"] == "true"
+}
+
 func parseFlags(fs *flag.FlagSet, args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -298,13 +317,13 @@ func settingsPathFrom(flags map[string]string) (path string, isDefault bool, err
 
 // loadSaved reads the settings of an earlier install. None yet is not an error for the default file, but a file the command line
 // names (named) must exist: a mistyped path would otherwise run the command on defaults, which are not an instance.
-func loadSaved(path string, named bool) (Settings, bool, error) {
+func loadSaved(cmd, path string, named bool) (Settings, bool, error) {
 	saved, err := LoadSettings(path)
 	switch {
 	case err == nil:
 		return saved, true, nil
 	case errors.Is(err, ErrNoSettings) && named:
-		return Settings{}, false, fmt.Errorf("--settings names %s, which does not exist: %w (nothing was changed; check the path: only `suiteward install` makes a settings file)", path, ErrNoSettings)
+		return Settings{}, false, fmt.Errorf("--settings names %s, which does not exist: %w (nothing was changed; check the path: only `%s install` makes a settings file)", path, ErrNoSettings, cmd)
 	case errors.Is(err, ErrNoSettings):
 		return DefaultSettings(), false, nil
 	}
@@ -327,6 +346,7 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 			return err
 		}
 	}
+	env.Unattended = unattended(flags)
 	plain, err := wantsPlain(flags, answers)
 	if err != nil {
 		return err
@@ -349,12 +369,12 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	upgrade := flags["upgrade"] == "true"
-	saved, haveSaved, err := loadSaved(settingsPath, upgrade && !defaultPath) // an install makes the file: only an upgrade needs it to be there
+	saved, haveSaved, err := loadSaved(env.Deps.command(), settingsPath, upgrade && !defaultPath) // an install makes the file: only an upgrade needs it to be there
 	if err != nil {
 		return err
 	}
 	if _, given := r.given("backup-recipient"); given && !upgrade {
-		return errors.New("--backup-recipient (backup_recipient) is for --upgrade: to set the recovery key of this instance, run `suiteward backup init`")
+		return fmt.Errorf("--backup-recipient (backup_recipient) is for --upgrade: to set the recovery key of this instance, run `%s backup init`", env.Deps.command())
 	}
 	var tier string
 	if upgrade { // an upgrade works on what is installed: it never asks which tier

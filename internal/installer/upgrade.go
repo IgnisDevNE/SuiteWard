@@ -15,8 +15,14 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
-// ErrNothingInstalled is the refusal of --upgrade, and of uninstall without --purge, when there is no stack to work on.
-var ErrNothingInstalled = errors.New("nothing is installed here: install first with `suiteward install`")
+// ErrNothingInstalled is the refusal of --upgrade, and of uninstall without --purge, when there is no stack to work on. Its text is the fact;
+// nothingInstalled adds the command that installs, which is named as the run reaches the program.
+var ErrNothingInstalled = errors.New("nothing is installed here")
+
+// nothingInstalled is ErrNothingInstalled with the install to run first.
+func nothingInstalled(cmd string) error {
+	return fmt.Errorf("%w: install first with `%s install`", ErrNothingInstalled, cmd)
+}
 
 // upgradeTarget is the release image the upgrade moves to: --image, else the release this binary carries.
 func upgradeTarget(r *Resolver) (string, error) {
@@ -104,8 +110,8 @@ func (r *Resolver) askYes(question string) (bool, error) {
 	return err == nil && yes, nil
 }
 
-func doctorHint(settingsPath string, defaultPath bool) string {
-	hint := "suiteward doctor"
+func doctorHint(cmd, settingsPath string, defaultPath bool) string {
+	hint := cmd + " doctor"
 	if !defaultPath {
 		hint += " --settings " + quoteArg(settingsPath)
 	}
@@ -160,9 +166,9 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	if !previous.Known {
-		return ErrNothingInstalled
+		return nothingInstalled(env.Deps.command())
 	}
-	if err := refuseUnfinishedInstall(pendingAppPath(t.settingsPath), func() (GitHub, error) { return base.GitHub, nil }); err != nil {
+	if err := refuseUnfinishedInstall(env.Deps.command(), pendingAppPath(t.settingsPath), func() (GitHub, error) { return base.GitHub, nil }); err != nil {
 		return err
 	}
 	s := base
@@ -176,7 +182,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err != nil {
 		return err
 	}
-	if err := refuseChangedSettings(asked, s, installCommand(r, false)); err != nil {
+	if err := refuseChangedSettings(asked, s, installCommand(env.Deps.command(), r, false)); err != nil {
 		return err
 	}
 	dbImage, err := installedDBImage(ctx, rt)
@@ -188,10 +194,11 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	plan := upgradePlan{oldImage: previous.Image, newImage: image, oldDB: dbImage, newDB: postgres}
-	doctor := doctorHint(t.settingsPath, t.defaultPath)
+	doctor := doctorHint(env.Deps.command(), t.settingsPath, t.defaultPath)
 	// A stack without a settings file (made by local.ps1) is converted even when it runs this release: the settings are saved.
 	if plan.current() && t.haveSaved {
 		r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctor)
+		refreshCopy(ctx, env)
 		return holdPage(scr)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
@@ -236,15 +243,16 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
-		return withBackup(err, dir, "", "")
+		return withBackup(env.Deps.command(), err, dir, "", "")
 	}
 	scr.Step(4)
 	if err := c.bringUp(ctx, func() error { return SaveSettings(t.settingsPath, c.s) }); err != nil {
-		return withBackup(err, dir, "", "")
+		return withBackup(env.Deps.command(), err, dir, "", "")
 	}
 	scr.Step(5)
 	c.restartAfterReboot(ctx)
-	upgraded(scr, image, dir, goBackColocated(engine, previous.Image, dir, scopeFlags(r, false)), doctor)
+	upgraded(scr, image, dir, goBackColocated(env.Deps.command(), engine, previous.Image, dir, scopeFlags(r, false)), doctor)
+	c.upgradeSelf(ctx)
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }
 
@@ -253,16 +261,16 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 // is asked whether to make one: a no ends the run here, and a yes (agreed) is acted on once the service answers, because the instance id of
 // /status names the kit. The key is stored with the settings when the upgrade is done.
 func settleRecipient(r *Resolver, env Env, s *Settings) (agreed bool, err error) {
-	if err := askedRecipient(r, s); err != nil {
+	if err := askedRecipient(env.Deps.command(), r, s); err != nil {
 		return false, err
 	}
 	if s.BackupRecipient != "" {
 		return false, nil
 	}
 	if !env.Term.IsTerminal {
-		return false, noKeyError(true)
+		return false, noKeyError(env.Deps.command(), true)
 	}
-	if err := askForKey(r, true); err != nil {
+	if err := askForKey(env.Deps.command(), r, true); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -302,16 +310,16 @@ const goingBack = "the steps: docs/backup.md, Going back after an upgrade"
 
 // goBackColocated is the way back after the upgrade of a co-located stack: a restore alone cannot undo an upgrade that migrated, so the stack
 // and its data volumes go first, and the previous release is installed before the backup is restored.
-func goBackColocated(engine, previousImage, backupPath, scope string) string {
-	return fmt.Sprintf("To go back, remove the stack and its data volumes (`suiteward uninstall --yes%[1]s`, then `%[2]s volume rm %[3]s %[4]s`), install the previous release (`suiteward install --image %[5]s%[1]s`), then run `suiteward restore %[6]s%[1]s` with that kit; migrations only go forward, so it must be the previous release (%[7]s).",
-		scope, engine, VolumeData, VolumeDBData, previousImage, quoteArg(backupPath), goingBack)
+func goBackColocated(cmd, engine, previousImage, backupPath, scope string) string {
+	return fmt.Sprintf("To go back, remove the stack and its data volumes (`%[8]s uninstall --yes%[1]s`, then `%[2]s volume rm %[3]s %[4]s`), install the previous release (`%[8]s install --image %[5]s%[1]s`), then run `%[8]s restore %[6]s%[1]s` with that kit; migrations only go forward, so it must be the previous release (%[7]s).",
+		scope, engine, VolumeData, VolumeDBData, previousImage, quoteArg(backupPath), goingBack, cmd)
 }
 
 // goBackIsolated is the way back after the upgrade of an isolated host: the unit files that the upgrade replaced were kept beside the backup;
 // they go back, systemd reloads them and the service stops, and then the backup is restored.
-func goBackIsolated(backupPath, unitsDir, scope string) string {
-	return fmt.Sprintf("To go back, copy the unit files that this upgrade replaced, from %s to %s, then run `systemctl --user daemon-reload` and `systemctl --user stop suiteward.service`, and then `suiteward restore %s%s` with that kit; migrations only go forward, so the units must be the previous release's (%s).",
-		unitsKeptBeside(backupPath), unitsDir, quoteArg(backupPath), scope, goingBack)
+func goBackIsolated(cmd, backupPath, unitsDir, scope string) string {
+	return fmt.Sprintf("To go back, copy the unit files that this upgrade replaced, from %s to %s, then run `systemctl --user daemon-reload` and `systemctl --user stop suiteward.service`, and then `%s restore %s%s` with that kit; migrations only go forward, so the units must be the previous release's (%s).",
+		unitsKeptBeside(backupPath), unitsDir, cmd, quoteArg(backupPath), scope, goingBack)
 }
 
 // scopeFlags names the tier and the settings file of this run when they are not the defaults, for a command that a message tells the person
@@ -395,7 +403,7 @@ func (c *colocatedInstall) startInstalled(ctx context.Context) error {
 // refuseUnfinishedInstall refuses an upgrade while an earlier install is unfinished: the App it recorded holds the key secret, and the
 // upgrade would start the stack again with the App of the settings, which GitHub refuses with that key. settings is called only when
 // a record exists.
-func refuseUnfinishedInstall(pendingPath string, settings func() (GitHub, error)) error {
+func refuseUnfinishedInstall(cmd, pendingPath string, settings func() (GitHub, error)) error {
 	pending, found, err := loadPendingApp(pendingPath)
 	if err != nil || !found {
 		return err
@@ -407,6 +415,6 @@ func refuseUnfinishedInstall(pendingPath string, settings func() (GitHub, error)
 	if !recordWins(&gh, &pending) {
 		return nil
 	}
-	return fmt.Errorf("an earlier install did not finish: it created the App %s and recorded it in %s, and that App's key is the secret %s now. Finish that install first, with a plain `suiteward install` (it takes the recorded App up), then upgrade",
-		pending.Slug, pendingPath, SecretGitHubAppKey)
+	return fmt.Errorf("an earlier install did not finish: it created the App %s and recorded it in %s, and that App's key is the secret %s now. Finish that install first, with a plain `%s install` (it takes the recorded App up), then upgrade",
+		pending.Slug, pendingPath, SecretGitHubAppKey, cmd)
 }

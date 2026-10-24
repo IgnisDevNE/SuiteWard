@@ -100,8 +100,14 @@ func TestTheDefaultImageIsOnThePageAndTheQuestionIsShort(t *testing.T) {
 		if !strings.Contains(strings.ReplaceAll(v.text(), " ", ""), "Default"+testImage) {
 			t.Errorf("%dx%d: the page has no row that gives the default image:\n%s", sz.w, sz.h, v.dump())
 		}
-		if !strings.HasSuffix(v.text(), "Release image (Enter keeps the default):") { // the words of the page: a narrow window wraps the question
-			t.Errorf("%dx%d: the page does not end in the short question:\n%s", sz.w, sz.h, v.dump())
+		var asked []string
+		for _, r := range v.rows {
+			if strings.TrimSpace(r) != "" {
+				asked = append(asked, r)
+			}
+		}
+		if last := asked[len(asked)-1]; last != "Release image:" {
+			t.Errorf("%dx%d: the last row of the page is %q, want the short question alone on it:\n%s", sz.w, sz.h, last, v.dump())
 		}
 		if !strings.Contains(v.hint, "Enter takes the default") {
 			t.Errorf("%dx%d: the hint is %q, want it to say that Enter takes the default", sz.w, sz.h, v.hint)
@@ -228,7 +234,7 @@ func TestTheRestorePageOfABackupOfAnotherTierStillShowsTheInstanceAndTheReleaseA
 			t.Errorf("the page does not show the fact %q of the backup (row %q):\n%s", strings.TrimSpace(fact), row, v.dump())
 		}
 	}
-	mustSay(t, v, "The backup is isolated; this instance is co-located.", "Type the instance id "+testInstance+" to confirm")
+	mustSay(t, v, "Backup tier: isolated; this instance: co-located.", "Type the instance id "+testInstance+" to confirm")
 }
 
 // ---- what stays as it was ----
@@ -359,5 +365,24 @@ func TestASingleCheckRunIsTheDefaultWhateverItsName(t *testing.T) {
 	}
 	if v := viewOf(t, in.shown[0], 100, 30); !strings.Contains(v.text(), "● lint (default)") {
 		t.Errorf("the single run is not the default:\n%s", v.dump())
+	}
+}
+
+// ---- the purge page of an instance that nothing names ----
+
+// An instance whose id is unknown is "this instance" in the box, not "instance unknown", and the word that is typed is still the id.
+func TestThePurgeBoxOfAnInstanceWithNoIdSaysThisInstance(t *testing.T) {
+	h := purgeHarness(t)
+	h.status = func(context.Context, string) ([]byte, error) { return nil, errors.New("connection refused") }
+	h.f.fail("psql", errors.New("the database container is not running"))
+	run := newScreenRun(termWidth, termHeight, unknownValue+"\n", "\n")
+	args := []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm", "--purge"}
+	if err := Uninstall(liveContext(t), args, run.on(h.newEnv())); err != nil {
+		t.Fatalf("Uninstall: %v\n%s", err, run.output())
+	}
+	v := run.question(t, 0)
+	mustSay(t, v, "This deletes the database, the artifacts, the secrets and the settings of this instance.", "Type the instance id "+unknownValue+" to confirm")
+	if strings.Contains(v.text(), "of instance "+unknownValue) {
+		t.Errorf("the box calls the instance %q:\n%s", unknownValue, v.dump())
 	}
 }

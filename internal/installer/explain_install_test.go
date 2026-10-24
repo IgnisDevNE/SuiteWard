@@ -136,7 +136,7 @@ func TestTheReleaseImageIsExplainedAndEnterKeepsTheOneTheBinaryCarries(t *testin
 	if !strings.HasPrefix(v.rows[0], "Release image") {
 		t.Errorf("the page of the image is titled %q, want \"Release image\"", v.rows[0])
 	}
-	mustSay(t, v, "pinned by its digest", "Enter keeps the release this binary carries", "Release image (Enter keeps the default)")
+	mustSay(t, v, "pinned by its digest", "Enter keeps the release this binary carries", "Release image:")
 }
 
 func TestTheImageOfAnInstalledStackIsTheOneEnterKeeps(t *testing.T) {
@@ -150,7 +150,7 @@ func TestTheImageOfAnInstalledStackIsTheOneEnterKeeps(t *testing.T) {
 	}
 	var image frameView
 	for i := range run.in.shown {
-		if v := run.question(t, i); strings.Contains(v.text(), "Release image (Enter keeps the default)") {
+		if v := run.question(t, i); strings.Contains(v.text(), "Release image:") {
 			image = v
 			break
 		}

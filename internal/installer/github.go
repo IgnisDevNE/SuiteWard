@@ -1019,15 +1019,33 @@ func askTestCheck(ctx context.Context, env githubEnv, client *rest.Client, r rep
 	return answer, nil
 }
 
-// pickTestCheck is the check runs seen, picked with the arrow keys with the first one highlighted, and one more choice at the end: another
-// name, which is then typed.
+// testCheckDefault is the index of the check run that Enter takes: the only one there is, or the only one with "test" in its name (in any
+// case). With several runs and none or more than one of those names, it is -1: no run is a better guess than another, and the person picks.
+func testCheckDefault(names []string) int {
+	if len(names) == 1 {
+		return 0
+	}
+	found := -1
+	for i, name := range names {
+		if strings.Contains(strings.ToLower(name), "test") {
+			if found >= 0 {
+				return -1
+			}
+			found = i
+		}
+	}
+	return found
+}
+
+// pickTestCheck is the check runs seen, picked with the arrow keys with the one that testCheckDefault names highlighted, and one more
+// choice at the end: another name, which is then typed.
 func pickTestCheck(r *Resolver, repo repoInfo, names []string, key string) (string, error) {
 	choices := make([]ui.Choice, 0, len(names)+1)
 	for _, name := range names {
 		choices = append(choices, ui.Choice{Name: name})
 	}
 	choices = append(choices, ui.Choice{Name: "another name…"})
-	picked, err := r.screen.Select("Required test check for "+repo.name, choices, 0)
+	picked, err := r.screen.Select("Required test check for "+repo.name, choices, testCheckDefault(names))
 	if err != nil {
 		return "", err
 	}

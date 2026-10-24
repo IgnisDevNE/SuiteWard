@@ -301,6 +301,9 @@ func (s *Screen) contentRows(width int) pageRows {
 		}
 		p.rows = append(p.rows, rows...)
 	}
+	if s.selNote != "" {
+		p.rows = append(p.rows, s.markedRows(warnGlyph, toneAmber, toneAmber, s.selNote, width)...)
+	}
 	if s.multi != nil {
 		p.rows = append(p.rows, s.multiRows(len(p.rows), width)...)
 	}

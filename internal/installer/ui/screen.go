@@ -23,6 +23,7 @@
 //   - Choose, Select: a numbered question that is answered by typing the number. Select, on a full screen whose terminal can be put in key
 //     mode (Options.KeyInput), draws the choices with a highlighted row instead: the up and down arrows move it, Enter picks, and the
 //     answer replaces the list on the question's line. Plain mode, and a screen that cannot read keys, ask Select by number as Choose.
+//     A default of -1 is no default: nothing is highlighted and Enter is refused, with a note, until an arrow has picked a row.
 //   - MultiSelect: Select with a checkbox per row: the arrows move, space toggles, Enter confirms, within the Min and Max of the caller.
 //     Where keys cannot be read it asks by typing, "numbers or names, comma-separated"; Resolver.MultiSelect asks a plain screen the typed
 //     question of Resolver.Value. Ask, and Choose, say in the hint line that Enter takes the default.
@@ -133,10 +134,11 @@ type Screen struct {
 	err     error                        // the first write or restore failure
 
 	full, suspended, closed bool
-	terminal                bool // the input is a terminal (Options.InputIsTerminal)
-	selecting               bool // a Select list is open: the arrow keys move its highlight
-	hasDef                  bool // the open question has a default: Enter takes it
-	paged, apart            bool // Page opened the page; its first question is not asked yet, and is set apart
+	terminal                bool   // the input is a terminal (Options.InputIsTerminal)
+	selecting               bool   // a Select list is open: the arrow keys move its highlight
+	selNote                 string // why the Enter of that list was refused: no row is highlighted yet
+	hasDef                  bool   // the open question has a default: Enter takes it
+	paged, apart            bool   // Page opened the page; its first question is not asked yet, and is set apart
 
 	steps []string
 	cur   int // the current step, 1-based; 0 with no steps
@@ -567,8 +569,9 @@ func (s *Screen) answer(prompt, label, def string) (string, error) {
 }
 
 // Choose prints the label and the numbered choices with the default marked, then asks for a number until it gets one: typing the
-// number of a choice answers it and an empty line takes the default. It returns the index of the choice, 0-based. An invalid answer
-// is explained and asked again; the end of the input is an error that wraps io.EOF.
+// number of a choice answers it and an empty line takes the default. A def of -1 is no default: an empty line is asked again. It
+// returns the index of the choice, 0-based. An invalid answer is explained and asked again; the end of the input is an error that
+// wraps io.EOF.
 func (s *Screen) Choose(label string, choices []Choice, def int) (int, error) {
 	if err := checkChoices("choose", label, choices, def); err != nil {
 		return 0, err
@@ -576,9 +579,12 @@ func (s *Screen) Choose(label string, choices []Choice, def int) (int, error) {
 	s.mu.Lock()
 	s.listChoices(label, choices, def)
 	s.mu.Unlock()
-	prompt := fmt.Sprintf("Choose [%d]: ", def+1)
+	prompt := "Choose: "
+	if def >= 0 {
+		prompt = fmt.Sprintf("Choose [%d]: ", def+1)
+	}
 	for {
-		line, err := s.prompt(prompt, true)
+		line, err := s.prompt(prompt, def >= 0)
 		if err != nil {
 			return 0, fmt.Errorf("read the choice for %s: %w", label, err)
 		}
@@ -589,10 +595,10 @@ func (s *Screen) Choose(label string, choices []Choice, def int) (int, error) {
 	}
 }
 
-// checkChoices refuses a list that has no choice, or a default that is not one of them: a bug of the caller.
+// checkChoices refuses a list that has no choice, or a default that is neither one of them nor -1 (none): a bug of the caller.
 func checkChoices(verb, label string, choices []Choice, def int) error {
-	if len(choices) == 0 || def < 0 || def >= len(choices) {
-		return fmt.Errorf("%s %q needs a default among its %d choices, got %d", verb, label, len(choices), def)
+	if len(choices) == 0 || def < -1 || def >= len(choices) {
+		return fmt.Errorf("%s %q needs a default among its %d choices, or -1 for none, got %d", verb, label, len(choices), def)
 	}
 	return nil
 }
@@ -602,6 +608,8 @@ func checkChoices(verb, label string, choices []Choice, def int) error {
 // returns the index of the choice, 0-based. The terminal is put in key mode (Options.KeyInput) for the length of the call and back
 // whatever the way out, a done context included. Plain mode, a screen with no way to read keys and a terminal that cannot be put in key
 // mode ask by number, exactly as Choose does. The end of the input is an error that wraps io.EOF.
+// A def of -1 is no default: nothing is highlighted, a down arrow highlights the first row and an up arrow the last, and an Enter before
+// that is refused with a note. A numbered question asks again on an empty answer.
 // shortcut: space and Esc do nothing; a list longer than the page shows its last rows; upgrade when a question needs one.
 func (s *Screen) Select(label string, choices []Choice, def int) (idx int, err error) {
 	if err := checkChoices("select", label, choices, def); err != nil {
@@ -625,12 +633,16 @@ func (s *Screen) Select(label string, choices []Choice, def int) (idx int, err e
 	if err := s.readKeys("the choice for "+label, func(k key) bool {
 		switch k {
 		case keyUp:
-			cur = (cur + n - 1) % n
+			cur = (max(cur, 0) + n - 1) % n // from no row, the last
 			s.moveSelect(n, cur)
 		case keyDown:
-			cur = (cur + 1) % n
+			cur = (cur + 1) % n // from no row, the first
 			s.moveSelect(n, cur)
 		case keyEnter:
+			if cur < 0 {
+				s.refuseSelect()
+				return false
+			}
 			return true
 		}
 		return false
@@ -707,10 +719,19 @@ func (s *Screen) openSelect(label string, choices []Choice, def int) {
 	s.draw()
 }
 
+// refuseSelect says that an Enter was refused because no row is highlighted yet.
+func (s *Screen) refuseSelect() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selNote = "Pick one with the arrows."
+	s.draw()
+}
+
 // moveSelect highlights row to of the n that end the page: nothing else writes while a question is open.
 func (s *Screen) moveSelect(n, to int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.selNote = ""
 	rows := s.items[len(s.items)-n:]
 	for i := range rows {
 		rows[i].sel = i == to
@@ -723,17 +744,17 @@ func (s *Screen) moveSelect(n, to int) {
 func (s *Screen) closeSelect(n int, answer string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.selecting = false
+	s.selecting, s.selNote = false, ""
 	if answer != "" {
 		s.items = append(s.items[:len(s.items)-n-1], item{kind: itemText, text: answer})
 	}
 	s.draw()
 }
 
-// parseChoice reads an answer of n choices: empty is the default, otherwise a number from 1 to n.
+// parseChoice reads an answer of n choices: empty is the default (and nothing when there is none, def -1), otherwise a number from 1 to n.
 func parseChoice(line string, def, n int) (int, bool) {
 	if line == "" {
-		return def, true
+		return def, def >= 0
 	}
 	k, err := strconv.Atoi(line)
 	if err != nil || k < 1 || k > n {

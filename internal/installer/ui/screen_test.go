@@ -187,7 +187,7 @@ func TestChooseFailures(t *testing.T) {
 	if _, err := s.Choose("Q", testChoices, 0); !errors.Is(err, io.EOF) {
 		t.Fatalf("an invalid answer, then the end of input: err = %v, want io.EOF", err)
 	}
-	for _, def := range []int{-1, 2} {
+	for _, def := range []int{-2, 2} {
 		if _, err := s.Choose("Q", testChoices, def); err == nil {
 			t.Fatalf("a default of %d among 2 choices was accepted", def)
 		}

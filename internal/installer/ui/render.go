@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -99,8 +100,9 @@ type keepLevel int
 
 const (
 	keepNone keepLevel = iota // the row is explanation, which goes first
-	keepWarn                  // the row is part of a warning, which goes last, whole
-	keepBox                   // the row is part of a critical box, which never goes
+	keepWarn                  // the row is part of a warning, which goes after it, whole
+	keepRow                   // the row is part of a summary row that a window too small for all of them drops, whole, after the warnings
+	keepBox                   // the row is part of a critical box or of a key row of a summary, which never goes
 )
 
 func (r row) pad(width int) string { return r.s + strings.Repeat(" ", max(0, width-r.w)) }
@@ -157,6 +159,7 @@ func (s *Screen) frame() frame {
 	page := pageRows{cursor: -1, tail: -1}
 	if summary {
 		page.rows = s.summaryRows(textW)
+		page.tail, page.summary = len(page.rows), true
 	} else {
 		page = s.contentRows(textW)
 	}
@@ -219,7 +222,7 @@ func (s *Screen) titleRow(inner int) string {
 	right, rightTone := "", toneDefault
 	switch {
 	case s.failure != "":
-		right, rightTone = "failed", toneAmber
+		right, rightTone = "failed", toneRed
 	case s.summary:
 		right, rightTone = "done", toneGreen
 	case len(s.steps) > 0:
@@ -250,7 +253,7 @@ func (s *Screen) stepCell(i int) row {
 	case n < s.cur:
 		glyph, t = "✓", toneGreen
 	case n == s.cur && s.failure != "":
-		glyph, t, bold = warnGlyph, toneAmber, true // the step the command failed in
+		glyph, t, bold = warnGlyph, toneRed, true // the step the command failed in
 	case n == s.cur:
 		glyph, t, bold = "●", toneGreen, true
 	}
@@ -266,7 +269,8 @@ type pageRows struct {
 	head   int // the rows of the title of a Page, which stay at the top; 0 for a page that Page did not open
 	// tail is the first row of what the page waits on, which stays at the bottom: the rule above a question, the error of a command that
 	// failed, or the end of a page that waits for Enter. -1 for a page that waits on nothing, which shows its last rows.
-	tail int
+	tail    int
+	summary bool // the page is a summary: it has no title, and what it trims is its warnings and then its rows (see trim)
 }
 
 // contentRows is the page of the current step. The pending line (and with it the cursor) comes after the lines, and the spinner,
@@ -297,6 +301,9 @@ func (s *Screen) contentRows(width int) pageRows {
 		}
 		p.rows = append(p.rows, rows...)
 	}
+	if s.selNote != "" {
+		p.rows = append(p.rows, s.markedRows(warnGlyph, toneAmber, toneAmber, s.selNote, width)...)
+	}
 	if s.multi != nil {
 		p.rows = append(p.rows, s.multiRows(len(p.rows), width)...)
 	}
@@ -307,14 +314,14 @@ func (s *Screen) contentRows(width int) pageRows {
 	if s.spinning {
 		p.rows = append(p.rows, s.spinRow(width))
 	}
-	if s.failure != "" { // the error, under the page it stopped on, in the style of a warning; no line is pending, so no cursor
+	if s.failure != "" { // the error, under the page it stopped on, marked in the red of the failed step; no line is pending, so no cursor
 		if p.tail < 0 {
 			p.tail = len(p.rows)
 		}
 		if len(p.rows) > 0 {
 			p.rows = append(p.rows, row{})
 		}
-		p.rows, p.cursor = append(p.rows, s.markedRows(warnGlyph, toneAmber, toneDefault, s.failure, width)...), -1
+		p.rows, p.cursor = append(p.rows, s.markedRows(warnGlyph, toneRed, toneDefault, s.failure, width)...), -1
 	}
 	if p.tail < 0 && s.waiting {
 		p.tail = len(p.rows)
@@ -331,14 +338,14 @@ func (s *Screen) trimmedRow(width int) row {
 
 // fitBody is the rows of a page that show in a body of bodyH rows, and the row of the cursor. A page that is taller shows its last rows,
 // as a terminal would (shortcut: no scrollback), except a page that Page opened and that waits on something: it keeps its title at the top
-// and what it waits on at the bottom, and trims what is between them (see trim). When the title, the question and the boxes do not fit
-// together, the last rows show.
+// and what it waits on at the bottom, and trims what is between them (see trim). A summary keeps its key rows and trims what is below
+// them. When the title, the question and the boxes do not fit together, the last rows show.
 func (s *Screen) fitBody(p pageRows, bodyH, width int) ([]row, int) {
 	n := len(p.rows)
 	if n <= bodyH {
 		return p.rows, p.cursor
 	}
-	if p.head > 0 && p.tail >= p.head {
+	if (p.head > 0 || p.summary) && p.tail >= p.head {
 		if gone, first, ok := p.trim(n - bodyH); ok {
 			rows, cursor := make([]row, 0, bodyH), -1
 			for i, r := range p.rows {
@@ -363,9 +370,10 @@ func (s *Screen) fitBody(p pageRows, bodyH, width int) ([]row, int) {
 // trim chooses the rows between the title and what the page waits on that go, so that need rows fewer remain, in this order:
 //  1. the blank rows, from the end, the one above the rule last: no word is lost;
 //  2. the explanation, from the end, behind a row that says so (first is the row of the first one that goes, where that row is drawn);
-//  3. whole warnings, from the end, behind that row too.
+//  3. whole warnings, from the end, behind that row too;
+//  4. the whole rows of a summary that are not key rows, from the end, behind that row too.
 //
-// A critical box is never trimmed. ok is false when that is not enough.
+// A critical box and the key rows of a summary are never trimmed. ok is false when that is not enough.
 func (p pageRows) trim(need int) (gone []bool, first int, ok bool) {
 	gone, first = make([]bool, len(p.rows)), -1
 	drop := func(i int) { gone[i], need = true, need-1 }
@@ -393,10 +401,12 @@ func (p pageRows) trim(need int) (gone []bool, first int, ok bool) {
 			words(i)
 		}
 	}
-	for i := p.tail - 1; i >= p.head && need > 0; i-- {
-		if g := p.rows[i].grp; !gone[i] && p.rows[i].keep == keepWarn {
-			for j := i; j >= p.head && p.rows[j].grp == g; j-- {
-				words(j)
+	for _, level := range []keepLevel{keepWarn, keepRow} {
+		for i := p.tail - 1; i >= p.head && need > 0; i-- {
+			if g := p.rows[i].grp; !gone[i] && p.rows[i].keep == level {
+				for j := i; j >= p.head && p.rows[j].grp == g; j-- {
+					words(j)
+				}
 			}
 		}
 	}
@@ -567,21 +577,37 @@ func (s *Screen) spinRow(width int) row {
 	return b.row()
 }
 
-// summaryRows is the key/value rows, then the warnings after a blank line.
+// keyRows are the rows of a summary that a window too small for all of it keeps: what runs, where it answers, and what doctor found.
+// shortcut: the keys are the names the installer gives its rows, spelled here because Summary takes rows and warnings and nothing about
+// them. Upgrade when a summary needs to say which of its rows matter.
+var keyRows = []string{"Tier", "Instance", "Status", "Doctor"}
+
+// summaryRows is the key/value rows, then the warnings after a blank line. A row and a warning are trimmed whole (fitBody): the warnings
+// first, from the end, then the rows that are not key rows.
 func (s *Screen) summaryRows(width int) []row {
 	keyW := 0
 	for _, kv := range s.rows {
 		keyW = min(width/3, max(keyW, utf8.RuneCountInString(kv.Key)))
 	}
 	var rows []row
-	for _, kv := range s.rows {
-		rows = append(rows, s.fieldRows(kv.Key, kv.Value, keyW, 0, width)...)
+	for i, kv := range s.rows {
+		keep := keepRow
+		if slices.Contains(keyRows, kv.Key) {
+			keep = keepBox
+		}
+		for _, r := range s.fieldRows(kv.Key, kv.Value, keyW, 0, width) {
+			r.keep, r.grp = keep, i+1
+			rows = append(rows, r)
+		}
 	}
 	if len(s.rows) > 0 && len(s.warns) > 0 {
 		rows = append(rows, row{})
 	}
-	for _, w := range s.warns {
-		rows = append(rows, s.markedRows(warnGlyph, toneAmber, toneAmber, w, width)...)
+	for i, w := range s.warns {
+		for _, r := range s.markedRows(warnGlyph, toneAmber, toneAmber, w, width) {
+			r.keep, r.grp = keepWarn, len(s.rows)+i+1
+			rows = append(rows, r)
+		}
 	}
 	return rows
 }
@@ -597,6 +623,7 @@ func wrapLines(text string, width int) []string {
 
 // wrap breaks one line of text at spaces into lines of at most width runes. The indent of the text stays on every line, a word that is
 // longer than a line is cut (after a path separator when one fits, see breakAt), and a trailing space stays (the cursor of a prompt goes after it).
+// A bullet (a line that starts with "- " after its indent) hangs: what it wraps to is indented two more, under its text and not under the dash.
 func wrap(text string, width int) []string {
 	width = max(1, width)
 	rest := strings.TrimLeft(text, " ")
@@ -605,6 +632,17 @@ func wrap(text string, width int) []string {
 		indent, rest = 0, text
 	}
 	pad := strings.Repeat(" ", indent)
+	if body, bullet := strings.CutPrefix(rest, "- "); bullet && indent+2 < width {
+		lines := wrap(pad+body, width-2)
+		for i, l := range lines {
+			lead := "  "
+			if i == 0 {
+				lead = "- "
+			}
+			lines[i] = pad + lead + strings.TrimPrefix(l, pad)
+		}
+		return lines
+	}
 	room := width - indent
 	var lines []string
 	var cur []rune

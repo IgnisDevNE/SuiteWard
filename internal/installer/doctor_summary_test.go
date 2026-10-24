@@ -233,9 +233,9 @@ func TestTheRulesetFileOfTheSummaryIsTheOneTheInstallWrites(t *testing.T) {
 	}
 }
 
-// A summary that carries what doctor found still shows the rows a person needs on the smallest window. The page shows its last rows when it is
-// taller than the window, so what doctor adds has to be short: this is the case of the first install, two repositories without their
-// ruleset and an owner who is not enrolled, and the Status and Doctor rows stay.
+// A summary that carries what doctor found still shows the rows a person needs on the smallest window. The page keeps its key rows and trims
+// the warnings from the end when it is taller than the window: this is the case of the first install, two repositories without their
+// ruleset and an owner who is not enrolled, and the Status and Doctor rows stay, with the first warning.
 func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 	f, s := colocated{checkOut: instanceChecks}.build(t)
 	dir, err := os.MkdirTemp("", "s") // a path as short as a real one: the page is short of rows
@@ -253,7 +253,7 @@ func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 		}
 	}
 	var rows summaryRows
-	for _, kv := range [][2]string{{"Tier", "co-located"}, {"Runtime", "Podman (rootless)"}, {"Instance", "v0.4.0-alpha.2"}, {"GitHub App", "1234 on Acme"},
+	for _, kv := range [][2]string{{"Tier", "co-located"}, {"Runtime", "Podman (rootless)"}, {"Instance", "1a2b3c4d"}, {"Release", "v0.4.0-alpha.2"}, {"GitHub App", "1234 on Acme"},
 		{"Repositories", "Acme/api, Acme/web"}, {"Owner", "alice (enrolled now)"}, {"Status", "http://127.0.0.1:47081/status"}, {"Settings", path}} {
 		rows.add(kv[0], kv[1])
 	}

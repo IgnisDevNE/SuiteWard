@@ -202,14 +202,41 @@ func (s SelfInstall) place(staged, target string) error {
 	return nil
 }
 
-// offerSelf is the part of the summary of an install or an upgrade that deals with the copy of the program, on a full screen of a PC
-// that offers one. It removes the copy that an earlier run put aside, refreshes a copy that exists (its owner said yes once: this asks nothing
-// and leaves the PATH alone, so a run that was told not to ask does it too), and otherwise explains the copy and the PATH entry and asks, unless
-// the run was told not to (env.Unattended). It returns the Deps the rest of the summary builds its hints with: after a copy that is on the
-// PATH they name the program suiteward. A failure is a warning in the summary, because the install it ends has worked.
+// refreshCopy keeps the copy of the program that an earlier run made up to date. The install and the upgrade call it once they have succeeded,
+// on every screen and whatever the command line says: the copy exists because its owner said yes to it, so this asks nothing and leaves the PATH
+// alone. It also removes the copy that a run before put aside. A failure is a warning, because the install it follows has worked.
+func refreshCopy(ctx context.Context, env Env) {
+	d, s, scr := env.Deps, env.Self, screenOn(env.Term.Out)
+	if s == nil || ctx.Err() != nil {
+		return
+	}
+	exe, err := s.Executable()
+	if err != nil {
+		return // without the path of this program there is nothing to copy from, and offerSelf says so where a person can answer
+	}
+	dir, err := s.folder(d)
+	if err != nil {
+		return // this user has no folder of local data, so no copy of the program was ever put there
+	}
+	target := filepath.Join(dir, selfFile)
+	_ = os.Remove(target + staleSuffix) // a copy that a program held in the run before: if it still does, the next run tries again
+	if _, err := os.Stat(target); err != nil || sameFile(exe, target) {
+		return // no copy, or this program is the copy
+	}
+	if _, err := s.copyTo(exe, dir); err != nil {
+		scr.Warn("The copy of suiteward.exe in %s was not updated: %v\n", dir, err)
+		return
+	}
+	scr.Keep("Updated the copy of suiteward.exe: %s\n", target)
+}
+
+// offerSelf is the part of the end of an install or an upgrade that offers the copy of the program, on a full screen of a PC that has none and
+// of a person who answers (not env.Unattended): it explains the copy and the PATH entry and asks. It returns the Deps the rest of the summary
+// builds its hints with: after a copy that the name suiteward reaches they name the program suiteward. A failure is a warning in the summary,
+// because the install it ends has worked.
 func offerSelf(ctx context.Context, env Env, rows *summaryRows) Deps {
 	d, s, scr := env.Deps, env.Self, screenOn(env.Term.Out)
-	if s == nil || !scr.FullScreen() || ctx.Err() != nil {
+	if s == nil || env.Unattended || !scr.FullScreen() || ctx.Err() != nil {
 		return d
 	}
 	exe, err := s.Executable()
@@ -223,33 +250,35 @@ func offerSelf(ctx context.Context, env Env, rows *summaryRows) Deps {
 		return d
 	}
 	target := filepath.Join(dir, selfFile)
-	_ = os.Remove(target + staleSuffix) // a copy that a program held in the run before: if it still does, the next run tries again
-	if found, err := s.LookPath(selfName); sameFile(exe, target) || (err == nil && sameFile(found, exe)) {
-		return d // this program is the copy, or the shell finds it by its name already
+	found, lookErr := s.LookPath(selfName)
+	if _, statErr := os.Stat(target); statErr == nil || sameFile(exe, target) || (lookErr == nil && sameFile(found, exe)) {
+		return d // there is a copy (refreshCopy dealt with it), this program is the copy, or the shell finds it by its name already
 	}
-	if _, err := os.Stat(target); err == nil {
-		if _, err := s.copyTo(exe, dir); err != nil {
-			rows.warn(fmt.Sprintf("The copy of suiteward.exe in %s was not updated: %v", dir, err))
-			return d
-		}
-		rows.add("Command", target+" (updated)")
-		return d
+	other := ""
+	if lookErr == nil {
+		other = found // the name suiteward reaches another program
 	}
-	if env.Unattended {
-		return d
-	}
-	return offerCopy(ctx, env, rows, exe, dir)
+	return offerCopy(ctx, env, rows, exe, dir, other)
 }
 
-// offerCopy explains the copy of the program and the PATH entry, asks, and on a yes makes both. The default is No: Enter never changes the PATH.
-func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir string) Deps {
+// offerCopy explains the copy of the program and the PATH entry, asks, and on a yes makes both. The default is Yes: the offer is for the person
+// who does not know that the commands need the PATH, and an input that ended or a Ctrl-C is a No. other is the program that the shell runs for
+// the name suiteward, when there is one: the folder of the copy goes at the end of the PATH, so that program keeps the name, the page says so,
+// and the hints keep naming the path.
+func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other string) Deps {
 	d, s, scr := env.Deps, env.Self, screenOn(env.Term.Out)
 	target := filepath.Join(dir, selfFile)
-	scr.Page("Run suiteward from any terminal",
-		ui.Para("This installer is "+exe+", which is not on your PATH, so a command that SuiteWard prints, such as suiteward doctor, does not work in a terminal."),
+	blocks := []ui.Block{
+		ui.Para("This installer is " + exe + ", which is not on your PATH, so a command that SuiteWard prints, such as suiteward doctor, does not work in a terminal."),
 		ui.Fields(ui.KV{Key: "Copy to", Value: target}, ui.KV{Key: "Add to user PATH", Value: dir}),
-		ui.Para("New terminals find suiteward by name. This terminal keeps the PATH it started with: the summary shows the one line that fixes it here."))
-	picked, err := scr.Select("Copy suiteward.exe and add it to your PATH?", yesNo, 1)
+	}
+	if other != "" {
+		blocks = append(blocks, ui.Para("The shell finds another suiteward, "+other+". The copy goes after it on your PATH, so that one still answers to the name."))
+	} else {
+		blocks = append(blocks, ui.Para("New terminals find suiteward by name. This terminal keeps the PATH it started with: the summary shows the one line that fixes it here."))
+	}
+	scr.Page("Run suiteward from any terminal", blocks...)
+	picked, err := scr.Select("Copy suiteward.exe and add it to your PATH?", yesNo, 0)
 	switch {
 	case ctx.Err() != nil || errors.Is(err, io.EOF): // Ctrl-C, or an input that ended: no answer is not a yes
 		return d
@@ -272,6 +301,10 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir string)
 		if err := s.Path.Announce(); err != nil {
 			rows.warn(fmt.Sprintf("Your PATH was changed, but the programs that run were not told (%v): a new terminal may need you to sign out and in again.", err))
 		}
+	}
+	if other != "" {
+		rows.add("Command", target+" (the shell finds another suiteward first: "+other+")")
+		return d
 	}
 	line := `$env:Path += ";` + dir + `"`
 	rows.add("Command", target+" (new terminals find it as suiteward)")
@@ -322,9 +355,16 @@ func offerRemoveCopy(ctx context.Context, env Env, unattended bool) {
 	scr.Page("Remove the suiteward command",
 		ui.Para("An install of this PC put the suiteward command where a terminal finds it: a copy of the installer, and its folder on your user PATH. The instance itself is gone."),
 		ui.Fields(found...),
-		ui.Para("A copy that a program is running is renamed aside, and the next run of the installer removes it."))
-	if picked, err := scr.Select("Remove the copy and its PATH entry?", yesNo, 1); err != nil || picked != 0 {
-		return // an interrupt, an input that ended or a No: nothing is removed
+		ui.Para("A copy that a program is running is renamed aside, to suiteward.exe.old: delete that file by hand."))
+	picked, err := scr.Select("Remove the copy and its PATH entry?", yesNo, 1)
+	switch {
+	case ctx.Err() != nil || errors.Is(err, io.EOF): // Ctrl-C, or an input that ended: no answer is not a yes
+		return
+	case err != nil:
+		scr.Warn("The suiteward command was not removed: the answer could not be read: %v\n", err)
+		return
+	case picked != 0:
+		return
 	}
 	if onPath {
 		s.removeFromPath(scr, dir)
@@ -351,7 +391,7 @@ func (s SelfInstall) removeFromPath(scr *ui.Screen, dir string) {
 }
 
 // removeCopy deletes the copy, and the one that an earlier run put aside. A copy that a running program holds cannot be deleted, but it can be
-// renamed: it goes aside, where the next run removes it, or the person does.
+// renamed: it goes aside, and the person is told to delete it (a later run may remove it too, but nothing promises that).
 func (s SelfInstall) removeCopy(scr *ui.Screen, dir string) {
 	target := filepath.Join(dir, selfFile)
 	stale := target + staleSuffix
@@ -365,7 +405,7 @@ func (s SelfInstall) removeCopy(scr *ui.Screen, dir string) {
 			scr.Warn("%s could not be removed (%v) nor renamed: close the terminals that run suiteward and delete it by hand.\n", target, renameErr)
 			return
 		}
-		scr.Say("%s is in use, so it was renamed to %s: the next run of the installer removes it, or you can delete it by hand.\n", target, stale)
+		scr.Say("%s is in use, so it was renamed to %s; delete it by hand: %s\n", target, stale, stale)
 		return
 	}
 	if err == nil {
@@ -376,5 +416,10 @@ func (s SelfInstall) removeCopy(scr *ui.Screen, dir string) {
 	}
 }
 
-// refreshCopy keeps the copy of the program that an earlier run made up to date.
-func refreshCopy(ctx context.Context, env Env) {}
+// installSelf is what the end of a successful install or upgrade of the co-located tier does about the copy of the program, before its summary is
+// built: the copy that exists is refreshed on every screen, and a person on a full screen is offered one. The summary shows what the offer left in
+// copyRows and builds its hints with the name it left in the Deps.
+func (c *colocatedInstall) installSelf(ctx context.Context) {
+	refreshCopy(ctx, c.env)
+	c.env.Deps = offerSelf(ctx, c.env, &c.copyRows)
+}

@@ -374,6 +374,8 @@ type colocatedInstall struct {
 	keepDB, keepServe bool
 
 	machineUser string // the rootless user of the Podman machine, once it has been looked up
+
+	copyRows summaryRows // what the offer of the copy of the program says in the summary (installSelf)
 }
 
 // secretState is what the stack already has of its database secrets, read before anything is changed.
@@ -894,6 +896,7 @@ func (c *colocatedInstall) finish(ctx context.Context, scr *ui.Screen, t install
 		c.say("Then check the instance with `%s`.\n", doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
 	}
 	scr.Step(6)
+	c.installSelf(ctx)
 	return showSummary(scr, func() []ui.KV { return c.installSummary(ctx, t) })
 }
 

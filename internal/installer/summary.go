@@ -179,31 +179,27 @@ func (c *colocatedInstall) commonSummary(ctx context.Context, rows *summaryRows)
 }
 
 func (c *colocatedInstall) installSummary(ctx context.Context, t installTarget) []ui.KV {
-	var rows, self summaryRows
-	env := c.env
-	env.Deps = offerSelf(ctx, c.env, &self) // before the hints of the rows: after a copy on the PATH they name the program suiteward
+	var rows summaryRows
 	c.commonSummary(ctx, &rows)
 	rows.add("Owner", c.owner)
 	rows.add("Status", c.statusRow(ctx))
 	rows.add("Token file", c.tokenFile)
 	rows.add("Settings", t.settingsPath)
-	rows = append(rows, self...)
-	rows.addDoctor(ctx, env, t.settingsPath, doctorHint(env.Deps.command(), t.settingsPath, t.defaultPath))
+	rows = append(rows, c.copyRows...)
+	rows.addDoctor(ctx, c.env, t.settingsPath, doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
 	return rows
 }
 
 // upgradeSummary has no row for the backup: upgraded keeps the lines that name it.
 func (c *colocatedInstall) upgradeSummary(ctx context.Context, t installTarget) []ui.KV {
-	var rows, self summaryRows
-	env := c.env
-	env.Deps = offerSelf(ctx, c.env, &self)
+	var rows summaryRows
 	c.commonSummary(ctx, &rows)
 	rows.add("Release", fmt.Sprintf("%s (was %s)", digestOf(c.image), digestOf(c.previous.Image)))
 	rows.add("Status", c.statusRow(ctx))
 	rows.add("Token file", c.tokenFile)
 	rows.add("Settings", t.settingsPath)
-	rows = append(rows, self...)
-	rows.addDoctor(ctx, env, t.settingsPath, doctorHint(env.Deps.command(), t.settingsPath, t.defaultPath))
+	rows = append(rows, c.copyRows...)
+	rows.addDoctor(ctx, c.env, t.settingsPath, doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
 	return rows
 }
 

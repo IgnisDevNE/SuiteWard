@@ -133,17 +133,14 @@ func askForKey(r *Resolver, upgrade bool) error {
 	if !r.term.IsTerminal {
 		return noKeyError(upgrade)
 	}
-	answer, err := r.ask("No recovery key is set, so a backup cannot be encrypted. Make one now, as `suiteward backup init` does? [Y/n]: ") // never answered by --yes
+	yes, err := r.askYes("No recovery key is set, so a backup cannot be encrypted. Make one now, as `suiteward backup init` does?")
 	switch {
 	case errors.Is(err, io.EOF): // the input ended: no answer is not a yes
 		return noKeyError(upgrade)
 	case err != nil:
 		return fmt.Errorf("read the answer: %w", err)
-	}
-	if answer != "" {
-		if yes, err := parseYesNo("key", answer); err != nil || !yes {
-			return noKeyError(upgrade)
-		}
+	case !yes:
+		return noKeyError(upgrade)
 	}
 	return nil
 }

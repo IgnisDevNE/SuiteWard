@@ -85,6 +85,25 @@ func confirmUpgrade(r *Resolver, plan upgradePlan, parent, recipient string, ser
 	return nil
 }
 
+// askYes asks a question that only the person at the terminal answers (a flag, the answers file and --yes never do) and whose default is yes:
+// on a full screen a choice between Yes and No with Yes selected, on a plain one the typed question with [Y/n]. An answer that is not a yes
+// is a no, and the end of the input is an error that wraps io.EOF: the caller refuses on both.
+func (r *Resolver) askYes(question string) (bool, error) {
+	if r.screen.FullScreen() {
+		picked, err := r.screen.Select(question, yesNo, 0)
+		return picked == 0 && err == nil, err
+	}
+	answer, err := r.ask(question + " [Y/n]: ")
+	if err != nil {
+		return false, err
+	}
+	if answer == "" {
+		return true, nil
+	}
+	yes, err := parseYesNo("answer", answer)
+	return err == nil && yes, nil
+}
+
 func doctorHint(settingsPath string, defaultPath bool) string {
 	hint := "suiteward doctor"
 	if !defaultPath {
@@ -217,11 +236,11 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
-		return withBackup(err, dir, "")
+		return withBackup(err, dir, "", "")
 	}
 	scr.Step(4)
 	if err := c.bringUp(ctx, func() error { return SaveSettings(t.settingsPath, c.s) }); err != nil {
-		return withBackup(err, dir, "")
+		return withBackup(err, dir, "", "")
 	}
 	scr.Step(5)
 	c.restartAfterReboot(ctx)
@@ -329,16 +348,14 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	if !r.term.IsTerminal {
 		return false, refuse
 	}
-	answer, err := r.ask(startServicePrompt + " [Y/n]: ") // never answered by --yes, a flag or the answers file
+	yes, err := r.askYes(startServicePrompt)
 	switch {
 	case errors.Is(err, io.EOF): // the input ended: no answer is not a yes
 		return false, refuse
 	case err != nil:
 		return false, fmt.Errorf("read the answer to the start of the service: %w", err)
-	case answer != "":
-		if yes, err := parseYesNo("start", answer); err != nil || !yes {
-			return false, refuse
-		}
+	case !yes:
+		return false, refuse
 	}
 	const manual = "take the backup by hand instead (dump the database and copy the artifacts volume yourself; details: docs/backup.md, Appendix A), then upgrade"
 	if err := start(ctx); err != nil {

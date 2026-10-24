@@ -200,6 +200,7 @@ func TestInstallChecksThePortsInsideThePodmanMachine(t *testing.T) {
 
 func TestInstallSaysHowToReadStatusInsideThePodmanMachine(t *testing.T) {
 	h := machineHarness(t)
+	h.status = hostRefuses // the port that the machine publishes does not answer from this PC
 	if err := h.podman("--connection", "podman-machine-default"); err != nil {
 		t.Fatal(err)
 	}

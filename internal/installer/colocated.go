@@ -883,24 +883,29 @@ func connectionUser(ctx context.Context, p *Podman, connection string) (string, 
 // finish runs setup, or says how, prints the next steps and, on a full screen, ends with the summary.
 func (c *colocatedInstall) finish(ctx context.Context, scr *ui.Screen, t installTarget) error {
 	c.say("The MCP token for a client is in %s (it is not printed).\n", c.tokenFile)
-	c.say("Read the status of the service: %s\n", c.statusHint(ctx))
 	if c.s.GitHub.AppID == 0 {
+		c.say("Read the status of the service: %s\n", c.statusHint(ctx)) // nothing has waited for the service: it may not answer from this PC yet
 		c.say("GitHub is not configured. Run the install again with --github yes (or the GitHub values) to set it up, then enroll the owner.\n")
 	} else {
 		if err := c.enroll(ctx, c.readStatus); err != nil {
 			return err
 		}
+		c.say("Read the status of the service: %s\n", c.statusHint(ctx)) // after the enrollment, which waited for the service to answer
 		c.say("Then check the instance with `%s`.\n", doctorHint(t.settingsPath, t.defaultPath))
 	}
 	scr.Step(6)
 	return showSummary(scr, func() []ui.KV { return c.installSummary(ctx, t) })
 }
 
-// statusHint is the command that reads /status of the service: inside the Podman machine when the port is published there.
+// statusHint is what reads /status of the service: the address when this PC reaches it, otherwise the command that reads it inside the
+// Podman machine that publishes the port, which does not always answer from the PC (WSL's port forwarding).
 func (c *colocatedInstall) statusHint(ctx context.Context) string {
 	curl := fmt.Sprintf("curl -s http://127.0.0.1:%d/status", c.s.HTTPPort)
 	if !c.inMachine() {
 		return curl
+	}
+	if c.answersHere(ctx) {
+		return statusURL(c.s.HTTPPort)
 	}
 	user, err := c.lookUpMachineUser(ctx)
 	if err != nil {

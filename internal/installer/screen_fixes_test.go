@@ -241,7 +241,10 @@ func TestTheSummaryOfAnInstallWithoutGitHubWaitsForTheServiceToAnswer(t *testing
 	run := func(t *testing.T, refusals int) (tail string, asked int) {
 		t.Helper()
 		h := newHarness(t, "linux")
-		h.status = func(context.Context, string) ([]byte, error) {
+		h.status = func(_ context.Context, address string) ([]byte, error) {
+			if !strings.HasSuffix(address, "/status") { // the reads of doctor at the end of the install are not the wait
+				return nil, errors.New("connection refused")
+			}
 			if asked++; asked <= refusals {
 				return nil, errors.New("connection refused")
 			}
@@ -332,8 +335,10 @@ func TestAServiceThatNeverAnswersIsWaitedForOnceByAnInstallWithGitHub(t *testing
 	h := newHarness(t, "linux")
 	h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
 	asked := 0
-	h.status = func(context.Context, string) ([]byte, error) {
-		asked++
+	h.status = func(_ context.Context, address string) ([]byte, error) {
+		if strings.HasSuffix(address, "/status") { // the reads of doctor at the end of the install are not the wait
+			asked++
+		}
 		return nil, errors.New("connection refused")
 	}
 	c := newTermConsole(&bytes.Buffer{})

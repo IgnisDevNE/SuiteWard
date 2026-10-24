@@ -74,7 +74,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 			return err
 		}
 		if !sameImage(want, previous.Image) {
-			return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `suiteward install --upgrade`", want, previous.Image)
+			return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `%s install --upgrade`", want, previous.Image, env.Deps.command())
 		}
 	}
 	s, err := chooseSettings(r, base, rt.Name(), connection)

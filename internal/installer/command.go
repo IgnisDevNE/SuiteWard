@@ -323,7 +323,7 @@ func loadSaved(cmd, path string, named bool) (Settings, bool, error) {
 	case err == nil:
 		return saved, true, nil
 	case errors.Is(err, ErrNoSettings) && named:
-		return Settings{}, false, fmt.Errorf("--settings names %s, which does not exist: %w (nothing was changed; check the path: only `suiteward install` makes a settings file)", path, ErrNoSettings)
+		return Settings{}, false, fmt.Errorf("--settings names %s, which does not exist: %w (nothing was changed; check the path: only `%s install` makes a settings file)", path, ErrNoSettings, cmd)
 	case errors.Is(err, ErrNoSettings):
 		return DefaultSettings(), false, nil
 	}
@@ -374,7 +374,7 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	if _, given := r.given("backup-recipient"); given && !upgrade {
-		return errors.New("--backup-recipient (backup_recipient) is for --upgrade: to set the recovery key of this instance, run `suiteward backup init`")
+		return fmt.Errorf("--backup-recipient (backup_recipient) is for --upgrade: to set the recovery key of this instance, run `%s backup init`", env.Deps.command())
 	}
 	var tier string
 	if upgrade { // an upgrade works on what is installed: it never asks which tier

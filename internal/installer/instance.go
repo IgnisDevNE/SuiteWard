@@ -230,7 +230,7 @@ func (i instance) readStatus(ctx context.Context) ([]byte, statusDoc, error) {
 // converts the stack saves them.
 func (i instance) needSettings(cmd string) error {
 	if !i.haveSettings {
-		return fmt.Errorf("there are no settings at %s to keep the recovery key in: install first, or run `suiteward install --upgrade`, which saves them", i.settingsPath)
+		return fmt.Errorf("there are no settings at %s to keep the recovery key in: install first, or run `%s install --upgrade`, which saves them", i.settingsPath, cmd)
 	}
 	return nil
 }
@@ -331,7 +331,7 @@ func colocatedSteps(cmd string, rt Runtime, s Settings, image string, scr *ui.Sc
 				return rt.Run(ctx, stack.Serve)
 			})
 		},
-		recovery: "run `suiteward install` with the options of this run: it creates the service again from the settings, and the volumes and the secrets are kept",
+		recovery: "run `" + cmd + " install` with the options of this run: it creates the service again from the settings, and the volumes and the secrets are kept",
 	}
 }
 

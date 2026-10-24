@@ -71,7 +71,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	params.NoGitHub = st.adopted.NoGitHub
 	plan := upgradePlan{oldImage: st.adopted.Image, newImage: image, oldDB: st.adopted.DBImage, newDB: postgres}
 	if _, statErr := os.Stat(host.settingsPath); plan.current() && statErr == nil {
-		say("Nothing to upgrade: already on %s. Check the instance with `suiteward doctor`.\n", digestOf(image))
+		say("Nothing to upgrade: already on %s. Check the instance with `%s doctor`.\n", digestOf(image), env.Deps.command())
 		return holdPage(scr)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
@@ -133,7 +133,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 // installCommand is the command that installs again, as the messages of the installer name it: the tier and the settings file
 // are named when they are not the defaults (see enrollCommand).
 func installCommand(cmd string, r *Resolver, isolated bool) string {
-	command := "suiteward install"
+	command := cmd + " install"
 	if isolated {
 		command += " --tier isolated"
 	}

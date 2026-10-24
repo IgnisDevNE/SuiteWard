@@ -116,7 +116,7 @@ func waitForExitCode(ctx context.Context, file string) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-limit.C:
-			return fmt.Errorf("setup did not end within %s: finish it in its window, or run suiteward enroll again", setupWaitLimit)
+			return fmt.Errorf("%w (%s)", errSetupTimeout, setupWaitLimit)
 		case <-tick.C:
 		}
 	}

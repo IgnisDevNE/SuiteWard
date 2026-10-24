@@ -65,7 +65,7 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	// Enroll refuses a co-located stack with no settings file (colocatedEnrollTarget), so that is not what a host that has none is offered.
-	if err := tierNeeded(r, haveSaved, env.Deps.GOOS, "run `suiteward install --upgrade --tier co-located` first, which saves the settings file of a co-located stack"); err != nil {
+	if err := tierNeeded(r, haveSaved, env.Deps.GOOS, "run `"+env.Deps.command()+" install --upgrade --tier co-located` first, which saves the settings file of a co-located stack"); err != nil {
 		return err
 	}
 	var target enrollTarget
@@ -93,7 +93,7 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 func colocatedEnrollTarget(ctx context.Context, r *Resolver, env Env, t installTarget) (enrollTarget, error) {
 	if !t.haveSaved { // enrolling again replaces the TOTP secret: not of an instance that defaults picked
 		return enrollTarget{}, fmt.Errorf("there is no settings file at %s, so nothing says which instance this is, and enrolling again replaces its TOTP secret: "+
-			"run `suiteward install --upgrade`, which converts the stack and saves the settings file, or pass --settings with the file of the instance; nothing was changed", t.settingsPath)
+			"run `%s install --upgrade`, which converts the stack and saves the settings file, or pass --settings with the file of the instance; nothing was changed", t.settingsPath, env.Deps.command())
 	}
 	rt, connection, err := openRuntime(ctx, r, env, t.saved, false)
 	if err != nil {
@@ -199,7 +199,7 @@ func confirmEnrollAgain(r *Resolver, enrolled, owner string) error {
 // enrollChecks is the test check of each repository of the instance: from --test-check, else from the saved settings, else asked.
 func enrollChecks(cmd string, r *Resolver, gh GitHub) (map[string]string, error) {
 	if len(gh.Repositories) == 0 {
-		return nil, errors.New("GitHub is not configured on this instance, so there is no repository to enroll for: run `suiteward install --github yes` first")
+		return nil, fmt.Errorf("GitHub is not configured on this instance, so there is no repository to enroll for: run `%s install --github yes` first", cmd)
 	}
 	value, _ := r.given("test-check")
 	listed, isList, err := parseTestCheckList(value)

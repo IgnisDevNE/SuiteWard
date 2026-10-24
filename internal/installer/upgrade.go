@@ -15,8 +15,14 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
-// ErrNothingInstalled is the refusal of --upgrade, and of uninstall without --purge, when there is no stack to work on.
-var ErrNothingInstalled = errors.New("nothing is installed here: install first with `suiteward install`")
+// ErrNothingInstalled is the refusal of --upgrade, and of uninstall without --purge, when there is no stack to work on. Its text is the fact;
+// nothingInstalled adds the command that installs, which is named as the run reaches the program.
+var ErrNothingInstalled = errors.New("nothing is installed here")
+
+// nothingInstalled is ErrNothingInstalled with the install to run first.
+func nothingInstalled(cmd string) error {
+	return fmt.Errorf("%w: install first with `%s install`", ErrNothingInstalled, cmd)
+}
 
 // upgradeTarget is the release image the upgrade moves to: --image, else the release this binary carries.
 func upgradeTarget(r *Resolver) (string, error) {

@@ -91,7 +91,7 @@ type keyInit struct {
 func (k *keyInit) keys(ctx context.Context) error {
 	if old := k.inst.s.BackupRecipient; old != "" {
 		if !k.replace {
-			return fmt.Errorf("a recovery key is set already (%s): the backups made with it need its kit. To replace it with a new key, run `suiteward backup init --replace`", archive.Fingerprint(old))
+			return fmt.Errorf("a recovery key is set already (%s): the backups made with it need its kit. To replace it with a new key, run `%s backup init --replace`", archive.Fingerprint(old), k.env.Deps.command())
 		}
 		k.replaced = archive.Fingerprint(old)
 	}
@@ -180,7 +180,7 @@ func (k *keyInit) kept() {
 	if k.replaced != "" {
 		scr.Keep("The backups made with the key %s still need its kit: keep that one too.\n", k.replaced)
 	}
-	scr.Say("Backups are now encrypted to this key: `suiteward backup`, and `suiteward install --upgrade`.\n")
+	scr.Say("Backups are now encrypted to this key: `%s backup`, and `%s install --upgrade`.\n", k.env.Deps.command(), k.env.Deps.command())
 }
 
 func (k *keyInit) summary() []ui.KV {

@@ -1184,7 +1184,7 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, cmd, webURL string, rea
 			open = append(open, r.name)
 		}
 	}
-	scr.Warn("The rulesets of %s are not imported or not checked yet: import the files named above on GitHub, then run suiteward doctor to check the protection.\n", strings.Join(open, ", "))
+	scr.Warn("The rulesets of %s are not imported or not checked yet: import the files named above on GitHub, then run %s doctor to check the protection.\n", strings.Join(open, ", "), cmd)
 	return results, nil
 }
 
@@ -1265,7 +1265,7 @@ func keepProtection(scr *ui.Screen, cmd string, lines []string) {
 	for _, line := range lines {
 		scr.Keep("%s", line)
 	}
-	scr.Keep("Run the checks again at any time with suiteward doctor.\n")
+	scr.Keep("Run the checks again at any time with %s doctor.\n", cmd)
 }
 
 // runSetup runs `suiteward setup` in the serving container on a real terminal. Setup prints the TOTP enrollment URI and secret there,
@@ -1401,7 +1401,10 @@ func setupHere(ctx context.Context, cmd string, rt Runtime, scr *ui.Screen, out 
 // setup that did not end well.
 func afterSetup(scr *ui.Screen, cmd string, err error) error {
 	if err != nil {
-		scr.Page("Setup did not finish", ui.Para("This run did not see setup finish. If the owner is not enrolled, run suiteward enroll to try again."))
+		scr.Page("Setup did not finish", ui.Para("This run did not see setup finish. If the owner is not enrolled, run "+cmd+" enroll to try again."))
+		if errors.Is(err, errSetupTimeout) {
+			err = fmt.Errorf("%w: finish it in its window, or run %s enroll again", err, cmd)
+		}
 		return fmt.Errorf("setup failed: %w", err)
 	}
 	scr.Page("Setup finished", ui.Para("The TOTP secret was shown only in the terminal of setup: the installer did not see it, keep it or log it. From now on an approval of this instance needs the code your authenticator shows."))

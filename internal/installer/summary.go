@@ -218,7 +218,9 @@ func isolatedSummary(ctx context.Context, env Env, host isolatedHost, s Settings
 	rows.add("Release", version)
 	rows.addGitHub(s.GitHub)
 	for _, kv := range own {
-		if kv.Key == "Release" { // the row of an upgrade is the image that replaced the old one: Release is the version of the service
+		// shortcut: the upgrade of the isolated tier (upgrade_isolated.go) passes the image that replaced the old one under the key
+		// Release, which is the version of the service here, so it is renamed. Upgrade when that caller passes Image itself.
+		if kv.Key == "Release" {
 			kv.Key = "Image"
 		}
 		rows.add(kv.Key, kv.Value)

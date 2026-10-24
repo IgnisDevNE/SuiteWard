@@ -1194,3 +1194,50 @@ func TestTheOfferDefaultsToNoWhereAnotherSuitewardWouldShadowTheCopy(t *testing.
 
 // noEnv is the environment of a test whose PATH entries name no variable.
 func noEnv(string) string { return "" }
+
+// ---- an entry that names the folder by a variable ----
+
+// A Path of the expandable kind may hold the folder as %LOCALAPPDATA%\SuiteWard\bin, which a terminal reads as the folder that this program
+// adds. It is the same folder: it is not added a second time, it is taken off by a purge, and the text of the value stays as it was stored.
+func TestAnEntryThatNamesTheFolderByAVariableIsTheSameFolder(t *testing.T) {
+	env := func(name string) string { // a Windows variable has no case
+		if strings.EqualFold(name, "LOCALAPPDATA") {
+			return `C:\Users\me\AppData\Local`
+		}
+		return ""
+	}
+	const named = `%LOCALAPPDATA%\SuiteWard\bin`
+	for _, entry := range []string{named, `%localappdata%\suiteward\BIN\`} {
+		if got, changed := addPathEntry(`C:\A;`+entry, folderOnPath, env); got != `C:\A;`+entry || changed {
+			t.Errorf("addPathEntry with the entry %q = %q, %v; want it left as it is", entry, got, changed)
+		}
+		if got, changed := removePathEntry(`%SystemRoot%\system32;`+entry+`;C:\B`, folderOnPath, env); got != `%SystemRoot%\system32;C:\B` || !changed {
+			t.Errorf("removePathEntry with the entry %q = %q, %v; want the other entries as they were stored", entry, got, changed)
+		}
+	}
+	// A variable that is not defined stays as it is written: that entry is another folder.
+	other := `%NOWHERE%\SuiteWard\bin`
+	if got, changed := addPathEntry(other, folderOnPath, env); got != other+";"+folderOnPath || !changed {
+		t.Errorf("addPathEntry with an undefined variable = %q, %v; want the folder added", got, changed)
+	}
+}
+
+func TestAnAcceptedCopyDoesNotAddAFolderThatThePathNamesByAVariable(t *testing.T) {
+	pc := newPC(t)
+	pc.path.value = `C:\Windows\system32;%LOCALAPPDATA%\SuiteWard\bin;C:\Tools`
+	pc.offer(false, "\n")
+	if readText(t, pc.target()) != "NEW BUILD" || len(pc.path.writes) != 0 || pc.path.announced != 0 {
+		t.Errorf("the PATH was written (%q, %d writes, announced %d times), want the entry that is there left as it is", pc.path.value, len(pc.path.writes), pc.path.announced)
+	}
+}
+
+func TestAPurgeRemovesTheEntryThatNamesTheFolderByAVariable(t *testing.T) {
+	pc := newPC(t).installed()
+	pc.path.value = `%SystemRoot%\system32;%LOCALAPPDATA%\SuiteWard\bin;C:\Tools`
+	if run, err := purgeOn(t, pc, []string{testInstance + "\n", "1\n", "\n"}, "--purge"); err != nil {
+		t.Fatalf("Uninstall: %v\n%s", err, run.output())
+	}
+	if want := `%SystemRoot%\system32;C:\Tools`; pc.path.value != want || pc.path.announced != 1 {
+		t.Errorf("the PATH is %q (announced %d times), want %q announced once", pc.path.value, pc.path.announced, want)
+	}
+}

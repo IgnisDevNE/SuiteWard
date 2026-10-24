@@ -154,7 +154,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 
 	// The adoption guard and the image, before anything is changed.
 	neverStarted := func() (bool, error) { return stackNeverStarted(host.run, settingsPath) }
-	digest, installed, err := adoptInstalled(&s, unitsDir, filepath.Join(configDir, "github.env"), r, neverStarted, scr.Warn) // what it changes is a notice to keep
+	digest, installed, err := adoptInstalled(env.Deps.command(), &s, unitsDir, filepath.Join(configDir, "github.env"), r, neverStarted, scr.Warn) // what it changes is a notice to keep
 	if err != nil {
 		return err
 	}
@@ -537,7 +537,7 @@ func checkUserManager(run func(string, ...string) (string, error)) error {
 // when it is not the account's own, so the caller can say when it may go. The installed tier replaces the one that was asked for, and
 // that is reported; the installed ports and job timeout stand unless the run is given others (a flag or the answers file), which win,
 // and the change is said.
-func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neverStarted func() (bool, error), say func(string, ...any)) (string, installedStack, error) {
+func adoptInstalled(cmd string, s *Settings, unitsDir, homeEnvFile string, r *Resolver, neverStarted func() (bool, error), say func(string, ...any)) (string, installedStack, error) {
 	st, err := adoptUnitsDir(unitsDir, homeEnvFile, false)
 	if err != nil {
 		return "", installedStack{}, err
@@ -550,7 +550,7 @@ func adoptInstalled(s *Settings, unitsDir, homeEnvFile string, r *Resolver, neve
 		s.Tier, s.HTTPPort, s.MCPPort, s.JobTimeout = kept.Tier, kept.HTTPPort, kept.MCPPort, kept.JobTimeout
 		installedDigest = strings.TrimPrefix(st.adopted.Image, releaseImageRepo+"@")
 	}
-	digest, err := chooseImage(r, installedDigest, neverStarted, say)
+	digest, err := chooseImage(cmd, r, installedDigest, neverStarted, say)
 	return digest, st, err
 }
 
@@ -659,7 +659,7 @@ func reportAdopted(say func(string, ...any), asked, installed Settings) {
 
 // chooseImage picks the digest to pin from the "image" answer and the installed one. A different image is an upgrade, which
 // has its own command, unless the stack never completed a start: then it is a retry after a failed first run.
-func chooseImage(r *Resolver, installedDigest string, neverStarted func() (bool, error), say func(string, ...any)) (string, error) {
+func chooseImage(cmd string, r *Resolver, installedDigest string, neverStarted func() (bool, error), say func(string, ...any)) (string, error) {
 	asked, _ := r.given("image")
 	switch {
 	case asked == "" && installedDigest == "":

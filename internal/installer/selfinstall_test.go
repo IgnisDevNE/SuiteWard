@@ -314,17 +314,18 @@ func TestAProgramThatCannotBeReadIsNotCopied(t *testing.T) {
 
 // aPC is a PC of a user on Windows: a program that is running from Downloads, a user's PATH, and nothing of SuiteWard.
 type aPC struct {
-	t     *testing.T
-	local string // %LOCALAPPDATA%
-	exe   string // the running program
-	found string // what the shell finds as suiteward, "" for nothing
-	path  *fakeUserPath
-	self  SelfInstall
+	t       *testing.T
+	local   string // %LOCALAPPDATA%
+	exe     string // the running program
+	found   string // what the shell finds as suiteward, "" for nothing
+	path    *fakeUserPath
+	self    SelfInstall
+	version string // the build version of the running program: a release unless a test says dev
 }
 
 func newPC(t *testing.T) *aPC {
 	t.Helper()
-	pc := &aPC{t: t, local: t.TempDir(), path: &fakeUserPath{value: `C:\Windows\system32;C:\Tools`, expand: true, found: true}}
+	pc := &aPC{t: t, version: releaseVersion, local: t.TempDir(), path: &fakeUserPath{value: `C:\Windows\system32;C:\Tools`, expand: true, found: true}}
 	pc.exe = filepath.Join(t.TempDir(), "Downloads", "suiteward_v0.4.0-alpha.1_windows_amd64.exe")
 	writeText(t, pc.exe, "NEW BUILD")
 	pc.self = SelfInstall{
@@ -367,7 +368,7 @@ func (pc *aPC) offer(plain bool, answers ...string) offered {
 func (pc *aPC) offerWith(ctx context.Context, plain bool, answers ...string) offered {
 	pc.t.Helper()
 	run := newScreenRun(100, 30, answers...)
-	return pc.offerOn(ctx, run, run.on(Env{Deps: pc.deps(), Self: &pc.self}), plain)
+	return pc.offerOn(ctx, run, run.on(Env{Deps: pc.deps(), Self: &pc.self, Version: pc.version}), plain)
 }
 
 // offerOn runs the offer of the PC on a screen of the run, with the environment as the caller made it.
@@ -390,7 +391,7 @@ func (pc *aPC) offerOn(ctx context.Context, run *screenRun, env Env, plain bool)
 func (pc *aPC) refresh(plain bool) string {
 	pc.t.Helper()
 	run := newScreenRun(100, 30)
-	env := run.on(Env{Deps: pc.deps(), Self: &pc.self})
+	env := run.on(Env{Deps: pc.deps(), Self: &pc.self, Version: pc.version})
 	scr, env, err := env.openConsole(liveContext(pc.t), plain)
 	if err != nil {
 		pc.t.Fatal(err)
@@ -527,7 +528,7 @@ func TestTheOfferIsMadeOnlyWhereItCanBeAnsweredAndHelps(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			pc := newPC(t)
 			run := newScreenRun(100, 30, "1\n")
-			env, plain := run.on(Env{Deps: pc.deps(), Self: &pc.self}), false
+			env, plain := run.on(Env{Deps: pc.deps(), Self: &pc.self, Version: pc.version}), false
 			set(pc, &env, &plain)
 			scr, env, err := env.openConsole(liveContext(t), plain)
 			if err != nil {
@@ -692,7 +693,7 @@ func TestAFailedAnswerIsNotAYes(t *testing.T) {
 func TestAnAnswerThatCannotBeReadIsAWarningAndNotAYes(t *testing.T) {
 	pc := newPC(t)
 	run := newScreenRun(100, 30)
-	env := run.on(Env{Deps: pc.deps(), Self: &pc.self})
+	env := run.on(Env{Deps: pc.deps(), Self: &pc.self, Version: pc.version})
 	env.Term.In = &terminalGone{r: strings.NewReader(""), err: errors.New("the terminal went away")}
 	o := pc.offerOn(liveContext(t), run, env, false)
 	if _, err := os.Stat(pc.target()); err == nil || len(pc.path.writes) != 0 {
@@ -750,7 +751,7 @@ func installOnPC(t *testing.T, pc *aPC, stdin string, extra ...string) (*harness
 	c := newTermConsole(&bytes.Buffer{})
 	env := h.newEnv()
 	env.OpenScreen = c.open
-	env.Self = &pc.self
+	env.Self, env.Version = &pc.self, pc.version
 	env.Deps.Command = swCmd
 	err := Install(liveContext(t), colocatedArgs(h, extra...), env)
 	return h, c, err
@@ -824,7 +825,7 @@ func purgeOn(t *testing.T, pc *aPC, answers []string, flags ...string) (*screenR
 	h.f.env["LOCALAPPDATA"] = pc.local
 	run := newScreenRun(termWidth, termHeight, answers...)
 	env := run.on(h.newEnv())
-	env.Self = &pc.self
+	env.Self, env.Version = &pc.self, pc.version
 	args := append([]string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm"}, flags...)
 	return run, Uninstall(liveContext(t), args, env)
 }
@@ -966,7 +967,7 @@ func TestAnAnswerThatCannotBeReadAtThePurgeQuestionIsAWarningAndNotAYes(t *testi
 	h.f.env["LOCALAPPDATA"] = pc.local
 	run := newScreenRun(termWidth, termHeight)
 	env := run.on(h.newEnv())
-	env.Self = &pc.self
+	env.Self, env.Version = &pc.self, pc.version
 	env.Term.In = &terminalGone{r: strings.NewReader(testInstance + "\n"), err: errors.New("the terminal went away")}
 	args := []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm", "--purge"}
 	_ = Uninstall(liveContext(t), args, env) // the wait for Enter at the end fails with the same terminal
@@ -1032,7 +1033,7 @@ func TestAnUpgradeThatWasToldNotToAskStillRefreshesTheCopyOfAnEarlierInstall(t *
 	c := newTermConsole(&u.out)
 	env := u.env()
 	env.OpenScreen = c.open
-	env.Self = &pc.self
+	env.Self, env.Version = &pc.self, pc.version
 	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--upgrade", "--backup-dir", u.backups, "--runtime", "podman", "--connection", "pm", "--image", testImage, "--yes"}
 	if err := Install(liveContext(t), args, env); err != nil {
 		t.Fatal(err)
@@ -1049,18 +1050,82 @@ func TestAnUpgradeThatWasToldNotToAskStillRefreshesTheCopyOfAnEarlierInstall(t *
 	noRepeats(t, c.tail())
 }
 
-func TestAnInstallOnAPlainScreenRefreshesTheCopyOfAnEarlierInstallAndNeverOffersOne(t *testing.T) {
+// The refresh is the work of an upgrade: it moves the stack to the release of this program, and the copy goes with it. An install of this program
+// may as well be an older or another build than the one that made the copy, and it never overwrites that copy in silence.
+func TestAnUpgradeOnAPlainScreenRefreshesTheCopyOfAnEarlierInstall(t *testing.T) {
 	pc := newPC(t)
 	writeText(t, pc.target(), "OLD BUILD")
-	_, c, err := installOnPC(t, pc, "\n\n1\n", "--plain")
-	if err != nil {
+	u := newUpgradeHarness(t, nil)
+	u.f.env["LOCALAPPDATA"] = pc.local
+	env := u.env()
+	env.Self, env.Version = &pc.self, pc.version
+	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--upgrade", "--backup-dir", u.backups, "--runtime", "podman", "--connection", "pm", "--image", testImage, "--yes"}
+	if err := Install(context.Background(), args, env); err != nil {
 		t.Fatal(err)
 	}
 	if readText(t, pc.target()) != "NEW BUILD" || len(pc.path.writes) != 0 {
 		t.Errorf("the copy holds %q after %d PATH writes, want this program and the PATH alone", readText(t, pc.target()), len(pc.path.writes))
 	}
-	if want := "Updated the copy of suiteward.exe: " + pc.target(); !strings.Contains(c.out.String(), want) {
-		t.Errorf("the output lacks %q:\n%s", want, c.out.String())
+	if want := "Updated the copy of suiteward.exe: " + pc.target(); !strings.Contains(u.out.String(), want) {
+		t.Errorf("the output lacks %q:\n%s", want, u.out.String())
+	}
+}
+
+func TestAnInstallLeavesTheCopyOfAnEarlierInstallAsItIs(t *testing.T) {
+	for name, extra := range map[string][]string{"a full screen": nil, "a plain run": {"--plain"}} {
+		t.Run(name, func(t *testing.T) {
+			pc := newPC(t)
+			writeText(t, pc.target(), "OLD BUILD")
+			_, c, err := installOnPC(t, pc, "\n\n1\n", extra...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if readText(t, pc.target()) != "OLD BUILD" || len(pc.path.writes) != 0 {
+				t.Errorf("an install changed the copy (%q) or the PATH (%d writes)", readText(t, pc.target()), len(pc.path.writes))
+			}
+			if out := c.out.String(); strings.Contains(out, "Updated the copy") || strings.Contains(out, "Run suiteward from any terminal") {
+				t.Errorf("an install refreshed the copy or offered one:\n%s", out)
+			}
+		})
+	}
+}
+
+// A development build is not a release: it never replaces the copy of a person who installed a release, and it is not offered as the command.
+func TestADevelopmentBuildLeavesTheCopyAsItIsAndSaysSo(t *testing.T) {
+	for _, version := range []string{"dev", ""} {
+		for name, plain := range map[string]bool{"a full screen": false, "a plain run": true} {
+			t.Run(version+" on "+name, func(t *testing.T) {
+				pc := newPC(t)
+				pc.version = version
+				writeText(t, pc.target(), "OLD BUILD")
+				out := pc.refresh(plain)
+				if readText(t, pc.target()) != "OLD BUILD" {
+					t.Errorf("the copy holds %q after a development build", readText(t, pc.target()))
+				}
+				if want := "this is a development build: the copy at " + pc.target() + " is left as it is"; !strings.Contains(compact(out), compact(want)) {
+					t.Errorf("the output lacks %q:\n%s", want, out)
+				}
+			})
+		}
+	}
+	pc := newPC(t)
+	pc.version = "dev"
+	if out := pc.refresh(true); strings.TrimSpace(out) != "" {
+		t.Errorf("a development build with no copy said %q", out)
+	}
+}
+
+func TestADevelopmentBuildIsNotOfferedAsTheCommand(t *testing.T) {
+	for _, version := range []string{"dev", ""} {
+		pc := newPC(t)
+		pc.version = version
+		o := pc.offer(false, "1\n")
+		if o.asked() || len(o.rows) != 0 || len(pc.path.writes) != 0 {
+			t.Errorf("version %q: a development build was offered (asked %d times, rows %v)", version, len(o.run.in.shown), o.rows)
+		}
+		if _, err := os.Stat(pc.target()); err == nil {
+			t.Errorf("version %q: a development build was copied", version)
+		}
 	}
 }
 
@@ -1082,7 +1147,7 @@ func TestAnUpgradeThatFindsNothingToUpgradeStillRefreshesTheCopyOfAnEarlierInsta
 	u.restack(testImage, nil)
 	u.f.env["LOCALAPPDATA"] = pc.local
 	env := u.env()
-	env.Self = &pc.self
+	env.Self, env.Version = &pc.self, pc.version
 	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--upgrade", "--backup-dir", u.backups, "--runtime", "podman", "--connection", "pm", "--image", testImage, "--yes"}
 	if err := Install(context.Background(), args, env); err != nil {
 		t.Fatal(err)
@@ -1092,5 +1157,22 @@ func TestAnUpgradeThatFindsNothingToUpgradeStillRefreshesTheCopyOfAnEarlierInsta
 	}
 	if readText(t, pc.target()) != "NEW BUILD" {
 		t.Errorf("the copy holds %q, want this program", readText(t, pc.target()))
+	}
+}
+
+// releaseVersion is the build version of a release: a development build is "dev", which never touches the copy of the program.
+const releaseVersion = "v0.4.0"
+
+// A copy that another suiteward shadows does not give the person the command they asked for: Enter, which takes the default, does not make it.
+func TestTheOfferDefaultsToNoWhereAnotherSuitewardWouldShadowTheCopy(t *testing.T) {
+	pc := newPC(t)
+	pc.found = filepath.Join(t.TempDir(), "Tools", "suiteward.exe")
+	writeText(t, pc.found, "ANOTHER BUILD")
+	o := pc.offer(false, "\n")
+	if v := compact(o.run.question(t, 0).text()); !strings.Contains(v, "2)No(default)") || strings.Contains(v, "1)Yes(default)") {
+		t.Errorf("the page does not mark No as the default:\n%s", o.run.question(t, 0).dump())
+	}
+	if _, err := os.Stat(pc.target()); err == nil || len(pc.path.writes) != 0 || len(o.rows) != 0 || o.d.Command != swCmd {
+		t.Errorf("Enter copied the program or changed the PATH (%v, %d writes, rows %v)", err, len(pc.path.writes), o.rows)
 	}
 }

@@ -264,3 +264,11 @@ func TestASetupThatDoesNotEndInTimeSaysToRunEnrollAgainAsTheRunReachesIt(t *test
 		t.Errorf("afterSetup = %v, want an error that says to run `%s enroll` again", got, swCmd)
 	}
 }
+
+func TestTheIsolatedImageRefusalNamesTheUpgradeAsTheRunReachesIt(t *testing.T) {
+	r := newTestResolver(t, map[string]string{"image": "sha256:" + strings.Repeat("b", 64)}, nil, Terminal{In: strings.NewReader(""), Out: &syncBuffer{}})
+	_, err := chooseImage(swCmd, r, strings.Repeat("a", 64), func() (bool, error) { return false, nil }, func(string, ...any) {})
+	if err == nil || !strings.Contains(err.Error(), "use `"+swCmd+" install --upgrade`") {
+		t.Errorf("chooseImage = %v, want a refusal that says to use `%s install --upgrade`", err, swCmd)
+	}
+}

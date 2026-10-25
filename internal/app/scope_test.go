@@ -345,8 +345,13 @@ func TestScopeAddLeavesWhatItCannotInsertSafelyToTheUser(t *testing.T) {
 			if r.code != 1 || r.stdout != "" || r.file != tc.declaration {
 				t.Fatalf("exit %d, stdout %q, the declaration is\n%q; want 1, nothing on stdout and no change", r.code, r.stdout, r.file)
 			}
-			if want := tc.list + ":\n  - added/\n"; !strings.Contains(r.stderr, want) {
-				t.Errorf("stderr does not give the lines to add by hand (%q):\n%s", want, r.stderr)
+			if !strings.Contains(r.stderr, "  - added/\n") {
+				t.Errorf("stderr does not give the lines to add by hand:\n%s", r.stderr)
+			}
+			// The key goes with the lines only when the file has no such list: pasted over a list that exists, it would be a second key.
+			absent := !strings.Contains(tc.declaration, tc.list+":")
+			if carriesKey := strings.Contains(r.stderr, "\n"+tc.list+":\n"); carriesKey != absent {
+				t.Errorf("the lines carry the key %q: %v; want %v, as the declaration has the list: %v\n%s", tc.list, carriesKey, absent, !absent, r.stderr)
 			}
 			if len(r.others) != 0 {
 				t.Errorf("the command left %q in the directory", r.others)
@@ -358,7 +363,7 @@ func TestScopeAddLeavesWhatItCannotInsertSafelyToTheUser(t *testing.T) {
 // The lines for the user are the ones that the list lacks: a pattern it holds, pasted, would make the declaration invalid.
 func TestScopeAddOffersByHandOnlyWhatTheListLacks(t *testing.T) {
 	r := scopeAdd(t, "version: 1\ninclude: [a, b]\n", "a", "c/")
-	if r.code != 1 || !strings.Contains(r.stderr, "include:\n  - c/\n") || strings.Contains(r.stderr, "  - a\n") {
+	if r.code != 1 || !strings.Contains(r.stderr, "  - c/\n") || strings.Contains(r.stderr, "  - a\n") {
 		t.Fatalf("exit %d, stderr:\n%s", r.code, r.stderr)
 	}
 }

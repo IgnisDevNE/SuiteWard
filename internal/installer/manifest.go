@@ -153,7 +153,7 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 		}
 		if env.Tier == config.TierIsolated {
 			port := addr[strings.LastIndex(addr, ":")+1:]
-			blocks = append(blocks, ui.Para("Isolated host: forward the port from your PC first, then open the address on the PC.\n"+
+			blocks = append(blocks, ui.Para("Isolated host: forward the port from your computer first, then open the address on the computer.\n"+
 				"aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\""+port+"\"],\"localPortNumber\":[\""+port+"\"]}'"))
 		}
 		blocks = append(blocks, ui.Para("Note the App name: if the installer cannot finish, the App has to be deleted on GitHub. You may rename it there."))
@@ -163,7 +163,7 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 		ghSay(env.Out, "Create the GitHub App: open this address in the browser of this machine and approve the App on GitHub. The App is named %s unless you rename it there; note the name, in case the installer cannot finish and the App has to be deleted.\n  http://%s/\n", name, addr)
 		if env.Tier == config.TierIsolated {
 			port := addr[strings.LastIndex(addr, ":")+1:]
-			ghSay(env.Out, "This host is isolated: from your PC, forward the port first, then open the address on the PC (the browser reaches the listener through the forward).\n"+
+			ghSay(env.Out, "This host is isolated: from your computer, forward the port first, then open the address on the computer (the browser reaches the listener through the forward).\n"+
 				"  aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"%s\"],\"localPortNumber\":[\"%s\"]}'\n", port, port)
 		}
 	}

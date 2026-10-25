@@ -16,7 +16,7 @@ On Linux and macOS, one command downloads the binary of the release you chose, c
 curl -fsSL https://github.com/IgnisDevNE/SuiteWard/releases/download/<tag>/install.sh | SUITEWARD_VERSION=<tag> sh
 ```
 
-Without cosign the script says that the signature was not verified: read [section 4.1](install.md#4-get-and-verify-the-installer) before you rely on it. The macOS binaries are not notarized: a browser download needs `xattr -d com.apple.quarantine <file>`, a `curl` download does not.
+Without cosign the script says that the signature was not verified: read [section 4.1](install.md#4-get-and-verify-the-installer) before you rely on it. The macOS binaries are not notarized: macOS may block a browser download, and when it does, `xattr -d com.apple.quarantine <file>` lifts the block; a `curl` download is not quarantined.
 
 On Windows, or to verify by hand on any system (the checks need the release source, which holds `scripts/verify-release.ps1`): from the release page, download the binary for your platform, `SHA256SUMS` and `SHA256SUMS.sigstore.json`, then verify them once, with PowerShell 7.2 or later and cosign 3.x, from the release source:
 
@@ -25,7 +25,7 @@ pwsh ./scripts/verify-release.ps1 -Blob <folder>/SHA256SUMS -Bundle <folder>/SHA
 pwsh ./scripts/verify-release.ps1 -Sums <folder>/SHA256SUMS -File <folder>/suiteward_<tag>_<os>_<arch>
 ```
 
-Use the file of your platform: `suiteward_<tag>_windows_amd64.exe`, or one of the `linux` and `darwin` files. On Linux and macOS, rename it to `suiteward`, run `chmod +x suiteward` and put it on your PATH. On Windows you can run the file where it is, by its path: at the end of the install it offers to copy itself to a folder on your PATH, and until then every command it prints names the path it was run from. A browser download on macOS needs `xattr -d com.apple.quarantine <file>` first.
+Use the file of your platform: `suiteward_<tag>_windows_amd64.exe`, or one of the `linux` and `darwin` files. On Linux and macOS, rename it to `suiteward`, run `chmod +x suiteward` and put it on your PATH. On Windows you can run the file where it is, by its path: at the end of the install it offers to copy itself to a folder on your PATH, and until then every command it prints names the path it was run from. macOS may block a browser download: when it does, run `xattr -d com.apple.quarantine <file>` first.
 
 **2. Install** ([section 5](install.md#5-install-co-located)):
 

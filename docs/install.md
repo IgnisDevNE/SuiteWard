@@ -440,7 +440,9 @@ Keep these points in mind:
 
   If the approved contract fails its integrity check, the command gets no reply: SuiteWard retries it and then records it as failed.
 
-**An agent widens the scope** with a pull request that edits `.suiteward.yml`. The edit creates a protected revision, and you approve it like any other. An agent cannot use `/suiteward suggest`: only the owner's comments are commands.
+**Add what the suggestion missed.** `suiteward scope add [--runner] PATTERN...`, run in the root of a checkout, adds the patterns to the `include` list of its `.suiteward.yml` (to `runner` with `--runner`). It changes only the lines it adds and prints them, and where it cannot insert safely (a list written as `[a, b]`, for one) it changes nothing and prints the lines to add by hand. Nothing is protected until you approve the revision that the changed file creates on a pull request.
+
+**An agent widens the scope** with a pull request that edits `.suiteward.yml`, for example with `suiteward scope add`. The edit creates a protected revision, and you approve it like any other. An agent cannot use `/suiteward suggest`: only the owner's comments are commands.
 
 **A reduction.** When a revision removes rules or paths from the scope, its revision comment lists the rules and the paths that the reduction removes, so you see what would stop being protected before you approve.
 

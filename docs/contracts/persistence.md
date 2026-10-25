@@ -1114,7 +1114,7 @@ This replaces the parts of the M1.7b section above that this list names.
   ```
 - Migration `00017` updates the `pr_commands` disposition CHECK.
 
-**Inventory.** `inventory.SuggestScope(entries []inventory.Entry) []string` returns the de-duplicated include patterns of the runtime contract's rule, from file paths only: the top-level directory globs first, then the file globs, each group sorted, then capped at 20, so the broadest suggestions survive the cap (E2, 2026-10-16).
+**Inventory.** The suggestion from file paths only was `inventory.SuggestScope` when this rework was written. M1.9 replaced it with `inventory.Suggest` and removed it: [Scope discovery](#scope-discovery-m19-normative) gives the signatures, the limit of 20 and the order.
 
 **Conformance:**
 - `LatestBootstrapProposal`: the newest wins, a promoted one is excluded, and both kinds are returned.
@@ -1125,7 +1125,6 @@ This replaces the parts of the M1.7b section above that this list names.
 - `PromoteMerge`: a superseded carrier's merge is `before-canonical`.
 - `Skipped`: the `since` boundary, and another pull is not matched.
 - The new dispositions are ignored by `LatestOwnerCommand`.
-- `SuggestScope`: the patterns, the cap and the ordering.
 
 ## Scope discovery (M1.9; normative)
 
@@ -1139,17 +1138,24 @@ The [runtime contract](runtime.md#scope-discovery-m19) gives the behavior. This 
   	Include []string
   	Runner  []string
   	Mixed   []string
-  	Cut     bool
+  	// Submodules are the non-vendored submodules that an Include or Runner pattern reaches; their content is not protected.
+  	Submodules []string
+  	// Cut is true when the limit dropped some include or runner patterns.
+  	Cut bool
   }
 
-  // Suggest replaces SuggestScope.
+  // Suggest proposes a declaration from the paths of the File entries of a tree. It replaced SuggestScope.
   func Suggest(entries []Entry) Suggestion
+
+  // SuggestAgainst is Suggest for a base declaration s: a runner pattern that s lists or covers is left out
+  // before the limit applies, so it neither takes room nor sets Cut.
+  func SuggestAgainst(entries []Entry, s scope.Scope) (Suggestion, error)
 
   // Uncovered returns the test-like file paths of entries that s does not cover, sorted.
   func Uncovered(entries []Entry, s scope.Scope) ([]string, error)
   ```
 
-  `SuggestScope` is removed when the callers move to `Suggest`.
+  The limit of 20 covers the include and the runner patterns together. The runner patterns come first, at most 20 of them, and the include patterns take the room that is left, the directory patterns before the file patterns and each group sorted. `Cut` is set whenever an include or runner pattern is dropped, and the replies say so. `Mixed` and `Submodules` have a limit of their own, 20 paths each. `SuggestScope` no longer exists.
 - **Scope.**
 
   ```go

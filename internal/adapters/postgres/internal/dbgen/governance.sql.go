@@ -900,9 +900,12 @@ func (q *Queries) ListProposalRevisions(ctx context.Context, arg ListProposalRev
 }
 
 const listVersionsHoldingManifest = `-- name: ListVersionsHoldingManifest :many
-SELECT version_id, manifest_digest = $1::text AS holds
+SELECT suite_versions.version_id, suite_versions.manifest_digest = $1::text AS holds
 FROM suite_versions
-WHERE project_id = $2 AND suite_id = $3
+JOIN promotions ON promotions.project_id = suite_versions.project_id
+    AND promotions.suite_id = suite_versions.suite_id
+    AND promotions.version_id = suite_versions.version_id
+WHERE suite_versions.project_id = $2 AND suite_versions.suite_id = $3
 `
 
 type ListVersionsHoldingManifestParams struct {
@@ -916,7 +919,8 @@ type ListVersionsHoldingManifestRow struct {
 	Holds     bool
 }
 
-// Every version of a Suite, with whether its manifest has the digest. The manifest itself is not read.
+// Every version of a Suite, as GetVersion finds it (with the promotion that created it), with whether its manifest has
+// the digest. The manifest itself is not read.
 func (q *Queries) ListVersionsHoldingManifest(ctx context.Context, arg ListVersionsHoldingManifestParams) ([]ListVersionsHoldingManifestRow, error) {
 	rows, err := q.db.Query(ctx, listVersionsHoldingManifest, arg.ManifestDigest, arg.ProjectID, arg.SuiteID)
 	if err != nil {

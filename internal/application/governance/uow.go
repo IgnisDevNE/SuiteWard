@@ -37,9 +37,9 @@ type Tx interface {
 	Proposal(context.Context, contract.ProposalID) (contract.Proposal, contract.Consent, error)
 	Assessment(context.Context, contract.ProposalReference, contract.SourceRevision) (contract.IntegrityAssessment, bool, error)
 	Version(context.Context, contract.SuiteVersionID) (contract.HistoricalCanonical, bool, error)
-	// VersionsHolding reports, for every version of the locked Suite, whether its manifest has the digest: one read of
-	// the stored digests, scoped to the Suite, that decodes no manifest (Version does). A Suite without versions gives
-	// an empty map.
+	// VersionsHolding reports, for every version of the locked Suite that Version would find, whether its manifest has
+	// the digest: one read of the stored digests, scoped to the Suite, that decodes no manifest (Version does). A Suite
+	// without versions gives an empty map.
 	VersionsHolding(context.Context, artifact.Digest) (map[contract.SuiteVersionID]bool, error)
 	PromotionFor(context.Context, contract.ProposalReference) (contract.PromotionRecord, bool, error)
 	// Receipt lookups are global, not limited to the locked Suite.

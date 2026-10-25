@@ -4,7 +4,9 @@
 - **Phase:** [M1.15](../plan/phases/M1.15.md)
 - **Decision:** [D-SCOPE-DISCOVERY](../plan/decisions.md#d-scope-discovery-suggesting-and-widening-the-scope) (the owner's question Q4)
 
-This is a document study with no code: the vendors' and runners' own documentation, plus a hand-picked sample of seven CI workflows. Every source was read on 2026-10-25 and is listed at the end. It decides what task S1 of [M1.15](../plan/phases/M1.15.md) reads besides file paths.
+This is a document study with no code: the vendors' and runners' own documentation, plus a hand-picked sample of seven CI workflows. Every source was read on 2026-10-25 and is listed at the end. It was to decide what task S1 of [M1.15](../plan/phases/M1.15.md) reads besides file paths.
+
+**Outcome (owner, 2026-10-25).** On this evidence, reading config files was taken out of M1.15: detection stays path-only, and `suiteward scope add` serves the layouts the path rules miss. Section 5 is kept as the design to start from if config reading is reconsidered.
 
 **Result.** No tool discovers tests from a source tree without being told where, or without running code. The reporting tools ingest what a CI run produced, the runners enumerate by executing, and the rest ask the user to declare. SuiteWard's model (path conventions, then a declared scope the owner approves) is the same one. The runners' static config files are the one other source that fits, and on the sample below it adds little: a configured directory says where the runner looks, not which files are tests. A CI workflow's test commands do not fit at all.
 
@@ -64,7 +66,7 @@ SuiteWard reads paths and contents through Contents read, never executes code, t
 - **Keep the approved format list minus Jest, and add no CI source.** Section 3 is the evidence. Jest is out of this phase (owner, 2026-10-25): `package.json` is not read, because the any-depth globs already find Jest test files and `roots` often names `src`.
 - **Gate every configured directory.** A value says where the runner looks, not which files count (section 3). Suggest a bare `dir/**` only when the existing path rules already treat the directory as a test directory, or its last segment is a test-directory name (`tests`, `test`, `spec`, `testdata`...). List any other value in the reply, with the config file it came from, for the owner to add with `suiteward scope add`. On the seven projects of the sample this suggests nothing the path rules miss, so S1 mainly gives the owner a list of configured directories to decide on.
 - **Within the approved runners, beyond the literal list (the orchestrator decides):**
-  - `pytest.toml` and `.pytest.toml` (`[pytest]`), and pyproject's `[tool.pytest]` table next to `[tool.pytest.ini_options]`. The suggester already lists both files as runner files, and the TOML library is approved.
+  - `pytest.toml` and `.pytest.toml` (`[pytest]`), and pyproject's `[tool.pytest]` table next to `[tool.pytest.ini_options]`. The suggester already lists both files as runner files; reading them needs a TOML library.
   - Exact section names: `setup.cfg` uses `[tool:pytest]`, `tox.ini` uses `[pytest]`.
   - `phpunit.dist.xml` (listed in the 10.5 manual), and `<file>` children of `<testsuite>` as well as `<directory>`.
 - **Declined for now (owner, 2026-10-25):** `.mocharc.json|jsonc|yaml|yml` `spec`, and `pom.xml` `<testSourceDirectory>`.

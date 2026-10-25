@@ -90,3 +90,35 @@ func TestPromoteMergeReadsTheEarlierVersionsWithoutOneReadPerVersion(t *testing.
 		t.Fatalf("reads of Tx.Version = %d on 6 versions and %d on 2, want the same number", many, few)
 	}
 }
+
+// One read lists the earlier versions for the whole decision, whether it ends in a promotion or in a correction.
+func TestPromoteMergeListsTheVersionsHoldingTheManifestWithOneRead(t *testing.T) {
+	for name, final := range map[string]string{"a promotion": "fresh", "a correction": "c3"} {
+		t.Run(name, func(t *testing.T) {
+			e, last, tree := versionsEnv(t, 6, final)
+			uow := faulting(e.mem, "VersionsHolding", 0) // a failure at call 0 never comes: the wrapper only counts
+
+			if _, err := governance.PromoteMerge(context.Background(), uow, e.writer, e.mergeRequest(last, tree)); err != nil {
+				t.Fatal(err)
+			}
+
+			if uow.calls != 1 {
+				t.Fatalf("reads of Tx.VersionsHolding = %d, want 1", uow.calls)
+			}
+		})
+	}
+}
+
+// A read that fails fails the merge, and the assessment recorded before it is rolled back with it.
+func TestPromoteMergeSurfacesTheFailureToListTheVersionsHoldingTheManifest(t *testing.T) {
+	e, last, tree := versionsEnv(t, 3, "fresh")
+	before := e.revision()
+	uow := faulting(e.mem, "VersionsHolding", 1)
+
+	_, err := governance.PromoteMerge(context.Background(), uow, e.writer, e.mergeRequest(last, tree))
+
+	if !errors.Is(err, uow.err) {
+		t.Fatalf("error = %v, want the injected failure", err)
+	}
+	e.requireWrites(before, 0)
+}

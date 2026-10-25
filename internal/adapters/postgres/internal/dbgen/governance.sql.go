@@ -899,6 +899,44 @@ func (q *Queries) ListProposalRevisions(ctx context.Context, arg ListProposalRev
 	return items, nil
 }
 
+const listVersionsHoldingManifest = `-- name: ListVersionsHoldingManifest :many
+SELECT version_id, manifest_digest = $1::text AS holds
+FROM suite_versions
+WHERE project_id = $2 AND suite_id = $3
+`
+
+type ListVersionsHoldingManifestParams struct {
+	ManifestDigest string
+	ProjectID      string
+	SuiteID        string
+}
+
+type ListVersionsHoldingManifestRow struct {
+	VersionID string
+	Holds     bool
+}
+
+// Every version of a Suite, with whether its manifest has the digest. The manifest itself is not read.
+func (q *Queries) ListVersionsHoldingManifest(ctx context.Context, arg ListVersionsHoldingManifestParams) ([]ListVersionsHoldingManifestRow, error) {
+	rows, err := q.db.Query(ctx, listVersionsHoldingManifest, arg.ManifestDigest, arg.ProjectID, arg.SuiteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVersionsHoldingManifestRow{}
+	for rows.Next() {
+		var i ListVersionsHoldingManifestRow
+		if err := rows.Scan(&i.VersionID, &i.Holds); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockSuite = `-- name: LockSuite :one
 SELECT project_id, suite_id, revision, current_version_id, target_id, policy_revision_id FROM suites
 WHERE project_id = $1 AND suite_id = $2

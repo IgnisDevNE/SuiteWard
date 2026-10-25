@@ -268,8 +268,15 @@ func (t *tx) Version(ctx context.Context, id contract.SuiteVersionID) (contract.
 	return h, ok, nil
 }
 
-func (t *tx) VersionsHolding(context.Context, artifact.Digest) (map[contract.SuiteVersionID]bool, error) {
-	return nil, errors.New("governancetest: VersionsHolding is not implemented")
+func (t *tx) VersionsHolding(ctx context.Context, digest artifact.Digest) (map[contract.SuiteVersionID]bool, error) {
+	if err := t.live(ctx); err != nil {
+		return nil, err
+	}
+	holding := make(map[contract.SuiteVersionID]bool, len(t.s.history))
+	for id, h := range t.s.history {
+		holding[id] = h.Version().Manifest().Digest() == digest
+	}
+	return holding, nil
 }
 
 func (t *tx) PromotionFor(ctx context.Context, reference contract.ProposalReference) (contract.PromotionRecord, bool, error) {

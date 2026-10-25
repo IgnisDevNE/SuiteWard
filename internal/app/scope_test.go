@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -36,7 +37,7 @@ func scopeCommand(t *testing.T, declaration string, args ...string) scopeResult 
 	t.Helper()
 	dir := t.TempDir()
 	if declaration != "" {
-		if err := os.WriteFile(dir+"/"+declarationFile, []byte(declaration), 0o644); err != nil {
+		if err := os.WriteFile(dir+"/"+declarationFile, []byte(declaration), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -299,7 +300,7 @@ func TestScopeAddRefusesAnInvalidPatternAndWritesNothing(t *testing.T) {
 			if r.stderr == "" {
 				t.Error("nothing explains the refusal")
 			}
-			if strings.ContainsAny(r.stderr, "\u200b\u3164\u202e\ufe0f\xff") {
+			if strings.ContainsAny(r.stderr, "\u200b\u3164\u202e\ufe0f") || strings.Contains(r.stderr, "\xff") {
 				t.Errorf("the refusal shows a character that cannot be seen:\n%q", r.stderr)
 			}
 			if len(r.others) != 0 {
@@ -369,9 +370,34 @@ func TestScopeAddNeedsADeclaration(t *testing.T) {
 	}
 }
 
+// The file is replaced by a temporary one, which CreateTemp makes 0600: the new file has the mode of the old one.
+func TestScopeAddKeepsTheModeOfTheFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no file modes to keep")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/"+declarationFile, []byte(commentedDeclaration), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir+"/"+declarationFile, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	if code, _, stderr := run([]string{"scope", "add", "docs/"}, Env{}); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	info, err := os.Stat(declarationFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o400 {
+		t.Errorf("the mode is %v; want -r--------", info.Mode().Perm())
+	}
+}
+
 func TestScopeAddDoesNotFollowASymlink(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(dir+"/real.yml", []byte(commentedDeclaration), 0o644); err != nil {
+	if err := os.WriteFile(dir+"/real.yml", []byte(commentedDeclaration), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("real.yml", dir+"/"+declarationFile); err != nil {

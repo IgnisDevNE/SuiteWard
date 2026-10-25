@@ -1,7 +1,7 @@
 # SuiteWard threat model
 
 - **Updated:** 2026-10-24 (the Windows PATH copy of the installer, phase M1.14; the one-line install script and the fifth installer binary, the encrypted backups with their recovery kit and restore, and the change report page on loopback, phase M1.13)
-- **Status:** Active. Describes the assets, actors, trust boundaries, threats and controls of the system as hardened in phase SH, for release `v0.2.0`. The rows for the one-line install, the encrypted backups, the restore and the change report page describe phase M1.13, released as `v0.4.0-alpha.1`. The row for the Windows PATH copy of the installer describes phase M1.14, which is on its phase branch and not released yet.
+- **Status:** Active. Describes the assets, actors, trust boundaries, threats and controls of the system as hardened in phase SH, for release `v0.2.0`. The rows for the one-line install, the encrypted backups, the restore and the change report page describe phase M1.13, released as `v0.4.0-alpha.1`. The row for the Windows PATH copy of the installer describes phase M1.14, released as `v0.4.0-alpha.2`.
 - **Scope:** SuiteWard as installed under [ADR 0027](../decisions/0027-agent-human-trust-separation.md): the service, its GitHub App, its PostgreSQL database and its image and release pipeline.
 
 This document backs the claims of [ADR 0007](../decisions/0007-canonical-contract-authority.md), [ADR 0012](../decisions/0012-mvp-authorization-policy.md) and [ADR 0015](../decisions/0015-required-contract-check.md). A control is cited by `file:line`, and a test by its name.

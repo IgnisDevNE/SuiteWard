@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
@@ -265,6 +266,10 @@ func (t *tx) Version(ctx context.Context, id contract.SuiteVersionID) (contract.
 	}
 	h, ok := t.s.history[id]
 	return h, ok, nil
+}
+
+func (t *tx) VersionsHolding(context.Context, artifact.Digest) (map[contract.SuiteVersionID]bool, error) {
+	return nil, errors.New("governancetest: VersionsHolding is not implemented")
 }
 
 func (t *tx) PromotionFor(ctx context.Context, reference contract.ProposalReference) (contract.PromotionRecord, bool, error) {

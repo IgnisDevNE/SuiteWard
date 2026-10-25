@@ -275,6 +275,10 @@ func (t *tx) Version(ctx context.Context, id contract.SuiteVersionID) (contract.
 	return historical, true, nil
 }
 
+func (t *tx) VersionsHolding(context.Context, artifact.Digest) (map[contract.SuiteVersionID]bool, error) {
+	return nil, errors.New("VersionsHolding is not implemented")
+}
+
 func (t *tx) PromotionFor(ctx context.Context, reference contract.ProposalReference) (contract.PromotionRecord, bool, error) {
 	if !t.inScope(reference) {
 		return contract.PromotionRecord{}, false, nil

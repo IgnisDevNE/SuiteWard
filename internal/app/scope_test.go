@@ -399,10 +399,10 @@ func TestScopeAddAsksForBlockStyleWhenTheListIsAFlowList(t *testing.T) {
 	}
 }
 
-// A pattern that starts with - is taken for a flag. -name/ matches at any depth, so the hint is the pattern that matches the same paths:
-// /-name would be anchored to the root.
+// A pattern after the first one that starts with - is taken for a flag. -name/ matches at any depth, so the hint is the pattern that matches
+// the same paths: /-name would be anchored to the root.
 func TestScopeAddHintForAPatternThatStartsWithADash(t *testing.T) {
-	r := scopeAdd(t, commentedDeclaration, "-name/")
+	r := scopeAdd(t, commentedDeclaration, "good/", "-name/")
 	if r.code != 2 || r.file != commentedDeclaration {
 		t.Fatalf("exit %d, the declaration is\n%q", r.code, r.file)
 	}

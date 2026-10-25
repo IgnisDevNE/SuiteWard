@@ -152,6 +152,17 @@ func (x *restoreRun) source() string {
 	return quoteArg(x.file)
 }
 
+// restored is how the summary names the backup: the path as it is, where source quotes it for a command line.
+func (x *restoreRun) restored() string {
+	if x.plaintext != "" {
+		return "plaintext directory " + x.plaintext
+	}
+	return x.file
+}
+
+// namesRepositories says that the backup holds at least one repository, which is what a default branch on GitHub to be behind needs.
+func (x *restoreRun) namesRepositories() bool { return len(x.doc.repositories()) > 0 }
+
 // ---- verify: nothing is changed ----
 
 func (x *restoreRun) verify(ctx context.Context) error {
@@ -762,7 +773,7 @@ const canonicalBehind = "The restored canonical may be behind the default branch
 func (x *restoreRun) finish() {
 	x.scr.Say("Restored the backup of the instance %s (%s) into this instance.\n", x.doc.Instance, x.info.SuitewardVersion)
 	x.scr.Keep("The credentials of this installation are not in a backup, so they are as they were: the database passwords and the MCP token. The owner's TOTP enrollment is the backup's.\n")
-	if !x.scr.FullScreen() { // a full screen has it on the summary page, which Close keeps
+	if !x.scr.FullScreen() && x.namesRepositories() { // a full screen has it on the summary page, which Close keeps
 		x.scr.Keep("%s\n", canonicalBehind)
 	}
 	x.scr.Say("Check the instance with `%s doctor`.\n", x.env.Deps.command())
@@ -773,11 +784,13 @@ func (x *restoreRun) finish() {
 
 func (x *restoreRun) summary() []ui.KV {
 	rows := summaryRows{
-		{Key: "Restored", Value: x.source()},
+		{Key: "Restored", Value: x.restored()},
 		{Key: "Instance", Value: x.doc.Instance},
 		{Key: "Release", Value: x.after.Version},
 	}
 	rows.add("Backup before", x.safety)
-	rows.warn(canonicalBehind)
+	if x.namesRepositories() {
+		rows.warn(canonicalBehind)
+	}
 	return rows
 }

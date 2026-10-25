@@ -158,6 +158,7 @@ func TestReadsRefuseStoredStateThatCannotBeRebuilt(t *testing.T) {
 		{"a promotion that corrects nothing but expects its own version", []string{"UPDATE proposal_revisions SET expected_version_id = 'v0' WHERE proposal_id = 'p0'"}, version("v0"), true, "promotion of version v0"},
 		{"a version table that cannot be read for the versions holding a manifest", []string{renameTable("suite_versions")}, versionsHolding, false, "list the versions holding a manifest"},
 		{"a promotion table that cannot be read for the versions holding a manifest", []string{renameTable("promotions")}, versionsHolding, false, "list the versions holding a manifest"},
+		{"a version whose promoted manifest differs from its own, listed", []string{"UPDATE proposal_revisions SET manifest_digest = '" + badDigest + "' WHERE proposal_id = 'p0'"}, versionsHolding, true, "version v0"},
 		{"a promotion table that cannot be read for a reference", []string{renameTable("promotions")}, promotionFor, false, "load promotion"},
 		{"a promotion whose binding cannot be rebuilt", []string{brokenCovered + "'p0'"}, promotionFor, true, "binding of version v0"},
 		{"a promotion that expects its own version", []string{"UPDATE proposal_revisions SET expected_version_id = 'v0' WHERE proposal_id = 'p0'"}, promotionFor, true, "promotion of version v0"},
@@ -203,6 +204,30 @@ func TestVersionsHoldingIgnoresAVersionWithoutItsPromotion(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// The merge decision reads the earlier versions without their manifests, but not without the check that each one's
+// promotion binds the manifest the version stores: a broken earlier version (V2 of three) still refuses the merge, whole.
+func TestPromoteMergeRefusesAnEarlierVersionWhosePromotionBindsAnotherManifest(t *testing.T) {
+	w := newPGWorld(t)
+	one, two, three := w.treeCandidate("p1", "V1", treeOf("one")), w.treeCandidate("p2", "V2", treeOf("two")), w.treeCandidate("p3", "V3", treeOf("three"))
+	w.seedMergeBaseline(w.treeCandidate("p0", "", treeOf("baseline")), one, two, three)
+	w.approve(one)
+	w.merge(one, treeOf("one"), governance.MergePromoted) // V2
+	w.approve(two)
+	w.merge(two, treeOf("two"), governance.MergePromoted) // V3
+	w.approve(three)
+	w.tamper("UPDATE proposal_revisions SET manifest_digest = '" + badDigest + "' WHERE proposal_id = 'p1'") // the promotion of V2
+	before := w.revision()
+
+	_, err := governance.PromoteMerge(t.Context(), w.store, w.content, three.mergeRequest(treeOf("three")))
+
+	if !errors.Is(err, governance.ErrInvalidState) || !strings.Contains(err.Error(), "version V2") {
+		t.Fatalf("merge = %v; want ErrInvalidState naming version V2", err)
+	}
+	if got := w.revision(); got != before || w.currentVersion() != "V3" {
+		t.Fatalf("revision %d and current version %q after the refused merge; want %d and V3 kept", got, w.currentVersion(), before)
+	}
 }
 
 func TestPromotionForIgnoresOtherSuites(t *testing.T) {

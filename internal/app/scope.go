@@ -152,20 +152,30 @@ func replaceDeclaration(data []byte, perm fs.FileMode) error {
 }
 
 // byHandError is a declaration that the command will not edit: nothing is written and the user adds the lines.
-type byHandError struct{ reason string }
+type byHandError struct {
+	reason string
+	absent bool // the declaration has no such list, so the lines need their key
+}
 
 func (e byHandError) Error() string { return e.reason }
 
-func byHand(format string, args ...any) error { return byHandError{fmt.Sprintf(format, args...)} }
+func byHand(format string, args ...any) error {
+	return byHandError{reason: fmt.Sprintf(format, args...)}
+}
 
-// reportByHand tells the user why nothing was written, and what to put in the declaration instead: the patterns that the list lacks.
+// reportByHand tells the user why nothing was written, and what to add to the declaration instead: the patterns that the list lacks. The
+// key goes with them only when the list is absent; pasted over a list that exists, it would be a second key.
 func reportByHand(list string, fresh []string, why byHandError, stderr io.Writer) int {
 	lines, err := itemLines("  - ", fresh, 0)
 	if err != nil {
 		reportf(stderr, "%v\n", err)
 		return 1
 	}
-	reportf(stderr, "%s was not changed: %v\nTo add the patterns yourself, put these lines in it:\n%s:\n%s\n", scope.DeclarationPath, why, list, strings.Join(lines, "\n"))
+	instruction, items := "add these items to its "+list+" list", strings.Join(lines, "\n")
+	if why.absent {
+		instruction, items = "add this list to it", list+":\n"+items
+	}
+	reportf(stderr, "%s was not changed: %v\nTo add the patterns yourself, %s:\n%s\n", scope.DeclarationPath, why, instruction, items)
 	return 1
 }
 
@@ -296,7 +306,7 @@ func blockList(raw []byte, key string) (*yaml.Node, error) {
 		}
 		return list, nil
 	}
-	return nil, byHand("there is no %s list", key)
+	return nil, byHandError{reason: fmt.Sprintf("there is no %s list", key), absent: true}
 }
 
 // itemLines is the line of each pattern as an item of a list: the prefix, then the value written in style as scope.AddPatterns writes it

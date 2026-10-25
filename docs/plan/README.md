@@ -1,6 +1,6 @@
 # Delivery plan
 
-- **Updated:** 2026-10-24 (the MVP `v0.2.0` is released; phase [M1.12](phases/M1.12.md), the installer, is merged and `v0.3.0-alpha.2` is published; phase [M1.13](phases/M1.13.md) is merged and released as `v0.4.0-alpha.1`; phase [M1.14](phases/M1.14.md), the installer UX refinement, is merged and released as `v0.4.0-alpha.2`; the next phase is planned after the macOS test of that release)
+- **Updated:** 2026-10-25 (phase [M1.15](phases/M1.15.md) is in progress: the installer leftovers, `suiteward scope add`, the test-discovery study, the self-scope entries and the one-read merge version are merged on its branch, and the live findings come next); 2026-10-24 (the MVP `v0.2.0` is released; phase [M1.12](phases/M1.12.md), the installer, is merged and `v0.3.0-alpha.2` is published; phase [M1.13](phases/M1.13.md) is merged and released as `v0.4.0-alpha.1`; phase [M1.14](phases/M1.14.md), the installer UX refinement, is merged and released as `v0.4.0-alpha.2`; the next phase is planned after the macOS test of that release)
 
 Each phase produces one PR, integrated with a merge commit after the user's authorization. Work inside a phase is orchestrated as described in [orchestration](orchestration.md): the main session writes [briefs](task-brief.md), `sw-implementer` subagents implement them test-first in their own worktrees, and `sw-reviewer` subagents review them. Open and accepted product choices live in the [decision register](decisions.md).
 
@@ -67,11 +67,10 @@ Deferred by the R1 amendments, in no fixed order. It starts after the alpha (`v0
 - Automatic protection setup and confirmed repair (ADRs 0016, 0017).
 - What M1.13 left of the backup work (ADRs 0019–0021; it delivered encrypted backups, the recovery kit and a first `suiteward restore`): Release storage, contingency PRs, scheduled backups and the separate backup container, receipts and backup health, and the recovery mode of the restore.
 - M2: canonical execution. It starts with the D-EXECUTION decision, the first ecosystem and its RunnerProfile (ADR 0008).
-- Scope-discovery UX: the owner's questions Q2 to Q4 and the [M1.9 backlog](phases/M1.9.md#backlog-carried), before or after M2 as the owner chooses.
+- Scope-discovery UX: the [M1.9 backlog](phases/M1.9.md#backlog-carried), before or after M2 as the owner chooses. M1.15 answered the owner's questions Q2 to Q4 ([D-M1.15](decisions.md#d-m115-scope-discovery-answers-and-the-merge-version-in-one-read)): `suiteward scope add`, the scope notice with the owner's approval, and a study of how other tools find tests. It studied reading config files and did not take it.
 - M3: hardening selected from observed threats.
 - The rest of the change report for protected files (owner, 2026-10-19), with no analysis by an agent. M1.13 delivered the numbers in the revision comment, the 20 files with the most changed lines, the deterministic markers (removed assertions, added skips and focus, removed test declarations and files) and the HTML report on loopback. What stays:
   - a link to each file's diff between the canonical commit and the head;
   - a full report on the check's Details page, built from the bytes SuiteWard compared;
   - a marker for changed runner files;
   - an HTML report served by the managed service, behind its sign-in.
-- A single store read by manifest digest in `nextMergeVersion`, which today reads one version per step (M1.10).

@@ -47,7 +47,7 @@ func parseScopeAdd(args []string, stderr io.Writer) (list string, patterns []str
 		err = errors.New("scope add needs at least one pattern")
 	case slices.ContainsFunc(patterns, func(p string) bool { return strings.HasPrefix(p, "-") }):
 		// flag stops at the first pattern, so a flag written after it would be added as a pattern.
-		err = errors.New("a pattern that starts with - is taken for a flag, and flags go before the patterns; write /-name for a pattern of that name")
+		err = errors.New("a pattern that starts with - is taken for a flag, and flags go before the patterns; write **/-name for a pattern of that name at any depth")
 	}
 	if err != nil {
 		reportf(stderr, "%v\n", err)
@@ -155,6 +155,7 @@ func replaceDeclaration(data []byte, perm fs.FileMode) error {
 type byHandError struct {
 	reason string
 	absent bool // the declaration has no such list, so the lines need their key
+	flow   bool // the list is written in flow style, which block lines cannot be added to
 }
 
 func (e byHandError) Error() string { return e.reason }
@@ -172,8 +173,11 @@ func reportByHand(list string, fresh []string, why byHandError, stderr io.Writer
 		return 1
 	}
 	instruction, items := "add these items to its "+list+" list", strings.Join(lines, "\n")
-	if why.absent {
+	switch {
+	case why.absent:
 		instruction, items = "add this list to it", list+":\n"+items
+	case why.flow:
+		instruction = "rewrite its " + list + " list in block style (one `- item` per line), then add these items to it"
 	}
 	reportf(stderr, "%s was not changed: %v\nTo add the patterns yourself, %s:\n%s\n", scope.DeclarationPath, why, instruction, items)
 	return 1
@@ -301,8 +305,10 @@ func blockList(raw []byte, key string) (*yaml.Node, error) {
 		switch {
 		case name.Anchor != "" || list.Anchor != "" || (name.Style|list.Style)&yaml.TaggedStyle != 0:
 			return nil, byHand("%s has an anchor or a tag", key)
-		case list.Kind != yaml.SequenceNode || list.Style&yaml.FlowStyle != 0:
-			return nil, byHand("%s is not a block list (a flow list, as in [a, b], is not edited)", key)
+		case list.Kind != yaml.SequenceNode:
+			return nil, byHand("%s is not a list", key)
+		case list.Style&yaml.FlowStyle != 0:
+			return nil, byHandError{reason: key + " is a flow list, as in [a, b], and this command edits block lists only", flow: true}
 		}
 		return list, nil
 	}

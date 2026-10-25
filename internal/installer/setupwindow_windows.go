@@ -131,3 +131,6 @@ func killTree(system string, pid int, process windows.Handle) {
 		_ = windows.TerminateProcess(process, 1) // the best that is left; the process may have ended on its own meanwhile
 	}
 }
+
+// sweepSetupDirs is not written yet.
+func sweepSetupDirs(string, time.Time) error { return nil }

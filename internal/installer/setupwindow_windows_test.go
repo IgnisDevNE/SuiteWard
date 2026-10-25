@@ -307,3 +307,122 @@ func TestWindowScriptWorksWithSpacesInTheProgramPathAndTheTempFolder(t *testing.
 		t.Errorf("the folder of the exit file is still in the temp folder: %v, %v", left, err)
 	}
 }
+
+// ---- the folders of windows that were never cleaned up ----
+
+// setupDir makes a folder as the starter makes one, in tmp, with the exit file of a setup that ended (or not). Everything in it is age old,
+// the folder last: a file made in it changes its time.
+func setupDir(t *testing.T, tmp, name string, withExit bool, age time.Duration) string {
+	t.Helper()
+	dir := filepath.Join(tmp, name)
+	if err := os.Mkdir(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	files := []string{filepath.Join(dir, "other")}
+	if withExit {
+		files = append(files, filepath.Join(dir, "exit"))
+	}
+	old := time.Now().Add(-age)
+	for _, file := range files {
+		if err := os.WriteFile(file, []byte("0\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(file, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// Only a folder that holds its exit file and has not been touched for more than a day goes: the setup of another enroll or install is in
+// flight in a folder that is new or that has no exit file yet, and what is not a folder of the starter's is not the starter's to remove.
+func TestSweepRemovesOnlyOldSetupFoldersThatHoldTheirExitFile(t *testing.T) {
+	tmp := t.TempDir()
+	cases := []struct {
+		name     string
+		folder   string
+		withExit bool
+		age      time.Duration
+		stays    bool
+	}{
+		{"old with its exit file", "suiteward-setup-1", true, 25 * time.Hour, false},
+		{"new with its exit file", "suiteward-setup-2", true, time.Hour, true},
+		{"just under a day, with its exit file", "suiteward-setup-3", true, 23*time.Hour + 30*time.Minute, true},
+		{"old with no exit file", "suiteward-setup-4", false, 25 * time.Hour, true},
+		{"old with its exit file, another name", "suiteward-other-5", true, 25 * time.Hour, true},
+		{"old with its exit file, a longer name", "x-suiteward-setup-6", true, 25 * time.Hour, true},
+	}
+	for _, tc := range cases {
+		setupDir(t, tmp, tc.folder, tc.withExit, tc.age)
+	}
+	file := filepath.Join(tmp, "suiteward-setup-file") // a file with the name of a setup folder is not one
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(file, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := sweepSetupDirs(tmp, time.Now()); err != nil {
+		t.Fatalf("sweepSetupDirs = %v", err)
+	}
+	for _, tc := range cases {
+		if got := exists(filepath.Join(tmp, tc.folder)); got != tc.stays {
+			t.Errorf("%s: the folder exists = %v after the sweep, want %v", tc.name, got, tc.stays)
+		}
+	}
+	if !exists(file) {
+		t.Error("a file that is named like a setup folder was removed")
+	}
+}
+
+// A folder that cannot be removed (Windows does not delete a file that is open) is reported and does not stop the others.
+func TestSweepReportsTheFolderItCouldNotRemoveAndRemovesTheRest(t *testing.T) {
+	tmp := t.TempDir()
+	locked := setupDir(t, tmp, "suiteward-setup-1", true, 25*time.Hour)
+	other := setupDir(t, tmp, "suiteward-setup-2", true, 25*time.Hour)
+	held, err := os.Open(filepath.Join(locked, "exit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = held.Close() })
+	err = sweepSetupDirs(tmp, time.Now())
+	if err == nil || !strings.Contains(err.Error(), locked) {
+		t.Errorf("sweepSetupDirs = %v, want the error that names %s", err, locked)
+	}
+	if exists(other) {
+		t.Errorf("%s stays because another folder could not be removed", other)
+	}
+}
+
+// The starter sweeps before it makes its own folder, and a sweep that fails does not fail the setup: an engine that ended well is a
+// success whatever an old folder holds.
+func TestTheWindowSweepsOldSetupFoldersAndAFailedSweepDoesNotFailSetup(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMP", tmp) // os.TempDir reads TMP, then TEMP
+	t.Setenv("TEMP", tmp)
+	removed := setupDir(t, tmp, "suiteward-setup-1", true, 25*time.Hour)
+	locked := setupDir(t, tmp, "suiteward-setup-2", true, 25*time.Hour)
+	held, err := os.Open(filepath.Join(locked, "exit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = held.Close() })
+	exe, _ := swapPowerShell(t, "window-left")
+	wait, err := startConsoleWindow(context.Background(), exe, []string{"--", "setup"})
+	if err != nil {
+		t.Fatalf("startConsoleWindow = %v, want a window that opens although an old folder could not be removed", err)
+	}
+	if err := wait(); err != nil {
+		t.Errorf("wait = %v, want success", err)
+	}
+	if exists(removed) {
+		t.Errorf("%s, a setup folder of two days ago, is still there", removed)
+	}
+	if !exists(locked) {
+		t.Errorf("%s is gone although a file of it was open", locked)
+	}
+}

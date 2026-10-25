@@ -77,6 +77,13 @@ func (t *faultTx) Assessment(ctx context.Context, reference contract.ProposalRef
 	return t.Tx.Assessment(ctx, reference, source)
 }
 
+func (t *faultTx) Version(ctx context.Context, id contract.SuiteVersionID) (contract.HistoricalCanonical, bool, error) {
+	if t.hits("Version") {
+		return contract.HistoricalCanonical{}, false, t.failure()
+	}
+	return t.Tx.Version(ctx, id)
+}
+
 func (t *faultTx) RecordAssessment(ctx context.Context, write governance.AssessmentWrite) error {
 	if t.hits("RecordAssessment") {
 		return t.failure()

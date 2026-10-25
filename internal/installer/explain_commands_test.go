@@ -405,15 +405,17 @@ func TestTheEnrollAgainPageSaysWhatItReplacesAndThatTheTypedWordIsAConfirmation(
 	if !strings.HasPrefix(v.rows[0], "Enroll the owner again") {
 		t.Errorf("the page is titled %q, want \"Enroll the owner again\"", v.rows[0])
 	}
-	mustSay(t, v, "An owner (bob) is already enrolled", "the old authenticator entry stops working", "you scan a new one", "This is a confirmation", `Type "enroll" to confirm`)
+	mustSay(t, v, "An owner (bob) is already enrolled", "the old authenticator entry stops working", "you add the new secret that setup shows to your authenticator", "This is a confirmation", `Type "enroll" to confirm`)
 }
 
+// The plain prompt is the question it was, with one clause changed on purpose: setup shows a secret and an otpauth:// URI, never a code to
+// scan, so the prompt no longer says that you scan a new one.
 func TestThePlainEnrollAgainPromptIsWhatItWas(t *testing.T) {
 	h := enrollHarness(t, statusEnrolled)
 	if code, stderr := h.enroll("enroll\n", "--owner", "alice"); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	want := "An owner (bob) is already enrolled. Enrolling again replaces the owner bob with alice and the TOTP secret: the old authenticator entry stops working, and you scan a new one.\nType \"enroll\" to replace it: "
+	want := "An owner (bob) is already enrolled. Enrolling again replaces the owner bob with alice and the TOTP secret: the old authenticator entry stops working, and you add the new secret that setup shows to your authenticator.\nType \"enroll\" to replace it: "
 	if !strings.Contains(h.out.String(), want) {
 		t.Errorf("the plain prompt changed:\n%s", h.out.String())
 	}

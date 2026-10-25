@@ -160,8 +160,11 @@ func (x *restoreRun) restored() string {
 	return x.file
 }
 
-// namesRepositories says that the backup holds at least one repository, which is what a default branch on GitHub to be behind needs.
-func (x *restoreRun) namesRepositories() bool { return len(x.doc.repositories()) > 0 }
+// mayHaveRepositories says that the backup holds a repository, or may: a default branch on GitHub to be behind or ahead needs one. A status
+// that was not recorded says nothing, so it does not rule one out.
+func (x *restoreRun) mayHaveRepositories() bool {
+	return x.doc.Unavailable || len(x.doc.repositories()) > 0
+}
 
 // ---- verify: nothing is changed ----
 
@@ -552,7 +555,11 @@ func (x *restoreRun) showInstance() {
 }
 
 func (x *restoreRun) warn() {
-	x.scr.Warn("Restoring replaces the database and the artifacts of this instance with the backup's. What was approved, proposed or promoted after the backup is lost, and the default branch on GitHub may be ahead of the restored canonical.\n")
+	replaced := "Restoring replaces the database and the artifacts of this instance with the backup's. What was approved, proposed or promoted after the backup is lost"
+	if x.mayHaveRepositories() {
+		replaced += ", and the default branch on GitHub may be ahead of the restored canonical"
+	}
+	x.scr.Warn("%s.\n", replaced)
 	x.scr.Warn("Stop any other running instance that uses the same GitHub App before you go on: two instances would publish and promote for the same repositories.\n")
 	if x.plaintext != "" {
 		x.scr.Warn("This backup is a plaintext directory: it is not encrypted, and nothing verifies who made it or that it is untouched. Whoever could read %s could read the TOTP secret in it.\n", x.plaintext)
@@ -773,7 +780,7 @@ const canonicalBehind = "The restored canonical may be behind the default branch
 func (x *restoreRun) finish() {
 	x.scr.Say("Restored the backup of the instance %s (%s) into this instance.\n", x.doc.Instance, x.info.SuitewardVersion)
 	x.scr.Keep("The credentials of this installation are not in a backup, so they are as they were: the database passwords and the MCP token. The owner's TOTP enrollment is the backup's.\n")
-	if !x.scr.FullScreen() && x.namesRepositories() { // a full screen has it on the summary page, which Close keeps
+	if !x.scr.FullScreen() && x.mayHaveRepositories() { // a full screen has it on the summary page, which Close keeps
 		x.scr.Keep("%s\n", canonicalBehind)
 	}
 	x.scr.Say("Check the instance with `%s doctor`.\n", x.env.Deps.command())
@@ -789,7 +796,7 @@ func (x *restoreRun) summary() []ui.KV {
 		{Key: "Release", Value: x.after.Version},
 	}
 	rows.add("Backup before", x.safety)
-	if x.namesRepositories() {
+	if x.mayHaveRepositories() {
 		rows.warn(canonicalBehind)
 	}
 	return rows

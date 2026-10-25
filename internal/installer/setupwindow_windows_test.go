@@ -186,15 +186,21 @@ func hiddenPowerShell(t *testing.T, stdin, out *os.File) (exitFile *string) {
 	return exitFile
 }
 
-// runHiddenWindow runs the real window script with no window, with the test binary as the engine (the helper "record", which prints its
-// arguments and ends with code). It returns what the script had left in the exit file before it waited for Enter, the arguments the engine
-// printed, and how the wait ended once the Enter was pressed.
-func runHiddenWindow(t *testing.T, args []string, code string) (left string, got []string, waitErr error) {
+// testBinary is the path of the running test binary, which is the engine of the windows that the tests start.
+func testBinary(t *testing.T) string {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+	return exe
+}
+
+// runHiddenWindow runs the real window script with no window, with exe (the test binary, or a copy of it) as the engine (the helper
+// "record", which prints its arguments and ends with code). It returns what the script had left in the exit file before it waited for
+// Enter, the arguments the engine printed, and how the wait ended once the Enter was pressed.
+func runHiddenWindow(t *testing.T, exe string, args []string, code string) (left string, got []string, waitErr error) {
+	t.Helper()
 	t.Setenv("SUITEWARD_TEST_HELPER", "record")
 	t.Setenv("SUITEWARD_TEST_EXIT", code)
 	enter, typed, err := os.Pipe() // the Enter that closes the window, which the test presses once it has seen the exit file
@@ -257,7 +263,7 @@ func TestWindowScriptRunsTheEngineWithEveryArgumentIntactAndLeavesItsExitCode(t 
 		"--test-check", `acme/lib=CI / test (ubuntu, "go 1.27") $HOME & 'x' ; ` + "`whoami`", "--dir", `C:\Program Files\SuiteWard\`, "--empty", ""}
 	for code, wantErr := range map[string]string{"0": "", "3": "exit code 3"} {
 		t.Run("exit code "+code, func(t *testing.T) {
-			left, got, err := runHiddenWindow(t, args, code)
+			left, got, err := runHiddenWindow(t, testBinary(t), args, code)
 			if left != code {
 				t.Errorf("the script left the exit code %q, want %s", left, code)
 			}
@@ -268,5 +274,36 @@ func TestWindowScriptRunsTheEngineWithEveryArgumentIntactAndLeavesItsExitCode(t 
 				t.Errorf("the engine got %q, want %q", got, args[1:])
 			}
 		})
+	}
+}
+
+// A space in a path is data too: the engine in a folder with a space in its name (C:\Program Files) and a temp folder that holds one (a user
+// name with a space puts it in %TEMP%) reach the script intact. The script starts the engine, leaves its code in the folder the installer
+// made, and the folder goes with the window.
+func TestWindowScriptWorksWithSpacesInTheProgramPathAndTheTempFolder(t *testing.T) {
+	engine := filepath.Join(t.TempDir(), "program files", "suite ward engine.exe")
+	if err := os.MkdirAll(filepath.Dir(engine), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	linkOrCopyTestBinary(t, engine)
+	spaced := filepath.Join(t.TempDir(), "temp folder")
+	if err := os.Mkdir(spaced, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMP", spaced) // os.TempDir reads TMP, then TEMP
+	t.Setenv("TEMP", spaced)
+	if !strings.Contains(os.TempDir(), " ") || !strings.Contains(engine, " ") {
+		t.Fatalf("the test needs a space in both paths: temp %q, engine %q", os.TempDir(), engine)
+	}
+	args := []string{"--", "setup", "--owner", "alice"}
+	left, got, err := runHiddenWindow(t, engine, args, "0")
+	if err != nil || left != "0" {
+		t.Errorf("the window ended with %v after leaving the exit code %q, want a success that left 0", err, left)
+	}
+	if !slices.Equal(got, args[1:]) {
+		t.Errorf("the engine got %q, want %q", got, args[1:])
+	}
+	if left, err := filepath.Glob(filepath.Join(spaced, "suiteward-setup-*")); err != nil || len(left) != 0 {
+		t.Errorf("the folder of the exit file is still in the temp folder: %v, %v", left, err)
 	}
 }

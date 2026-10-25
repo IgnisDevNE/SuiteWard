@@ -153,6 +153,7 @@ func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) erro
 	if def == unknownLogin {
 		def = ""
 	}
+	r.explain([]string{"owner"}, "Instance owner", ui.Para("Your GitHub username, as in github.com/<username>. Only this account's /suiteward commands and approvals count, and it cannot be an organization."))
 	owner, err := r.Value("owner", "GitHub login of the instance owner, the only account whose approvals count", def)
 	if err != nil {
 		return err

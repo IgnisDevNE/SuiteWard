@@ -900,11 +900,16 @@ func (q *Queries) ListProposalRevisions(ctx context.Context, arg ListProposalRev
 }
 
 const listVersionsHoldingManifest = `-- name: ListVersionsHoldingManifest :many
-SELECT suite_versions.version_id, suite_versions.manifest_digest = $1::text AS holds
+SELECT suite_versions.version_id, suite_versions.manifest_digest = $1::text AS holds,
+    proposal_revisions.manifest_digest = suite_versions.manifest_digest AS consistent
 FROM suite_versions
 JOIN promotions ON promotions.project_id = suite_versions.project_id
     AND promotions.suite_id = suite_versions.suite_id
     AND promotions.version_id = suite_versions.version_id
+JOIN proposal_revisions ON proposal_revisions.project_id = promotions.project_id
+    AND proposal_revisions.suite_id = promotions.suite_id
+    AND proposal_revisions.proposal_id = promotions.proposal_id
+    AND proposal_revisions.revision_id = promotions.revision_id
 WHERE suite_versions.project_id = $2 AND suite_versions.suite_id = $3
 `
 
@@ -915,12 +920,14 @@ type ListVersionsHoldingManifestParams struct {
 }
 
 type ListVersionsHoldingManifestRow struct {
-	VersionID string
-	Holds     bool
+	VersionID  string
+	Holds      bool
+	Consistent bool
 }
 
-// Every version of a Suite, as GetVersion finds it (with the promotion that created it), with whether its manifest has
-// the digest. The manifest itself is not read.
+// Every version of a Suite, as GetVersion finds it (with the promotion that created it and the proposal revision that
+// holds the approval binding), with whether its manifest has the digest and whether the binding names the digest the
+// version stores. The manifest itself is not read.
 func (q *Queries) ListVersionsHoldingManifest(ctx context.Context, arg ListVersionsHoldingManifestParams) ([]ListVersionsHoldingManifestRow, error) {
 	rows, err := q.db.Query(ctx, listVersionsHoldingManifest, arg.ManifestDigest, arg.ProjectID, arg.SuiteID)
 	if err != nil {
@@ -930,7 +937,7 @@ func (q *Queries) ListVersionsHoldingManifest(ctx context.Context, arg ListVersi
 	items := []ListVersionsHoldingManifestRow{}
 	for rows.Next() {
 		var i ListVersionsHoldingManifestRow
-		if err := rows.Scan(&i.VersionID, &i.Holds); err != nil {
+		if err := rows.Scan(&i.VersionID, &i.Holds, &i.Consistent); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

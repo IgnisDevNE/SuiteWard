@@ -272,6 +272,7 @@ func (t *tx) VersionsHolding(ctx context.Context, digest artifact.Digest) (map[c
 	if err := t.live(ctx); err != nil {
 		return nil, err
 	}
+	// A HistoricalCanonical is sealed with its promotion binding the version's own digest, so no stored version can disagree with it.
 	holding := make(map[contract.SuiteVersionID]bool, len(t.s.history))
 	for id, h := range t.s.history {
 		holding[id] = h.Version().Manifest().Digest() == digest

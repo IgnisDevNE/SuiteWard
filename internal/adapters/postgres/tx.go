@@ -282,6 +282,9 @@ func (t *tx) VersionsHolding(ctx context.Context, digest artifact.Digest) (map[c
 	}
 	holding := make(map[contract.SuiteVersionID]bool, len(rows))
 	for _, row := range rows {
+		if !row.Consistent { // the check Version makes in NewHistoricalCanonical, without decoding the manifest
+			return nil, invalidState("version "+row.VersionID, errors.New("its promotion binds another manifest digest than the version stores"))
+		}
 		holding[contract.SuiteVersionID(row.VersionID)] = row.Holds
 	}
 	return holding, nil

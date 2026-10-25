@@ -165,6 +165,21 @@ func TestScopeAddWritesOnlyTheNewLines(t *testing.T) {
 			want: "version: 1\ninclude:\n    -   a\n    -   b\n    -   c/\n",
 		},
 		{
+			name: "the last item has a trailing comment",
+			old:  "version: 1\ninclude:\n  - a\n  - b   # the b files\nrunner:\n  - r\n", args: []string{"c/"}, list: "include", added: []string{"c/"},
+			want: "version: 1\ninclude:\n  - a\n  - b   # the b files\n  - c/\nrunner:\n  - r\n",
+		},
+		{
+			name: "the last item has a trailing comment, CRLF line endings",
+			old:  "version: 1\r\ninclude:\r\n  - a\r\n  - b # the b files\r\nrunner:\r\n  - r\r\n", args: []string{"c/"}, list: "include", added: []string{"c/"},
+			want: "version: 1\r\ninclude:\r\n  - a\r\n  - b # the b files\r\n  - c/\r\nrunner:\r\n  - r\r\n",
+		},
+		{
+			name: "the last item of the file has a trailing comment and no line break after it",
+			old:  "version: 1\ninclude:\n  - a # the a files", args: []string{"c/"}, list: "include", added: []string{"c/"},
+			want: "version: 1\ninclude:\n  - a # the a files\n  - c/",
+		},
+		{
 			name: "a comment under the list stays under the new line",
 			old:  "version: 1\ninclude:\n  - a\n  # about the runner\nrunner:\n  - r\n", args: []string{"b/"}, list: "include", added: []string{"b/"},
 			want: "version: 1\ninclude:\n  - a\n  - b/\n  # about the runner\nrunner:\n  - r\n",
@@ -365,6 +380,34 @@ func TestScopeAddOffersByHandOnlyWhatTheListLacks(t *testing.T) {
 	r := scopeAdd(t, "version: 1\ninclude: [a, b]\n", "a", "c/")
 	if r.code != 1 || !strings.Contains(r.stderr, "  - c/\n") || strings.Contains(r.stderr, "  - a\n") {
 		t.Fatalf("exit %d, stderr:\n%s", r.code, r.stderr)
+	}
+}
+
+// A flow list cannot take block lines: the user rewrites the list in block style first, and then adds the items.
+func TestScopeAddAsksForBlockStyleWhenTheListIsAFlowList(t *testing.T) {
+	r := scopeAdd(t, "version: 1\ninclude: [a, b]\n", "c/")
+	if r.code != 1 || r.file != "version: 1\ninclude: [a, b]\n" {
+		t.Fatalf("exit %d, the declaration is\n%q", r.code, r.file)
+	}
+	for _, want := range []string{"block style", "one `- item` per line", "  - c/\n"} {
+		if !strings.Contains(r.stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, r.stderr)
+		}
+	}
+	if strings.Contains(r.stderr, "\ninclude:\n") {
+		t.Errorf("stderr offers the key, which would be a second include: key:\n%s", r.stderr)
+	}
+}
+
+// A pattern that starts with - is taken for a flag. -name/ matches at any depth, so the hint is the pattern that matches the same paths:
+// /-name would be anchored to the root.
+func TestScopeAddHintForAPatternThatStartsWithADash(t *testing.T) {
+	r := scopeAdd(t, commentedDeclaration, "-name/")
+	if r.code != 2 || r.file != commentedDeclaration {
+		t.Fatalf("exit %d, the declaration is\n%q", r.code, r.file)
+	}
+	if !strings.Contains(r.stderr, "**/-name") || strings.Contains(r.stderr, "write /-name") {
+		t.Errorf("the hint does not name **/-name:\n%s", r.stderr)
 	}
 }
 

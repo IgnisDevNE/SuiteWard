@@ -57,6 +57,22 @@ JOIN proposal_revisions ON proposal_revisions.project_id = promotions.project_id
 WHERE suite_versions.project_id = sqlc.arg(project_id) AND suite_versions.suite_id = sqlc.arg(suite_id)
   AND suite_versions.version_id = sqlc.arg(version_id);
 
+-- Every version of a Suite, as GetVersion finds it (with the promotion that created it and the proposal revision that
+-- holds the approval binding), with whether its manifest has the digest and whether the binding names the digest the
+-- version stores. The manifest itself is not read.
+-- name: ListVersionsHoldingManifest :many
+SELECT suite_versions.version_id, suite_versions.manifest_digest = sqlc.arg(manifest_digest)::text AS holds,
+    proposal_revisions.manifest_digest = suite_versions.manifest_digest AS consistent
+FROM suite_versions
+JOIN promotions ON promotions.project_id = suite_versions.project_id
+    AND promotions.suite_id = suite_versions.suite_id
+    AND promotions.version_id = suite_versions.version_id
+JOIN proposal_revisions ON proposal_revisions.project_id = promotions.project_id
+    AND proposal_revisions.suite_id = promotions.suite_id
+    AND proposal_revisions.proposal_id = promotions.proposal_id
+    AND proposal_revisions.revision_id = promotions.revision_id
+WHERE suite_versions.project_id = sqlc.arg(project_id) AND suite_versions.suite_id = sqlc.arg(suite_id);
+
 -- name: GetPromotionByReference :one
 SELECT sqlc.embed(promotions), sqlc.embed(proposal_revisions)
 FROM promotions

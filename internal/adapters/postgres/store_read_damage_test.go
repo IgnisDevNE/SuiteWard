@@ -5,10 +5,12 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
@@ -70,6 +72,10 @@ func TestReadsRefuseStoredStateThatCannotBeRebuilt(t *testing.T) {
 	}
 	version := func(id contract.SuiteVersionID) func(context.Context, governance.Tx) error {
 		return func(ctx context.Context, tx governance.Tx) error { _, _, err := tx.Version(ctx, id); return err }
+	}
+	versionsHolding := func(ctx context.Context, tx governance.Tx) error {
+		_, err := tx.VersionsHolding(ctx, artifact.Hash([]byte("a manifest")))
+		return err
 	}
 	promotionFor := func(ctx context.Context, tx governance.Tx) error {
 		_, _, err := tx.PromotionFor(ctx, contract.ProposalReference{ProjectID: fxProject, SuiteID: fxSuite, ProposalID: "p0", RevisionID: "revision-1"})
@@ -150,6 +156,8 @@ func TestReadsRefuseStoredStateThatCannotBeRebuilt(t *testing.T) {
 		{"a version whose promoted binding cannot be rebuilt", []string{brokenCovered + "'p0'"}, version("v0"), true, "binding of version v0"},
 		{"a version whose promoted manifest differs from its own", []string{"UPDATE proposal_revisions SET manifest_digest = '" + badDigest + "' WHERE proposal_id = 'p0'"}, version("v0"), true, "version v0"},
 		{"a promotion that corrects nothing but expects its own version", []string{"UPDATE proposal_revisions SET expected_version_id = 'v0' WHERE proposal_id = 'p0'"}, version("v0"), true, "promotion of version v0"},
+		{"a version table that cannot be read for the versions holding a manifest", []string{renameTable("suite_versions")}, versionsHolding, false, "list the versions holding a manifest"},
+		{"a promotion table that cannot be read for the versions holding a manifest", []string{renameTable("promotions")}, versionsHolding, false, "list the versions holding a manifest"},
 		{"a promotion table that cannot be read for a reference", []string{renameTable("promotions")}, promotionFor, false, "load promotion"},
 		{"a promotion whose binding cannot be rebuilt", []string{brokenCovered + "'p0'"}, promotionFor, true, "binding of version v0"},
 		{"a promotion that expects its own version", []string{"UPDATE proposal_revisions SET expected_version_id = 'v0' WHERE proposal_id = 'p0'"}, promotionFor, true, "promotion of version v0"},
@@ -174,6 +182,27 @@ func TestReadsRefuseStoredStateThatCannotBeRebuilt(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A stored version without the promotion that created it is no version of the history: Version does not find it, so the
+// list of the versions holding a manifest must not name it either, though its digest is the one asked for.
+func TestVersionsHoldingIgnoresAVersionWithoutItsPromotion(t *testing.T) {
+	w, _ := damagedWorld(t)
+	w.tamper("INSERT INTO suite_versions (project_id, suite_id, version_id, manifest_digest, manifest) VALUES ('" + string(fxProject) + "', '" + string(fxSuite) + "', 'orphan', '" + badDigest + "', '{}')")
+	digest, err := artifact.ParseDigest(badDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.read(func(ctx context.Context, tx governance.Tx) error {
+		if _, found, err := tx.Version(ctx, "orphan"); err != nil || found {
+			t.Fatalf("Version of a version without a promotion = found %v, %v; want not found", found, err)
+		}
+		holding, err := tx.VersionsHolding(ctx, digest)
+		if want := map[contract.SuiteVersionID]bool{"v0": false}; err != nil || !maps.Equal(holding, want) {
+			t.Fatalf("VersionsHolding = %v, %v; want %v", holding, err, want)
+		}
+		return nil
+	})
 }
 
 func TestPromotionForIgnoresOtherSuites(t *testing.T) {

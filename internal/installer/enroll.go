@@ -153,6 +153,7 @@ func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) erro
 	if def == unknownLogin {
 		def = ""
 	}
+	r.explain([]string{"owner"}, "Instance owner", ownerPage)
 	owner, err := r.Value("owner", "GitHub login of the instance owner, the only account whose approvals count", def)
 	if err != nil {
 		return err
@@ -180,7 +181,7 @@ func confirmEnrollAgain(r *Resolver, enrolled, owner string) error {
 	if enrolled != unknownLogin && !strings.EqualFold(enrolled, owner) {
 		replaces = fmt.Sprintf("the owner %s with %s and ", enrolled, owner)
 	}
-	what := fmt.Sprintf("An owner (%s) is already enrolled. Enrolling again replaces %sthe TOTP secret: the old authenticator entry stops working, and you scan a new one.", enrolled, replaces)
+	what := fmt.Sprintf("An owner (%s) is already enrolled. Enrolling again replaces %sthe TOTP secret: the old authenticator entry stops working, and you add the new secret that setup shows to your authenticator.", enrolled, replaces)
 	prompt := what + "\nType \"enroll\" to replace it: "
 	if r.screen.FullScreen() {
 		r.screen.Page("Enroll the owner again", ui.Para(what), ui.Para("This is a confirmation: nothing changes until you type enroll."))

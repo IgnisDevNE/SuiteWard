@@ -70,9 +70,7 @@ func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 	if res.AccountType == "User" {
 		defaultOwner = res.Account
 	}
-	if env.R.screen.FullScreen() && env.R.asks("owner") {
-		env.R.screen.Page("Instance owner", ui.Para("Your GitHub username, as in github.com/<username>. Only this account's /suiteward commands and approvals count, and it cannot be an organization."))
-	}
+	env.R.explain([]string{"owner"}, "Instance owner", ownerPage)
 	if res.OwnerLogin, err = env.R.Value("owner", "GitHub login of the instance owner, the only account whose approvals count", defaultOwner); err != nil {
 		return fail(err)
 	}
@@ -100,6 +98,9 @@ func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 	}
 	return res, nil
 }
+
+// ownerPage is the explanation of the owner question, which the install and enroll draw on a full screen that is going to ask it.
+var ownerPage = ui.Para("Your GitHub username, as in github.com/<username>. Only this account's /suiteward commands and approvals count, and it cannot be an organization.")
 
 // chooseApp finds the App the flow works with: the one an answer names, else a new one when --github new-app asks for it, else
 // the one an earlier run created and recorded (PendingApp) when it is not the App of the settings, else the one the settings name,

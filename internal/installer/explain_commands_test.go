@@ -349,6 +349,51 @@ func TestThePlainPurgeKeepsItsPromptAndItsLines(t *testing.T) {
 
 // ---- enroll ----
 
+// The owner question of enroll has the page the install gives it, when it is asked: with an owner enrolled the default is that owner, and the
+// person at the terminal still has to know whose account is wanted and what it is for.
+func TestTheEnrollOwnerQuestionHasAPageOfItsOwn(t *testing.T) {
+	h := enrollHarness(t, statusEnrolled)
+	run := newScreenRun(termWidth, termHeight, "\n", "enroll\n", "\n") // the default owner, the confirmation, Enter at the last page
+	var stderr bytes.Buffer
+	if code := Main(liveContext(t), []string{"enroll", "--settings", h.settingsPath()}, run.on(h.newEnv()), &stderr); code != 0 {
+		t.Fatalf("exit %d: %s\n%s", code, stderr.String(), run.output())
+	}
+	v := run.question(t, 0)
+	if !strings.HasPrefix(v.rows[0], "Instance owner") {
+		t.Errorf("the page of the owner question is titled %q, want \"Instance owner\":\n%s", v.rows[0], v.dump())
+	}
+	mustSay(t, v, "github.com/<username>", "/suiteward", "cannot be an organization", "GitHub login of the instance owner")
+}
+
+// No page where nothing asks the owner: --owner answers it, and a plain screen asks the one question it always asked.
+func TestTheEnrollOwnerPageIsOnlyDrawnWhereTheQuestionIsAsked(t *testing.T) {
+	const page = "github.com/<username>"
+	t.Run("given with --owner", func(t *testing.T) {
+		h := enrollHarness(t, statusEnrolled)
+		run := newScreenRun(termWidth, termHeight, "enroll\n", "\n")
+		var stderr bytes.Buffer
+		if code := Main(liveContext(t), []string{"enroll", "--settings", h.settingsPath(), "--owner", "alice"}, run.on(h.newEnv()), &stderr); code != 0 {
+			t.Fatalf("exit %d: %s\n%s", code, stderr.String(), run.output())
+		}
+		if shows(run.output(), page) {
+			t.Errorf("the page of a question that has its answer was drawn:\n%s", run.output())
+		}
+	})
+	t.Run("plain", func(t *testing.T) {
+		h := enrollHarness(t, statusEnrolled)
+		if code, stderr := h.enroll("\nenroll\n"); code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		out := h.out.String()
+		if want := "GitHub login of the instance owner, the only account whose approvals count [bob]: "; !strings.Contains(out, want) {
+			t.Errorf("the plain question changed:\n%s", out)
+		}
+		if strings.Contains(out, page) {
+			t.Errorf("the plain output carries the page:\n%s", out)
+		}
+	})
+}
+
 func TestTheEnrollAgainPageSaysWhatItReplacesAndThatTheTypedWordIsAConfirmation(t *testing.T) {
 	h := enrollHarness(t, statusEnrolled)
 	run := newScreenRun(termWidth, termHeight, "enroll\n", "\n")
@@ -360,15 +405,17 @@ func TestTheEnrollAgainPageSaysWhatItReplacesAndThatTheTypedWordIsAConfirmation(
 	if !strings.HasPrefix(v.rows[0], "Enroll the owner again") {
 		t.Errorf("the page is titled %q, want \"Enroll the owner again\"", v.rows[0])
 	}
-	mustSay(t, v, "An owner (bob) is already enrolled", "the old authenticator entry stops working", "you scan a new one", "This is a confirmation", `Type "enroll" to confirm`)
+	mustSay(t, v, "An owner (bob) is already enrolled", "the old authenticator entry stops working", "you add the new secret that setup shows to your authenticator", "This is a confirmation", `Type "enroll" to confirm`)
 }
 
+// The plain prompt is the question it was, with one clause changed on purpose: setup shows a secret and an otpauth:// URI, never a code to
+// scan, so the prompt no longer says that you scan a new one.
 func TestThePlainEnrollAgainPromptIsWhatItWas(t *testing.T) {
 	h := enrollHarness(t, statusEnrolled)
 	if code, stderr := h.enroll("enroll\n", "--owner", "alice"); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	want := "An owner (bob) is already enrolled. Enrolling again replaces the owner bob with alice and the TOTP secret: the old authenticator entry stops working, and you scan a new one.\nType \"enroll\" to replace it: "
+	want := "An owner (bob) is already enrolled. Enrolling again replaces the owner bob with alice and the TOTP secret: the old authenticator entry stops working, and you add the new secret that setup shows to your authenticator.\nType \"enroll\" to replace it: "
 	if !strings.Contains(h.out.String(), want) {
 		t.Errorf("the plain prompt changed:\n%s", h.out.String())
 	}

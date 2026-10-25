@@ -283,7 +283,7 @@ func TestManifestIsolatedPrintsThePortForward(t *testing.T) {
 	base := waitForListener(t, out)
 	port := strings.TrimSuffix(strings.TrimPrefix(base, "http://127.0.0.1:"), "/")
 	text := out.String()
-	for _, want := range []string{"ssm start-session", "AWS-StartPortForwardingSession", `"portNumber":["` + port + `"]`, `"localPortNumber":["` + port + `"]`} {
+	for _, want := range []string{"from your computer, forward the port first, then open the address on the computer", "ssm start-session", "AWS-StartPortForwardingSession", `"portNumber":["` + port + `"]`, `"localPortNumber":["` + port + `"]`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the output lacks %q:\n%s", want, text)
 		}

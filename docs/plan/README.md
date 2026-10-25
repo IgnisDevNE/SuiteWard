@@ -40,7 +40,7 @@ Evidence for the earlier phases lives in [history](../history.md).
 
 ## Roadmap
 
-The MVP, released as `v0.2.0`, is a self-hosted, tamper-evident, human-approved test contract for one developer working with AI agents on GitHub. M1.12 (the installer) and M1.13 are merged and released as alphas; M1.14 refines the installer.
+The MVP, released as `v0.2.0`, is a self-hosted, tamper-evident, human-approved test contract for one developer working with AI agents on GitHub. M1.12 (the installer), M1.13 and M1.14 (its refinement) are merged and released as alphas.
 
 | Phase | Outcome | Depends on |
 | --- | --- | --- |

@@ -1155,7 +1155,7 @@ The [runtime contract](runtime.md#scope-discovery-m19) gives the behavior. This 
   func Uncovered(entries []Entry, s scope.Scope) ([]string, error)
   ```
 
-  The limit of 20 covers the include and the runner patterns together. The runner patterns come first, at most 20 of them, and the include patterns take the room that is left, the directory patterns before the file patterns and each group sorted. `Cut` is set whenever anything is dropped, and the replies say so. `Mixed` and `Submodules` have a limit of their own, 20 paths each. `SuggestScope` no longer exists.
+  The limit of 20 covers the include and the runner patterns together. The runner patterns come first, at most 20 of them, and the include patterns take the room that is left, the directory patterns before the file patterns and each group sorted. `Cut` is set whenever an include or runner pattern is dropped, and the replies say so. `Mixed` and `Submodules` have a limit of their own, 20 paths each. `SuggestScope` no longer exists.
 - **Scope.**
 
   ```go

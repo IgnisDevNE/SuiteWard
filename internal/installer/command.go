@@ -480,8 +480,11 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 	if waitErr != nil {
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n", waitErr) // a failed write to stderr cannot be reported anywhere else
 	}
+	if closeErr != nil { // Doctor's own 1 for a report it could not write comes with this error too: the screen keeps the first failed write
+		_, _ = fmt.Fprintf(stderr, "suiteward: the terminal failed while doctor ran: %v\n", closeErr) // a failed write to stderr cannot be reported anywhere else
+	}
 	if code == 0 && (waitErr != nil || closeErr != nil) {
-		return 1 // the report could not be held or written to the terminal, and nothing else says so
+		return 1 // the report could not be held or written to the terminal, and the lines above say which
 	}
 	return code
 }

@@ -351,8 +351,11 @@ func (t missingVersionTx) Version(ctx context.Context, id contract.SuiteVersionI
 
 func (t missingVersionTx) VersionsHolding(ctx context.Context, digest artifact.Digest) (map[contract.SuiteVersionID]bool, error) {
 	holding, err := t.Tx.VersionsHolding(ctx, digest)
+	if err != nil {
+		return nil, err
+	}
 	delete(holding, t.id)
-	return holding, err
+	return holding, nil
 }
 
 // A correction names the current version, which the history must hold: a missing one is a broken state, not a zero version

@@ -384,7 +384,7 @@ func TestSweepReportsTheFolderItCouldNotRemoveAndRemovesTheRest(t *testing.T) {
 	tmp := t.TempDir()
 	locked := setupDir(t, tmp, "suiteward-setup-1", true, 25*time.Hour)
 	other := setupDir(t, tmp, "suiteward-setup-2", true, 25*time.Hour)
-	held, err := os.Open(filepath.Join(locked, "exit"))
+	held, err := os.Open(filepath.Clean(filepath.Join(locked, "exit")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +406,7 @@ func TestTheWindowSweepsOldSetupFoldersAndAFailedSweepDoesNotFailSetup(t *testin
 	t.Setenv("TEMP", tmp)
 	removed := setupDir(t, tmp, "suiteward-setup-1", true, 25*time.Hour)
 	locked := setupDir(t, tmp, "suiteward-setup-2", true, 25*time.Hour)
-	held, err := os.Open(filepath.Join(locked, "exit"))
+	held, err := os.Open(filepath.Clean(filepath.Join(locked, "exit")))
 	if err != nil {
 		t.Fatal(err)
 	}

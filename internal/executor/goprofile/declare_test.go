@@ -267,6 +267,18 @@ func TestChangedTests(t *testing.T) {
 			canonical: one(a, "func TestA(t *testing.T, n int) {}\n"),
 			added:     []TestID{idOf(a, "TestA")},
 		},
+		// go test -run selects by name alone, so both tests of that name run, and a change of either is a change.
+		"the same name in the internal and the external test package": {
+			head: map[string][]byte{
+				"a/dup_test.go":   src("func TestDup(t *testing.T) {}\n"),
+				"a/dup_x_test.go": []byte("package p_test\n\nimport \"testing\"\n\nfunc TestDup(t *testing.T) { t.Log(1) }\n"),
+			},
+			canonical: map[string][]byte{
+				"a/dup_test.go":   src("func TestDup(t *testing.T) {}\n"),
+				"a/dup_x_test.go": []byte("package p_test\n\nimport \"testing\"\n\nfunc TestDup(t *testing.T) {}\n"),
+			},
+			changed: []TestID{idOf("a/dup_test.go", "TestDup")},
+		},
 		// The file is excluded by its constraint, so the sandbox cannot run it: the caller lists the test as excluded
 		// by looking it up in DeclaredTests, so it has to be here.
 		"a test in a file that the build context leaves out": {

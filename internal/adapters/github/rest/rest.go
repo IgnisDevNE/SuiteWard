@@ -228,6 +228,7 @@ type Client struct {
 	token  TokenFunc
 	http   *http.Client
 	base   string
+	scheme string // of base: the one a redirect may use besides https
 	budget *Budget
 
 	mu         sync.Mutex
@@ -260,6 +261,7 @@ func NewClient(token TokenFunc, httpClient *http.Client, baseURL string, budget 
 		token:  token,
 		http:   httpClient,
 		base:   strings.TrimSuffix(baseURL, "/"),
+		scheme: u.Scheme,
 		budget: budget,
 		cache:  map[string]cached{},
 	}, nil
@@ -316,7 +318,8 @@ func (c *Client) Post(ctx context.Context, path string, body []byte) (Response, 
 // a body that ends before its declared length is an error. Both requests go through the client's transport and
 // not through the client, which would follow the redirect with its own rules, bound the whole exchange (the
 // body included) by its Timeout, and quote the redirect's address in its errors. The Timeout bounds the API's
-// answer only: ctx, which must carry a deadline, bounds the archive host and the body. No error repeats the
+// answer only: ctx, which must carry a deadline (ErrNoDeadline), bounds the archive host and the body. The
+// redirect must go to https or to the scheme of the API's address (ErrInsecureRedirect). No error repeats the
 // redirect's address, whose query carries a short-lived credential for a private repository.
 func (c *Client) Download(ctx context.Context, path string, dst io.Writer, limit int64) (int64, error) {
 	if !strings.HasPrefix(path, "/") {
@@ -324,6 +327,9 @@ func (c *Client) Download(ctx context.Context, path string, dst io.Writer, limit
 	}
 	if limit <= 0 {
 		return 0, fmt.Errorf("github download %s: limit %d is not positive", path, limit)
+	}
+	if _, bounded := ctx.Deadline(); !bounded {
+		return 0, fmt.Errorf("github download: %w", ErrNoDeadline)
 	}
 	if err := c.budget.acquire(); err != nil {
 		return 0, fmt.Errorf("github download %s: %w", path, err)
@@ -375,6 +381,9 @@ func (c *Client) redirect(ctx context.Context, transport http.RoundTripper, path
 	location, err := resp.Location()
 	if err != nil {
 		return nil, errors.New("the redirect has no usable Location") // the parse error would quote the address
+	}
+	if location.Scheme != "https" && location.Scheme != c.scheme {
+		return nil, ErrInsecureRedirect // the address is not repeated: its query can carry a credential
 	}
 	return location, nil
 }

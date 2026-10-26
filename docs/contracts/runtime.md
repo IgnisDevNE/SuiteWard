@@ -1,6 +1,6 @@
 # Runtime contract
 
-- **Status:** frozen for phase M1.2 by M1.2-C0 (decision D-RUNTIME); GitHub settings added for phase M1.4 by M1.4-C0; extended by each later phase through M1.11 (`v0.2.0`).
+- **Status:** frozen for phase M1.2 by M1.2-C0 (decision D-RUNTIME); GitHub settings added for phase M1.4 by M1.4-C0; extended by each later phase through M1.11 (`v0.2.0`), and by phase M2.1 (execution, the receipt and the executor API, [ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md)).
 - **Consumers:** M1.2-A (configuration), M1.2-B (jobs and outbox), M1.2-C (composition and lifecycle), M1.2-D (image, deployment, smoke).
 
 One binary, `suiteward`, runs the API and the workers. This document fixes the surface other tasks build against: settings, commands, endpoints, lifecycle and container conventions. The persistence side (jobs, outbox) is in the [persistence contract](persistence.md#jobs-and-outbox-m12-normative).
@@ -30,8 +30,10 @@ Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret sett
 | `GITHUB_API_URL` (M1.4) | no | `https://api.github.com` | Absolute `https` URL (an `http` URL is accepted only for a loopback host, for tests). |
 | `INSTALLATION_TIER` (M1.5) | no | `co-located` | `isolated` or `co-located` (D-TIER). Declared by the deployment, never detected; the remote quadlet sets `isolated`, and `suiteward install` sets it on the service container to the tier it installs (`--tier`, `co-located` by default; `internal/installer/stack.go` for the co-located containers, the rendered quadlet for the isolated ones). |
 | `REPORT_BASE_URL` (M1.13) | no | none | `http://127.0.0.1:<port>` or `http://localhost:<port>` (the host is lowercased, the port is 1 to 65535 without a leading zero, no path, query, fragment or user info, and a trailing slash is dropped): the origin that the change report links of a revision comment name, the HTTP port of the instance as the machine that runs it sees it (on the isolated tier, the end of a port forward). Anything else is refused at startup; the value is not echoed. Unset: the revision comment has no link. `suiteward install` sets it on both tiers from `--http-port` (`http://127.0.0.1:<HTTP port>`); a stack of an earlier release lacks it until `install --upgrade` adds it ([install guide, section 12](../install.md#what-the-installer-does-for-review)). |
+| `EXECUTOR_TOKEN` (M2.1) | yes | none | The bearer token of the executor API ([Execution](#execution-m21-normative)), at least 32 bytes like `MCP_TOKEN`, normally given as `EXECUTOR_TOKEN_FILE`. Unset: the executor routes are not served (404) and no execution job is created. A build without the Go image stamp has the same effect. |
+| `EXECUTOR_JOB_TIMEOUT` (M2.1) † | no | `30m` | Go duration, 1m to 6h: how long an execution job may take from its creation to a result, queue wait included. Not `JOB_TIMEOUT`, which bounds a River job. |
 
-Later phases add settings under the same rules. The GitHub settings of M1.4 are an interim operator configuration: they do not establish the trusted App installation association, which D-IDENTITY and M1.5 decide (see [github](github.md#configuration-interim-m14)).
+Later phases add settings under the same rules. A † in this document marks a choice of task A0 (M2.1) inside [ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md): a name, a size or a duration that the integrator may change. The GitHub settings of M1.4 are an interim operator configuration: they do not establish the trusted App installation association, which D-IDENTITY and M1.5 decide (see [github](github.md#configuration-interim-m14)).
 
 ## Commands
 
@@ -52,6 +54,18 @@ Later phases add settings under the same rules. The GitHub settings of M1.4 are 
 - `suiteward version` (also `--version` and `-version`): print `suiteward <version>` and, on a second line, `image: <digest>`, the digest of the release image this binary installs by default (`none (development build)` when the version is `dev`, and `not recorded in this binary` for the binary inside the release image, which is stamped with the version but cannot know the digest of the image that holds it). It reads no setting and no environment, exits 0, and exits 2 with the usage when it is given any argument. It is handled before any configuration is loaded, as the installer commands are.
 - `suiteward scope add [--runner] PATTERN...` (M1.15, [D-M1.15](../plan/decisions.md#d-m115-scope-discovery-answers-and-the-merge-version-in-one-read)): widen the declaration of the checkout it runs in. It reads no setting and no environment and runs before any configuration is loaded, as `version` does. It edits `.suiteward.yml` of the current directory, which must be a regular file (a symbolic link is refused and a missing file is never created), as text: after the last item of the block list `include`, or `runner` with `--runner`, it inserts one line for each pattern that the list lacks, with the indentation and line break of that item and the quoting that every item of the list shares (plain when they differ, and quoted where YAML needs it). Every other byte stays. A pattern that the list holds already is skipped and reported, and a pattern that the domain refuses, or that holds a tab, a backslash or a character that cannot be seen, is refused before the file is read. The new bytes must read back through `scope.ParseDeclaration` as the old three lists plus the new patterns, within the cap of the declaration, and the file is replaced through a temporary file in its directory and keeps its mode. Where it cannot insert safely (for example, the declaration is invalid, the key is not a list or the list is absent, it is a flow list, it has an anchor or a tag, its last item is not a line `- value`, or the result would not read back as the old declaration plus the new patterns), it changes nothing and prints on stderr the lines to add by hand (the key goes with them only when the list is absent). It prints the lines it added on stdout and says that they protect more files only once the owner approves the revision, because it grants nothing. Exit 0 when it added the patterns or found nothing to add, 1 when it did not change the file (a pattern refused, no regular `.suiteward.yml`, a declaration left to the user, a failed write), and 2 on a usage error (no pattern, an unknown flag, a pattern that starts with `-` after the first pattern, or no `add`).
 
+- `suiteward execute` (M2.1, [ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md)): the executor. It runs outside the service's container, on the machine that has the container runtime, and holds nothing but the executor token. It reads only `EXECUTOR_URL`, `EXECUTOR_TOKEN` (or `EXECUTOR_TOKEN_FILE`) and `EXECUTOR_RUNTIME`, and runs before any service configuration is loaded, as `version` does. It refuses to start (exit 1, naming the variable, never its value) when its environment holds `DATABASE_URL`, `MIGRATION_DATABASE_URL`, `GITHUB_APP_KEY`, `MCP_TOKEN` or the `_FILE` form of one of them, so it never holds a credential of the service. The loop: `POST /lease` (when it answers 204, wait 5 s †, and after an error back off up to 60 s †), prepare the job, run it, post the result. On `SIGTERM` or `SIGINT` it stops leasing at once; a job in flight gets the shutdown grace and is then abandoned, so its lease expires and the job is leased again. Exit 0 after a clean stop, 1 for a fatal error (settings, the refused environment, no runtime), 2 for a usage error. The settings, the sandbox and the install of the executor per tier are in the [install guide](../install.md) (written by M2.1-T9) and in the sandbox spike `docs/spikes/s4-sandbox.md` (written by M2.1-S0).
+
+Executor settings (read by `suiteward execute` only; the names are choices of A0 †):
+
+| Name | Secret | Default | Rule |
+| --- | --- | --- | --- |
+| `EXECUTOR_URL` | no | none (required) | The origin of the service's HTTP listener: an `https` URL, or an `http` URL for a loopback host. No path, query or user info. |
+| `EXECUTOR_TOKEN` | yes | none (required) | The same value as the service's, at least 32 bytes. |
+| `EXECUTOR_RUNTIME` | no | `podman` | `podman` or `docker`: the container runtime CLI. |
+
+The Go image is not a setting: its digest reference is a build stamp of the release, like `version` and `source`, and the service names it in each lease.
+
 Any other command, or none, prints usage and exits 2.
 
 ## `serve` lifecycle
@@ -66,14 +80,16 @@ A fatal startup error (bad settings, unreachable database, schema not ready) exi
 
 ## HTTP surface (Chi)
 
-Bound to `HTTP_ADDR`; loopback by default. No endpoint changes state, and none returns secrets.
+Bound to `HTTP_ADDR`; loopback by default. No endpoint changes state, except the executor API (M2.1, below), which needs the executor token and changes the state of execution jobs only. None returns secrets.
 
 | Path | Meaning |
 | --- | --- |
 | `GET /healthz` | Liveness: 200 `{"status":"ok"}` while the process serves. |
 | `GET /readyz` | Readiness: 200 when the database answers, the schema version equals `SupportedVersion` and the service is not shutting down; 503 otherwise. It does not query River: River starts before the listener opens, the process never cancels the context it started with, and only the shutdown stops it, so River runs while this answers 200. During shutdown the 503 is best effort: the listener closes at once and `net/http` drops a request it reads after the drain began, so only a request in flight at that instant sees it. Body `{"status":"ready","schemaVersion":N}` or `{"status":"unavailable","reason":"..."}`. |
-| `GET /status` | JSON: `version`, `schemaVersion`, `instance` (the first 8 characters of the instance id, as in the name of the setup authenticator entry), `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains: finished jobs follow River's default retention (completed and cancelled jobs 24 h, discarded jobs 7 days; decision D-JOB-RETENTION, verified against River v0.49.0) (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`, `github_bootstrap`, `github_commands` and, since M1.6b, `github_checks`; each `github` entry then also has `checks`, the last check-job error for that repository, absent when none. Since M1.6b each entry also has `bootstrap`, a fixed code for the last reason that repository's bootstrap is waiting or stopped (`no-open-pull-request`, `awaiting-initial-contract`, `read-failed`, `repository-changed`, `invalid-source`, `origin-not-passed`, `assessment-conflict`, `blocked-<reason>`, `awaiting-merge-decision` (M1.7b) or `failed`; since the M1.7b rework the bootstrap codes are those of [Explicit bootstrap: propose and skip](#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16)), kept in memory and cleared by the next run that finds nothing wrong, absent when none; never GitHub text. The MCP `status` tool does not show it. Since M1.7 each entry also has `merges` and `integrity`, and the job counts also exclude `github_merges` and `canonical_integrity` (see "Merges and integrity jobs"). Since M1.7c each `github` entry also has `cycleStartedAt` when one is recorded (see "Latency (M1.7c)"). Since M1.8, `source`: the URL of the source revision the binary was built from, set at build time like `version`, and absent when the build set none (D-RELEASE, AGPL section 13). When GitHub is configured, `unconfiguredRepositories` lists the enrolled repositories that `GITHUB_REPOSITORIES` does not name (the GitHub jobs skip them, and the commands horizon ignores them), absent when there are none; the MCP `status` tool shows it too. Since M1.11, when GitHub is configured and the current rate-limit window is known (a response was read and the window has not ended), `budget`: `remaining` (the requests SuiteWard may still send in the window, 0 once it refuses) and `reset` (RFC 3339, when the window ends and requests resume, corrected for the clock offset); absent otherwise; the MCP `status` tool shows it too. |
+| `GET /status` | JSON: `version`, `schemaVersion`, `instance` (the first 8 characters of the instance id, as in the name of the setup authenticator entry), `jobs` (`available`, `running`, `retryable`, `scheduled`, `completed`, `discarded`) and `outbox` (`pending`, `delivered`, `failed`). Counts only. `discarded` and `failed` are the visible terminal failures. The job counts exclude the outbox relay's own periodic job (`outbox_relay`) and cover only the jobs River still retains: finished jobs follow River's default retention (completed and cancelled jobs 24 h, discarded jobs 7 days; decision D-JOB-RETENTION, verified against River v0.49.0) (see the [persistence contract](persistence.md#jobs-and-outbox-m12-normative)); a relay that keeps failing shows as a growing `outbox.pending`, not in `jobs`. Since M1.4, when GitHub is configured, also `github`: one entry per configured repository with `repo`, `lastSuccess`, `lastError` (text without secrets or bodies) and `waitUntil` (RFC 3339 or absent). The job counts also exclude the synchronization tick (`github_sync_tick`). Since M1.5, always `tier` (the effective tier: `co-located` when either `INSTALLATION_TIER` or the enrollment says so; with `tierNote` when they differ, saying to re-run setup) and `owner` (`login`, `accountId`, `enrolledAt`; absent before setup), and each `github` entry has `protection`: `result` (`enforced`, `findings`, `enforcement-unavailable`, `unknown`, or absent before the first verification), `findings` and `caveats` (lists of the D-PROTECTION codes), `checkedAt`. The job counts also exclude `github_protection_check`, `github_bootstrap`, `github_commands` and, since M1.6b, `github_checks`; each `github` entry then also has `checks`, the last check-job error for that repository, absent when none. Since M1.6b each entry also has `bootstrap`, a fixed code for the last reason that repository's bootstrap is waiting or stopped (`no-open-pull-request`, `awaiting-initial-contract`, `read-failed`, `repository-changed`, `invalid-source`, `origin-not-passed`, `assessment-conflict`, `blocked-<reason>`, `awaiting-merge-decision` (M1.7b) or `failed`; since the M1.7b rework the bootstrap codes are those of [Explicit bootstrap: propose and skip](#explicit-bootstrap-propose-and-skip-m17b-rework-2026-10-16)), kept in memory and cleared by the next run that finds nothing wrong, absent when none; never GitHub text. The MCP `status` tool does not show it. Since M1.7 each entry also has `merges` and `integrity`, and the job counts also exclude `github_merges` and `canonical_integrity` (see "Merges and integrity jobs"). Since M1.7c each `github` entry also has `cycleStartedAt` when one is recorded (see "Latency (M1.7c)"). Since M1.8, `source`: the URL of the source revision the binary was built from, set at build time like `version`, and absent when the build set none (D-RELEASE, AGPL section 13). When GitHub is configured, `unconfiguredRepositories` lists the enrolled repositories that `GITHUB_REPOSITORIES` does not name (the GitHub jobs skip them, and the commands horizon ignores them), absent when there are none; the MCP `status` tool shows it too. Since M1.11, when GitHub is configured and the current rate-limit window is known (a response was read and the window has not ended), `budget`: `remaining` (the requests SuiteWard may still send in the window, 0 once it refuses) and `reset` (RFC 3339, when the window ends and requests resume, corrected for the clock offset); absent otherwise; the MCP `status` tool shows it too. Since M2.1, `execution`: `enabled` (true when `EXECUTOR_TOKEN` is set and the build has the Go image stamp), `jobs` (the number of execution jobs in each state: `pending`, `leased`, `complete`, `unavailable`, `cancelled`) and `lastLeaseAt` (RFC 3339, when an executor last asked for a job, kept in memory, so absent after a restart until the next ask). Counts only, never a repository, a path or a test name. |
 | `GET /reports/{owner}/{repo}/{revision}` | Since M1.13, the change report of one change proposal revision (`{revision}` is `P<n>-R<m>`) as one HTML page: the revision, the base canonical version, the numbers of its comment (files, lines, marker lines seen), and every file with its status, its `+N/−M` or why it has none (binary, too large, too different, work budget) and its unified diff. The page is static (inline style in the brand colors, light and dark; no script, nothing to load), and every string from the repository is escaped, with its hidden characters (control, bidirectional, zero-width, invalid UTF-8) written as escapes. It is rebuilt on every request from the manifest of the revision, which the checks job keeps in the artifact store under the manifest's own digest (its canonical encoding, whose SHA-256 is that digest), from the manifest of the base canonical in the database, and from the bytes of the files that differ, so a revision that a later head superseded still has its page. It reads nothing else. A repository that is not enrolled (and any repository before an owner is enrolled), a reference that is not `P<n>-R<m>`, an unknown or baseline revision (a baseline expects no canonical, so there is nothing to compare it with) and a revision recorded before M1.13, which has no stored manifest, are 404. Only a `Host` of `127.0.0.1`, `localhost` or `[::1]`, with any port or none, is answered; any other is 403 (DNS rebinding). That is no authentication and the route takes no token: anyone who can reach the HTTP listener reads the reports of the enrolled repositories, as they read `/status`. Every answer, errors included, carries `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The sizes of the files that differ are read before their bytes: a file with a side over 1 MiB, the bound of the report, is not read, and its entry says it is too large to compare, with its sizes and no line count, an added or removed file included; a revision whose other files would take more than 32 MiB to read (both sides together) is refused before any of them is read, and so is a page over 8 MiB, both with 413. A file whose lines mostly end with a carriage return is shown without it and marked once as CRLF. A literal backslash of the repository is written twice, so that an escape is never the spelling of a file's own text; a report that cannot be built now is 503 with a fixed text, the cause logged. One report is built at a time in the process, and a request waits for its turn up to 20 seconds. The answer is `text/html; charset=utf-8`. The revision comment links this page when `REPORT_BASE_URL` is set; the page opens only where the instance is reachable. The contents and the bounds are in [Change report (M1.13)](#change-report-m113-normative). |
+| `GET /receipts/{owner}/{repo}/{pull}` | Since M2.1, the receipt page of one pull request: the execution results of its current head, the receipt and the canonical run, as one HTML page. Same rules as the change report page (loopback `Host` only, no authentication, the same headers, rebuilt on every request). See [The receipt page](#the-receipt-page). |
+| `/executor/v1/...` | Since M2.1, the executor API: `POST /lease`, `GET /jobs/{id}/archive/{head\|base}`, `GET /jobs/{id}/files/{digest}`, `POST /jobs/{id}/heartbeat` and `POST /jobs/{id}/result`. Bearer token, not served without `EXECUTOR_TOKEN`. See [The executor API](#the-executor-api). |
 
 ### Command and bootstrap jobs (M1.6a)
 
@@ -580,6 +596,222 @@ A revision that is not found, one that expects no canonical (a baseline), a cano
 **The check summary** states the same four facts (files, lines, files not shown, marker lines seen) as bullets of its list, for a check whose payload names a revision and a canonical version, followed by "Marker lines are lines to look at, not a verdict." It has no link and no path.
 
 **The page** is `GET /reports/{owner}/{repo}/{revision}` of the [HTTP surface](#http-surface-chi), served on the HTTP listener, which is loopback by default and published on the host's loopback only by the installer. Only a `Host` of `127.0.0.1`, `localhost` or `[::1]` is answered (any other is 403), which is a defence against DNS rebinding and not an authentication: anyone who can reach the listener reads the reports of the enrolled repositories, as they read `/status`. It reads only what the revision binds, so it shows nothing that the revision's own manifest and its base canonical do not name.
+
+### Execution (M2.1; normative)
+
+[ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md) decides the rules and [D-M2.1](../plan/decisions.md#d-m21-canonical-execution-the-receipt-and-the-go-profile) records them; this section is the wire and the behavior. A † marks a choice of task A0 (a name, a size or a duration). The persistence side is in the [persistence contract](persistence.md#execution-m21-normative).
+
+**The effective policy.** The checks job and the commands job read it from the declaration of the Suite's current canonical version: the bytes that the canonical manifest names for `.suiteward.yml`, read through `ContentReader` and parsed by `scope.ParseDeclaration` (which reads the `execution` block). The pair `(canonical level, receipt level)` is `(off, off)` when the block or its `profile` is absent. The canonical declaration governs every pull request, the one that changes it included. Before the first version there is no policy and nothing runs. Fork pull requests get no job: they stay `fork-unsupported`.
+
+**Unavailable reasons.** A run that cannot be completed is `unavailable` with one reason from a closed set of codes †:
+
+| Reason | Set by | Meaning |
+| --- | --- | --- |
+| `executor-error` | executor | the executor failed in a way no other code names |
+| `sandbox-unavailable` | executor | the sandbox could not be built, or the runtime cannot honor a required property |
+| `toolchain-mismatch` | executor | the repository needs a Go that the pinned image does not have |
+| `source-mismatch` | executor | the source check failed: a missing, extra or mismatched file, or an unsafe symlink |
+| `archive-unavailable` | executor | an archive or a manifest file could not be read |
+| `profile-unsupported` | executor | the job names a profile that this executor lacks |
+| `too-large` | executor, service | an archive, a tree or a result passed its limit |
+| `timeout` | service | the job passed `deadlineAt` |
+| `attempts-exhausted` | service | the lease expired on the last attempt |
+| `executor-not-configured` | service | no executor token, or no Go image stamp; no job is created |
+
+A job is cancelled, not unavailable, when its binding is no longer wanted: `head-moved` (the pull request has another head), `closed` (the pull request is not open) or `obsolete` (the governing manifest or the policy changed) †.
+
+#### The executor API
+
+Base path `/executor/v1` on the service's HTTP listener. It is not served (404, empty body) when `EXECUTOR_TOKEN` is unset.
+
+**Common rules.**
+- **Auth.** `Authorization: Bearer <EXECUTOR_TOKEN>`, compared in constant time, separate from the MCP token. A missing or wrong token is 401 with no detail. The token is never logged or returned.
+- **No `Host` rule.** The loopback `Host` check of the report pages does not apply. The report pages need it because they have no authentication. These routes have a bearer token, which a browser page cannot send cross-origin (no CORS header is ever served).
+- **Lease header.** Every request under `/jobs/{id}` carries `Suiteward-Lease: <leaseId>`.
+- **Format.** JSON bodies are UTF-8 and strictly decoded: an unknown field, a trailing value or a non-object is 400 `invalid`. Times are RFC 3339 in UTC. Every answer carries `Cache-Control: no-store`.
+- **Errors** are `{"error": "<code>"}` with a fixed code and never an echo of the request: `invalid` (400), `not-found` (404), `lease-lost` (409), `conflict` (409), `too-large` (413), `github` (502: GitHub could not be read, retryable), `unavailable` (503: the service is shutting down or not ready) and `internal` (500, the cause logged). Any 409 under `/jobs/{id}` means: stop, discard the work, post nothing.
+- **Deadlines.** The listener's 30 s read and write bounds stay for every route except the two downloads. Each download extends its own write deadline, for that request, to the job's remaining time, at most 10 minutes †. Each handler caps its request body.
+- **Limits of a job.** The service refuses to lease a job whose commit has more than 50,000 tree entries †; such a job becomes `unavailable` (`too-large`).
+
+**`POST /lease`.** Grants at most one job.
+- *Request:* no body, or `{}`. Any other body is 400.
+- *204:* no job is ready.
+- *200:* the job, as below. The service reads the tree entries of each commit when it grants the lease. A GitHub failure is 502 and leaves the job pending with its attempts unchanged. A truncated tree makes the job `unavailable` (`too-large`).
+- *Also:* 401, 503.
+- *Rules:* the oldest job that is `pending`, or `leased` with an expired lease, goes first. Granting increments `attempts` and sets a new `leaseId` and `leaseExpiresAt` (60 s from now †, never beyond `deadlineAt`). The answer is at most 16 MiB †.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `jobId` | integer | |
+| `leaseId` | string | 32 lowercase hex digits, new for each grant |
+| `leaseExpiresAt`, `deadlineAt` | string | RFC 3339 |
+| `plan` | string | `canonical` or `receipt` |
+| `pull` | integer | |
+| `profile` | object | `id` (`go`) and `image`, the pinned Go image by digest (`<name>@sha256:<64 hex>`, at most 300 bytes) |
+| `head` | object | `sha` (40 lowercase hex) and `tree`, the entries of that commit |
+| `base` | object | the same shape as `head`; present exactly for `receipt` (the merge base) |
+| `manifest` | object | `source` (`V<n>` or `P<n>-R<m>`), `digest` (`sha256:<64 hex>`) and `files`, an array of `{path, digest}`. For `canonical` it is the governing manifest. For `receipt` it is the canonical version that the revision expects |
+| `scope` | object | `include` and `exclude`, arrays of patterns: the declaration of that manifest, at most 1000 patterns in all |
+| `limits` | object | `archiveBytes` 268435456, `fileBytes` 8388608, `testTimeoutSeconds` 600, `memoryMiB` 2048, `cpus` 2, `pids` 512, `reruns` 2 † |
+
+A tree entry is `{path, mode, sha}`: `path` is at most 4096 bytes, `mode` is one of `100644`, `100755`, `120000` and `160000`, and `sha` is the 40-hex git id of the blob (of the commit, for a submodule).
+
+**`GET /jobs/{id}/archive/{head|base}`.** The commit's `tar.gz`, streamed by the service from GitHub's archive of that exact SHA, with a token that holds Contents read only. The executor never holds a GitHub token.
+- *200:* `application/gzip`, no `Content-Length`. The service sends at most `limits.archiveBytes` plus 1 byte. An archive that reaches the limit is `too-large`, which the executor reports.
+- *404:* an unknown job, `base` of a `canonical` job, or any other side. *409:* the lease. *502:* GitHub. Also 401.
+- *Idempotent:* it may be repeated.
+
+**`GET /jobs/{id}/files/{digest}`.** One file of `manifest.files`, from the service's store.
+- *200:* `application/octet-stream` with `X-Content-Type-Options: nosniff`, at most `limits.fileBytes`. The executor re-checks the digest of what it received.
+- *404:* a digest that is not in this job's manifest. The service never reads another one. *409:* the lease. *500:* the store has no valid content for a digest of the manifest (logged at Error). Also 401.
+
+**`POST /jobs/{id}/heartbeat`.**
+- *Request:* no body. *200:* `{"leaseExpiresAt": "..."}`, 60 s from now, never beyond `deadlineAt`. *409:* the lease was lost (another lease, or the job is cancelled or finished). Also 401, 404.
+- *Idempotent.* The executor should send one about every 20 s †.
+
+**`POST /jobs/{id}/result`.** At most 4 MiB †. A 200 answer is `{"state": "complete"}` or `{"state": "unavailable"}`.
+
+| Field | Type | Rule |
+| --- | --- | --- |
+| `status` | string | `complete` or `unavailable` |
+| `reason` | string | present exactly for `unavailable`; an executor-set code of the table above |
+| `head`, `base` | objects | `{sha}`; each must equal the job's, and `base` is present exactly for `receipt` |
+| `executor` | object | `version` (1 to 64 printable ASCII bytes) and `binarySha256` (64 lowercase hex) |
+| `sandbox` | object | `imageDigest` (`sha256:<64 hex>`) and `toolchain` (at most 64 printable ASCII bytes, for example `go1.25.1`); required for `complete` |
+| `startedAt`, `endedAt` | string | RFC 3339; `endedAt` is not before `startedAt`; neither is more than 5 minutes ahead of the service's clock |
+| `tests` | array | `complete` only; at most 10,000 † (below) |
+| `unapproved` | array | `receipt` only: at most 100 paths of test files under patterns that only the head adds |
+| `markers` | array | `receipt` only: at most 200 objects `{kind, path, line}`. `kind` is `testing-import`, `testing-testing`, `flag-lookup-test`, `exit-in-init`, `test-file-read` or `env-read` †; `line` is 1 to 10,000,000 |
+| `submodules` | array | at most 100 paths that were skipped |
+
+A test is `{package, name, file, kind, head, base, excluded}`:
+- `package` is the directory of the package relative to the repository root (`.` for the root), at most 512 bytes. `name` is `Test` followed by letters, digits and `_`, at most 200 bytes. `file` is the declaring file, a path ending `_test.go`, at most 1024 bytes. A path is clean and relative, with no `..`.
+- `kind` is `declared` for `canonical`, and `added` or `changed` for `receipt`.
+- `head` has 1 to 3 observations in run order, each `pass`, `fail`, `build-error`, `skip` or `absent`. `base` is the same, and is present exactly for a `receipt` test that is not excluded.
+- `excluded` is `build-constraint` †. A test with it has no `head` and no `base`.
+- `(package, name)` is unique in the result.
+
+The service validates, in this order:
+1. the token and the job (404);
+2. the lease header, and that the lease has not expired (409);
+3. that the job is not already finished (the same body, by SHA-256, answers 200 as before; another body is 409 `conflict`);
+4. the size (413);
+5. the strict decoding;
+6. the heads against the job;
+7. every rule above.
+
+Every string is valid UTF-8 and holds no control or format character and no newline. A result that breaks a rule is 400 and nothing is stored. The service derives each test's state from its observations with the domain, stores the result, sets the job's state and wakes `github_checks`. The result carries no output, no error text and no free text: an executor cannot put words into a check or a page.
+
+#### Job lifecycle
+
+States of a job †: `pending`, `leased`, `complete`, `unavailable`, `cancelled`. The last three are final. The run status of ADR 0028 is `pending` for `pending` and `leased`, and otherwise the job's state. A `cancelled` job is the run of no binding.
+
+| From | To | When |
+| --- | --- | --- |
+| (none) | `pending` | the checks job creates it |
+| `pending` | `leased` | a lease is granted; `attempts` goes up by one |
+| `leased` | `pending` | the lease expired and `attempts` is below 3 † |
+| `leased` | `unavailable` | the lease expired on the third attempt (`attempts-exhausted`) |
+| `pending`, `leased` | `unavailable` | `deadlineAt` passed (`timeout`) |
+| `leased` | `complete`, `unavailable` | a result is stored |
+| `pending`, `leased` | `cancelled` | the binding is no longer wanted |
+
+The lease query applies expiry when it picks a job. The checks job applies the rest at the start of each run, and wakes itself on any change it makes. Nothing is ever deleted. An unavailable run is final for its head and binding. Only a new head, or a changed manifest or policy, makes the checks job create another job. There is no rerun command (ADR 0028, open item 8).
+
+**What the checks job does for execution.** It stays the only writer of check states.
+1. It sweeps expiry and deadlines. It cancels the jobs of a pull request that is closed or has another head (`closed`, `head-moved`), and the jobs whose binding is no longer the wanted one (`obsolete`).
+2. For each open, non-fork pull request of a repository with a canonical, a policy that is not `(off, off)`, an executor token and a Go image stamp, after the head assessment, it wants:
+   - when `canonical` is not `off`: the **canonical** plan. The governing manifest is the current revision's manifest when that revision has an eligible exact approval and a passed assessment of this head (the condition for `ready`), and the canonical's manifest otherwise;
+   - when `receipt` is not `off` and the head has a revision: the **receipt** plan, with the canonical's manifest and, as the base, the merge base of the head and the pull request's base branch. The service reads the merge base through GitHub's compare endpoint, the `merge_base_commit` of `base_sha...head_sha`. That is a new read for the GitHub adapter (M2.1-T8).
+3. It creates the job for each wanted plan unless a job with the same key exists and is not cancelled. The **job key** is the SHA-256, in lowercase hex, of six lines, each ended by a newline †: the plan, the profile, the head SHA, the base SHA (empty for the canonical plan), the governing manifest digest and the digest of the canonical declaration. The policy levels are inside that declaration, so a changed policy is a new job.
+4. Without an executor token or a Go image stamp it creates nothing, and every run reads `unavailable` with `executor-not-configured`.
+
+A result, `complete` or `unavailable`, wakes `github_checks` after its commit, by the rule of "Latency (M1.7c)": the handler inserts the wake-up as a job does, and a failed wake-up is logged and never fails the request.
+
+#### The canonical gate on the `SuiteWard / Contract` check
+
+Under `canonical: required`, and only where the check would otherwise be `success` (reason `unchanged` or `ready`), the checks job reads the current head's canonical run and publishes:
+
+| Run | State | Reason † |
+| --- | --- | --- |
+| no job yet, `pending` or `leased` | `in_progress` | `canonical-pending` |
+| `unavailable` | `in_progress` | `canonical-unavailable` |
+| `complete` with any `FAIL`, `MISSING` or `FLAKY` | `failure` | `canonical-failed` |
+| `complete` with none of them | `success` | the reason it would have had |
+
+Every other reason keeps its precedence, as with `runner-uncovered`. A canonical run with no declared test is `complete` with zero tests. Both are provisional (ADR 0028, open items 6 and 9). The gate never turns another state into `success`.
+
+Under `advisory` or `off` the check and its publication rule are unchanged, so its text does not change either: the results of an advisory run are on the [receipt page](#the-receipt-page) only. Under `required`, the summary of the check states counts only, with no repository text, no path, no test name and no link: the tests run, how many passed, were skipped, failed, were missing or flaky, and how many are excluded and were not run, with the words "Excluded tests are not covered." when there are some. It still names the tier. Under `required` the summary may say that SuiteWard ran the tests. Under `advisory` and `off` it never does. The amendment of D-CHECKS and of ADR 0015 is in [D-M2.1](../plan/decisions.md#d-m21-canonical-execution-the-receipt-and-the-go-profile).
+
+#### The `SuiteWard / Receipt` check
+
+The `github_checks` job writes it for each open, non-fork pull request of a repository with a canonical whose `receipt` level is not `off`, for a head that has a revision (provisional; ADR 0028, open item 2). The check is never required. It is published like the Contract check: one run per head and generation, `POST` only, a generation that advances when the head, the state, the reason or the reference changes, and the lost-publication rule of the check ledger (a message that failed is sent again under the next generation after 15 minutes). It reads the head's receipt run:
+
+| Run | State | Reason † | Title † |
+| --- | --- | --- | --- |
+| no job yet, `pending` or `leased` | `in_progress` | `receipt-pending` | "Receipt pending" |
+| `complete`, any evaluated test `FAILS` or `MISSING` | `failure` | `receipt-failing` | "Receipt: failing or missing tests" |
+| `complete`, otherwise | `success` | `receipt-complete` | "Receipt ready" |
+| `unavailable`, or no executor | `neutral` | `receipt-unavailable` | "Receipt unavailable" |
+
+The conclusion never depends on a mode. The summary is public text. It holds the count of each state (`DETECTS`, `INERT`, `NEW API`, `FAILS`, `MISSING`, `FLAKY`, `SKIPPED`), the number of excluded tests, the number of marker lines seen, the tier, the sentence "Observed by this instance's executor. Evidence, not a verdict.", and, for `unavailable`, the reason code in words. It has no repository text, no path, no test name, no link and no mode.
+
+**Outbox kind `github_receipt_check`.** Key `receipt-check:<repository id>:<pull>:<generation>`, a system row. The payload (explicit tags, strict decoding) has `repositoryId`, `repo`, `pull`, `headSha`, `generation`, `state`, `reason`, `reference`, `tier`, `counts` (`detects`, `inert`, `newApi`, `fails`, `missing`, `flaky`, `skipped`, `excluded`, `markers`, all integers) and, for `neutral`, `unavailable`, the reason code.
+
+The publisher follows the `github_check` publisher. It drops a message whose generation is no longer the current one. It looks for a check run named `SuiteWard / Receipt` from this App whose `external_id` is `suiteward:<instance id>:<key>`, and otherwise posts it: `success`, `failure` and `neutral` as `completed` with that conclusion, `in_progress` as `in_progress`. A 422 for a head that no longer exists is logged and counts as delivered.
+
+#### Commands
+
+**Grammar.** The prefix and every word are matched without regard to case, as D-COMMANDS says. A mode is stored in lower case.
+- `/suiteward approve P<n>-R<m> [fix|feature|refactor] <code>`: the mode, when given, is the word between the reference and the code. A third token that is not a mode word is read as the code, so a misspelled mode is `bad-code`. With a mode word as the third token, the fourth must be the six-digit code.
+- `/suiteward revoke P<n>-R<m> <code>` is unchanged. It takes no mode, and a mode word is a `bad-code`.
+- `/suiteward mode <fix|feature|refactor>`: owner only, no code. A bare `mode` is `missing-mode`, another word is `bad-mode`, and anything after the mode is `extra-text`.
+- The `malformed` reasons gain `missing-mode` and `bad-mode` †.
+
+**Dispositions** (migration `00021`; each is a code of `pr_commands`): `receipt-refused`, `mode-set` and `mode-refused` †.
+- `mode-set`: the preview mode was recorded. `mode-refused`, with `reason` `fork` or `not-open` †, is acknowledged and records nothing else. Both carry no code, take no step and no operation id, and are never counted by `LatestOwnerCommand`: they never set or clear `owner-command-rejected`.
+- `receipt-refused`: an `approve` whose code was valid and was consumed, refused by the receipt gate. It carries no operation id and records no consent. It is never counted by `LatestOwnerCommand` and never sets `owner-command-rejected`.
+- The mode of the comment (`mode-set`, and any `approve` that carried one, whatever its disposition) is recorded in `pr_commands.mode`.
+
+**The receipt gate in the commands job.** It is step 6a of "Owner-authored", after `ConsumeStep` and before `ProcessConsent`. It acts on an `approve` only: `revoke`, `skip`, `propose` and `suggest` are never gated.
+1. It applies only when the policy's `receipt` level is not `off`, and when the approve names the proposal's current revision. Another reference goes on to `ProcessConsent`, which rejects it as before (provisional; ADR 0028, open item 5).
+2. It reads the pull request's head as the synchronization observed it when the command is processed, and that head's receipt run. No job yet counts as `pending`.
+3. `off` and `advisory`: proceed. `before-approval`: refuse unless the run is `complete`. `required`: refuse unless the run is `complete`, the comment carries a mode, and the summary for that mode is met.
+4. A refusal is recorded `receipt-refused` through `Record`, with an acknowledgment and the gate record of the persistence contract, in one transaction. The `reason` of the acknowledgment is the first that applies: `pending` (the run is pending or missing), `unavailable`, `mode-missing`, `mode-not-met`.
+5. When it proceeds, `ProcessConsent` runs as before, and `Record(processed)` writes the gate record in the same transaction as the ledger entry.
+6. A retry after a crash that finds the consent already recorded (the replay of the operation) skips the gate and records the entry as `processed`.
+
+The acknowledgment of `receipt-refused` is `ack:<repository id>:<comment id>` with `disposition`, `comment`, `owner`, `reference`, `reason`, `mode` (optional) and, for `mode-not-met`, `counts` (as in the receipt check). It says that the code was used and nothing was approved, what is missing, and that the next attempt needs the next code. For `mode-set` the payload has `disposition`, `comment`, `owner` and `mode`. For `mode-refused` it has `disposition`, `comment`, `owner` and `reason`.
+
+**The preview mode** of a pull request is the `mode` of its latest `mode-set` entry created at or after the current enrollment. It lasts across heads and revisions (provisional; ADR 0028, open item 7). The receipt page shows it, and no gate reads it.
+
+#### The revision comment
+
+The `revision:` payload gains `receipt` (optional string): the effective `receipt` level when it is not `off`, which the checks job sets from the canonical declaration when it writes the message. The text gains one fixed line, after the change report and before the approve command:
+
+> Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. It is evidence, not a verdict. Results: `<link>`. The `SuiteWard / Receipt` check carries the counts.
+
+- The link is `<REPORT_BASE_URL>/receipts/<owner>/<repo>/<pull>`, with the owner and the name path-escaped. It is set only when `REPORT_BASE_URL` is, and the renderer refuses any other link. Without it the line says "Results: see the `SuiteWard / Receipt` check."
+- `before-approval` adds "Approving waits until the receipt is complete."
+- `required` adds "Approving needs a mode and a receipt that meets it:" and the copyable command `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>` in place of the usual one.
+- The comment is posted once and never edited, so the line states the level as it was when the comment was written. The acknowledgment of a refusal states what holds now.
+- A weakening of the policy is a reduction. `reducedRules` gains one entry for each level that gets weaker, in the form `execution.canonical: required -> advisory` or `execution.receipt: advisory -> off`. Removing `profile` or the block lists each level that was not `off`. A strengthening lists nothing.
+
+#### The receipt page
+
+`GET /receipts/{owner}/{repo}/{pull}`. It shows the execution results of the pull request's current head (the last head recorded, for a closed pull request). It is rebuilt on every request from stored rows, with the rules of the change report page: only a loopback `Host` is answered (403 otherwise), there is no authentication, the same four headers are on every answer, every string is escaped with its hidden characters written as escapes, and the type is `text/html; charset=utf-8`. An unenrolled repository, a repository before an owner is enrolled and an unknown pull request are 404. A known pull request with no job is 200 with the sentence "No execution results for this pull request yet."
+
+For the head it shows:
+- the head SHA and the base SHA;
+- the tier, and the sentence that the results are evidence reported by an executor, with the reduced-assurance sentence on the co-located tier;
+- the evidence binding of each run: the governing manifest and its source, the policy levels, the profile, the executor's version and binary SHA-256, the image digest and the times;
+- the receipt: the state of each evaluated test with its package and file, the paths "not evaluated: pattern not approved yet", the skipped submodules, and the marker lines with their path and line;
+- the canonical run: the state of each declared test, the number of excluded tests and their reasons;
+- the preview mode, and whether the summary of each of the three modes is met.
+
+A test name is shown escaped. No output of a test is shown, because none is stored.
+
+Bounds: a run has at most 10,000 test rows, so a page stays under 8 MiB. A page over it is 413. A page that cannot be built is 503 with a fixed text, and one page is built at a time, as for the change report.
 
 ### Protection verification job (M1.5)
 

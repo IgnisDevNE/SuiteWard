@@ -23,6 +23,12 @@ import (
 	"time"
 )
 
+// passesTheBound reports whether err refuses a fetch for passing the byte bound: deterministic and install-failed (runtime contract, reasons),
+// and neither the too-large of an unpacked size nor a counted fetch failure.
+func passesTheBound(err error) bool {
+	return errors.Is(err, ErrInstallFailed) && !errors.Is(err, ErrTooLarge) && !errors.Is(err, ErrFetchFailed)
+}
+
 // recorded is one entry the sink took, read to the end as a tar writer would.
 type recorded struct {
 	name string
@@ -254,8 +260,8 @@ func TestFetchEnforcesTheByteBoundOnTheTotal(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			sink := &memSink{}
 			stats, err := Fetch(context.Background(), clientFor(t, proxy.Server, ""), proxy.URL, plan, sink, Limits{Bytes: c.bound})
-			if c.wantErr != errors.Is(err, ErrTooLarge) || (err != nil) != c.wantErr {
-				t.Errorf("err = %v, want ErrTooLarge = %v", err, c.wantErr)
+			if c.wantErr != passesTheBound(err) || (err != nil) != c.wantErr {
+				t.Errorf("err = %v, want a passed bound = %v", err, c.wantErr)
 			}
 			if len(sink.entries) != c.wantFiles {
 				t.Errorf("the sink took %d entries, want %d", len(sink.entries), c.wantFiles)
@@ -279,8 +285,8 @@ func TestFetchEnforcesTheByteBoundWhileBufferingABodyWithNoLength(t *testing.T) 
 	})
 	sink := &memSink{}
 	_, err := Fetch(context.Background(), clientFor(t, srv, ""), srv.URL, planOf(modName), sink, Limits{Bytes: 4000})
-	if !errors.Is(err, ErrTooLarge) {
-		t.Errorf("err = %v, want ErrTooLarge", err)
+	if !passesTheBound(err) {
+		t.Errorf("err = %v, want a passed bound", err)
 	}
 	if len(sink.entries) != 0 {
 		t.Errorf("the sink took %d entries of a body that passed the bound, want none", len(sink.entries))
@@ -302,8 +308,8 @@ func TestFetchRefusesADeclaredLengthPastTheBoundWithoutReadingTheBody(t *testing
 	})
 	sink := &memSink{}
 	_, err := Fetch(context.Background(), clientFor(t, srv, ""), srv.URL, planOf(modName), sink, Limits{Bytes: 100})
-	if !errors.Is(err, ErrTooLarge) {
-		t.Errorf("err = %v, want ErrTooLarge", err)
+	if !passesTheBound(err) {
+		t.Errorf("err = %v, want a passed bound", err)
 	}
 	if len(sink.entries) != 0 || bodyWritten.Load() {
 		t.Errorf("the sink took %d entries", len(sink.entries))
@@ -661,8 +667,8 @@ func TestFetchBuffersABodyWithNoLengthThatIsExactlyTheBound(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			sink := &memSink{}
 			_, err := Fetch(context.Background(), clientFor(t, srv, ""), srv.URL, planOf(modName), sink, Limits{Bytes: tc.bound})
-			if tc.wantErr != errors.Is(err, ErrTooLarge) || (err != nil) != tc.wantErr {
-				t.Errorf("err = %v, want ErrTooLarge = %v", err, tc.wantErr)
+			if tc.wantErr != passesTheBound(err) || (err != nil) != tc.wantErr {
+				t.Errorf("err = %v, want a passed bound = %v", err, tc.wantErr)
 			}
 			if !tc.wantErr && (len(sink.entries) != 1 || !bytes.Equal(sink.entries[0].data, body)) {
 				t.Errorf("the sink took %d entries, want the whole body in one", len(sink.entries))

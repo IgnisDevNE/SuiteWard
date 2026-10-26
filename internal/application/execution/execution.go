@@ -63,22 +63,22 @@ type Reason string
 
 // The reasons of a job that is unavailable, or whose last attempt failed (docs/contracts/runtime.md, "Unavailable reasons").
 const (
-	ReasonExecutorError        Reason = "executor-error"
-	ReasonSandboxUnavailable   Reason = "sandbox-unavailable"
-	ReasonArchiveUnavailable   Reason = "archive-unavailable"
-	ReasonLeaseExpired         Reason = "lease-expired"
-	ReasonTimeout              Reason = "timeout"
-	ReasonGitHubUnavailable    Reason = "github-unavailable"
-	ReasonNoExecutor           Reason = "no-executor"
-	ReasonFetchFailed          Reason = "fetch-failed"
-	ReasonInstallFailed        Reason = "install-failed"
-	ReasonResourceLimit        Reason = "resource-limit"
-	ReasonToolchainMismatch    Reason = "toolchain-mismatch"
-	ReasonSourceMismatch       Reason = "source-mismatch"
-	ReasonTooLarge             Reason = "too-large"
-	ReasonProfileUnsupported   Reason = "profile-unsupported"
-	ReasonNotConfigured        Reason = "executor-not-configured"
-	ReasonNoMergeBase          Reason = "no-merge-base"
+	ReasonExecutorError      Reason = "executor-error"
+	ReasonSandboxUnavailable Reason = "sandbox-unavailable"
+	ReasonArchiveUnavailable Reason = "archive-unavailable"
+	ReasonLeaseExpired       Reason = "lease-expired"
+	ReasonTimeout            Reason = "timeout"
+	ReasonGitHubUnavailable  Reason = "github-unavailable"
+	ReasonNoExecutor         Reason = "no-executor"
+	ReasonFetchFailed        Reason = "fetch-failed"
+	ReasonInstallFailed      Reason = "install-failed"
+	ReasonResourceLimit      Reason = "resource-limit"
+	ReasonToolchainMismatch  Reason = "toolchain-mismatch"
+	ReasonSourceMismatch     Reason = "source-mismatch"
+	ReasonTooLarge           Reason = "too-large"
+	ReasonProfileUnsupported Reason = "profile-unsupported"
+	ReasonNotConfigured      Reason = "executor-not-configured"
+	ReasonNoMergeBase        Reason = "no-merge-base"
 )
 
 // The reasons of a cancelled job: its binding is no longer wanted.

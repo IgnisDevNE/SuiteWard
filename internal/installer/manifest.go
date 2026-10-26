@@ -243,7 +243,7 @@ func askPaste(ctx context.Context, env githubEnv, codes <-chan string, state str
 		secret, err := scr.HiddenLine(read, label, env.R.term.ReadPassword)
 		stop()
 		callback, answered := "", false
-		if called != nil {
+		if endsOnCallback {
 			select {
 			case callback, answered = <-called:
 			default:

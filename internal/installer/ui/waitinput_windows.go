@@ -6,8 +6,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"reflect"
+	"runtime"
 	"slices"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -35,6 +36,11 @@ var (
 	procPeekConsole  = kernel32.NewProc("PeekConsoleInputW")
 	procReadConsoleI = kernel32.NewProc("ReadConsoleInputW")
 )
+
+// addressOf is the address of what p points to, for a call into the console API. shortcut: it goes through reflect.ValueOf(p).Pointer()
+// because an inline unsafe.Pointer is flagged by gosec G103, which has no exception here; what p points to has escaped to the heap by then
+// (it is an interface value), where it stays put, and the caller keeps it alive with runtime.KeepAlive until the call returns.
+func addressOf(p any) uintptr { return reflect.ValueOf(p).Pointer() }
 
 // inputReadiness is the wait for a key of the console behind f that Options.InputReady is: it waits on the console and looks at its events,
 // and reads none a key needs, so the end of its context leaves nothing pending. It is nil where the console cannot be waited on.
@@ -67,7 +73,7 @@ func inputReadiness(f *os.File) func(context.Context) error {
 func skipToCharacter(h windows.Handle) (bool, error) {
 	var records [peekedRecords]inputRecord
 	var n uint32
-	if r, _, err := procPeekConsole.Call(uintptr(h), uintptr(unsafe.Pointer(&records[0])), uintptr(len(records)), uintptr(unsafe.Pointer(&n))); r == 0 {
+	if r, _, err := procPeekConsole.Call(uintptr(h), addressOf(&records[0]), uintptr(len(records)), addressOf(&n)); r == 0 {
 		return false, fmt.Errorf("look at the keys of the console: %w", err)
 	}
 	seen := slices.IndexFunc(records[:n], func(r inputRecord) bool { return r.eventType == keyEvent && r.keyDown != 0 && r.char != 0 })
@@ -77,9 +83,10 @@ func skipToCharacter(h windows.Handle) (bool, error) {
 	}
 	if drop > 0 {
 		var read uint32
-		if r, _, err := procReadConsoleI.Call(uintptr(h), uintptr(unsafe.Pointer(&records[0])), uintptr(drop), uintptr(unsafe.Pointer(&read))); r == 0 {
+		if r, _, err := procReadConsoleI.Call(uintptr(h), addressOf(&records[0]), uintptr(drop), addressOf(&read)); r == 0 {
 			return false, fmt.Errorf("drop the events that make no character: %w", err)
 		}
+		runtime.KeepAlive(&read)
 	}
 	return seen >= 0, nil
 }

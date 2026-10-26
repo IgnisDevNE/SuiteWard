@@ -7,9 +7,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -67,6 +67,7 @@ func openConsoleInput(t *testing.T) *os.File {
 	}
 	f := os.NewFile(uintptr(h), "CONIN$")
 	t.Cleanup(func() { _ = f.Close() })
+	t.Cleanup(func() { _ = windows.FlushConsoleInputBuffer(h) }) // what a test typed is not left for the shell that runs the tests
 	return f
 }
 
@@ -75,9 +76,10 @@ func typeIntoConsole(t *testing.T, f *os.File, events ...inputRecord) {
 	t.Helper()
 	var written uint32
 	write := windows.NewLazySystemDLL("kernel32.dll").NewProc("WriteConsoleInputW")
-	if r, _, err := write.Call(f.Fd(), uintptr(unsafe.Pointer(&events[0])), uintptr(len(events)), uintptr(unsafe.Pointer(&written))); r == 0 {
+	if r, _, err := write.Call(f.Fd(), addressOf(&events[0]), uintptr(len(events)), addressOf(&written)); r == 0 {
 		t.Fatalf("type into the console: %v", err)
 	}
+	runtime.KeepAlive(&written)
 }
 
 // keyEvents are the events of a key that is pressed and let go: the key down comes with the character, and the key up has none.

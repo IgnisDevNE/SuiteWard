@@ -161,8 +161,8 @@ var (
 )
 
 // parseExecution validates the optional execution mapping: only the keys profile, canonical and receipt, each once,
-// each a string from its fixed list. A profile alone sets both levels to advisory. Without a profile nothing runs,
-// whatever levels are written, so the result is no policy; an absent key (a zero node) is the same.
+// each a string from its fixed list. A profile alone sets both levels to advisory. A level without a profile is
+// refused: it would read as a policy that runs nothing. An empty mapping and an absent key (a zero node) are no policy.
 func parseExecution(node yaml.Node) (Execution, error) {
 	if node.Kind == 0 {
 		return Execution{}, nil
@@ -191,10 +191,14 @@ func parseExecution(node yaml.Node) (Execution, error) {
 		}
 		values[key.Value] = value.Value
 	}
-	if values["profile"] == "" { // a profile that is given is never empty: it is one of the accepted values
+	profile, named := values["profile"]
+	if !named {
+		if len(values) > 0 {
+			return Execution{}, fmt.Errorf("%w: execution levels without a profile", ErrInvalidDeclaration)
+		}
 		return Execution{}, nil
 	}
-	return Execution{Profile: values["profile"], Canonical: cmp.Or(values["canonical"], "advisory"), Receipt: cmp.Or(values["receipt"], "advisory")}, nil
+	return Execution{Profile: profile, Canonical: cmp.Or(values["canonical"], "advisory"), Receipt: cmp.Or(values["receipt"], "advisory")}, nil
 }
 
 // NoDeclaration is the declaration of a repository without .suiteward.yml.
@@ -223,8 +227,8 @@ type Execution struct {
 	Profile, Canonical, Receipt string
 }
 
-// Execution returns the execution policy, and false when the declaration names no profile: then nothing runs, so
-// "not configured" is told apart from a profile with its levels off.
+// Execution returns the execution policy, and false when the declaration names no profile (no section, or an empty
+// one): then nothing runs, so "not configured" is told apart from a profile with its levels off.
 func (d Declaration) Execution() (Execution, bool) {
 	return d.execution, d.execution.Profile != ""
 }

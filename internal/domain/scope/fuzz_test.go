@@ -18,8 +18,8 @@ import (
 // FuzzParseDeclaration feeds hostile .suiteward.yml bytes to ParseDeclaration. Whatever it accepts must satisfy the
 // documented schema, checked against the YAML nodes directly: one document, a mapping with only the keys version
 // (the integer 1), include, exclude, runner and execution, each key once, each list holding distinct strings that are
-// patterns, the execution mapping holding only the keys profile, canonical and receipt with values from their fixed lists,
-// and Execution and Reductions agreeing with those values.
+// patterns, the execution mapping holding only the keys profile, canonical and receipt with values from their fixed lists
+// (canonical and receipt only beside a profile), and Execution and Reductions agreeing with those values.
 // An extension beyond the brief: AddPatterns, which the scope notices use on the same bytes, must keep every
 // pattern and stay valid.
 func FuzzParseDeclaration(f *testing.F) {
@@ -30,7 +30,8 @@ func FuzzParseDeclaration(f *testing.F) {
 		"version: 1\ninclude: ['!x']\n", "version: 1\nrunner: [~]\n",
 		"version: 1\nexecution:\n  profile: go\n  canonical: required\n  receipt: before-approval\n",
 		"version: 1\nexecution: {profile: go}\n", "version: 1\nexecution: {profile: go, canonical: off, receipt: off}\n",
-		"version: 1\nexecution: {canonical: required}\n", "version: 1\nexecution: {}\n",
+		"version: 1\nexecution: {canonical: required}\n", "version: 1\nexecution: {receipt: off}\n",
+		"version: 1\nexecution: {canonical: required, profile: go}\n", "version: 1\nexecution: {}\n",
 		"version: 1\nexecution: {profile: go, extra: x}\n", "version: 1\nexecution: {profile: rust}\n",
 		"version: 1\nexecution: {profile: go, canonical: before-approval}\n", "version: 1\nexecution: ~\n",
 		"version: 1\nexecution:\n", "version: 1\nexecution: {profile: &p go, receipt: *p}\n",
@@ -131,10 +132,13 @@ func executionValues(t *testing.T, raw []byte, node *yaml.Node) map[string]strin
 		}
 		values[key.Value] = value.Value
 	}
+	if _, named := values["profile"]; !named && len(values) > 0 {
+		t.Fatalf("accepted %q whose execution has levels but no profile", raw)
+	}
 	return values
 }
 
-// checkExecution compares Execution with the values of the execution mapping (no profile runs nothing), and checks that
+// checkExecution compares Execution with the values of the execution mapping (an empty mapping is no policy), and checks that
 // Reductions does not call an added or an unchanged policy a reduction and reports the removal of one level by level.
 func checkExecution(t *testing.T, raw []byte, d scope.Declaration, values map[string]string) {
 	t.Helper()

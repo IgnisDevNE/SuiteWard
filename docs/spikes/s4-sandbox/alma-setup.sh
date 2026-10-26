@@ -3,7 +3,7 @@
 # usage, as root in the distro: sh alma-setup.sh
 set -eu
 D=$(dirname "$0")
-. "$D/image.sh"; IMG=$ALPINE
+. "$D/guard.sh"; . "$D/image.sh"; IMG=$ALPINE
 
 dnf -y install podman iproute procps-ng policycoreutils passt
 

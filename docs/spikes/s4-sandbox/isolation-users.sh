@@ -2,17 +2,17 @@
 # What the second account (suiteward-exec) can see of the first (suiteward): containers, volumes, secrets, files, sockets, processes.
 # usage, as root in the distro: sh isolation-users.sh setup | check | teardown
 D=$(dirname "$0")
-. "$D/image.sh"; IMG=$ALPINE
+. "$D/guard.sh"; . "$D/image.sh"; IMG=$ALPINE
 svc() { sh "$D/as.sh" suiteward "$@"; }
 exe() { sh "$D/as.sh" suiteward-exec "$@"; }
 say() { printf '\n== %s\n' "$*"; }
 
 case $1 in
 setup) # the service account owns a network, a secret, a volume and a container that publishes a port on the host loopback
-	svc podman network create suiteward
+	svc podman network create m21s0-suiteward
 	printf 'value-only-suiteward-may-read' | svc podman secret create m21s0-secret -
 	svc podman volume create m21s0-data
-	svc podman run -d --name m21s0-svc --network suiteward -v m21s0-data:/data --secret m21s0-secret -e BANNER=svc-of-suiteward \
+	svc podman run -d --name m21s0-svc --network m21s0-suiteward -v m21s0-data:/data --secret m21s0-secret -e BANNER=svc-of-suiteward \
 		-p 127.0.0.1:18091:8080 "$IMG" sh -c "$(cat "$D/listener.sh")"
 	svc podman exec m21s0-svc sh -c 'echo marker > /data/marker; cat /run/secrets/m21s0-secret; echo' ;;
 check)
@@ -38,5 +38,5 @@ check)
 	say "the published port on the host loopback, from a native process of suiteward-exec"
 	exe sh -c 'printf "GET / HTTP/1.0\r\n\r\n" | timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/18091; cat >&3; cat <&3" | tail -1' ;;
 teardown)
-	svc podman rm -f m21s0-svc; svc podman volume rm m21s0-data; svc podman secret rm m21s0-secret; svc podman network rm suiteward ;;
+	svc podman rm -f m21s0-svc; svc podman volume rm m21s0-data; svc podman secret rm m21s0-secret; svc podman network rm m21s0-suiteward ;;
 esac

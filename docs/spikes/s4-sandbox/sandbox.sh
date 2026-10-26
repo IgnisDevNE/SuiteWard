@@ -3,10 +3,13 @@
 # The module's files arrive as a tar on stdin (git archive, or tar of a directory); nothing is bind-mounted.
 # usage: RT=docker|podman IMAGE=<name@sha256:digest> [VOL= NET= FP= SUID= MEM= CPUS= PIDS= TMPFS= CGO= GOMEMLIMIT=] sandbox.sh prep|install|test [go test args]
 # VOL: the module cache volume (install writes it, test mounts it read-only). FP: a volume laid out as a module proxy; with FP, install runs
-# from file:///fp (NET=none works) and test needs no VOL at all: go extracts the modules it needs into the tmpfs.
+# from file:///fp (NET=none works) and test needs no VOL at all: go extracts the modules it needs into the tmpfs. (FP is a convenience of the
+# spike: the product puts the module files in the same stdin tar as the source, and no volume.)
+# RT=podman runs only inside the throwaway distro m21s0-alma (guard.sh): on the PC `podman` may be the client of the Podman machine.
 set -eu
-. "$(dirname "$0")/image.sh"
+. "$(dirname "$0")/image.sh"; D=$(dirname "$0")
 RT=${RT:-docker}; IMAGE=${IMAGE:-$ALPINE}
+if [ "$RT" = podman ]; then . "$D/guard.sh"; fi
 VOL=${VOL:-m21s0-gomod}; NET=${NET:-m21s0-inst}; FP=${FP:-}
 SUID=${SUID:-65534}   # nobody: both images and both runtimes know it, so none has to invent a passwd entry
 MEM=${MEM:-3g}; CPUS=${CPUS:-4}; PIDS=${PIDS:-512}; TMPFS=${TMPFS:-1g}; CGO=${CGO:-0}

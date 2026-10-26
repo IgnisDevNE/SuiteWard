@@ -2,7 +2,7 @@
 # The executor as (a) a native process of suiteward-exec and (b) a container of suiteward-exec with its own user socket mounted.
 # usage, as root in the distro (after alma-setup.sh and isolation-users.sh setup):  sh executor-shapes.sh build | socket | b-run <tar> | b-power | units | state
 D=$(dirname "$0")
-. "$D/image.sh"; IMG=$ALPINE
+. "$D/guard.sh"; . "$D/image.sh"; IMG=$ALPINE
 exe() { sh "$D/as.sh" suiteward-exec "$@"; }
 say() { printf '\n== %s\n' "$*"; }
 UID_EXE=$(id -u suiteward-exec)

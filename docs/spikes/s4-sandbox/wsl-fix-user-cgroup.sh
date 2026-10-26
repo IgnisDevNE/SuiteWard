@@ -2,6 +2,7 @@
 # WSL only. After `wsl --terminate` the old user manager's processes can outlive the distro in the VM's cgroup tree, and the new manager then
 # fails with 219/CGROUP ("Failed to kill control group ... Input/output error"). Kill the stale cgroup and start the manager again.
 # usage, as root in the distro: sh wsl-fix-user-cgroup.sh <uid>...
+. "$(dirname "$0")/guard.sh"
 for u in "$@"; do
 	if ! systemctl is-active -q "user@$u.service"; then
 		printf 1 | tee "/sys/fs/cgroup/user.slice/user-$u.slice/user@$u.service/cgroup.kill" >/dev/null 2>&1

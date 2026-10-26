@@ -1,8 +1,9 @@
 #!/bin/sh
 # Can the executor see, from outside the sandbox, that the cgroup OOM killer fired? A kill of a child leaves the container running and exiting 0.
 # usage: RT=docker|podman IMAGE=<ref> sh oom-signal.sh
-. "$(dirname "$0")/image.sh"
+. "$(dirname "$0")/image.sh"; D=$(dirname "$0")
 RT=${RT:-docker}; IMAGE=${IMAGE:-$ALPINE}
+if [ "$RT" = podman ]; then . "$D/guard.sh"; fi   # RT=podman only inside the throwaway distro m21s0-alma
 export MSYS_NO_PATHCONV=1
 log=$(mktemp)
 HOG='a=$(head -c 150000000 /dev/zero | tr "\0" x); echo hog-survived'

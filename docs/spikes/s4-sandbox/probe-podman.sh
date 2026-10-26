@@ -3,7 +3,7 @@
 # (systemd-run --unit=m21s0-listener python3 -m http.server 18081 --bind 127.0.0.1) and suiteward's container on 18091 (isolation-users.sh setup).
 # usage, as root in the distro: sh probe-podman.sh [network-flag...]     e.g.  sh probe-podman.sh --network=none
 D=$(dirname "$0")
-. "$D/image.sh"; IMG=$ALPINE
+. "$D/guard.sh"; . "$D/image.sh"; IMG=$ALPINE
 SVC_IP=$(sh "$D/as.sh" suiteward podman inspect m21s0-svc --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
 echo "# flags: $*   (suiteward's container is $SVC_IP on its own network)"
 sh "$D/as.sh" suiteward-exec podman run --rm "$@" "$IMG" sh -c 'getent hosts host.containers.internal; ip -4 route | head -2; ip -4 -o addr | grep -v " lo "' 2>&1 | grep -v "shared mount"

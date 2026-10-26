@@ -12,8 +12,8 @@
 // Rendering: Acknowledge renders an Ack (Outcome Approved, Revoked,
 // NoActiveApproval, Rejected with a Rejection, MalformedCommand with a Reason,
 // InvalidCode, ReplayedCode, NoSuite, EditedFirst, BootstrapPromoted,
-// RevokedAfterPromotion, ApprovedAfterPromotion, OtherPullRequest, ProposeRefused, SkipRefused or SuggestRefused with a Refusal, AlreadyProposed,
-// ProposeFailed, Skipped or NothingUncovered), BootstrapSummary renders
+// RevokedAfterPromotion, ApprovedAfterPromotion, OtherPullRequest, ProposeRefused, SkipRefused, SuggestRefused, ModeRefused or UnblockRefused with a Refusal, AlreadyProposed,
+// ProposeFailed, Skipped, NothingUncovered, ReceiptRefused with the Gate reason that refused an approve, ModeSet or Unblocked with its Plans), BootstrapSummary renders
 // a Summary (from the default branch or from a pull request; at most 20 entries per listing, each shortened to 300 bytes),
 // RevisionComment renders a Revision the same way (with the rules and paths a reduction removes and the levels of the execution policy it lowers), and BootstrapNotice and
 // BootstrapCancelled render the comments of a pull request before the first contract. SuggestDeclaration renders a

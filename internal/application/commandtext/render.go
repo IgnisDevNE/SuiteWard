@@ -194,8 +194,10 @@ func acknowledgment(a Ack) string {
 		return consentAck(a)
 	case InvalidCode, ReplayedCode, NoSuite, MalformedCommand, EditedFirst, OtherPullRequest:
 		return commandAck(a)
-	case ProposeRefused, SkipRefused, SuggestRefused:
+	case ProposeRefused, SkipRefused, SuggestRefused, ModeRefused, UnblockRefused:
 		return refusal(a)
+	case ReceiptRefused, ModeSet, Unblocked:
+		return executionAck(a)
 	case AlreadyProposed, ProposeFailed, Skipped, NothingUncovered, BootstrapPromoted:
 		return bootstrapAck(a)
 	}
@@ -895,9 +897,20 @@ var refusals = map[Outcome]refusalSet{
 		InvalidSource: {"SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest a declaration",
 			"Fix the files or the declaration, then comment `/suiteward suggest` again.", ""},
 	}},
+	ModeRefused: {"/suiteward mode", map[Refusal]refusalText{
+		Fork:    {forkReason, "Open the pull request from a branch of this repository, then comment `/suiteward mode <fix|feature|refactor>` there.", ""},
+		NotOpen: {notOpenReason, "Comment `/suiteward mode <fix|feature|refactor>` on an open pull request.", ""},
+	}},
+	// An unblock that is refused has consumed its code, as a receipt refusal has.
+	UnblockRefused: {"/suiteward unblock", map[Refusal]refusalText{
+		Fork:    {forkReason, "Open the pull request from a branch of this repository. " + codeUsedAgain, ""},
+		NotOpen: {notOpenReason, "Comment `/suiteward unblock <code>` on an open pull request. " + codeUsedAgain, ""},
+		NotUnavailable: {"no run of this head is unavailable, so there is nothing to unblock",
+			"An unblock lifts only a run that is unavailable on the current head: a pending, failing or complete run is never lifted. " + codeUsedAgain, ""},
+	}},
 }
 
-// refusal renders the refusal of a propose, a skip or a suggest. A suggest whose file is invalid names the file that failed, not quoted.
+// refusal renders the refusal of a propose, a skip, a suggest, a mode or an unblock. A suggest whose file is invalid names the file that failed, not quoted.
 func refusal(a Ack) string {
 	set := refusals[a.Outcome]
 	text, known := set.reasons[a.Refusal]

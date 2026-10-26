@@ -150,15 +150,16 @@ func TestCheckSourceReadsTheLegacyRegularModeAsRegular(t *testing.T) {
 
 func TestCheckSourceAcceptsSymlinksThatResolveInsideTheTree(t *testing.T) {
 	for name, links := range map[string][]execution.ExtractedFile{
-		"to a sibling":                      {link("a", "b.go")},
-		"to a file below":                   {link("a", "dir/b.go")},
-		"up and back down":                  {link("dir/a", "../b.go")},
-		"to the tree's own root":            {link("dir/a", "..")},
-		"to a directory":                    {link("a", "dir")},
-		"dot segments":                      {link("a", "./dir/./b.go")},
-		"to nothing, inside the tree":       {link("a", "does/not/exist")},
-		"through a link to a directory":     {link("d", "dir"), link("a", "d/b.go")},
-		"through two links, within the cap": {link("l1", "l2"), link("l2", "l3"), link("l3", "l4"), link("a", "l1/b.go")},
+		"to a sibling":                {link("a", "b.go")},
+		"to a file below":             {link("a", "dir/b.go")},
+		"up and back down":            {link("dir/a", "../b.go")},
+		"to the tree's own root":      {link("dir/a", "..")},
+		"to a directory":              {link("a", "dir")},
+		"dot segments":                {link("a", "./dir/./b.go")},
+		"to nothing, inside the tree": {link("a", "does/not/exist")},
+		"through a link named in another case, staying inside": {link("sub/d", ".."), link("sub/a", "D/x")},
+		"through a link to a directory":                        {link("d", "dir"), link("a", "d/b.go")},
+		"through two links, within the cap":                    {link("l1", "l2"), link("l2", "l3"), link("l3", "l4"), link("a", "l1/b.go")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var entries []execution.TreeEntry
@@ -193,6 +194,18 @@ func TestCheckSourceRefusesASymlinkThatLeavesTheTree(t *testing.T) {
 		},
 		"an escape after a link":      {link("d/t", ".."), link("s", "d/t/..")},
 		"an escape through two links": {link("s/y", ".."), link("s/x", "y/../..")},
+
+		// NTFS and APFS ignore case, and Windows drops trailing dots and spaces, so these name the link sub/d.
+		"an escape through a link named in another case": {link("sub/d", ".."), link("sub/a", "D/../x")},
+		"an escape through a link named with a dot":      {link("sub/d", ".."), link("sub/a", "d./../x")},
+		"an escape through a link named with a space":    {link("sub/d", ".."), link("sub/a", "d /../x")},
+		"an escape through a link named in Unicode case": {link("sub/É", ".."), link("sub/a", "é/../x")},
+		"an escape through a link spelled in upper case": {link("sub/D", ".."), link("sub/a", "d/../x")},
+		"an escape through a link spelled with a dot":    {link("sub/d.", ".."), link("sub/a", "d/../x")},
+		"a name that ends in a dot":                      {link("a", "dir./b.go")},
+		"a name that ends in a space":                    {link("a", "dir /b.go")},
+		"a name of dots":                                 {link("a", ".../b.go")},
+		"two links with one folded name":                 {link("a", "x"), link("A", "y")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var entries []execution.TreeEntry

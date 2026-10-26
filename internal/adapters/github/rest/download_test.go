@@ -573,58 +573,75 @@ func TestDownloadRefusesAContextWithoutADeadlineBeforeTheBudget(t *testing.T) {
 	}
 }
 
-// The redirect's address comes from the answer: https, or at least the scheme the client was told to speak to the API, and nothing else.
-func TestDownloadFollowsARedirectToHTTPSOrToTheSchemeOfTheAPIOnly(t *testing.T) {
+// schemeClient is a client over an API and an archive host that speak https or http as asked, and the redirect between them:
+// to the host unless location says otherwise.
+func schemeClient(t *testing.T, tlsAPI, tlsTarget bool, location string, body []byte) (client *rest.Client, targetLog *requestLog, redirect string) {
+	t.Helper()
+	start := func(h http.Handler, tls bool) (*httptest.Server, *requestLog) {
+		if tls {
+			return startLoggedTLS(t, h)
+		}
+		return startLogged(t, h)
+	}
+	target, targetLog := start(serveBody(body, true), tlsTarget)
+	if location == "" {
+		location = target.URL + "/a.tar.gz?token=" + redirectQuery
+	}
+	api, _ := start(found(location), tlsAPI)
+	httpClient := http.DefaultClient
+	switch {
+	case tlsTarget:
+		httpClient = target.Client()
+	case tlsAPI:
+		httpClient = api.Client()
+	}
+	client, err := rest.NewClient(newTokens().Token, httpClient, api.URL, newBudget(t, 0.5, &clock{now: t0}))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	return client, targetLog, location
+}
+
+// The redirect's address comes from the answer: https, or at least the scheme the client was told to speak to the API.
+func TestDownloadFollowsARedirectToHTTPSOrToTheSchemeOfTheAPI(t *testing.T) {
 	for _, tc := range []struct {
-		name                string
-		tlsAPI, tlsTarget   bool
-		location            string // overrides the target's address
-		wantInsecureRefusal bool
+		name              string
+		tlsAPI, tlsTarget bool
 	}{
-		{name: "http API, http target"},
-		{name: "https API, https target", tlsAPI: true, tlsTarget: true},
-		{name: "http API, https target", tlsTarget: true},
-		{name: "https API, http target", tlsAPI: true, wantInsecureRefusal: true},
-		{name: "http API, ftp address", location: "ftp://127.0.0.1:1/a.tar.gz?token=" + redirectQuery, wantInsecureRefusal: true},
+		{"http API, http target", false, false},
+		{"https API, https target", true, true},
+		{"http API, https target", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := payload(1000)
-			start := func(h http.Handler, tls bool) (*httptest.Server, *requestLog) {
-				if tls {
-					return startLoggedTLS(t, h)
-				}
-				return startLogged(t, h)
-			}
-			target, targetLog := start(serveBody(body, true), tc.tlsTarget)
-			location := tc.location
-			if location == "" {
-				location = target.URL + "/a.tar.gz?token=" + redirectQuery
-			}
-			api, _ := start(found(location), tc.tlsAPI)
-			httpClient := http.DefaultClient
-			switch {
-			case tc.tlsTarget:
-				httpClient = target.Client()
-			case tc.tlsAPI:
-				httpClient = api.Client()
-			}
-			client, err := rest.NewClient(newTokens().Token, httpClient, api.URL, newBudget(t, 0.5, &clock{now: t0}))
-			if err != nil {
-				t.Fatalf("NewClient: %v", err)
-			}
+			client, _, _ := schemeClient(t, tc.tlsAPI, tc.tlsTarget, "", body)
 			dst := newRecordingWriter()
 
-			_, err = client.Download(withDeadline(t), archivePath, dst, 1<<20)
-			if !tc.wantInsecureRefusal {
-				if err != nil || !bytes.Equal(dst.written(), body) {
-					t.Errorf("Download = %v with %d bytes, want the body", err, len(dst.written()))
-				}
-				return
+			if _, err := client.Download(withDeadline(t), archivePath, dst, 1<<20); err != nil || !bytes.Equal(dst.written(), body) {
+				t.Errorf("Download = %v with %d bytes, want the body", err, len(dst.written()))
 			}
+		})
+	}
+}
+
+func TestDownloadRefusesAnyOtherRedirectWithoutRepeatingTheAddress(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		tlsAPI   bool
+		location string // "": the plain http archive host
+	}{
+		{"http target of an https API", true, ""},
+		{"ftp address", false, "ftp://127.0.0.1:1/a.tar.gz?token=" + redirectQuery},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, targetLog, location := schemeClient(t, tc.tlsAPI, false, tc.location, payload(1000))
+			dst := newRecordingWriter()
+
+			_, err := client.Download(withDeadline(t), archivePath, dst, 1<<20)
 			if !errors.Is(err, rest.ErrInsecureRedirect) {
 				t.Fatalf("err = %v, want ErrInsecureRedirect", err)
 			}
-			for _, leak := range []string{target.URL, location, redirectQuery, tokenValue} {
+			for _, leak := range []string{location, redirectQuery, tokenValue} {
 				if strings.Contains(err.Error(), leak) {
 					t.Errorf("error %q contains %q", err, leak)
 				}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"testing"
 
@@ -57,13 +58,13 @@ func treeFile(path, body string, from execution.Source) execution.TreeFile {
 
 // composition is a plan with the head and the base archives that serve it.
 type composition struct {
-	tree    []execution.TreeFile
-	head    []member
-	base    []member
-	files   *manifestFiles
-	limits  Limits
-	headTar []byte // the archive data, set by build
-	baseTar []byte
+	tree   []execution.TreeFile
+	head   []member
+	base   []member
+	files  *manifestFiles
+	limits Limits
+	// treeEntries replaces the tree entries that build derives from the members of a side, for a tree that differs from its archive.
+	treeEntries map[Side][]execution.TreeEntry
 }
 
 func (c *composition) build(t *testing.T) (arch *archives, entries map[Side][]execution.TreeEntry) {
@@ -76,6 +77,7 @@ func (c *composition) build(t *testing.T) (arch *archives, entries map[Side][]ex
 	if c.base != nil {
 		arch.data[SideBase], entries[SideBase] = targz(t, c.base...), treeOf(c.base...)
 	}
+	maps.Copy(entries, c.treeEntries)
 	if c.limits == (Limits{}) {
 		c.limits = generous
 	}
@@ -212,11 +214,19 @@ func TestComposeVerifiesEveryFileWhileItStreams(t *testing.T) {
 			ErrSourceMismatch,
 		},
 		"a mode that is not the tree's": {
-			&composition{head: []member{executable("a.go", "package a\n")}, tree: []execution.TreeFile{treeFile("a.go", "package a\n", execution.FromHead)}},
+			&composition{
+				head:        []member{executable("a.go", "package a\n")},
+				tree:        []execution.TreeFile{treeFile("a.go", "package a\n", execution.FromHead)},
+				treeEntries: map[Side][]execution.TreeEntry{SideHead: treeOf(file("a.go", "package a\n"))},
+			},
 			ErrSourceMismatch,
 		},
 		"a symlink where the tree has a file": {
-			&composition{head: []member{symlink("a.go", "package a\n")}, tree: []execution.TreeFile{treeFile("a.go", "package a\n", execution.FromHead)}},
+			&composition{
+				head:        []member{symlink("a.go", "package a\n")},
+				tree:        []execution.TreeFile{treeFile("a.go", "package a\n", execution.FromHead)},
+				treeEntries: map[Side][]execution.TreeEntry{SideHead: treeOf(file("a.go", "package a\n"))},
+			},
 			ErrSourceMismatch,
 		},
 		"a digest the plan does not expect": { // the blob SHA-1 matches the tree, the SHA-256 does not match the plan

@@ -4,9 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/rand"
 	"errors"
 	"io"
-	"math/rand/v2"
 	"path"
 	"runtime"
 	"strings"
@@ -119,14 +119,13 @@ type errReader struct{ err error }
 
 func (r errReader) Read([]byte) (int, error) { return 0, r.err }
 
-// incompressible is n bytes that gzip cannot shrink.
+// incompressible is n bytes that gzip hardly shrinks: random text, five bits of entropy to the byte.
 func incompressible(n int) string {
-	r := rand.New(rand.NewPCG(1, 2))
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = byte(r.UintN(256))
+	var b strings.Builder
+	for b.Len() < n {
+		b.WriteString(rand.Text())
 	}
-	return string(b)
+	return b.String()[:n]
 }
 
 // allocated is how many bytes f allocated, in total and not live: a copy of a whole entry would show.

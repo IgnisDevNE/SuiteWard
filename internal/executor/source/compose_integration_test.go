@@ -69,7 +69,7 @@ func pipeCompose(c *composition, t *testing.T, modules map[string]string) io.Rea
 
 func TestTheComposedTarIsExtractedByTheSandbox(t *testing.T) {
 	rt := dockerForTar(t)
-	long := strings.Repeat("d", 60) + "/" + strings.Repeat("e", 60) + "/" + strings.Repeat("f", 60) + ".txt"
+	long := strings.Repeat("d", 90) + "/" + strings.Repeat("e", 90) + "/" + strings.Repeat("f", 90) + ".txt" // 276 bytes: too long for ustar, so Go writes a pax header
 	files := &manifestFiles{}
 	c := &composition{
 		head: []member{file("a.go", "package a\n"), executable("bin/run.sh", "#!/bin/sh\necho hi\n"), symlink("lnk", "a.go"), file(long, "long\n")},

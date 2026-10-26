@@ -83,6 +83,7 @@ func typeIntoConsole(t *testing.T, f *os.File, events ...inputRecord) {
 	if r, _, err := write.Call(f.Fd(), addressOf(&events[0]), uintptr(len(events)), addressOf(&written)); r == 0 {
 		t.Fatalf("type into the console: %v", err)
 	}
+	runtime.KeepAlive(events)
 	runtime.KeepAlive(&written)
 }
 
@@ -228,7 +229,7 @@ func TestInputFlusherDropsWhatWasTypedAheadOfAConsoleThatCanBeFlushed(t *testing
 	if flush == nil {
 		t.Fatal("no flush was offered for a console that can be flushed")
 	}
-	typeIntoConsole(t, conin, keyEvents('', 0x0d, 0x1c)...)
+	typeIntoConsole(t, conin, keyEvents('\r', 0x0d, 0x1c)...)
 	if pendingEvents(t, conin) == 0 {
 		t.Fatal("the console queued nothing of what was typed: the test cannot see what the flush does with it")
 	}

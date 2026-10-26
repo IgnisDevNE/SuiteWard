@@ -39,7 +39,9 @@ var (
 
 // addressOf is the address of what p points to, for a call into the console API. shortcut: it goes through reflect.ValueOf(p).Pointer()
 // because an inline unsafe.Pointer is flagged by gosec G103, which has no exception here; what p points to has escaped to the heap by then
-// (it is an interface value), where it stays put, and the caller keeps it alive with runtime.KeepAlive until the call returns.
+// (it is an interface value), where it stays put, and the caller keeps it alive with runtime.KeepAlive until the call returns. Upgrade it to
+// typed wrappers once golang.org/x/sys/windows has them for the console input records (v0.47.0 has none), or once gosec allows the inline
+// pointer; then delete it.
 func addressOf(p any) uintptr { return reflect.ValueOf(p).Pointer() }
 
 // inputReadiness is the wait for a key of the console behind f that Options.InputReady is: it waits on the console and looks at its events,

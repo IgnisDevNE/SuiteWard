@@ -17,7 +17,8 @@ import (
 
 var (
 	// ErrInvalidSource reports a commit tree or an extraction the check cannot read: a malformed path, mode or blob
-	// SHA-1, a path listed twice, or an extracted file whose fields do not fit its mode.
+	// SHA-1, a path listed twice, two spellings of one name (case, trailing dots and spaces), a path below a file, or an
+	// extracted file whose fields do not fit its mode.
 	ErrInvalidSource = errors.New("invalid source tree")
 	// ErrUnsafeSymlink reports a symlink whose target leaves the tree, or does not resolve inside it.
 	ErrUnsafeSymlink = errors.New("symlink target leaves the tree")
@@ -138,10 +139,37 @@ func checkPath(p string, seen map[string]bool) error {
 	return nil
 }
 
+// refuseNameConflicts fails with invalid when the paths of a tree could not all be written to one directory tree: two
+// spellings of one name, or a path below a file. paths holds every path, directories included; files holds the paths that
+// are not directories, with a true value.
+func refuseNameConflicts(paths, files map[string]bool, invalid error) error {
+	if err := refuseFoldedTwins(paths, invalid); err != nil {
+		return err
+	}
+	return refuseBelowFile(paths, files, invalid)
+}
+
+// refuseFoldedTwins fails with invalid when a path or one of its ancestor directories has the same folded key (foldPath) as
+// another path or directory of paths but is spelled differently. NTFS and APFS ignore case and drop trailing dots and
+// spaces, so Tests/evil.go and tests/a_test.go share a directory there, and A.go is a.go, though a case-sensitive match
+// tells them apart. It covers files, directories and one of each. A repository that has both Docs/ and docs/ is refused too.
+func refuseFoldedTwins(paths map[string]bool, invalid error) error {
+	spelled := map[string]string{}
+	for _, p := range slices.Sorted(maps.Keys(paths)) {
+		for name := p; name != "."; name = path.Dir(name) {
+			key := foldPath(name)
+			if other, seen := spelled[key]; seen && other != name {
+				return fmt.Errorf("%w: %q and %q are one name once case and trailing dots and spaces are ignored", invalid, other, name)
+			}
+			spelled[key] = name
+		}
+	}
+	return nil
+}
+
 // refuseBelowFile fails with invalid when a path of paths sits below another path that is a file of files (a key with a true
 // value). A tree holds no such path, and an extraction that does would write below a link or through a file. Names are
-// compared folded (foldPath), as NTFS and APFS compare them, so a file D above d/x conflicts; only a file where a directory
-// is does, and two directories that differ in case do not.
+// compared folded (foldPath), as NTFS and APFS compare them, so a file D above d/x conflicts.
 func refuseBelowFile(paths, files map[string]bool, invalid error) error {
 	folded := map[string]bool{}
 	for p, isFile := range files {
@@ -185,7 +213,7 @@ func indexTree(entries []TreeEntry) (map[string]blob, []string, error) {
 			return nil, nil, fmt.Errorf("%w: %q has the unknown mode %q", ErrInvalidSource, e.Path, e.Mode)
 		}
 	}
-	if err := refuseBelowFile(seen, notDirs, ErrInvalidSource); err != nil {
+	if err := refuseNameConflicts(seen, notDirs, ErrInvalidSource); err != nil {
 		return nil, nil, err
 	}
 	slices.Sort(submodules)
@@ -217,7 +245,7 @@ func indexExtraction(files []ExtractedFile) (map[string]blob, map[string]string,
 			return nil, nil, fmt.Errorf("%w: %q has the mode %q, which no extracted file has", ErrInvalidSource, f.Path, f.Mode)
 		}
 	}
-	if err := refuseBelowFile(seen, seen, ErrInvalidSource); err != nil {
+	if err := refuseNameConflicts(seen, seen, ErrInvalidSource); err != nil {
 		return nil, nil, err
 	}
 	return extracted, links, nil
@@ -250,17 +278,12 @@ func foldPath(p string) string {
 }
 
 // checkLinks resolves every link of the extraction inside the tree. Links are indexed by the folded path of their names: a
-// walk that meets a name follows the link that the name spells in any case, with trailing dots or spaces. Two links that
-// fold to one name are refused, as no filesystem that ignores case can hold both.
+// walk that meets a name follows the link that the name spells in any case, with trailing dots or spaces. The extraction has
+// no two paths that fold to one key (indexExtraction refused it), so a key names one link.
 func checkLinks(links map[string]string) error {
 	byFold := map[string]string{}
-	named := map[string]string{}
-	for _, link := range slices.Sorted(maps.Keys(links)) {
-		key := foldPath(link)
-		if other, taken := named[key]; taken {
-			return fmt.Errorf("%w: %q and %q are one name once case and trailing dots are ignored", ErrUnsafeSymlink, other, link)
-		}
-		named[key], byFold[key] = link, links[link]
+	for link, target := range links {
+		byFold[foldPath(link)] = target
 	}
 	for _, link := range slices.Sorted(maps.Keys(links)) {
 		if err := resolveInside(link, links[link], byFold); err != nil {

@@ -10,7 +10,8 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
-// ErrInvalidTree reports an input the tree rules refuse: an absent manifest, or a composed tree with a path below another path of it.
+// ErrInvalidTree reports an input the tree rules refuse: an absent manifest, or a composed tree that could not be written to
+// one directory tree: two spellings of one name (case, trailing dots and spaces), or a path below another path of it.
 var ErrInvalidTree = errors.New("invalid tree composition")
 
 // Source says whose bytes a file of a composed tree holds.
@@ -79,7 +80,7 @@ func finishTree(tree []TreeFile) ([]TreeFile, error) {
 	for _, f := range tree {
 		paths[f.Path] = true
 	}
-	if err := refuseBelowFile(paths, paths, ErrInvalidTree); err != nil {
+	if err := refuseNameConflicts(paths, paths, ErrInvalidTree); err != nil {
 		return nil, err
 	}
 	return tree, nil

@@ -1270,7 +1270,7 @@ Insert-only. One row for each test of a `complete` result. The head and base obs
 | `name` | `text NOT NULL` | 1 to 200 bytes |
 | `file` | `text NOT NULL` | 1 to 1024 bytes |
 | `kind` | `text NOT NULL` | `declared`, `added` or `changed` |
-| `excluded_reason` | `text` | `build-constraint` †; not null exactly when `state = 'excluded'` |
+| `excluded_reason` | `text` | `build-constraint` or `nested-module` †; not null exactly when `state = 'excluded'` |
 | `head_runs` | `text[] NOT NULL` | each element `pass`, `fail`, `build-error`, `skip` or `absent`; 1 to 3 elements, none exactly when the test is excluded |
 | `base_runs` | `text[]` | the same elements; null when excluded and for a canonical job; otherwise 1 to 3 elements |
 | `state` | `text NOT NULL` | the lower-case form of a state of ADR 0028. Canonical states: `pass`, `fail`, `skipped`, `missing`, `flaky`, `excluded`. Receipt states: `excluded`, `missing`, `flaky`, `skipped`, `fails`, `new_api`, `detects`, `inert`. One `CHECK` lists the union; `fail` and `fails` are two states, as in the ADR. `state = 'excluded'` exactly when `excluded_reason` is set |

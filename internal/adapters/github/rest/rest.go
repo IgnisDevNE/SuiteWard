@@ -48,6 +48,10 @@ var (
 	ErrRateLimited = errors.New("github: rate limited")
 	// ErrTooLarge matches a download that exceeds its size limit.
 	ErrTooLarge = errors.New("github: download exceeds the size limit")
+	// ErrNoDeadline matches a download whose context has no deadline.
+	ErrNoDeadline = errors.New("github: download without a deadline")
+	// ErrInsecureRedirect matches a redirect to an address that is neither https nor of the API's scheme.
+	ErrInsecureRedirect = errors.New("github: the redirect is neither https nor of the API's scheme")
 )
 
 // maxBody bounds any response body read into memory; a variable only so tests can lower it.

@@ -103,6 +103,14 @@ func archiveReader(t *testing.T, api *archiveHost, fraction float64) *github.Rea
 	return reader
 }
 
+// archiveContext is a context that ends with the test or after a minute: Download refuses a context without a deadline.
+func archiveContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	t.Cleanup(cancel)
+	return ctx
+}
+
 func archiveBody(n int) []byte {
 	b := make([]byte, n)
 	for i := range b {
@@ -117,7 +125,7 @@ func TestArchiveStreamsTheTarballOfTheCommitWithTheInstallationToken(t *testing.
 	api := startArchiveHost(t, redirectTo(target.URL+"/legacy.tar.gz/refs/heads/main?token=short-lived"))
 	var dst bytes.Buffer
 
-	n, err := archiveReader(t, api, 0.5).Archive(t.Context(), archiveRepo, archiveSHA, &dst, github.DefaultArchiveLimit)
+	n, err := archiveReader(t, api, 0.5).Archive(archiveContext(t), archiveRepo, archiveSHA, &dst, github.DefaultArchiveLimit)
 	if err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
@@ -148,7 +156,7 @@ func TestArchiveRefusesWhatIsNotAFullCommitIDOfARepositoryBeforeAnyRequest(t *te
 	} {
 		t.Run(name, func(t *testing.T) {
 			var dst bytes.Buffer
-			if _, err := reader.Archive(t.Context(), tc.repo, tc.sha, &dst, github.DefaultArchiveLimit); !errors.Is(err, github.ErrInvalidArgument) {
+			if _, err := reader.Archive(archiveContext(t), tc.repo, tc.sha, &dst, github.DefaultArchiveLimit); !errors.Is(err, github.ErrInvalidArgument) {
 				t.Errorf("err = %v, want ErrInvalidArgument", err)
 			}
 			if n := len(api.requests()); n != 0 || dst.Len() != 0 {
@@ -156,11 +164,17 @@ func TestArchiveRefusesWhatIsNotAFullCommitIDOfARepositoryBeforeAnyRequest(t *te
 			}
 		})
 	}
-	if _, err := reader.Archive(t.Context(), archiveRepo, archiveSHA, io.Discard, 0); err == nil || !strings.Contains(err.Error(), "limit") {
+	if _, err := reader.Archive(archiveContext(t), archiveRepo, archiveSHA, io.Discard, 0); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Errorf("err = %v, want a refusal of a limit that is not positive", err)
 	}
 	if n := len(api.requests()); n != 0 {
 		t.Errorf("%d requests after a limit that is not positive, want none", n)
+	}
+	if _, err := reader.Archive(t.Context(), archiveRepo, archiveSHA, io.Discard, github.DefaultArchiveLimit); !errors.Is(err, rest.ErrNoDeadline) {
+		t.Errorf("err = %v, want ErrNoDeadline for a context without a deadline", err)
+	}
+	if n := len(api.requests()); n != 0 {
+		t.Errorf("%d requests after a context without a deadline, want none", n)
 	}
 }
 
@@ -192,7 +206,7 @@ func TestArchiveStopsAtTheLimitAndNeverSucceedsOnABrokenBody(t *testing.T) {
 			api := startArchiveHost(t, redirectTo(target.URL+"/a.tar.gz"))
 			var dst bytes.Buffer
 
-			_, err := archiveReader(t, api, 0.5).Archive(t.Context(), archiveRepo, archiveSHA, &dst, limit)
+			_, err := archiveReader(t, api, 0.5).Archive(archiveContext(t), archiveRepo, archiveSHA, &dst, limit)
 			if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
 				t.Errorf("err = %v, want %v", err, tc.want)
 			}
@@ -210,7 +224,7 @@ func TestArchiveNamesTheStatusOfAFailedReadAndDoesNotRetry(t *testing.T) {
 	t.Run("the API answers 404", func(t *testing.T) {
 		api := startArchiveHost(t, failing(http.StatusNotFound))
 
-		_, err := archiveReader(t, api, 0.5).Archive(t.Context(), archiveRepo, archiveSHA, io.Discard, github.DefaultArchiveLimit)
+		_, err := archiveReader(t, api, 0.5).Archive(archiveContext(t), archiveRepo, archiveSHA, io.Discard, github.DefaultArchiveLimit)
 		var status *rest.StatusError
 		if !errors.As(err, &status) || status.Status != 404 || !errors.Is(err, rest.ErrNotFound) || !strings.Contains(err.Error(), "status 404") {
 			t.Errorf("err = %v, want one that names status 404 and matches ErrNotFound", err)
@@ -223,7 +237,7 @@ func TestArchiveNamesTheStatusOfAFailedReadAndDoesNotRetry(t *testing.T) {
 		target := startArchiveHost(t, failing(http.StatusBadGateway))
 		api := startArchiveHost(t, redirectTo(target.URL+"/a.tar.gz"))
 
-		_, err := archiveReader(t, api, 0.5).Archive(t.Context(), archiveRepo, archiveSHA, io.Discard, github.DefaultArchiveLimit)
+		_, err := archiveReader(t, api, 0.5).Archive(archiveContext(t), archiveRepo, archiveSHA, io.Discard, github.DefaultArchiveLimit)
 		var status *rest.StatusError
 		if !errors.As(err, &status) || status.Status != 502 || !strings.Contains(err.Error(), "status 502") {
 			t.Errorf("err = %v, want one that names status 502", err)
@@ -241,11 +255,11 @@ func TestArchiveCountsOnceAgainstTheBudgetAndHonoursItsRefusal(t *testing.T) {
 	reader := archiveReader(t, api, 0.2)
 
 	for i := 1; i <= 2; i++ {
-		if _, err := reader.Archive(t.Context(), archiveRepo, archiveSHA, io.Discard, github.DefaultArchiveLimit); err != nil {
+		if _, err := reader.Archive(archiveContext(t), archiveRepo, archiveSHA, io.Discard, github.DefaultArchiveLimit); err != nil {
 			t.Fatalf("download %d: %v", i, err)
 		}
 	}
-	_, err := reader.Archive(t.Context(), archiveRepo, archiveSHA, io.Discard, github.DefaultArchiveLimit)
+	_, err := reader.Archive(archiveContext(t), archiveRepo, archiveSHA, io.Discard, github.DefaultArchiveLimit)
 	if !errors.Is(err, rest.ErrBudgetExhausted) {
 		t.Fatalf("third download err = %v, want the budget's refusal", err)
 	}

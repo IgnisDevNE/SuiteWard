@@ -25,6 +25,14 @@ const redirectQuery = "redirect-credential-7731"
 // archivePath is the path of a tarball read, as the github adapter builds it.
 const archivePath = "/repos/o/r/tarball/0123456789abcdef0123456789abcdef01234567"
 
+// withDeadline is a context that ends with the test or after a minute: Download refuses a context without a deadline.
+func withDeadline(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	t.Cleanup(cancel)
+	return ctx
+}
+
 // payload is deterministic data in which no two neighbouring chunks look alike, so a copy that drops or reorders one shows.
 func payload(n int) []byte {
 	b := make([]byte, n)
@@ -82,16 +90,31 @@ func (l *requestLog) all() []seenRequest {
 	return slices.Clone(l.seen)
 }
 
-// startLogged runs h on a test server and logs its requests.
-func startLogged(t *testing.T, h http.Handler) (*httptest.Server, *requestLog) {
-	t.Helper()
+// logging wraps h to log the requests it receives.
+func logging(h http.Handler) (http.Handler, *requestLog) {
 	log := &requestLog{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.mu.Lock()
 		log.seen = append(log.seen, seenRequest{r.Method, r.URL.RequestURI(), r.Header.Get("Authorization")})
 		log.mu.Unlock()
 		h.ServeHTTP(w, r)
-	}))
+	}), log
+}
+
+// startLogged runs h on a test server and logs its requests.
+func startLogged(t *testing.T, h http.Handler) (*httptest.Server, *requestLog) {
+	t.Helper()
+	handler, log := logging(h)
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	return srv, log
+}
+
+// startLoggedTLS is startLogged over TLS; srv.Client() trusts its certificate, which every such server shares.
+func startLoggedTLS(t *testing.T, h http.Handler) (*httptest.Server, *requestLog) {
+	t.Helper()
+	handler, log := logging(h)
+	srv := httptest.NewTLSServer(handler)
 	t.Cleanup(srv.Close)
 	return srv, log
 }
@@ -131,7 +154,7 @@ func TestDownloadSendsTheTokenToTheAPIOnlyAndCopiesWhatTheRedirectServes(t *test
 	api, apiLog := startLogged(t, found(target.URL+"/legacy.tar.gz/abc?token="+redirectQuery))
 	dst := newRecordingWriter()
 
-	n, err := downloadClient(t, api.URL).Download(t.Context(), archivePath, dst, 1<<20)
+	n, err := downloadClient(t, api.URL).Download(withDeadline(t), archivePath, dst, 1<<20)
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
@@ -162,7 +185,7 @@ func TestDownloadHandsTheBodyToTheWriterAsItArrives(t *testing.T) {
 	}))
 	api, _ := startLogged(t, found(target.URL+"/a.tar.gz"))
 
-	if _, err := downloadClient(t, api.URL).Download(t.Context(), archivePath, dst, 1<<20); err != nil {
+	if _, err := downloadClient(t, api.URL).Download(withDeadline(t), archivePath, dst, 1<<20); err != nil {
 		t.Fatalf("Download: %v", err)
 	}
 	if !streamed.Load() {
@@ -196,7 +219,7 @@ func TestDownloadStopsAtTheLimit(t *testing.T) {
 			api, _ := startLogged(t, found(target.URL+"/a.tar.gz"))
 			dst := newRecordingWriter()
 
-			n, err := downloadClient(t, api.URL).Download(t.Context(), archivePath, dst, limit)
+			n, err := downloadClient(t, api.URL).Download(withDeadline(t), archivePath, dst, limit)
 			if tc.wantErr != errors.Is(err, rest.ErrTooLarge) || (!tc.wantErr && err != nil) {
 				t.Fatalf("err = %v, want ErrTooLarge: %v", err, tc.wantErr)
 			}
@@ -230,7 +253,7 @@ func TestDownloadReportsABrokenBodyAndNeverSucceeds(t *testing.T) {
 			target, _ := startLogged(t, broken)
 			api, _ := startLogged(t, found(target.URL+"/a.tar.gz"))
 
-			_, err := downloadClient(t, api.URL).Download(t.Context(), archivePath, newRecordingWriter(), 1<<20)
+			_, err := downloadClient(t, api.URL).Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20)
 			if !errors.Is(err, io.ErrUnexpectedEOF) {
 				t.Errorf("err = %v, want io.ErrUnexpectedEOF", err)
 			}
@@ -297,7 +320,7 @@ func TestDownloadMapsTheAnswerOfTheAPIAndNeverRetries(t *testing.T) {
 			}))
 			dst := newRecordingWriter()
 
-			_, err := downloadClient(t, api.URL).Download(t.Context(), archivePath, dst, 1<<20)
+			_, err := downloadClient(t, api.URL).Download(withDeadline(t), archivePath, dst, 1<<20)
 			assertFailure(t, err, tc.status, tc.want, secretAnswer, tokenValue)
 			if n := len(apiLog.all()); n != 1 {
 				t.Errorf("the API saw %d requests, want 1 (no retry)", n)
@@ -329,7 +352,7 @@ func TestDownloadMapsTheAnswerOfTheRedirectTargetAndNeverRetries(t *testing.T) {
 			api, _ := startLogged(t, found(target.URL+"/a.tar.gz?token="+redirectQuery))
 			dst := newRecordingWriter()
 
-			_, err := downloadClient(t, api.URL).Download(t.Context(), archivePath, dst, 1<<20)
+			_, err := downloadClient(t, api.URL).Download(withDeadline(t), archivePath, dst, 1<<20)
 			assertFailure(t, err, tc.status, tc.want, secretAnswer, redirectQuery, tokenValue)
 			if n := len(targetLog.all()); n != 1 || len(dst.written()) != 0 {
 				t.Errorf("the target saw %d requests and the writer %d bytes, want 1 and none (no retry)", n, len(dst.written()))
@@ -360,7 +383,7 @@ func TestDownloadErrorsNeverCarryTheRedirectURL(t *testing.T) {
 				w.WriteHeader(http.StatusFound)
 			}))
 
-			_, err := downloadClient(t, api.URL).Download(t.Context(), archivePath, newRecordingWriter(), 1<<20)
+			_, err := downloadClient(t, api.URL).Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20)
 			if err == nil {
 				t.Fatal("Download succeeded")
 			}
@@ -379,7 +402,7 @@ func TestDownloadFollowsOneRedirectOnly(t *testing.T) {
 	second, _ := startLogged(t, found(third.URL+"/c.tar.gz"))
 	api, _ := startLogged(t, found(second.URL+"/b.tar.gz"))
 
-	_, err := downloadClient(t, api.URL).Download(t.Context(), archivePath, newRecordingWriter(), 1<<20)
+	_, err := downloadClient(t, api.URL).Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20)
 	var status *rest.StatusError
 	if !errors.As(err, &status) || status.Status != http.StatusFound {
 		t.Errorf("err = %v, want *StatusError 302 for the second redirect", err)
@@ -406,11 +429,11 @@ func TestDownloadCountsOnceInTheSharedBudgetFromTheAnswerOfTheAPI(t *testing.T) 
 	client := newClient(t, newTokens().Token, api.URL, newBudget(t, 0.2, &clock{now: t0}))
 
 	for i := 1; i <= 2; i++ {
-		if _, err := client.Download(t.Context(), archivePath, newRecordingWriter(), 1<<20); err != nil {
+		if _, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20); err != nil {
 			t.Fatalf("download %d: %v", i, err)
 		}
 	}
-	_, err := client.Download(t.Context(), archivePath, newRecordingWriter(), 1<<20)
+	_, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20)
 	var exhausted *rest.BudgetExhaustedError
 	if !errors.As(err, &exhausted) || !errors.Is(err, rest.ErrBudgetExhausted) {
 		t.Fatalf("third download err = %v, want *BudgetExhaustedError", err)
@@ -444,16 +467,16 @@ func TestDownloadTokenSourceErrorIsWrappedAndReleasesItsReservation(t *testing.T
 	// 20% of 10 is two requests. One answered download makes the window known; the failed attempt must give its reservation back or the last one is refused.
 	client := newClient(t, token, api.URL, newBudget(t, 0.2, &clock{now: t0}))
 
-	if _, err := client.Download(t.Context(), archivePath, newRecordingWriter(), 1<<20); err != nil {
+	if _, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20); err != nil {
 		t.Fatalf("first download: %v", err)
 	}
 	failing.Store(true)
-	_, err := client.Download(t.Context(), archivePath, newRecordingWriter(), 1<<20)
+	_, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20)
 	if !errors.Is(err, boom) || !errors.Is(err, rest.ErrNotSent) {
 		t.Fatalf("err = %v, want the token source error, not sent", err)
 	}
 	failing.Store(false)
-	if _, err := client.Download(t.Context(), archivePath, newRecordingWriter(), 1<<20); err != nil {
+	if _, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20); err != nil {
 		t.Errorf("download after a failed attempt: %v", err)
 	}
 	if n := len(apiLog.all()); n != 2 {
@@ -474,7 +497,7 @@ func TestDownloadRejectsInvalidArgumentsBeforeAnyRequest(t *testing.T) {
 		"negative limit":               {archivePath, -1, "limit"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := client.Download(t.Context(), tc.path, newRecordingWriter(), tc.limit); err == nil || !strings.Contains(err.Error(), tc.text) {
+			if _, err := client.Download(withDeadline(t), tc.path, newRecordingWriter(), tc.limit); err == nil || !strings.Contains(err.Error(), tc.text) {
 				t.Errorf("err = %v, want a refusal that says %q", err, tc.text)
 			}
 			if n := len(apiLog.all()); n != 0 {
@@ -500,11 +523,162 @@ func TestDownloadIsNotCutByTheTimeoutOfTheHTTPClient(t *testing.T) {
 	}
 	dst := newRecordingWriter()
 
-	if _, err := client.Download(t.Context(), archivePath, dst, 1<<20); err != nil {
+	if _, err := client.Download(withDeadline(t), archivePath, dst, 1<<20); err != nil {
 		t.Fatalf("Download: %v", err)
 	}
 	if !bytes.Equal(dst.written(), body) {
 		t.Errorf("the writer got %d bytes, want the %d bytes of the body", len(dst.written()), len(body))
+	}
+}
+
+// foundWithLimit answers a 302 to location with the rate limit of a window of 10 in which each answer uses one request.
+func foundWithLimit(location string) http.Handler {
+	var mu sync.Mutex
+	hits := 0
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		hits++
+		used := hits
+		mu.Unlock()
+		setRateLimit(w, 10, 10-used, t0.Add(time.Hour))
+		w.Header().Set("Location", location)
+		w.WriteHeader(http.StatusFound)
+	})
+}
+
+// Nothing else bounds the archive host and the body: a context without a deadline could hold a download for ever.
+func TestDownloadRefusesAContextWithoutADeadlineBeforeTheBudget(t *testing.T) {
+	target, _ := startLogged(t, serveBody(payload(100), true))
+	api, apiLog := startLogged(t, foundWithLimit(target.URL+"/a.tar.gz?token="+redirectQuery))
+	// 20% of 10 is two requests. The refused call must not keep a reservation, or the last download is refused for the budget.
+	client := newClient(t, newTokens().Token, api.URL, newBudget(t, 0.2, &clock{now: t0}))
+	if _, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20); err != nil {
+		t.Fatalf("first download: %v", err)
+	}
+
+	_, err := client.Download(t.Context(), archivePath, newRecordingWriter(), 1<<20)
+	if !errors.Is(err, rest.ErrNoDeadline) {
+		t.Fatalf("err = %v, want ErrNoDeadline", err)
+	}
+	for _, leak := range []string{api.URL, target.URL, redirectQuery, tokenValue} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("error %q contains %q", err, leak)
+		}
+	}
+	if _, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20); err != nil {
+		t.Errorf("download after the refused one: %v", err)
+	}
+	if n := len(apiLog.all()); n != 2 {
+		t.Errorf("the API saw %d requests, want 2 (the refused call sends nothing)", n)
+	}
+}
+
+// The redirect's address comes from the answer: https, or at least the scheme the client was told to speak to the API, and nothing else.
+func TestDownloadFollowsARedirectToHTTPSOrToTheSchemeOfTheAPIOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		tlsAPI, tlsTarget   bool
+		location            string // overrides the target's address
+		wantInsecureRefusal bool
+	}{
+		{name: "http API, http target"},
+		{name: "https API, https target", tlsAPI: true, tlsTarget: true},
+		{name: "http API, https target", tlsTarget: true},
+		{name: "https API, http target", tlsAPI: true, wantInsecureRefusal: true},
+		{name: "http API, ftp address", location: "ftp://127.0.0.1:1/a.tar.gz?token=" + redirectQuery, wantInsecureRefusal: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := payload(1000)
+			start := func(h http.Handler, tls bool) (*httptest.Server, *requestLog) {
+				if tls {
+					return startLoggedTLS(t, h)
+				}
+				return startLogged(t, h)
+			}
+			target, targetLog := start(serveBody(body, true), tc.tlsTarget)
+			location := tc.location
+			if location == "" {
+				location = target.URL + "/a.tar.gz?token=" + redirectQuery
+			}
+			api, _ := start(found(location), tc.tlsAPI)
+			httpClient := http.DefaultClient
+			switch {
+			case tc.tlsTarget:
+				httpClient = target.Client()
+			case tc.tlsAPI:
+				httpClient = api.Client()
+			}
+			client, err := rest.NewClient(newTokens().Token, httpClient, api.URL, newBudget(t, 0.5, &clock{now: t0}))
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+			dst := newRecordingWriter()
+
+			_, err = client.Download(withDeadline(t), archivePath, dst, 1<<20)
+			if !tc.wantInsecureRefusal {
+				if err != nil || !bytes.Equal(dst.written(), body) {
+					t.Errorf("Download = %v with %d bytes, want the body", err, len(dst.written()))
+				}
+				return
+			}
+			if !errors.Is(err, rest.ErrInsecureRedirect) {
+				t.Fatalf("err = %v, want ErrInsecureRedirect", err)
+			}
+			for _, leak := range []string{target.URL, location, redirectQuery, tokenValue} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("error %q contains %q", err, leak)
+				}
+			}
+			if n := len(targetLog.all()); n != 0 || len(dst.written()) != 0 {
+				t.Errorf("the target saw %d requests and the writer %d bytes, want none", n, len(dst.written()))
+			}
+		})
+	}
+}
+
+// An answer that is not the redirect still settles the reservation: the cap of the window is not reached by reservations nobody gave back.
+func TestDownloadSettlesItsReservationWhenTheAPIDoesNotRedirect(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		second func(w http.ResponseWriter)
+	}{
+		{"404", func(w http.ResponseWriter) { w.WriteHeader(http.StatusNotFound) }},
+		{"200", func(w http.ResponseWriter) { w.WriteHeader(http.StatusOK) }},
+		{"redirect to an address that is not https", func(w http.ResponseWriter) {
+			w.Header().Set("Location", "ftp://127.0.0.1:1/a.tar.gz")
+			w.WriteHeader(http.StatusFound)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target, _ := startLogged(t, serveBody(payload(100), true))
+			var mu sync.Mutex
+			hits := 0
+			api, _ := startLogged(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				hits++
+				n := hits
+				mu.Unlock()
+				if n == 2 { // no rate-limit headers: nothing but the reservation itself can show in the budget
+					tc.second(w)
+					return
+				}
+				setRateLimit(w, 10, 10-min(n, 2), t0.Add(time.Hour))
+				w.Header().Set("Location", target.URL+"/a.tar.gz")
+				w.WriteHeader(http.StatusFound)
+			}))
+			// 20% of 10 is two requests: the first answered download is one, the second must leave none in flight, or the third is refused.
+			client := newClient(t, newTokens().Token, api.URL, newBudget(t, 0.2, &clock{now: t0}))
+
+			if _, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20); err != nil {
+				t.Fatalf("first download: %v", err)
+			}
+			if _, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20); err == nil {
+				t.Fatal("the second download succeeded")
+			}
+			if _, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20); err != nil {
+				t.Errorf("third download: %v (a reservation was not settled)", err)
+			}
+		})
 	}
 }
 
@@ -534,18 +708,18 @@ func TestDownloadBoundsTheAPIAnswerByTheTimeoutOfTheHTTPClientAndReleasesItsRese
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, err := client.Download(t.Context(), archivePath, newRecordingWriter(), 1<<20); err != nil {
+	if _, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20); err != nil {
 		t.Fatalf("first download: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second) // a guard: the call must end long before it
+	ctx, cancel := context.WithTimeout(withDeadline(t), 3*time.Second) // a guard: the call must end long before it
 	defer cancel()
 	start := time.Now()
 	_, err = client.Download(ctx, archivePath, newRecordingWriter(), 1<<20)
 	if err == nil || time.Since(start) > 1500*time.Millisecond {
 		t.Fatalf("the hung download ended after %v with %v, want an error within the client's Timeout of 100ms", time.Since(start), err)
 	}
-	if _, err := client.Download(t.Context(), archivePath, newRecordingWriter(), 1<<20); err != nil {
+	if _, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20); err != nil {
 		t.Errorf("download after the hung one: %v", err)
 	}
 	if n := len(apiLog.all()); n != 3 {
@@ -571,7 +745,7 @@ func TestDownloadSendsBothRequestsThroughTheTransportOfTheHTTPClient(t *testing.
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	if _, err := client.Download(t.Context(), archivePath, newRecordingWriter(), 1<<20); err != nil {
+	if _, err := client.Download(withDeadline(t), archivePath, newRecordingWriter(), 1<<20); err != nil {
 		t.Fatalf("Download: %v", err)
 	}
 	if n := transport.requests.Load(); n != 2 {
@@ -592,7 +766,7 @@ func TestDownloadCopiesTheBytesOnTheWire(t *testing.T) {
 	api, _ := startLogged(t, found(target.URL+"/a.tar.gz"))
 	dst := newRecordingWriter()
 
-	if _, err := downloadClient(t, api.URL).Download(t.Context(), archivePath, dst, 1<<20); err != nil {
+	if _, err := downloadClient(t, api.URL).Download(withDeadline(t), archivePath, dst, 1<<20); err != nil {
 		t.Fatalf("Download: %v", err)
 	}
 	if !bytes.Equal(dst.written(), packed.Bytes()) {

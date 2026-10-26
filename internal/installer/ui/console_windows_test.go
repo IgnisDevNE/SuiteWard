@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -263,5 +264,27 @@ func TestQuestionsAreAnsweredAtAConsoleThatCannotBeFlushed(t *testing.T) {
 	}
 	if n := flushes.Load(); n != 1 {
 		t.Errorf("the flush of a console that cannot be flushed was tried %d times, want once", n)
+	}
+}
+
+// Opening the screen leaves the console input as it was found: a command that asks nothing (doctor, backup with its flags) must not drop the
+// keys that the user typed ahead for the shell, and a flush from a background process group stops the process on a unix terminal. Only a
+// question drops what was typed before it is drawn.
+func TestOpenOSDoesNotDropWhatWasTypedAheadWhenItOpens(t *testing.T) {
+	conin := openConsoleInput(t)
+	stdin := os.Stdin
+	os.Stdin = conin
+	t.Cleanup(func() { os.Stdin = stdin })
+	typeIntoConsole(t, conin, keyEvents('\r', 0x0d, 0x1c)...)
+	if pendingEvents(t, conin) == 0 {
+		t.Fatal("the console queued nothing of what was typed: the test cannot see what opening the screen does with it")
+	}
+	s, err := OpenOS(context.Background(), strings.NewReader(""), testVersion, true)
+	if err != nil {
+		t.Fatalf("OpenOS: %v", err)
+	}
+	mustClose(t, s)
+	if pendingEvents(t, conin) == 0 {
+		t.Error("opening the screen dropped the keys that were typed ahead")
 	}
 }

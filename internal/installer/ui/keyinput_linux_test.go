@@ -3,6 +3,8 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"io"
 	"os"
 	"strconv"
@@ -103,5 +105,114 @@ func TestEnableKeysReadsKeysAtOnceKeepsSignalsAndRestoresTheMode(t *testing.T) {
 	}
 	if after := termios(t, slave); after != before {
 		t.Errorf("the terminal mode was not restored.\nbefore: %+v\nafter:  %+v", before, after)
+	}
+}
+
+// Keys typed while nothing reads are queued by the terminal (the line discipline), and key mode would hand them to the question that opens
+// next: an Enter that nobody pressed for it. Key mode starts by dropping them, and keeps what is typed after.
+func TestEnableKeysDropsWhatWasTypedBeforeKeyMode(t *testing.T) {
+	master, slave := openPty(t)
+	if _, err := master.WriteString("x\r"); err != nil { // a whole line, typed ahead
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond) // the line is in the queue of the terminal
+	restore, err := enableKeys(slave)
+	if err != nil {
+		t.Fatalf("enableKeys: %v", err)
+	}
+	t.Cleanup(func() { _ = restore() })
+	if _, err := master.WriteString("a"); err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 1)
+		n, _ := io.ReadFull(slave, buf)
+		got <- string(buf[:n])
+	}()
+	select {
+	case s := <-got:
+		if s != "a" {
+			t.Errorf("the first key the question reads is %q, want the key typed after key mode started (a)", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the key typed after key mode started did not arrive")
+	}
+}
+
+// The wait for a key sees a byte without reading it, and ends with its context.
+func TestInputReadinessWaitsForAKeyWithoutReadingItAndEndsWithItsContext(t *testing.T) {
+	master, slave := openPty(t)
+	restore, err := enableKeys(slave)
+	if err != nil {
+		t.Fatalf("enableKeys: %v", err)
+	}
+	t.Cleanup(func() { _ = restore() })
+	ready := inputReadiness(slave)
+	if ready == nil {
+		t.Fatal("this terminal cannot be waited on for a key")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	waited := make(chan error, 1)
+	go func() { waited <- ready(ctx) }()
+	select {
+	case err := <-waited:
+		t.Fatalf("the wait ended with no key typed: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-waited:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("the wait ended with %v, want the end of its context", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the context did not end the wait")
+	}
+
+	if _, err := master.WriteString("a"); err != nil {
+		t.Fatal(err)
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+	if err := ready(ctx2); err != nil {
+		t.Fatalf("a key was typed and the wait did not see it: %v", err)
+	}
+	buf := make([]byte, 1)
+	if n, err := slave.Read(buf); n != 1 || buf[0] != 'a' || err != nil {
+		t.Errorf("the read after the wait got %q, %v, want the key that was typed (a): the wait must not take it", buf[:n], err)
+	}
+}
+
+// A question in cooked mode is not answered by a line typed before it: flushInput drops what the terminal queued, and leaves its mode alone.
+func TestFlushInputDropsWhatWasTypedAheadAndLeavesTheModeAlone(t *testing.T) {
+	master, slave := openPty(t)
+	before := termios(t, slave)
+	if _, err := master.WriteString("x\r"); err != nil { // a whole line, typed ahead
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond) // the line is in the queue of the terminal
+	if err := flushInput(slave); err != nil {
+		t.Fatalf("flushInput: %v", err)
+	}
+	if after := termios(t, slave); after != before {
+		t.Errorf("the terminal mode changed.\nbefore: %+v\nafter:  %+v", before, after)
+	}
+	if _, err := master.WriteString("y\r"); err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 2)
+		n, _ := io.ReadFull(slave, buf)
+		got <- string(buf[:n])
+	}()
+	select {
+	case s := <-got:
+		if s != "y\n" {
+			t.Errorf("the first line the question reads is %q, want the one typed after the flush (y)", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the line typed after the flush did not arrive")
 	}
 }

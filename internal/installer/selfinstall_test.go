@@ -502,8 +502,9 @@ func checkACopyThatWasAcceptedBy(t *testing.T, answer string) {
 	if got, want := o.row("This terminal (PowerShell)"), `$env:Path += ';`+pc.dir()+`'`; got != want {
 		t.Errorf("the This terminal (PowerShell) row says %q, want the line to run in PowerShell: %q", got, want)
 	}
-	if !slices.Contains(strings.Split(o.run.console.tail(), "\n"), `$env:Path += ';`+pc.dir()+`'`) {
-		t.Errorf("the scrollback has no line that is exactly the command for this terminal:\n%s", o.run.console.tail())
+	// The row is the only place of the line: the summary prints it once, and the offer does not print it again on a line of its own.
+	if got := strings.Count(o.run.console.tail(), `$env:Path +=`); got != 0 {
+		t.Errorf("the line for this terminal is in the scrollback %d times, want only its row:\n%s", got, o.run.console.tail())
 	}
 	if o.d.Command != "suiteward" || o.d.command() != "suiteward" {
 		t.Errorf("the hints after the copy use %q, want suiteward", o.d.Command)
@@ -787,9 +788,9 @@ func TestTheSummaryOfAnInstallOffersTheCopyAndSaysWhatToRunInThisTerminal(t *tes
 			t.Errorf("the scrollback lacks %q:\n%s", want, tail)
 		}
 	}
-	// The line for this terminal is a line of its own in the scrollback, to copy as it is.
-	if !slices.Contains(strings.Split(tail, "\n"), `$env:Path += ';`+pc.dir()+`'`) {
-		t.Errorf("the scrollback has no line that is exactly the command for this terminal:\n%s", tail)
+	// The line for this terminal is printed once, as its labelled row, and not again on a line of its own.
+	if got := strings.Count(tail, `$env:Path +=`); got != 1 {
+		t.Errorf("the line for this terminal is in the scrollback %d times, want once, as its labelled row:\n%s", got, tail)
 	}
 	// What the summary tells the person to run after the copy is the command of a new terminal.
 	if want := "Check again: suiteward doctor --settings " + quoteArg(h.settingsPath()); !strings.Contains(tail, want) {

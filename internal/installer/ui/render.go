@@ -345,7 +345,7 @@ func (s *Screen) trimmedRow(width int) row {
 // fitBody is the rows of a page that show in a body of bodyH rows, and the row of the cursor. A page that is taller shows its last rows,
 // as a terminal would (shortcut: no scrollback), except a page that Page opened and that waits on something: it keeps its title at the top
 // and what it waits on at the bottom, and trims what is between them (see trim). A summary keeps its key rows and trims what is below
-// them. When the title, the question and the boxes do not fit together, the last rows show.
+// them. When the title, the question and the boxes do not fit together, the last rows show, behind a first row that says that rows are hidden.
 func (s *Screen) fitBody(p pageRows, bodyH, width int) ([]row, int) {
 	n := len(p.rows)
 	if n <= bodyH {
@@ -370,7 +370,14 @@ func (s *Screen) fitBody(p pageRows, bodyH, width int) ([]row, int) {
 		}
 	}
 	cut := n - bodyH
-	return p.rows[cut:], p.cursor - cut
+	if bodyH < 2 { // no room for a row that says so beside one that is read
+		return p.rows[cut:], p.cursor - cut
+	}
+	cursor := p.cursor - cut // the row that says that rows are hidden takes the place of the first of the rows that show
+	if cursor == 0 {
+		cursor = -1
+	}
+	return append([]row{s.trimmedRow(width)}, p.rows[cut+1:]...), cursor
 }
 
 // trim chooses the rows between the title and what the page waits on that go, so that need rows fewer remain, in this order:

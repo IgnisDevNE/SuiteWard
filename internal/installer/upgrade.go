@@ -194,11 +194,10 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	plan := upgradePlan{oldImage: previous.Image, newImage: image, oldDB: dbImage, newDB: postgres}
-	doctor := doctorHint(env.Deps.command(), t.settingsPath, t.defaultPath)
 	// A stack without a settings file (made by local.ps1) is converted even when it runs this release: the settings are saved.
 	if plan.current() && t.haveSaved {
-		r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctor)
-		refreshCopy(ctx, env)
+		d := refreshCopy(ctx, env) // first: the hint names the program as the refreshed copy answers
+		r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctorHint(d.command(), t.settingsPath, t.defaultPath))
 		return holdPage(scr)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
@@ -251,8 +250,10 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	}
 	scr.Step(5)
 	c.restartAfterReboot(ctx)
-	upgraded(scr, image, dir, goBackColocated(env.Deps.command(), engine, previous.Image, dir, scopeFlags(r, false)), doctor)
-	c.upgradeSelf(ctx)
+	c.env.Deps = refreshCopy(ctx, c.env) // before the hints below, which name the program as the refreshed copy answers
+	cmd := c.env.Deps.command()
+	upgraded(scr, image, dir, goBackColocated(cmd, engine, previous.Image, dir, scopeFlags(r, false)), doctorHint(cmd, t.settingsPath, t.defaultPath))
+	c.installSelf(ctx)
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }
 

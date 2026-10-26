@@ -263,9 +263,9 @@ func (s *Screen) closeMulti(ok bool) []int {
 	}
 	switch {
 	case ok && len(names) == 0:
-		s.add(item{kind: itemText, text: l.label + ": none"})
+		s.add(item{kind: itemText, text: answered(l.label, "none")})
 	case ok:
-		s.add(item{kind: itemText, text: l.label + ": " + strings.Join(names, ", ")})
+		s.add(item{kind: itemText, text: answered(l.label, strings.Join(names, ", "))})
 	default:
 		s.add(item{kind: itemText, text: l.label})
 		for i := range l.rows {

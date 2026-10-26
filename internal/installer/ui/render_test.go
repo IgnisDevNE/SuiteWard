@@ -401,8 +401,9 @@ func TestOnlyTheLastLinesFit(t *testing.T) {
 		s.Say("L%02d\n", i)
 	}
 	rows := strings.Join(snapshot(s).rows, "\n")
-	if !strings.Contains(rows, "L40") || !strings.Contains(rows, "L23") || strings.Contains(rows, "L22") {
-		t.Fatalf("the content column shows the last 18 lines (L23..L40):\n%s", rows)
+	// The 18 rows of the body are the notice that rows are hidden and the last 17 lines.
+	if !strings.Contains(rows, "L40") || !strings.Contains(rows, "L24") || strings.Contains(rows, "L23") || !strings.Contains(rows, "enlarge the window to read the rest") {
+		t.Fatalf("the content column shows the notice and the last 17 lines (L24..L40):\n%s", rows)
 	}
 }
 

@@ -108,6 +108,9 @@ func TestScopeDigest(t *testing.T) {
 	}{
 		{"golden declaration", goldenDeclaration, "sha256:73faea98057e780271a99814faaa6bfda3fe4482c2ead9eac753dc7b129ad71e"},
 		{"golden no declaration", absent, "sha256:5c18947ae886baaeee7dffc51a5f54928e2c7758510af00e21cee83d5b0b7ab9"},
+		// Pinned before the execution section existed (computed from the encoding, not from Digest): a declaration without
+		// the section keeps its digest, so no approved scope changes under it.
+		{"this repository's own declaration", repoDeclaration, "sha256:6339de0649c42939f562a31c8ce8941e3c0b1e6842fb77ce7b473f3042ff2027"},
 	}
 	for _, tt := range golden {
 		t.Run(tt.name, func(t *testing.T) {
@@ -130,6 +133,9 @@ func TestScopeDigest(t *testing.T) {
 		{"list order only", "version: 1\ninclude: [a, b]\n", "version: 1\ninclude: [b, a]\n"},
 		{"a pattern moved between include and runner", "version: 1\ninclude: [a]\n", "version: 1\nrunner: [a]\n"},
 		{"no declaration versus a declaration without lists", absent, "version: 1\n"},
+		{"an execution section", "version: 1\n", "version: 1\nexecution: {profile: go}\n"},
+		{"a default level spelled out", "version: 1\nexecution: {profile: go}\n", "version: 1\nexecution: {profile: go, canonical: advisory}\n"},
+		{"a level of the policy", "version: 1\nexecution: {profile: go, canonical: advisory}\n", "version: 1\nexecution: {profile: go, canonical: required}\n"},
 	}
 	for _, tt := range different {
 		t.Run(tt.name, func(t *testing.T) {

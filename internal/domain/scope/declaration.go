@@ -2,6 +2,7 @@ package scope
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -22,19 +23,24 @@ var ErrInvalidDeclaration = errors.New("invalid scope declaration")
 
 // Declaration is a validated .suiteward.yml, or its absence.
 type Declaration struct {
-	present bool
-	raw     []byte
-	include []Pattern
-	exclude []Pattern
-	runner  []Pattern
+	present   bool
+	raw       []byte
+	include   []Pattern
+	exclude   []Pattern
+	runner    []Pattern
+	execution Execution
 }
 
 // ParseDeclaration validates raw as a schema version 1 declaration: a single
-// YAML mapping with the integer key version (1) and the optional pattern
-// sequences include, exclude and runner, and nothing else. The mapping is
-// walked as nodes, not decoded into a struct: yaml.v3 would coerce any scalar
-// into a string, a whole float into an int, and expand merge keys (<<) into
-// keys the file does not spell out.
+// YAML mapping with the integer key version (1), the optional pattern
+// sequences include, exclude and runner, and the optional mapping execution,
+// and nothing else. The mapping is walked as nodes, not decoded into a struct:
+// yaml.v3 would coerce any scalar into a string, a whole float into an int,
+// and expand merge keys (<<) into keys the file does not spell out.
+//
+// The execution key was added to version 1 without a new version: an older
+// binary refuses a declaration that has it (an unknown key), which is meant, as
+// it could not apply the policy the owner declared.
 func ParseDeclaration(raw []byte) (Declaration, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return Declaration{}, fmt.Errorf("%w: empty", ErrInvalidDeclaration)
@@ -63,7 +69,7 @@ func ParseDeclaration(raw []byte) (Declaration, error) {
 			return Declaration{}, fmt.Errorf("%w: unsupported key at line %d", ErrInvalidDeclaration, key.Line)
 		}
 		switch key.Value {
-		case "version", "include", "exclude", "runner":
+		case "version", "include", "exclude", "runner", "execution":
 		default:
 			return Declaration{}, fmt.Errorf("%w: unknown key %q at line %d", ErrInvalidDeclaration, key.Value, key.Line)
 		}
@@ -97,7 +103,11 @@ func ParseDeclaration(raw []byte) (Declaration, error) {
 	if err != nil {
 		return Declaration{}, err
 	}
-	return Declaration{present: true, raw: slices.Clone(raw), include: include, exclude: exclude, runner: runner}, nil
+	execution, err := parseExecution(fields["execution"])
+	if err != nil {
+		return Declaration{}, err
+	}
+	return Declaration{present: true, raw: slices.Clone(raw), include: include, exclude: exclude, runner: runner, execution: execution}, nil
 }
 
 func checkVersion(node yaml.Node) error {
@@ -142,6 +152,51 @@ func parseList(key string, node yaml.Node) ([]Pattern, error) {
 	return patterns, nil
 }
 
+// The levels of the execution policy in the order of weakening: a lower position is a weaker policy, and off is the weakest.
+var (
+	canonicalLevels = []string{"off", "advisory", "required"}
+	receiptLevels   = []string{"off", "advisory", "before-approval", "required"}
+	// executionFields are the keys allowed under execution, each with the values it accepts.
+	executionFields = map[string][]string{"profile": {"go"}, "canonical": canonicalLevels, "receipt": receiptLevels}
+)
+
+// parseExecution validates the optional execution mapping: only the keys profile, canonical and receipt, each once,
+// each a string from its fixed list. A profile alone sets both levels to advisory. Without a profile nothing runs,
+// whatever levels are written, so the result is no policy; an absent key (a zero node) is the same.
+func parseExecution(node yaml.Node) (Execution, error) {
+	if node.Kind == 0 {
+		return Execution{}, nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return Execution{}, fmt.Errorf("%w: execution must be a mapping", ErrInvalidDeclaration)
+	}
+	values := make(map[string]string, len(executionFields))
+	for i := 0; i < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		if key.Kind != yaml.ScalarNode || key.ShortTag() != "!!str" {
+			return Execution{}, fmt.Errorf("%w: unsupported key under execution at line %d", ErrInvalidDeclaration, key.Line)
+		}
+		accepted, known := executionFields[key.Value]
+		if !known {
+			return Execution{}, fmt.Errorf("%w: unknown key %q under execution at line %d", ErrInvalidDeclaration, key.Value, key.Line)
+		}
+		if _, dup := values[key.Value]; dup {
+			return Execution{}, fmt.Errorf("%w: execution key %q appears twice", ErrInvalidDeclaration, key.Value)
+		}
+		if value.Kind != yaml.ScalarNode || value.ShortTag() != "!!str" {
+			return Execution{}, fmt.Errorf("%w: execution %s at line %d is not a string", ErrInvalidDeclaration, key.Value, value.Line)
+		}
+		if !slices.Contains(accepted, value.Value) {
+			return Execution{}, fmt.Errorf("%w: execution %s %q is not one of %q", ErrInvalidDeclaration, key.Value, value.Value, accepted)
+		}
+		values[key.Value] = value.Value
+	}
+	if values["profile"] == "" { // a profile that is given is never empty: it is one of the accepted values
+		return Execution{}, nil
+	}
+	return Execution{Profile: values["profile"], Canonical: cmp.Or(values["canonical"], "advisory"), Receipt: cmp.Or(values["receipt"], "advisory")}, nil
+}
+
 // NoDeclaration is the declaration of a repository without .suiteward.yml.
 func NoDeclaration() Declaration {
 	return Declaration{include: []Pattern{}, exclude: []Pattern{}, runner: []Pattern{}}
@@ -160,6 +215,26 @@ func (d Declaration) Exclude() []Pattern {
 // Runner returns a copy of the runner patterns in input order.
 func (d Declaration) Runner() []Pattern {
 	return slices.Clone(d.runner)
+}
+
+// Execution is the execution policy of a declaration that names a profile: the profile (go), the canonical level (off,
+// advisory or required) and the receipt level (off, advisory, before-approval or required) it runs at.
+type Execution struct {
+	Profile, Canonical, Receipt string
+}
+
+// Execution returns the execution policy, and false when the declaration names no profile: then nothing runs, so
+// "not configured" is told apart from a profile with its levels off.
+func (d Declaration) Execution() (Execution, bool) {
+	return d.execution, d.execution.Profile != ""
+}
+
+// levels returns the position of each level in its order of weakening; without a profile nothing runs, so both are off.
+func (e Execution) levels() (canonical, receipt int) {
+	if e.Profile == "" {
+		return 0, 0
+	}
+	return slices.Index(canonicalLevels, e.Canonical), slices.Index(receiptLevels, e.Receipt)
 }
 
 // AddPatterns returns raw with include and runner appended to their lists. It creates a list that is missing (in block

@@ -244,6 +244,7 @@ func TestCheckSourceRefusesASymlinkThatLeavesTheTree(t *testing.T) {
 		"a name that ends in a dot":                      {link("a", "dir./b.go")},
 		"a name that ends in a space":                    {link("a", "dir /b.go")},
 		"a name of dots":                                 {link("a", ".../b.go")},
+		"a target spelled as an 8.3 short name":          {link("a", "INTEGR~1/b.go")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var entries []execution.TreeEntry

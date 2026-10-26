@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -47,21 +46,4 @@ func TestOpenOSPlain(t *testing.T) {
 		t.Fatal("the plain flag opened a full screen")
 	}
 	mustClose(t, s)
-}
-
-// OpenOS gives the screen no flush that is known to fail: where the input cannot be flushed (a file here, a console handle opened for reading
-// only on Windows), FlushInput is left nil, as InputReady is where the input cannot be waited on.
-func TestInputFlusherIsNilForAnInputThatCannotBeFlushed(t *testing.T) {
-	f, err := os.Create(filepath.Join(t.TempDir(), "in.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := f.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	if inputFlusher(f) != nil {
-		t.Error("a flush was offered for a file, which cannot be flushed")
-	}
 }

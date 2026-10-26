@@ -1451,7 +1451,7 @@ func afterSetup(scr *ui.Screen, cmd string, err error) error {
 		}
 		return fmt.Errorf("setup failed: %w", err)
 	}
-	scr.Page("Setup finished", ui.Para("The TOTP secret was shown only in the terminal of setup: the installer did not see it, keep it or log it. From now on an approval of this instance needs the code your authenticator shows."))
+	scr.Page("Setup finished", ui.Para("The TOTP secret was shown only in the terminal of setup: the installer did not see, keep or log it. From now on an approval of this instance needs the code your authenticator shows."))
 	return nil
 }
 

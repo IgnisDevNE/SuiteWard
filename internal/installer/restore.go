@@ -560,7 +560,9 @@ func (x *restoreRun) warn() {
 		replaced += ", and the default branch on GitHub may be ahead of the restored canonical"
 	}
 	x.scr.Warn("%s.\n", replaced)
-	x.scr.Warn("Stop any other running instance that uses the same GitHub App before you go on: two instances would publish and promote for the same repositories.\n")
+	if x.mayHaveRepositories() {
+		x.scr.Warn("Stop any other running instance that uses the same GitHub App before you go on: two instances would publish and promote for the same repositories.\n")
+	}
 	if x.plaintext != "" {
 		x.scr.Warn("This backup is a plaintext directory: it is not encrypted, and nothing verifies who made it or that it is untouched. Whoever could read %s could read the TOTP secret in it.\n", x.plaintext)
 	}

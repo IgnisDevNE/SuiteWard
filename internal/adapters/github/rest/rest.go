@@ -311,8 +311,9 @@ func (c *Client) Post(ctx context.Context, path string, body []byte) (Response, 
 // The copy stops at limit bytes with ErrTooLarge (a declared length over the limit before a byte is copied) and
 // a body that ends before its declared length is an error. Both requests go through the client's transport and
 // not through the client, which would follow the redirect with its own rules, bound the whole exchange (the
-// body included) by its Timeout, and quote the redirect's address in its errors: ctx bounds the download, and
-// no error repeats the address, whose query carries a short-lived credential for a private repository.
+// body included) by its Timeout, and quote the redirect's address in its errors. The Timeout bounds the API's
+// answer only: ctx, which must carry a deadline, bounds the archive host and the body. No error repeats the
+// redirect's address, whose query carries a short-lived credential for a private repository.
 func (c *Client) Download(ctx context.Context, path string, dst io.Writer, limit int64) (int64, error) {
 	if !strings.HasPrefix(path, "/") {
 		return 0, fmt.Errorf("github download %q: path must start with /", path)
@@ -345,6 +346,11 @@ func (c *Client) redirect(ctx context.Context, transport http.RoundTripper, path
 	if err != nil {
 		c.budget.release()
 		return nil, fmt.Errorf("%w: token: %w", ErrNotSent, err)
+	}
+	if c.http.Timeout > 0 { // the client's Timeout bounds this answer, so a hung request cannot hold its reservation
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.http.Timeout)
+		defer cancel()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
 	if err != nil {

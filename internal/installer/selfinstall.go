@@ -464,4 +464,3 @@ func (s SelfInstall) removeCopy(scr *ui.Screen, dir string) {
 func (c *colocatedInstall) installSelf(ctx context.Context) {
 	c.env.Deps = offerSelf(ctx, c.env, &c.copyRows)
 }
-

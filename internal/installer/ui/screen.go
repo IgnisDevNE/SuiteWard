@@ -115,6 +115,9 @@ type Options struct {
 	// InputReady waits until the terminal has a key to read, without reading it, and returns the error of ctx when ctx is done first. Optional.
 	// With it, a HiddenLine ends with its context and leaves no read pending, so the next question has the input to itself.
 	InputReady func(ctx context.Context) error
+	// FlushInput drops what was typed at the terminal and nothing has read, without a change of its mode. Optional. On a terminal (InputIsTerminal)
+	// every question calls it before it is drawn, so that a key typed before it never answers it.
+	FlushInput func() error
 }
 
 // Choice is one numbered answer of Choose.

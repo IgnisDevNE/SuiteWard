@@ -21,10 +21,11 @@ import (
 
 // typedKeys is the keyboard of a test that a screen can wait on: what is typed waits until a read takes it.
 type typedKeys struct {
-	mu     sync.Mutex
-	buf    []byte
-	closed bool
-	wake   chan struct{} // closed, and replaced, whenever something is typed or the keyboard is closed
+	mu      sync.Mutex
+	buf     []byte
+	closed  bool
+	waitErr error         // when set, Ready fails with it: a terminal whose wait broke after the probe worked
+	wake    chan struct{} // closed, and replaced, whenever something is typed or the keyboard is closed
 }
 
 func newTypedKeys(t *testing.T) *typedKeys {
@@ -80,6 +81,9 @@ func (k *typedKeys) Read(p []byte) (int, error) {
 
 // Ready is Options.InputReady of the keyboard.
 func (k *typedKeys) Ready(ctx context.Context) error {
+	if k.waitErr != nil {
+		return k.waitErr
+	}
 	if k.wait(ctx.Done()) != nil {
 		return ctx.Err()
 	}
@@ -254,5 +258,26 @@ func TestTheQuestionOfAPasteThatTheCallbackEndsFitsASmallScreen(t *testing.T) {
 	keys.Type("pastedcode\r")
 	if res := awaitFor(t, done, 3*time.Second); res.err != nil || res.code != "pastedcode" {
 		t.Fatalf("result = %+v", res)
+	}
+}
+
+// A wait that fails after the probe worked does not abort the install at the paste: the question is read as a plain one, which an Enter ends
+// (and takes the callback that came), and the flow goes on.
+func TestAWaitThatFailsDoesNotAbortThePasteAndAnEnterEndsIt(t *testing.T) {
+	env, out, keys := readyManifestEnv(t)
+	keys.waitErr = errors.New("the wait broke")
+	done := startManifestWith(liveContext(t), env, "acme")
+	base := waitForListener(t, out)
+	action, _ := fetchForm(t, base)
+	waitForText(t, out, "No answer from GitHub yet")
+	callback(t, base, "latecode1", stateOf(t, action))
+	select {
+	case res := <-done:
+		t.Fatalf("the flow ended with the callback, or with the error of the wait: %+v", res)
+	case <-time.After(300 * time.Millisecond): // it cannot tell that GitHub answered, and goes on waiting for an Enter
+	}
+	keys.Type("\r")
+	if res := awaitFor(t, done, 3*time.Second); res.err != nil || res.code != "latecode1" {
+		t.Fatalf("result = %+v, want the code of the callback", res)
 	}
 }

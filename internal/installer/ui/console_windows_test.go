@@ -173,3 +173,34 @@ func TestInputReadinessWaitsForACharacterWithoutReadingItAndEndsWithItsContext(t
 		t.Fatal("the wait took the character: the read after it has nothing to read")
 	}
 }
+
+// A question in cooked mode is not answered by a line typed before it: flushInput drops what the console queued, and leaves its mode alone.
+func TestFlushInputDropsWhatWasTypedAheadAndLeavesTheModeAlone(t *testing.T) {
+	conin := openConsoleInput(t)
+	h := windows.Handle(conin.Fd())
+	var before uint32
+	if err := windows.GetConsoleMode(h, &before); err != nil {
+		t.Fatalf("read the console input mode: %v", err)
+	}
+	typeIntoConsole(t, conin, keyEvents('\r', 0x0d, 0x1c)...)
+	if pendingEvents(t, conin) == 0 {
+		t.Fatal("the console queued nothing of what was typed: the test cannot see what the flush does with it")
+	}
+	if err := flushInput(conin); err != nil {
+		t.Fatalf("flushInput: %v", err)
+	}
+	if n := pendingEvents(t, conin); n != 0 {
+		t.Errorf("%d events typed ahead are still queued", n)
+	}
+	var after uint32
+	if err := windows.GetConsoleMode(h, &after); err != nil || after != before {
+		t.Errorf("the console input mode changed from %#x to %#x (%v)", before, after, err)
+	}
+}
+
+// A file is not a console: its input cannot be flushed, and that is an error, not a silent no-op.
+func TestFlushInputRejectsANonConsole(t *testing.T) {
+	if err := flushInput(notAConsole(t)); err == nil {
+		t.Fatal("flushInput accepted a file")
+	}
+}

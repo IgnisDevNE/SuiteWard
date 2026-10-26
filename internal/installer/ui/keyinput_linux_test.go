@@ -183,3 +183,36 @@ func TestInputReadinessWaitsForAKeyWithoutReadingItAndEndsWithItsContext(t *test
 		t.Errorf("the read after the wait got %q, %v, want the key that was typed (a): the wait must not take it", buf[:n], err)
 	}
 }
+
+// A question in cooked mode is not answered by a line typed before it: flushInput drops what the terminal queued, and leaves its mode alone.
+func TestFlushInputDropsWhatWasTypedAheadAndLeavesTheModeAlone(t *testing.T) {
+	master, slave := openPty(t)
+	before := termios(t, slave)
+	if _, err := master.WriteString("x\r"); err != nil { // a whole line, typed ahead
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond) // the line is in the queue of the terminal
+	if err := flushInput(slave); err != nil {
+		t.Fatalf("flushInput: %v", err)
+	}
+	if after := termios(t, slave); after != before {
+		t.Errorf("the terminal mode changed.\nbefore: %+v\nafter:  %+v", before, after)
+	}
+	if _, err := master.WriteString("y\r"); err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 2)
+		n, _ := io.ReadFull(slave, buf)
+		got <- string(buf[:n])
+	}()
+	select {
+	case s := <-got:
+		if s != "y\n" {
+			t.Errorf("the first line the question reads is %q, want the one typed after the flush (y)", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the line typed after the flush did not arrive")
+	}
+}

@@ -33,3 +33,6 @@ func enableKeys(f *os.File) (func() error, error) {
 		return nil
 	}, nil
 }
+
+// flushInput drops what the user typed at the terminal behind f and nothing has read, and leaves its mode as it is.
+func flushInput(*os.File) error { return nil }

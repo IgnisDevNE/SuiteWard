@@ -37,7 +37,7 @@ func OpenOS(ctx context.Context, in io.Reader, version string, plain bool) (*Scr
 	if env.StdinTTY { // a plain run at a terminal needs it too: a hidden line is read in key mode (no echo, Ctrl-C kept as a signal)
 		o.KeyInput = func() (func() error, error) { return enableKeys(os.Stdin) }
 		o.InputReady = inputReadiness(os.Stdin) // nil where the terminal cannot be waited on without reading it
-		o.FlushInput = func() error { return flushInput(os.Stdin) }
+		o.FlushInput = inputFlusher(os.Stdin)
 	}
 	if o.Mode == ModeFull {
 		restore, err := enableVT(os.Stdout)
@@ -49,3 +49,6 @@ func OpenOS(ctx context.Context, in io.Reader, version string, plain bool) (*Scr
 	}
 	return Open(o)
 }
+
+// inputFlusher is Options.FlushInput of the terminal behind f.
+func inputFlusher(f *os.File) func() error { return func() error { return flushInput(f) } }

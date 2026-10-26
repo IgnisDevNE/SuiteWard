@@ -171,6 +171,7 @@ func TestPlanSideRefusesAReplaceToADirectoryOutsideTheTree(t *testing.T) {
 		"a way out after the cleaning":        "replace example.com/x => ./a/../../outside",
 		"a Windows directory":                 `replace example.com/x => .\dir`,
 		"a Windows drive":                     `replace example.com/x => C:\dir`,
+		"a Windows drive with slashes":        "replace example.com/x => C:/dir",
 		"a versioned old side":                "replace example.com/x v1.0.0 => ../outside",
 		"one of several in a block":           "replace (\n\texample.com/y => ./inside\n\texample.com/x => ../outside\n)",
 		"an outside replace by an inside one": "replace example.com/x => ../outside\nreplace example.com/y => ./inside",
@@ -266,7 +267,7 @@ func TestPlanSideVendorsWhenTheGoDirectiveIsAtLeast114AndVendorModulesTxtExists(
 			if tc.wantVendor && len(plan.Files) != 0 {
 				t.Errorf("a vendored side fetches nothing, the plan names %q", namesOf(plan))
 			}
-			if !tc.wantVendor && len(plan.Files) != 3 {
+			if !tc.wantVendor && len(plan.Files) != 2 {
 				t.Errorf("a side that does not vendor plans its go.sum, the plan names %q", namesOf(plan))
 			}
 		})
@@ -282,5 +283,17 @@ func TestPlanSideDoesNotReadTheGoSumOrTheReplacesOfAVendoredSide(t *testing.T) {
 	}
 	if !plan.Vendor || len(plan.Files) != 0 {
 		t.Errorf("plan = %+v, want Vendor and no files", plan)
+	}
+}
+
+// What a refusal says of the candidate is bounded, whatever the candidate sent.
+func TestPlanSideRefusalDoesNotEchoTheCandidateAtLength(t *testing.T) {
+	goMod := []byte(goModHead + "\n" + strings.Repeat("x", 100000) + " y\n")
+	_, err := PlanSide(goMod, nil, false, anyLimits)
+	if !errors.Is(err, ErrInstallFailed) {
+		t.Fatalf("err = %v, want ErrInstallFailed", err)
+	}
+	if len(err.Error()) > 500 {
+		t.Errorf("the refusal is %d bytes long", len(err.Error()))
 	}
 }

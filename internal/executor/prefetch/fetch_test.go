@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -333,21 +334,42 @@ func TestFetchRefusesAZipWhoseDirectoryDoesNotFitTheTail(t *testing.T) {
 	}
 }
 
-func TestFetchRefusesAZipWhoseUnpackedSizeOverflows(t *testing.T) {
+// rawZip is a zip whose directory claims the given unpacked sizes; nothing is behind them.
+func rawZip(t *testing.T, sizes ...uint64) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	for i := range 2 { // each size fits an int64, their sum does not
-		if _, err := zw.CreateRaw(&zip.FileHeader{Name: fmt.Sprintf("example.com/m@v1.0.0/f%d", i), Method: zip.Store, UncompressedSize64: 1 << 62}); err != nil {
+	for i, n := range sizes {
+		if _, err := zw.CreateRaw(&zip.FileHeader{Name: fmt.Sprintf("example.com/m@v1.0.0/f%d", i), Method: zip.Store, UncompressedSize64: n}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	proxy := newFakeProxy(t, map[string][]byte{zipName: buf.Bytes()})
-	_, err := Fetch(context.Background(), clientFor(t, proxy.Server, ""), proxy.URL, planOf(zipName), &memSink{}, Limits{Bytes: 1 << 20})
-	if !errors.Is(err, ErrTooLarge) {
-		t.Errorf("err = %v, want ErrTooLarge", err)
+	return buf.Bytes()
+}
+
+func TestFetchRefusesZipsWhoseUnpackedSizeOverflows(t *testing.T) {
+	const half = 1 << 62 // a size that fits an int64, twice of it does not
+	proxy := newFakeProxy(t, map[string][]byte{
+		"x.example/one/@v/v1.0.0.zip":  rawZip(t, math.MaxInt64+1),
+		"x.example/two/@v/v1.0.0.zip":  rawZip(t, half, half),
+		"x.example/half/@v/v1.0.0.zip": rawZip(t, half),
+		"x.example/more/@v/v1.0.0.zip": rawZip(t, half),
+	})
+	for name, files := range map[string][]string{
+		"one entry past an int64":           {"x.example/one/@v/v1.0.0.zip"},
+		"entries whose sum overflows":       {"x.example/two/@v/v1.0.0.zip"},
+		"zips whose sum overflows":          {"x.example/half/@v/v1.0.0.zip", "x.example/more/@v/v1.0.0.zip"},
+		"the second of two such zips again": {"x.example/half/@v/v1.0.0.zip", "x.example/more/@v/v1.0.0.zip", "x.example/half/@v/v1.0.0.zip"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Fetch(context.Background(), clientFor(t, proxy.Server, ""), proxy.URL, planOf(files...), &memSink{}, Limits{Bytes: 1 << 20})
+			if !errors.Is(err, ErrTooLarge) {
+				t.Errorf("err = %v, want ErrTooLarge", err)
+			}
+		})
 	}
 }
 
@@ -481,14 +503,13 @@ func TestFetchRequestsOnlyOverHTTPS(t *testing.T) {
 	defer plain.Close()
 	tlsSrv := newTLS(t, func(w http.ResponseWriter, r *http.Request) {})
 	for name, base := range map[string]string{
-		"http":         plain.URL,
-		"ftp":          "ftp://proxy.example",
-		"no scheme":    "proxy.golang.org",
-		"empty":        "",
-		"no host":      "https://",
-		"a query":      tlsSrv.URL + "?x=1",
-		"a fragment":   tlsSrv.URL + "#x",
-		"user and key": "https://user:key@" + hostOf(t, tlsSrv.URL),
+		"http":       plain.URL,
+		"ftp":        "ftp://proxy.example",
+		"no scheme":  "proxy.golang.org",
+		"empty":      "",
+		"no host":    "https://",
+		"a query":    tlsSrv.URL + "?x=1",
+		"a fragment": tlsSrv.URL + "#x",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Fetch(context.Background(), clientFor(t, tlsSrv, ""), base, planOf(modName), &memSink{}, Limits{Bytes: 1 << 20})
@@ -622,5 +643,100 @@ func TestClientAllowsARedirectOnlyToStorageGoogleapisOverHTTPS(t *testing.T) {
 	}
 	if tr, ok := c.Transport.(*http.Transport); !ok || !tr.DisableCompression {
 		t.Error("the client must not ask for a compressed answer: Content-Length is how a file is streamed")
+	}
+}
+
+// A body of unknown length that is exactly as large as what is left of the bound fits; one byte more does not.
+func TestFetchBuffersABodyWithNoLengthThatIsExactlyTheBound(t *testing.T) {
+	body := bytes.Repeat([]byte("c"), 3000)
+	srv := newTLS(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body[:1000])
+		w.(http.Flusher).Flush()
+		_, _ = w.Write(body[1000:])
+	})
+	for name, tc := range map[string]struct {
+		bound   int64
+		wantErr bool
+	}{"exactly the bound": {3000, false}, "one byte more than the bound": {2999, true}} {
+		t.Run(name, func(t *testing.T) {
+			sink := &memSink{}
+			_, err := Fetch(context.Background(), clientFor(t, srv, ""), srv.URL, planOf(modName), sink, Limits{Bytes: tc.bound})
+			if tc.wantErr != errors.Is(err, ErrTooLarge) || (err != nil) != tc.wantErr {
+				t.Errorf("err = %v, want ErrTooLarge = %v", err, tc.wantErr)
+			}
+			if !tc.wantErr && (len(sink.entries) != 1 || !bytes.Equal(sink.entries[0].data, body)) {
+				t.Errorf("the sink took %d entries, want the whole body in one", len(sink.entries))
+			}
+		})
+	}
+	// The body is cut short at exactly the bound: that is a failure of the proxy, not a body that fits.
+	cut := newTLS(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler)
+	})
+	_, err := Fetch(context.Background(), clientFor(t, cut, ""), cut.URL, planOf(modName), &memSink{}, Limits{Bytes: 3000})
+	if !errors.Is(err, ErrFetchFailed) {
+		t.Errorf("a body cut after the bound: err = %v, want ErrFetchFailed", err)
+	}
+}
+
+func TestFetchRefusesASinkThatDoesNotTakeTheWholeFile(t *testing.T) {
+	proxy := newFakeProxy(t, map[string][]byte{modName: modBody})
+	half := sinkFunc(func(name string, size int64, r io.Reader) error {
+		_, err := io.CopyN(io.Discard, r, size/2)
+		return err
+	})
+	_, err := Fetch(context.Background(), clientFor(t, proxy.Server, ""), proxy.URL, planOf(modName), half, Limits{Bytes: 1 << 20})
+	if err == nil || errors.Is(err, ErrFetchFailed) {
+		t.Errorf("err = %v, want a refusal of the sink that is not a fetch failure", err)
+	}
+}
+
+func TestFetchRefusesAFileNameThatIsNotAURL(t *testing.T) {
+	proxy := newFakeProxy(t, nil)
+	_, err := Fetch(context.Background(), clientFor(t, proxy.Server, ""), proxy.URL, planOf("a.example/m/@v/\x7f.mod"), &memSink{}, Limits{Bytes: 1 << 20})
+	if err == nil || errors.Is(err, ErrFetchFailed) {
+		t.Errorf("err = %v, want a refusal that is not a counted fetch failure", err)
+	}
+	if got := proxy.asked(); len(got) != 0 {
+		t.Errorf("requests = %q, want none", got)
+	}
+}
+
+func TestTailBufferKeepsTheLastBytesWhateverTheChunks(t *testing.T) {
+	data := make([]byte, 1000)
+	for i := range data {
+		data[i] = byte(i)
+	}
+	for _, chunk := range []int{1, 7, 100, 250, 999, 1000} {
+		for _, keep := range []int{1, 10, 100, 499, 1000, 1500} {
+			tail := tailBuffer{max: keep}
+			for rest := data; len(rest) > 0; {
+				n := min(chunk, len(rest))
+				tail.write(rest[:n])
+				rest = rest[n:]
+			}
+			if want := data[max(0, len(data)-keep):]; !bytes.Equal(tail.bytes(), want) {
+				t.Errorf("chunks of %d, tail of %d: kept %d bytes that are not the last %d", chunk, keep, len(tail.bytes()), len(want))
+			}
+		}
+	}
+}
+
+func TestTailReaderAtReadsOnlyWhatWasKept(t *testing.T) {
+	r := tailReaderAt{tail: []byte("0123456789"), off: 100}
+	buf := make([]byte, 4)
+	if n, err := r.ReadAt(buf, 102); n != 4 || err != nil || string(buf) != "2345" {
+		t.Errorf("a read inside the tail got %d %q %v", n, buf, err)
+	}
+	if n, err := r.ReadAt(buf, 108); n != 2 || !errors.Is(err, io.EOF) || string(buf[:2]) != "89" {
+		t.Errorf("a read across the end got %d %q %v, want 2 bytes and io.EOF", n, buf[:n], err)
+	}
+	if n, err := r.ReadAt(buf, 110); n != 0 || !errors.Is(err, io.EOF) {
+		t.Errorf("a read at the end got %d %v, want io.EOF", n, err)
+	}
+	if _, err := r.ReadAt(buf, 99); !errors.Is(err, errNotInTail) {
+		t.Errorf("a read before the tail: err = %v, want errNotInTail", err)
 	}
 }

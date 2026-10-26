@@ -54,5 +54,11 @@ func enableKeys(f *os.File) (func() error, error) {
 	}, nil
 }
 
-// flushInput drops what the user typed in the console behind f and nothing has read, and leaves its mode as it is.
-func flushInput(*os.File) error { return nil }
+// flushInput drops what the user typed in the console behind f and nothing has read, and leaves its mode as it is. A file is no console: that
+// is an error.
+func flushInput(f *os.File) error {
+	if err := windows.FlushConsoleInputBuffer(windows.Handle(f.Fd())); err != nil {
+		return fmt.Errorf("drop the keys typed before: %w", err)
+	}
+	return nil
+}

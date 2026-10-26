@@ -238,7 +238,7 @@ func askPaste(ctx context.Context, env githubEnv, codes <-chan string, state str
 		redraw()
 		read, called, stop := ctx, (<-chan string)(nil), func() {}
 		if endsOnCallback {
-			read, called, stop = untilCallback(ctx, codes)
+			read, called, stop = untilCallback(ctx, codes, scr.HiddenLineStopsCleanly)
 		}
 		secret, err := scr.HiddenLine(read, label, env.R.term.ReadPassword)
 		stop()
@@ -278,9 +278,11 @@ func askPaste(ctx context.Context, env githubEnv, codes <-chan string, state str
 	}
 }
 
-// untilCallback is ctx that also ends when the callback brings its code, and the channel that holds that code. stop ends the watch, and
-// must be called when the question is over: a code that came before it is in the channel, and one that came after is left in codes.
-func untilCallback(ctx context.Context, codes <-chan string) (context.Context, <-chan string, func()) {
+// untilCallback is ctx that also ends when the callback brings its code, and the channel that holds that code. The question ends only while
+// canEnd says that it can be ended without a read left on the input: when the screen stopped waiting for keys (a wait of it failed), the code
+// waits in the channel for the Enter that ends the question, and an abandoned read never holds the keyboard from the next one. stop ends the
+// watch, and must be called when the question is over: a code that came before it is in the channel, and one that came after is left in codes.
+func untilCallback(ctx context.Context, codes <-chan string, canEnd func() bool) (context.Context, <-chan string, func()) {
 	paste, cancel := context.WithCancel(ctx)
 	called := make(chan string, 1)
 	watching := make(chan struct{})
@@ -289,7 +291,9 @@ func untilCallback(ctx context.Context, codes <-chan string) (context.Context, <
 		select {
 		case code := <-codes:
 			called <- code
-			cancel()
+			if canEnd() {
+				cancel()
+			}
 		case <-paste.Done():
 		}
 	}()

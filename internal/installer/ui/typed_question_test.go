@@ -111,3 +111,19 @@ func TestScriptedInputKeepsTheAnswersItWasGivenToTypedQuestions(t *testing.T) {
 		t.Errorf("scripted input was flushed %d times: it is not a terminal", in.flushes)
 	}
 }
+
+// A secret read by the no-echo reader of the caller is such a question too: what the terminal queued before it was drawn is dropped.
+func TestASecretTakesNoKeyThatWasTypedBeforeItOpened(t *testing.T) {
+	s, in := typedTerminal(t, true)
+	in.Type("\n") // typed while nothing read
+	read := func() ([]byte, error) {
+		time.Sleep(50 * time.Millisecond) // the reader of the caller: what is queued would end it at once
+		return nil, nil
+	}
+	if _, err := s.Secret("Token", read); err != nil {
+		t.Fatal(err)
+	}
+	if in.flushes != 1 {
+		t.Errorf("the terminal was flushed %d times before the secret, want once", in.flushes)
+	}
+}

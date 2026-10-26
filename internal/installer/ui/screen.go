@@ -138,7 +138,8 @@ type Screen struct {
 	w, h    int
 	restore func() error
 	keys    func() (func() error, error) // Options.KeyInput
-	ready   func(context.Context) error  // Options.InputReady
+	ready   func(context.Context) error  // Options.InputReady, until a wait of it fails (stopWaiting)
+	flush   func() error                 // Options.FlushInput
 	err     error                        // the first write or restore failure
 
 	full, suspended, closed bool
@@ -190,7 +191,7 @@ func Open(o Options) (*Screen, error) {
 	}
 	s := &Screen{
 		out: o.Out, in: bufio.NewReader(o.In), ctx: ctx, version: oneLine(o.Version), color: o.Color, w: o.Width, h: o.Height,
-		restore: o.RestoreConsole, keys: o.KeyInput, ready: o.InputReady, full: o.Mode == ModeFull, terminal: o.InputIsTerminal, plainBars: map[string]string{},
+		restore: o.RestoreConsole, keys: o.KeyInput, ready: o.InputReady, flush: o.FlushInput, full: o.Mode == ModeFull, terminal: o.InputIsTerminal, plainBars: map[string]string{},
 	}
 	if s.full {
 		s.write(enterAltScreen)
@@ -531,6 +532,9 @@ func (s *Screen) Prompt(text string) (string, error) { return s.prompt(text, fal
 
 // prompt is Prompt; hasDef says that the question has a default, which the hint line of the frame tells Enter takes.
 func (s *Screen) prompt(text string, hasDef bool) (string, error) {
+	if err := s.dropTypedAhead(); err != nil {
+		return "", err
+	}
 	s.mu.Lock()
 	s.setApart()
 	s.hasDef = hasDef
@@ -822,6 +826,9 @@ func (s *Screen) Secret(label string, read func() ([]byte, error)) ([]byte, erro
 	if read == nil {
 		return nil, fmt.Errorf("the secret %s needs a reader that does not echo", label)
 	}
+	if err := s.dropTypedAhead(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	s.setApart()
 	s.secret = true
@@ -868,10 +875,10 @@ func (s *Screen) HiddenLine(ctx context.Context, label string, fallback func() (
 	s.setApart()
 	s.emit(label + " (input is hidden): ")
 	s.mu.Unlock()
-	if s.ready != nil && s.pendingGivenUp() == nil {
-		line, err = s.readHiddenWaiting(ctx)
+	if wait := s.waiter(); wait != nil && s.pendingGivenUp() == nil {
+		line, err = s.readHiddenWaiting(ctx, wait)
 	} else {
-		line, err = awaitingUntil(s, ctx, func() ([]byte, error) { return readHiddenLine(s.in, nil) })
+		line, err = awaitingUntil(s, ctx, func() ([]byte, error) { return readHiddenLine(s.in, nil, nil) })
 	}
 	if errors.Is(err, errCtrlC) {
 		err = s.afterTerminalError(errCtrlC)
@@ -885,28 +892,57 @@ func (s *Screen) HiddenLine(ctx context.Context, label string, fallback func() (
 	return line, nil
 }
 
-// readHiddenWaiting reads the hidden line in the goroutine of the call, waiting for a key (Options.InputReady) before each read that could
-// block. The end of ctx or of the screen's context ends the wait, and with it the question: no read was started, so none stays on the input
-// and the next question has it to itself. The error is the one of the context that ended it.
-func (s *Screen) readHiddenWaiting(ctx context.Context) ([]byte, error) {
+// errNoWait is the end of a wait for a key that failed, and not because a context ended: the terminal cannot be waited on after all.
+var errNoWait = errors.New("the terminal cannot be waited on for a key")
+
+// readHiddenWaiting reads the hidden line in the goroutine of the call, waiting for a key (wait, Options.InputReady) before each read that
+// could block. The end of ctx or of the screen's context ends the wait, and with it the question: no read was started, so none stays on the
+// input and the next question has it to itself. The error is the one of the context that ended it. A wait that fails for another reason,
+// after the probe that opened the screen worked, does not end the question, and the install with it: the screen stops waiting, and the rest of
+// the line is read as a plain read, which an Enter ends and the context of the call ends by abandoning it (see awaitingUntil). The part of the
+// line that was read already is kept.
+func (s *Screen) readHiddenWaiting(ctx context.Context, wait func(context.Context) error) ([]byte, error) {
 	both, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer context.AfterFunc(s.ctx, cancel)()
-	line, err := readHiddenLine(s.in, func() error {
-		if err := s.ready(both); err != nil {
-			return cmp.Or(ctx.Err(), s.ctx.Err(), err)
+	line, err := readHiddenLine(s.in, nil, func() error {
+		if err := wait(both); err != nil {
+			if done := cmp.Or(ctx.Err(), s.ctx.Err()); done != nil {
+				return done
+			}
+			return errNoWait
 		}
 		return nil
 	})
+	if errors.Is(err, errNoWait) {
+		s.stopWaiting()
+		read := line // what was read before the wait failed; the goroutine of the plain read must not see the line that is assigned below
+		line, err = awaitingUntil(s, ctx, func() ([]byte, error) { return readHiddenLine(s.in, read, nil) })
+	}
 	if err != nil && ctx.Err() == nil && s.ctx.Err() == nil && s.terminal {
 		err = s.afterTerminalError(err) // a console that ends a read with the end of the input before the signal that cancels the context
 	}
 	return line, err
 }
 
+// waiter is Options.InputReady while it works, and nil once a wait of it failed.
+func (s *Screen) waiter() func(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ready
+}
+
+// stopWaiting turns the waits off for the rest of the life of the screen: one of them failed, and the questions that follow are read plainly.
+func (s *Screen) stopWaiting() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ready = nil
+}
+
 // HiddenLineStopsCleanly says that the context of a HiddenLine ends its read with nothing left pending on the input: the screen can wait for a
-// key (Options.InputReady). Without it a read that its context ended stays on the input until the user presses Enter.
-func (s *Screen) HiddenLineStopsCleanly() bool { return s.keys != nil && s.ready != nil }
+// key (Options.InputReady) and no wait of it has failed. Without it a read that its context ended stays on the input until the user presses
+// Enter.
+func (s *Screen) HiddenLineStopsCleanly() bool { return s.keys != nil && s.waiter() != nil }
 
 // Summary shows key/value rows and warnings on a screen with no step column. Full screen waits for Enter, so the screen can be read
 // before Close leaves it, and keeps the rows and warnings for Close to print on the normal screen (a second Summary replaces them):
@@ -1002,8 +1038,29 @@ func (s *Screen) waitForEnter() error {
 			return fmt.Errorf("wait for Enter: %w", s.ctx.Err())
 		}
 	}
+	if err := s.dropTypedAhead(); err != nil {
+		return fmt.Errorf("wait for Enter: %w", err)
+	}
 	if _, err := s.readLine(); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("wait for Enter: %w", err)
+	}
+	return nil
+}
+
+// dropTypedAhead makes sure that no key typed before a question was drawn answers it, a typed question and the Enter that ends a page
+// included. On a terminal it drops what the reader holds and nothing has used (a second Enter that came in the read of the first) and what
+// the terminal queued while nothing read (Options.FlushInput). Scripted input is not a terminal, and keeps its keys. A read that was given up
+// is still using the reader: nothing is dropped under it.
+func (s *Screen) dropTypedAhead() error {
+	if !s.terminal || s.pendingGivenUp() != nil {
+		return nil
+	}
+	_, _ = s.in.Discard(s.in.Buffered()) // buffered, so it cannot fail
+	if s.flush == nil {
+		return nil
+	}
+	if err := s.flush(); err != nil {
+		return fmt.Errorf("drop the keys typed before: %w", err)
 	}
 	return nil
 }

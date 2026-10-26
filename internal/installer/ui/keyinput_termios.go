@@ -34,5 +34,11 @@ func enableKeys(f *os.File) (func() error, error) {
 	}, nil
 }
 
-// flushInput drops what the user typed at the terminal behind f and nothing has read, and leaves its mode as it is.
-func flushInput(*os.File) error { return nil }
+// flushInput drops what the user typed at the terminal behind f and nothing has read, and leaves its mode as it is. A file is no terminal: that
+// is an error.
+func flushInput(f *os.File) error {
+	if err := flushFd(int(f.Fd())); err != nil {
+		return fmt.Errorf("drop the keys typed before: %w", err)
+	}
+	return nil
+}

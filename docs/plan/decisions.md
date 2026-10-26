@@ -665,7 +665,7 @@ Updated by R1. Patch coverage of 90% is required; project coverage is informatio
 
 ## Open
 
-- **D-EXECUTION-LATER:** sealed tests kept outside the repository, remote attestation (an M3 candidate), services such as PostgreSQL in the sandbox, the pruning of stored results, and the safety of the Python and TypeScript install steps, which run package code (M2.2 and M2.3).
+- **D-EXECUTION-LATER:** sealed tests kept outside the repository, remote attestation (an M3 candidate), services such as PostgreSQL in the sandbox, the pruning of stored results, the safety of the Python and TypeScript install steps, which run package code (M2.2 and M2.3), private Go modules hosted on GitHub fetched through the App's read access under a governed list of prefixes (owner, 2026-10-26; M2.1 supports them only vendored), and, for a later SecOps phase, a candidate that forces `resource-limit` (a memory hog) to turn an advisory receipt `neutral` or to pass `before-approval` (owner, 2026-10-26).
 - **D-MANAGED-EXECUTION:** future provider-hosted or customer-infrastructure execution; nothing scheduled.
 - **D-HARDENING-CONTROLS:** further signing, provenance and transparency controls where a concrete threat justifies them. Signing the release image against `release.yml` on a `refs/tags/v*` ref, with a provenance and an SBOM, is in place from the first release built after the 2026-10-20 amendment of ADR 0008 (D-RELEASE); what remains is M3's key management and other controls. Encrypting the TOTP secret at rest with a host key is an M3 candidate with ADR 0019 (ADR 0027).
 

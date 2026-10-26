@@ -620,7 +620,7 @@ A revision that is not found, one that expects no canonical (a baseline), a cano
 | `timeout` | service | a leased attempt went past `EXECUTOR_JOB_TIMEOUT`; counted | yes |
 | `github-unavailable` | executor, service | GitHub could not be read (the tree at lease time, the merge base, an archive, a refused budget, a secondary limit) | not counted |
 | `no-executor` | service | no executor was seen for `EXECUTOR_LEASE_WAIT`; once an executor is seen again a fresh job replaces it | no |
-| `fetch-failed` | executor | a module could not be fetched from `proxy.golang.org` (the proxy, the network, a private module: no attempt tells them apart); counted | yes |
+| `fetch-failed` | executor | a module could not be fetched from `proxy.golang.org` (the proxy, the network, a private module that is not vendored: no attempt tells them apart); counted | yes |
 | `install-failed` | executor | the dependency prefetch was refused before any fetch: a module path or version that fails validation, a `replace` to a directory outside the tree, or a bound on the number or the bytes of modules | no |
 | `resource-limit` | executor | the container was killed by the memory limit, exited with status 137, or the executor killed one `go test` process 60 s after its `-timeout`. Only out-of-band signals count: `.State.OOMKilled` of the runtime's `inspect`, the exit status, and the executor's own kill, never text in the output. A candidate can cause it, so the owner should read it before unblocking | no |
 | `toolchain-mismatch` | executor | the repository needs a Go that the pinned image does not have | no |

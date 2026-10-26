@@ -71,7 +71,7 @@ type composer struct {
 // Appender that adds the module files to the same tar. The files of the head and the base come from their archive streams, which
 // are opened for the sides the tree uses only; each is checked against the tree entries of its side (the blob SHA-1, from the size
 // in the tar header) and against the SHA-256 that the plan expects, while it is copied. The files of the manifest come from files,
-// whole and checked by digest before a byte of them is written. Nothing else of an archive is written, and a file of the tree that
+// whole and checked by digest before a byte of them is written, and each is executable when the head has an executable file at its path. Nothing else of an archive is written, and a file of the tree that
 // an archive lacks, or has twice, is a mismatch.
 //
 // Bytes reach w before a file is fully verified, so a failure (an error that is returned with no Appender) means the tar is not to
@@ -95,8 +95,12 @@ func Compose(ctx context.Context, w io.Writer, tree []execution.TreeFile, archiv
 			}
 		}
 	}
+	headModes := make(map[string]execution.GitMode, len(entries[SideHead]))
+	for _, e := range entries[SideHead] {
+		headModes[e.Path] = e.Mode
+	}
 	for _, f := range p.manifest {
-		if err := c.fromManifest(ctx, files, f); err != nil {
+		if err := c.fromManifest(ctx, files, f, headModes[f.Path]); err != nil {
 			return nil, err
 		}
 	}
@@ -198,8 +202,9 @@ func (c *composer) copyEntry(e entry, f execution.TreeFile, te execution.TreeEnt
 }
 
 // fromManifest writes one file of the governing manifest. The file is read whole, within the cap of a file, and checked by digest
-// before a byte of it reaches the tar.
-func (c *composer) fromManifest(ctx context.Context, files FileOpener, f execution.TreeFile) error {
+// before a byte of it reaches the tar. The manifest records no mode, so the file is executable when the head has an executable file
+// at its path (headMode, empty when it has none), and a regular file otherwise.
+func (c *composer) fromManifest(ctx context.Context, files FileOpener, f execution.TreeFile, headMode execution.GitMode) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -222,13 +227,17 @@ func (c *composer) fromManifest(ctx context.Context, files FileOpener, f executi
 	if err := c.reserve(f.Path, int64(len(data))); err != nil {
 		return err
 	}
-	if err := c.tw.WriteHeader(&tar.Header{Name: f.Path, Typeflag: tar.TypeReg, Mode: regularMode, Size: int64(len(data))}); err != nil {
+	mode, gitMode := int64(regularMode), execution.GitRegular
+	if headMode == execution.GitExecutable {
+		mode, gitMode = executableMode, execution.GitExecutable
+	}
+	if err := c.tw.WriteHeader(&tar.Header{Name: f.Path, Typeflag: tar.TypeReg, Mode: mode, Size: int64(len(data))}); err != nil {
 		return err
 	}
 	if _, err := c.tw.Write(data); err != nil {
 		return err
 	}
-	c.record(execution.ExtractedFile{Path: f.Path, Mode: execution.GitRegular, BlobSHA1: execution.BlobSHA1(data)}, int64(len(data)))
+	c.record(execution.ExtractedFile{Path: f.Path, Mode: gitMode, BlobSHA1: execution.BlobSHA1(data)}, int64(len(data)))
 	return nil
 }
 
@@ -336,5 +345,15 @@ func (a *Appender) Close() error {
 }
 
 // Spend charges n bytes against the budget without writing anything, for what the tar will hold once it is unpacked and does not
-// carry itself: the unpacked size of the module zips that Add wrote. Past the budget it is ErrTooLarge and charges nothing.
-func (a *Appender) Spend(n int64) error { return fmt.Errorf("not implemented") }
+// carry itself: the unpacked size of the module zips that Add wrote. Past the budget it is ErrTooLarge and charges nothing, and a
+// negative n is ErrInvalidPlan.
+func (a *Appender) Spend(n int64) error {
+	if n < 0 {
+		return fmt.Errorf("%w: cannot spend %d bytes", ErrInvalidPlan, n)
+	}
+	if err := a.c.reserve("the unpacked module files", n); err != nil {
+		return err
+	}
+	a.c.total += n
+	return nil
+}

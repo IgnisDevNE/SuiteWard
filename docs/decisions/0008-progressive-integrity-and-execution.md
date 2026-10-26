@@ -56,16 +56,7 @@ This verifies that the image was built and signed by this repository's release w
 
 ## Amendment 2026-10-26: M2 is delivered as M2.1 to M2.3, through a separate executor
 
-[ADR 0028](0028-canonical-execution-and-the-receipt.md) records the design of M2. It does not reopen the order of the table above, and it changes four things.
-
-- **Delivery.** M2 arrives one ecosystem at a time: M2.1 is Go, M2.2 is Python and M2.3 is TypeScript. M2.1 also delivers the receipt, a report of what the tests that a pull request adds or changes do on the head and on the code before the change. The receipt was not part of the original M2.
-- **The backend is a separate executor.** The table's `DockerExecutionBackend` is not built into the service. A separate process, `suiteward execute`, drives a container runtime CLI (Podman or Docker) and holds only its own token. The service keeps the App key and the database and never receives a runtime socket. Docker Compose for service packaging stays distinct from running candidate code, as above.
-- **The first profile is Go, and execution is opt-in.** The open decision "first supported test ecosystem and executable RunnerProfile" is settled for Go. Nothing runs until the canonical declaration names a profile, and the levels of enforcement are part of that governed declaration.
-- **The exit evidence, as built.** "Real failures fail, corrections pass" is the canonical plan and its gate on the Contract check. "Candidate-controlled commands or reports cannot replace the trusted verification process" is the fixed command of the pinned profile, the expected tests taken from static analysis, the commit source checked against its tree entries, and the layers of ADR 0028 that detect and flag. They are not proof: code that behaves differently under test cannot be ruled out.
-
-An installation that requires execution does not accept integrity-only evidence when its executor is unavailable. With `canonical: required` the Contract check stays `in_progress` and never becomes `success` from integrity alone. A policy change follows the existing governance process.
-
-Of the open decisions below, private dependencies, network and secrets are answered for Go: a sandbox holds no secret, has network only for the dependency install, and private modules are not supported. Provider or customer infrastructure stays open ([D-MANAGED-EXECUTION](../plan/decisions.md#open)).
+[ADR 0028](0028-canonical-execution-and-the-receipt.md) records the design of M2 and settles its open decisions for Go. M2 arrives one ecosystem at a time (M2.1 Go, M2.2 Python, M2.3 TypeScript), and the `DockerExecutionBackend` above is built as a separate executor process that drives a container runtime CLI, so the service never receives a runtime socket. An installation that requires execution does not accept integrity-only evidence when the executor is unavailable.
 
 ## Alternatives and consequences
 

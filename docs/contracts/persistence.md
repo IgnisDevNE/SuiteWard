@@ -1299,11 +1299,11 @@ Insert-only. The receipt state at the moment of an `approve`, whether it was ref
 | `head_sha` | `text NOT NULL` | `^[0-9a-f]{40}$`: the head that the gate read |
 | `receipt_level` | `text NOT NULL` | `advisory`, `before-approval` or `required` |
 | `run_state` | `text NOT NULL` | `none` (no job yet), `pending`, `complete` or `unavailable` |
-| `job_id` | `bigint` | foreign key to `execution_jobs`; null exactly when `run_state = 'none'` |
+| `job_id` | `bigint` | foreign key to `execution_jobs`; null for `none`, not null for `pending` and `complete`, and either for `unavailable` (null when no executor is configured, because no job exists) |
 | `summary` | `text` | `met` or `not-met`; set only when `run_state = 'complete'` and the comment carried a mode |
 | `decided_at` | `timestamptz NOT NULL` | |
 
-The mode of the approve is in `pr_commands.mode`, next to the disposition, so that the ledger holds one record of the comment.
+The mode of the approve is in `pr_commands.mode`, next to the disposition, so that the ledger holds one record of the comment. An `approve` that the commands job retried after a crash, and that found its consent already recorded, has no row: the state at the approval was not recorded.
 
 ### Changes to `pr_commands`
 
@@ -1342,7 +1342,7 @@ The fake and PostgreSQL suites cover:
   - `mode-set` without a mode is refused;
   - `LatestOwnerCommand` ignores all three: after an `approve` with a wrong code, a `mode` keeps `owner-command-rejected`;
   - `PreviewMode` returns the latest `mode-set`, honors `since`, and ignores another pull.
-- `approval_receipts` is written with its `pr_commands` entry or not at all, and refuses `run_state = 'none'` with a job and a job without one.
+- `approval_receipts` is written with its `pr_commands` entry or not at all, and refuses `none` with a job, and `pending` or `complete` without one, and accepts `unavailable` with no job.
 
 ## Cycle start (M1.7c; normative)
 

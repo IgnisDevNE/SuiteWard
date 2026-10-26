@@ -691,7 +691,7 @@ A test is `{package, name, file, kind, head, base, excluded}`:
 - `kind` is `declared` for `canonical`, and `added` or `changed` for `receipt`.
 - `head` has 1 to 3 observations in run order, each `pass`, `fail`, `build-error`, `skip` or `absent`. `base` is the same, and is present exactly for a `receipt` test that is not excluded.
 - `excluded` is `build-constraint` †. A test with it has no `head` and no `base`.
-- `(package, name)` is unique in the result.
+- `(package, name)` is unique in the result. An internal and an external test package of one directory share one `package` value. A name that both declare is reported once, and its observation is the worst of the two (a failure of either reads `fail`), because `go test -run` selects by name alone. That is a limit, not a feature.
 
 The service validates, in this order:
 1. the token and the job (404);
@@ -737,7 +737,7 @@ Under `canonical: required`, and only where the check would otherwise be `succes
 | Run | State | Reason † |
 | --- | --- | --- |
 | no job yet, `pending` or `leased` | `in_progress` | `canonical-pending` |
-| `unavailable` | `in_progress` | `canonical-unavailable` |
+| `unavailable`, or no executor token or Go image stamp (`executor-not-configured`) | `in_progress` | `canonical-unavailable` |
 | `complete` with any `FAIL`, `MISSING` or `FLAKY` | `failure` | `canonical-failed` |
 | `complete` with none of them | `success` | the reason it would have had |
 
@@ -777,11 +777,11 @@ The publisher follows the `github_check` publisher. It drops a message whose gen
 
 **The receipt gate in the commands job.** It is step 6a of "Owner-authored", after `ConsumeStep` and before `ProcessConsent`. It acts on an `approve` only: `revoke`, `skip`, `propose` and `suggest` are never gated.
 1. It applies only when the policy's `receipt` level is not `off`, and when the approve names the proposal's current revision. Another reference goes on to `ProcessConsent`, which rejects it as before (provisional; ADR 0028, open item 5).
-2. It reads the pull request's head as the synchronization observed it when the command is processed, and that head's receipt run. No job yet counts as `pending`.
+2. It reads the pull request's head as the synchronization observed it when the command is processed, and that head's receipt run. No job yet counts as `pending`. No executor token or Go image stamp counts as `unavailable` (`executor-not-configured`), whatever the head: no job will ever exist.
 3. `off` and `advisory`: proceed. `before-approval`: refuse unless the run is `complete`. `required`: refuse unless the run is `complete`, the comment carries a mode, and the summary for that mode is met.
 4. A refusal is recorded `receipt-refused` through `Record`, with an acknowledgment and the gate record of the persistence contract, in one transaction. The `reason` of the acknowledgment is the first that applies: `pending` (the run is pending or missing), `unavailable`, `mode-missing`, `mode-not-met`.
 5. When it proceeds, `ProcessConsent` runs as before, and `Record(processed)` writes the gate record in the same transaction as the ledger entry.
-6. A retry after a crash that finds the consent already recorded (the replay of the operation) skips the gate and records the entry as `processed`.
+6. A retry after a crash that finds the consent already recorded (the replay of the operation) skips the gate and records the entry as `processed` with no gate record: the state at the approval was not recorded, and a state read now would not be that one. The missing record marks the retry.
 
 The acknowledgment of `receipt-refused` is `ack:<repository id>:<comment id>` with `disposition`, `comment`, `owner`, `reference`, `reason`, `mode` (optional) and, for `mode-not-met`, `counts` (as in the receipt check). It says that the code was used and nothing was approved, what is missing, and that the next attempt needs the next code. For `mode-set` the payload has `disposition`, `comment`, `owner` and `mode`. For `mode-refused` it has `disposition`, `comment`, `owner` and `reason`.
 

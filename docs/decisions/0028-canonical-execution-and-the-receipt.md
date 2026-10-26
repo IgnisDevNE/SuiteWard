@@ -100,7 +100,7 @@ Each side of each test yields one observation: `pass`, `fail` (a failed assertio
 
 `EXCLUDED` tests are left out of every rule below: they neither satisfy "at least one DETECTS" nor block.
 
-**Run status**, for each plan and head: `pending`, `complete` or `unavailable`. A run is unavailable when the executor fails, the whole job times out, the sandbox cannot be built, the toolchain does not match, or the source check of section 3 fails. **Unavailable is never treated as a pass.**
+**Run status**, for each plan and head: `pending`, `complete` or `unavailable`. A run is unavailable when the executor fails, the whole job times out, the sandbox cannot be built, the toolchain does not match, the source check of section 3 fails, or the instance has no executor configured. **Unavailable is never treated as a pass.** Both gates read it as "not complete": the canonical gate keeps the check `in_progress`, and the receipt gate refuses.
 
 ### 6. Mode summaries of a receipt
 

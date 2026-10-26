@@ -141,12 +141,12 @@ func TestReceiptApproveGate(t *testing.T) {
 		{"before-approval, complete and failing, no mode", execution.ReceiptLevelBeforeApproval, execution.RunComplete, failing, execution.ModeNone, execution.ReasonNone},
 		{"before-approval, complete and empty", execution.ReceiptLevelBeforeApproval, execution.RunComplete, execution.ReceiptCounts{}, execution.ModeFix, execution.ReasonNone},
 
-		// required: complete, a mode, and that mode's summary met.
+		// required: complete, a mode, and that mode's summary met; a complete receipt with no evaluated test needs no mode.
 		{"required, pending", execution.ReceiptLevelRequired, execution.RunPending, execution.ReceiptCounts{Detects: 1}, execution.ModeFix, execution.ReasonReceiptPending},
 		{"required, unavailable", execution.ReceiptLevelRequired, execution.RunUnavailable, execution.ReceiptCounts{Detects: 1}, execution.ModeFix, execution.ReasonReceiptUnavailable},
 		{"required, pending and no mode: the receipt state comes first", execution.ReceiptLevelRequired, execution.RunPending, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonReceiptPending},
 		{"required, complete but no mode", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Detects: 1}, execution.ModeNone, execution.ReasonModeRequired},
-		{"required, complete and empty, no mode", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonModeRequired},
+		{"required, complete and empty, no mode: nothing to judge", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonNone},
 		{"required, fix met", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Detects: 1, Inert: 1}, execution.ModeFix, execution.ReasonNone},
 		{"required, fix not met", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Inert: 1}, execution.ModeFix, execution.ReasonModeNotMet},
 		{"required, fix blocked by a failure", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Detects: 1, Fails: 1}, execution.ModeFix, execution.ReasonModeNotMet},
@@ -154,7 +154,12 @@ func TestReceiptApproveGate(t *testing.T) {
 		{"required, refactor met", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Inert: 2}, execution.ModeRefactor, execution.ReasonNone},
 		{"required, refactor met by an empty receipt", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{}, execution.ModeRefactor, execution.ReasonNone},
 		{"required, refactor not met by a detection", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Inert: 1, Detects: 1}, execution.ModeRefactor, execution.ReasonModeNotMet},
-		{"required, fix over an empty receipt", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{}, execution.ModeFix, execution.ReasonModeNotMet},
+		{"required, fix over an empty receipt: nothing to judge", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{}, execution.ModeFix, execution.ReasonNone},
+		{"required, feature over an empty receipt", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{}, execution.ModeFeature, execution.ReasonNone},
+		{"required, all EXCLUDED and no mode: an empty receipt", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Excluded: 3}, execution.ModeNone, execution.ReasonNone},
+		{"required, all EXCLUDED, fix: an empty receipt", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Excluded: 3}, execution.ModeFix, execution.ReasonNone},
+		{"required, a skipped test is evaluated: the mode is judged", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Skipped: 1}, execution.ModeFix, execution.ReasonModeNotMet},
+		{"required, a skipped test is evaluated: a mode is needed", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Skipped: 1}, execution.ModeNone, execution.ReasonModeRequired},
 
 		// not applicable: no evaluated file, so no receipt, and the approve needs no mode.
 		{"required, not applicable and no mode", execution.ReceiptLevelRequired, execution.RunNotApplicable, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonNone},
@@ -299,8 +304,8 @@ func TestReceiptConclusion(t *testing.T) {
 	}{
 		{"pending", execution.RunPending, execution.ReceiptCounts{Fails: 3}, execution.ConclusionInProgress, "in_progress"},
 		{"unavailable, whatever the counts", execution.RunUnavailable, execution.ReceiptCounts{Fails: 3}, execution.ConclusionNeutral, "neutral"},
-		// Not applicable is no check at all: the caller publishes nothing, so it must not send this name to GitHub.
-		{"not applicable, whatever the counts", execution.RunNotApplicable, execution.ReceiptCounts{Fails: 3}, execution.ConclusionNone, "none"},
+		// Not applicable is no check at all: the caller publishes nothing, and the value has no name so that no caller can send one to GitHub.
+		{"not applicable, whatever the counts", execution.RunNotApplicable, execution.ReceiptCounts{Fails: 3}, execution.ConclusionNone, ""},
 		{"a failing test", execution.RunComplete, execution.ReceiptCounts{Fails: 1, Detects: 4}, execution.ConclusionFailure, "failure"},
 		{"a missing test", execution.RunComplete, execution.ReceiptCounts{Missing: 1, Detects: 4}, execution.ConclusionFailure, "failure"},
 		{"detections", execution.RunComplete, execution.ReceiptCounts{Detects: 2}, execution.ConclusionSuccess, "success"},

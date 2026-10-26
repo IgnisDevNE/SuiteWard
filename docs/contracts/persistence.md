@@ -1,6 +1,6 @@
 # Governance persistence contract
 
-- **Status:** frozen for phase R1 (replaces the M1.01 contract `m1-01.md`); extended for phase M1.2 by "Jobs and outbox" below (frozen by M1.2-C0) and for phase M1.3 by "Proposal revisions" (frozen by M1.3-C0) and "Baseline proposals" (frozen before M1.3-C2) below, and for phase M1.4 by "GitHub observations" (frozen by M1.4-B0), and by each later phase through M1.11 (`v0.2.0`, released 2026-10-22), including phase SH.
+- **Status:** frozen for phase R1 (replaces the M1.01 contract `m1-01.md`); extended for phase M1.2 by "Jobs and outbox" below (frozen by M1.2-C0) and for phase M1.3 by "Proposal revisions" (frozen by M1.3-C0) and "Baseline proposals" (frozen before M1.3-C2) below, and for phase M1.4 by "GitHub observations" (frozen by M1.4-B0), and by each later phase through M1.11 (`v0.2.0`, released 2026-10-22), including phase SH, and by phase M2.1 ("Execution", [ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md)).
 - **Consumers:** R1-C (domain reconstitution), R1-D1/D2 (PostgreSQL adapter), R1-E (application port, use cases, in-memory fake, conformance suite), M1.3-C1 (proposal revision write), M1.3-C2 (baseline proposals), M1.4-B1 (observation store), M1.4-B2 (reconciliation).
 
 ## Principles
@@ -1192,6 +1192,158 @@ The [runtime contract](runtime.md#scope-discovery-m19) gives the behavior. This 
 - `suggested`, `suggest-refused` and `other-pull` are ignored by `LatestOwnerCommand`: after an `approve` with a wrong code, a `suggest` keeps `owner-command-rejected`.
 - Payloads: an ack or revision payload of the `v0.1.0` shape still decodes.
 
+## Execution (M2.1; normative)
+
+[ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md) decides the rules, and the [runtime contract](runtime.md#execution-m21-normative) gives the wire and the behavior. Migration `00021_execution.sql` adds everything below, forward only, and `SupportedVersion` becomes 21. A † marks a choice of task A0 (a name, a size or a number) that the integrator may change. The new tables follow the conventions of the earlier ones: `text` enumerations with `CHECK` constraints, no `UPDATE` of an insert-only table, and `DELETE` and `TRUNCATE` rejected by `reject_immutable_history()`. `GrantApp` needs no change: its default privileges cover the new tables, and the triggers stop what a grant would allow.
+
+**Evidence, not authority.** Nothing here is read by `Tx`, consent or promotion. The use cases that decide a state (the executor API and the checks job) call `internal/domain/execution` and hand the store rows that already carry their states. The store checks the shape (codes, sizes, the plan against the rows) and never re-runs a decision.
+
+**Retention: none in M2.1.** No row of these tables is deleted, as for `pr_commands` and the outbox. The bounds are in the wire contract: at most 10,000 test rows for a result, and two jobs for each head. Pruning old per-test rows is an open question (ADR 0028, open item 7).
+
+### Table `execution_jobs`
+
+One row for each wanted run: a plan on a head. It changes while the job is open and never after.
+
+| Column | Type | Rule |
+| --- | --- | --- |
+| `job_id` | `bigint GENERATED ALWAYS AS IDENTITY` | primary key |
+| `job_key` | `text NOT NULL` | `^[0-9a-f]{64}$`; the SHA-256 of the six lines of the [runtime contract](runtime.md#job-lifecycle); unique among the jobs that are not `cancelled` (a partial unique index) |
+| `repository_id` | `bigint NOT NULL` | `> 0` |
+| `pull_number` | `integer NOT NULL` | `> 0` |
+| `plan` | `text NOT NULL` | `canonical` or `receipt` |
+| `profile` | `text NOT NULL` | `go` |
+| `head_sha` | `text NOT NULL` | `^[0-9a-f]{40}$` |
+| `base_sha` | `text` | `^[0-9a-f]{40}$`; not null exactly when `plan = 'receipt'` |
+| `governing_digest` | `text NOT NULL` | `^sha256:[0-9a-f]{64}$`: the manifest the job runs against |
+| `governing_source` | `text NOT NULL` | `^(V[0-9]+\|P[0-9]+-R[0-9]+)$` |
+| `declaration_digest` | `text NOT NULL` | `^sha256:[0-9a-f]{64}$`: the canonical declaration, the source of the policy |
+| `canonical_level`, `receipt_level` | `text NOT NULL` | the effective levels when the job was created. `canonical_level` is `off`, `advisory` or `required`, and not `off` for a `canonical` job. `receipt_level` is `off`, `advisory`, `before-approval` or `required`, and not `off` for a `receipt` job |
+| `state` | `text NOT NULL DEFAULT 'pending'` | `pending`, `leased`, `complete`, `unavailable` or `cancelled` |
+| `reason` | `text` | not null exactly when `state` is `unavailable` or `cancelled`: for `unavailable`, one of the reasons of the [runtime contract](runtime.md#execution-m21-normative); for `cancelled`, `head-moved`, `closed` or `obsolete` |
+| `attempts` | `integer NOT NULL DEFAULT 0` | `>= 0`; the number of leases granted |
+| `lease_id` | `text` | `^[0-9a-f]{32}$`; not null exactly when `state = 'leased'` |
+| `lease_expires_at` | `timestamptz` | not null exactly when `state = 'leased'` |
+| `leased_at` | `timestamptz` | not null exactly when `attempts > 0`: the time of the latest lease |
+| `deadline_at` | `timestamptz NOT NULL` | after `created_at` |
+| `created_at` | `timestamptz NOT NULL` | |
+| `finished_at` | `timestamptz` | not null exactly when `state` is `complete`, `unavailable` or `cancelled` |
+
+There is no foreign key to `github_pulls` (observation rows are state, not history), as `pr_checks` has none. Indexes: the partial unique index on `job_key`; `(job_id) WHERE state IN ('pending', 'leased')`, which the lease query reads; and `(repository_id, pull_number, head_sha)`.
+
+**Update guard `guard_execution_job_update`.** A `BEFORE UPDATE` trigger. A row whose state is `complete`, `unavailable` or `cancelled` cannot change. The identity columns (`job_id`, `job_key`, `repository_id`, `pull_number`, `plan`, `profile`, `head_sha`, `base_sha`, `governing_digest`, `governing_source`, `declaration_digest`, `canonical_level`, `receipt_level`, `deadline_at`, `created_at`) never change. The state moves only along the table of the [runtime contract](runtime.md#job-lifecycle): `pending` to `leased`, `unavailable` or `cancelled`; `leased` to `pending`, `complete`, `unavailable` or `cancelled`. `DELETE` and `TRUNCATE` are rejected.
+
+### Table `execution_results`
+
+Insert-only. One row for each job that received a result from the executor, `complete` or `unavailable`. A job that the service made unavailable (a timeout, exhausted attempts) has none, and its `execution_jobs` row says why.
+
+| Column | Type | Rule |
+| --- | --- | --- |
+| `job_id` | `bigint NOT NULL` | primary key; foreign key to `execution_jobs` |
+| `status` | `text NOT NULL` | `complete` or `unavailable`; the job's state, written in the same transaction |
+| `reason` | `text` | not null exactly for `unavailable`; an executor-set reason of the runtime contract |
+| `executor_version` | `text NOT NULL` | 1 to 64 bytes |
+| `executor_sha256` | `text NOT NULL` | `^[0-9a-f]{64}$` |
+| `image_digest` | `text` | `^sha256:[0-9a-f]{64}$`; not null for `complete` |
+| `toolchain` | `text` | at most 64 bytes; not null for `complete` |
+| `started_at`, `ended_at` | `timestamptz NOT NULL` | `ended_at >= started_at` |
+| `received_at` | `timestamptz NOT NULL` | the service's clock |
+| `body_digest` | `text NOT NULL` | `^sha256:[0-9a-f]{64}$`; of the request body, so that the same result sent again is recognized |
+| `markers` | `jsonb NOT NULL DEFAULT '[]'` | an array of at most 200 objects `{kind, path, line}`; an immutable payload |
+| `unapproved_paths` | `text[] NOT NULL DEFAULT '{}'` | at most 100 |
+| `submodules` | `text[] NOT NULL DEFAULT '{}'` | at most 100 |
+
+### Table `execution_tests`
+
+Insert-only. One row for each test of a `complete` result. The head and base observations are the facts, and `state` is the decision that was shown.
+
+| Column | Type | Rule |
+| --- | --- | --- |
+| `job_id` | `bigint NOT NULL` | foreign key to `execution_results`; part of the primary key `(job_id, package, name)` |
+| `package` | `text NOT NULL` | 1 to 512 bytes |
+| `name` | `text NOT NULL` | 1 to 200 bytes |
+| `file` | `text NOT NULL` | 1 to 1024 bytes |
+| `kind` | `text NOT NULL` | `declared`, `added` or `changed` |
+| `excluded_reason` | `text` | `build-constraint` †; not null exactly when `state = 'excluded'` |
+| `head_runs` | `text[] NOT NULL` | each element `pass`, `fail`, `build-error`, `skip` or `absent`; 1 to 3 elements, none exactly when the test is excluded |
+| `base_runs` | `text[]` | the same elements; null when excluded and for a canonical job; otherwise 1 to 3 elements |
+| `state` | `text NOT NULL` | the lower-case form of a state of ADR 0028. Canonical states: `pass`, `fail`, `skipped`, `missing`, `flaky`, `excluded`. Receipt states: `excluded`, `missing`, `flaky`, `skipped`, `fails`, `new_api`, `detects`, `inert`. One `CHECK` lists the union; `fail` and `fails` are two states, as in the ADR. `state = 'excluded'` exactly when `excluded_reason` is set |
+
+The store also checks, against the job's plan: a `canonical` job has only `declared` rows with no `base_runs`, and a `receipt` job has only `added` and `changed` rows, each with `base_runs` unless excluded, and only receipt states. A violation is `ErrInvalidRequest` and nothing is written.
+
+### Table `pr_receipt_checks`
+
+The ledger of the `SuiteWard / Receipt` check. It mirrors `pr_checks` (migration `00014`): one row for each pull request, with the current state and the publication generation, updated in place and never deleted, and with the publications themselves in the outbox. It has the columns of `pr_checks` with the same constraints, except that `change`, `revision` and `command_id` have no meaning here and are left out, `state` also accepts `neutral`, and `job_id` is added.
+
+| Column | Type | Rule |
+| --- | --- | --- |
+| `repository_id`, `pull_number` | `bigint`, `integer` | primary key; both `> 0` |
+| `head_sha` | `text NOT NULL` | `^[0-9a-f]{40}$` |
+| `head_since` | `timestamptz NOT NULL` | when this head was first recorded |
+| `state` | `text NOT NULL` | `success`, `in_progress`, `failure` or `neutral` |
+| `reason` | `text NOT NULL` | not blank: `receipt-pending`, `receipt-failing`, `receipt-complete` or `receipt-unavailable` |
+| `reference` | `text NOT NULL` | `^(P[0-9]+-R[0-9]+)?$` |
+| `job_id` | `bigint NOT NULL` | `>= 0`; the receipt job that the state shows, `0` for none; no foreign key, as `pr_checks` has none to the outbox |
+| `generation` | `bigint NOT NULL` | `> 0` |
+| `message_key` | `text NOT NULL` | not blank: `receipt-check:<repository id>:<pull>:<generation>` |
+| `decided_at` | `timestamptz NOT NULL` | |
+
+The triggers are `pr_receipt_checks_no_delete` and `pr_receipt_checks_no_truncate`. The store has the shape of `checks.Store`: `Current(ctx, repositoryID, pull)` and `Publish(ctx, result, at, message func(generation int64) (governance.OutboxMessage, error))`, with the same rules. A new head, state, reason or reference advances the generation by one and writes the `github_receipt_check` message in the same transaction. A result that changes none of them updates `job_id` and `decided_at` only and writes no message. A message that ended `failed` is sent again under the next generation, no sooner than 15 minutes after it finished. Concurrent publications for one pull never write two messages for one generation.
+
+### Table `approval_receipts`
+
+Insert-only. The receipt state at the moment of an `approve`, whether it was refused or not. One row for each `approve` that reached the receipt gate under a `receipt` level other than `off`, written in the same transaction as its `pr_commands` entry.
+
+| Column | Type | Rule |
+| --- | --- | --- |
+| `repository_id`, `comment_id` | `bigint NOT NULL` | primary key; foreign key to `pr_commands` |
+| `head_sha` | `text NOT NULL` | `^[0-9a-f]{40}$`: the head that the gate read |
+| `receipt_level` | `text NOT NULL` | `advisory`, `before-approval` or `required` |
+| `run_state` | `text NOT NULL` | `none` (no job yet), `pending`, `complete` or `unavailable` |
+| `job_id` | `bigint` | foreign key to `execution_jobs`; null exactly when `run_state = 'none'` |
+| `summary` | `text` | `met` or `not-met`; set only when `run_state = 'complete'` and the comment carried a mode |
+| `decided_at` | `timestamptz NOT NULL` | |
+
+The mode of the approve is in `pr_commands.mode`, next to the disposition, so that the ledger holds one record of the comment.
+
+### Changes to `pr_commands`
+
+- **Dispositions.** The `pr_commands_disposition_check` list is replaced, as `00020` replaced it, by the list of `00020` plus `receipt-refused`, `mode-set` and `mode-refused` †. The table is insert-only, so only the `CHECK` changes. `receipt-refused` carries no operation id (the existing rule allows one only for `processed`) and its step stays consumed. `LatestOwnerCommand` does not list the three dispositions, so none of them sets or clears `owner-command-rejected`.
+- **`mode text`**, nullable, with `CHECK (mode IS NULL OR mode IN ('fix', 'feature', 'refactor'))` and `CHECK (disposition <> 'mode-set' OR mode IS NOT NULL)`. The ledger writes it whenever the command carried a mode.
+- **`commands.Entry`** gains `Mode` (empty for none). `Record` gains an optional gate record, written to `approval_receipts` in the same transaction, which an entry other than an `approve` never has.
+- **`PreviewMode(ctx, repositoryID, pull, since)`** returns the `mode` of the latest `mode-set` entry of the pull created at or after `since` (the current enrollment's `enrolled_at`), and false when there is none.
+
+### Store operations of `execution_jobs` and the results
+
+The behavior is in the [runtime contract](runtime.md#the-executor-api); these are the semantics that the store must guarantee. The signatures belong to the port that task P1 writes.
+- **Enqueue.** Idempotent by `job_key` among the jobs that are not `cancelled`: it returns the existing job and writes nothing. A job that breaks a constraint is `ErrInvalidRequest`.
+- **Lease.** In one transaction, picks the oldest job that is `pending`, or `leased` with an expired lease, with `FOR UPDATE SKIP LOCKED`. A candidate past its `deadline_at` becomes `unavailable` (`timeout`), and one whose lease expired on its third attempt becomes `unavailable` (`attempts-exhausted`); the transaction goes on to the next candidate. Otherwise it increments `attempts`, sets `leased_at`, a new `lease_id` and `lease_expires_at`, and returns the job. It returns none when nothing is ready. Two concurrent leases never return one job.
+- **Heartbeat.** Extends `lease_expires_at` when the job is `leased`, the lease matches and has not expired, and the deadline has not passed. Anything else is a lost lease (`ErrLeaseLost`, P1's name †).
+- **Complete.** Validates the lease as the heartbeat does, then writes the `execution_results` row, the `execution_tests` rows and the job's state in one transaction. For a finished job it returns the stored outcome when `body_digest` equals the stored one, and `ErrConflict` otherwise.
+- **Cancel** and **Expire.** Cancel moves a `pending` or `leased` job to `cancelled` with its reason and does nothing to a final job. Expire applies the expiry, deadline and attempt rules to every open job and returns the number it changed.
+- **Reads.** The jobs of a head, by plan; a job by key; the tests of a job; the number of jobs in each state for `/status`.
+
+### Conformance
+
+The fake and PostgreSQL suites cover:
+- `execution_jobs`:
+  - Enqueue is idempotent, and a `cancelled` job does not block a new one with the same key;
+  - the lease is exclusive under concurrency (PostgreSQL), takes the oldest first, and an expired lease is leased again;
+  - `attempts` stops at 3, the third expiry is `attempts-exhausted`, and a passed deadline is `timeout`;
+  - a heartbeat extends, and a heartbeat with another lease, after expiry or on a final job is `ErrLeaseLost`;
+  - a final row cannot be updated or deleted, and no identity column can be updated (PostgreSQL triggers, as the owner role).
+- Results:
+  - `Complete` stores the result, the tests and the state together or not at all;
+  - the same body twice is stored once, and another body for a finished job is `ErrConflict`;
+  - a canonical job refuses a row with `base_runs`, and a receipt job refuses a row without one;
+  - an invalid code, a count over its bound or a duplicate `(package, name)` writes nothing.
+- `pr_receipt_checks`: the rules of the `Publish` conformance of `pr_checks`, with `neutral` as a fourth state.
+- `pr_commands`:
+  - the three dispositions are accepted and none of them carries an operation id;
+  - `mode-set` without a mode is refused;
+  - `LatestOwnerCommand` ignores all three: after an `approve` with a wrong code, a `mode` keeps `owner-command-rejected`;
+  - `PreviewMode` returns the latest `mode-set`, honors `since`, and ignores another pull.
+- `approval_receipts` is written with its `pr_commands` entry or not at all, and refuses `run_state = 'none'` with a job and a job without one.
+
 ## Cycle start (M1.7c; normative)
 
 **`internal/application/githubsync`.**
@@ -1239,7 +1391,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b, `00018` the cycle start in M1.7c, `00019` the suggest dispositions in M1.9, `00020` the other-pull disposition)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b, `00018` the cycle start in M1.7c, `00019` the suggest dispositions in M1.9, `00020` the other-pull disposition, `00021` execution in M2.1)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |
@@ -1258,13 +1410,18 @@ Property every reconstitution test must check: state produced by domain operatio
 | `owner_enrollment` (M1.5) | singleton | replaced by `setup` | generation, account_id, login, secret bytea (20 bytes), tier, policy_revision_id, enrolled_at |
 | `owner_test_checks` (M1.5) | (repository_id, policy_revision_id) | insert-only | project_id, repo, test_check; FK to `policies` |
 | `totp_consumed_steps` (M1.5) | (account_id, step) | insert-only, no delete | consumed_at, source_command_id (M1.6a: the command that used the step; `setup:<generation>` for setup) |
-| `pr_commands` (M1.6a) | (repository_id, comment_id) | insert-only | pull_number, author_id, created_at, body_digest, disposition (codes), operation_id (exactly when `processed`), decided_at |
+| `pr_commands` (M1.6a) | (repository_id, comment_id) | insert-only | pull_number, author_id, created_at, body_digest, disposition (codes), operation_id (exactly when `processed`), decided_at; M2.1: mode (`fix`, `feature`, `refactor`, when the command carried one) |
 | `suiteward_instance` (M1.6a) | singleton | immutable | instance_id (32 lowercase hex, random) |
 | `pr_checks` (M1.6b) | (repository_id, pull_number) | current state, updated in place; no delete, no truncate | head_sha, head_since, state (`success`, `in_progress`, `failure`), reason, reference, change, revision, command_id, generation, message_key, decided_at |
 | `pr_merges` (M1.7) | (project_id, suite_id, carrier) | immutable | kind, reason, source, version_id (nullable since M1.7b: empty exactly for `blocked` and `before-canonical` decided without a canonical), corrects_version_id, proposal_id, revision_id, recorded_at |
 | `canonical_integrity` (M1.7) | (project_id, suite_id) | latest verdict, replaced (`unavailable` never replaces `failed` for one version) | version_id, verdict (`passed`, `failed`, `unavailable`), checked_at |
 | `github_protection_results` (M1.5) | repository_id | latest result, replaced | result, findings text[], caveats text[], checked_at |
 | `github_comment_versions` (M1.4) | (repo, comment_id, updated_at, body_digest) | insert-only except `not_seen_since`, by trigger; no delete | pull_number, author_id, author_login, created_at, body bytea, body_digest (checked against the bytes), first_seen, not_seen_since |
+| `execution_jobs` (M2.1) | job_id (identity); unique job_key among jobs that are not `cancelled` | open jobs change by guard trigger (state, lease, attempts); final rows never change; no delete, no truncate | repository_id, pull_number, plan (`canonical`, `receipt`), profile, head_sha, base_sha, governing_digest, governing_source, declaration_digest, canonical_level, receipt_level, state, reason, attempts, lease_id, lease_expires_at, leased_at, deadline_at, created_at, finished_at |
+| `execution_results` (M2.1) | job_id | insert-only | status, reason, executor_version, executor_sha256, image_digest, toolchain, started_at, ended_at, received_at, body_digest, markers jsonb, unapproved_paths, submodules |
+| `execution_tests` (M2.1) | (job_id, package, name) | insert-only | file, kind, excluded_reason, head_runs, base_runs, state |
+| `pr_receipt_checks` (M2.1) | (repository_id, pull_number) | current state, updated in place; no delete, no truncate | head_sha, head_since, state (`success`, `in_progress`, `failure`, `neutral`), reason, reference, job_id, generation, message_key, decided_at |
+| `approval_receipts` (M2.1) | (repository_id, comment_id) | insert-only | head_sha, receipt_level, run_state, job_id, summary, decided_at |
 
 River's own tables (`river_job` and the rest) are created by vendored goose migrations and owned by River.
 

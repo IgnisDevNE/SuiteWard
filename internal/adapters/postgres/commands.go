@@ -63,21 +63,28 @@ func (s *Store) Record(ctx context.Context, e commands.Entry, ack *governance.Ou
 		return err
 	}
 	return inTx(ctx, s.pool, "command ledger", func(transaction pgx.Tx) error {
-		q := dbgen.New(transaction)
-		inserted, err := q.InsertPRCommand(ctx, dbgen.InsertPRCommandParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID, PullNumber: pull,
-			AuthorID: e.AuthorID, CreatedAt: timestamp(e.CreatedAt), BodyDigest: e.BodyDigest.String(), Disposition: string(e.Disposition),
-			OperationID: optionalText(string(e.Operation)), DecidedAt: timestamp(e.DecidedAt)})
-		if err != nil {
-			return fmt.Errorf("write command ledger entry: %w", err)
-		}
-		if inserted == 0 {
-			return sameEntry(ctx, q, e, pull)
-		}
-		if ack != nil {
-			return insertOutbox(ctx, q, pgtype.Text{}, pgtype.Text{}, *ack)
-		}
-		return nil
+		_, err := recordEntry(ctx, dbgen.New(transaction), e, pull, ack)
+		return err
 	})
+}
+
+// recordEntry writes the ledger row and then the acknowledgment through q, in the transaction of the caller, and reports whether
+// the entry is new. An entry that already exists is compared with e: the same one is success and writes nothing, another is
+// commands.ErrConflict.
+func recordEntry(ctx context.Context, q *dbgen.Queries, e commands.Entry, pull int32, ack *governance.OutboxMessage) (bool, error) {
+	inserted, err := q.InsertPRCommand(ctx, dbgen.InsertPRCommandParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID, PullNumber: pull,
+		AuthorID: e.AuthorID, CreatedAt: timestamp(e.CreatedAt), BodyDigest: e.BodyDigest.String(), Disposition: string(e.Disposition),
+		OperationID: optionalText(string(e.Operation)), Mode: optionalText(e.Mode), DecidedAt: timestamp(e.DecidedAt)})
+	if err != nil {
+		return false, fmt.Errorf("write command ledger entry: %w", err)
+	}
+	if inserted == 0 {
+		return false, sameEntry(ctx, q, e, pull)
+	}
+	if ack != nil {
+		return true, insertOutbox(ctx, q, pgtype.Text{}, pgtype.Text{}, *ack)
+	}
+	return true, nil
 }
 
 // sameEntry is nil when the stored entry of e's comment is e, and commands.ErrConflict when it is another.
@@ -87,7 +94,8 @@ func sameEntry(ctx context.Context, q *dbgen.Queries, e commands.Entry, pull int
 		return fmt.Errorf("read command ledger entry: %w", err)
 	}
 	if row.PullNumber != pull || row.AuthorID != e.AuthorID || !observedTime(row.CreatedAt).Equal(e.CreatedAt) || row.BodyDigest != e.BodyDigest.String() ||
-		row.Disposition != string(e.Disposition) || contract.OperationID(row.OperationID.String) != e.Operation || !observedTime(row.DecidedAt).Equal(e.DecidedAt) {
+		row.Disposition != string(e.Disposition) || contract.OperationID(row.OperationID.String) != e.Operation || row.Mode.String != e.Mode ||
+		!observedTime(row.DecidedAt).Equal(e.DecidedAt) {
 		return fmt.Errorf("%w: comment %d of repository %d", commands.ErrConflict, e.CommentID, e.RepositoryID)
 	}
 	return nil
@@ -114,7 +122,8 @@ func (s *Store) LatestOwnerCommand(ctx context.Context, repositoryID int64, pull
 		return commands.Entry{}, false, fmt.Errorf("read ledger entry %d: stored digest: %w", row.CommentID, err)
 	}
 	return commands.Entry{RepositoryID: row.RepositoryID, CommentID: row.CommentID, PullNumber: int(row.PullNumber), AuthorID: row.AuthorID, CreatedAt: observedTime(row.CreatedAt),
-		BodyDigest: digest, Disposition: commands.Disposition(row.Disposition), Operation: contract.OperationID(row.OperationID.String), DecidedAt: observedTime(row.DecidedAt)}, true, nil
+		BodyDigest: digest, Disposition: commands.Disposition(row.Disposition), Operation: contract.OperationID(row.OperationID.String), Mode: row.Mode.String,
+		DecidedAt: observedTime(row.DecidedAt)}, true, nil
 }
 
 // Skipped implements commands.Store.
@@ -134,8 +143,22 @@ func (s *Store) Skipped(ctx context.Context, repositoryID int64, pull int, since
 }
 
 // PreviewMode implements commands.Store.
-func (s *Store) PreviewMode(context.Context, int64, int, time.Time) (string, bool, error) {
-	return "", false, nil
+func (s *Store) PreviewMode(ctx context.Context, repositoryID int64, pull int, since time.Time) (string, bool, error) {
+	if err := commands.ValidatePreview(repositoryID, pull); err != nil {
+		return "", false, err
+	}
+	number, err := int32Of(pull)
+	if err != nil {
+		return "", false, err
+	}
+	mode, err := dbgen.New(s.pool).PreviewMode(ctx, dbgen.PreviewModeParams{RepositoryID: repositoryID, PullNumber: number, Since: timestamp(since)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("read the preview mode: %w", err)
+	}
+	return mode.String, true, nil
 }
 
 // Instance implements commands.Store.

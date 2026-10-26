@@ -148,7 +148,6 @@ func TestExecutionJobConstraints(t *testing.T) {
 		{"deadline on a pending job", "23514", "execution_jobs_leased_check", map[string]any{"deadline_at": execAt}},
 		{"finish time on a pending job", "23514", "execution_jobs_finished_check", map[string]any{"finished_at": execAt}},
 		{"unavailable without a finish time", "23514", "execution_jobs_finished_check", map[string]any{"state": "unavailable", "reason": "executor-not-configured"}},
-		{"unavailable with a reason of its own that is not a code", "23514", "execution_jobs_reason_check", map[string]any{"state": "unavailable", "reason": "bogus", "finished_at": execAt}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			inRolledBackTransaction(t, database, func(tx pgx.Tx) {
@@ -219,6 +218,11 @@ func TestExecutionJobGuards(t *testing.T) {
 		{"unavailable to its own reason", toUnavailable, "UPDATE execution_jobs SET reason = 'executor-not-configured'", "execution_jobs_final"},
 		{"cancelled to pending", toCancelled, "UPDATE execution_jobs SET state = 'pending', reason = NULL, finished_at = NULL", "execution_jobs_final"},
 		{"cancelled with no change", toCancelled, "UPDATE execution_jobs SET job_key = job_key", "execution_jobs_final"},
+		{"pending to leased with a lease id that is not hexadecimal", nil, "UPDATE execution_jobs SET " + strings.Replace(lease, execLease(1), "not-a-lease", 1), "execution_jobs_lease_id_check"},
+		{"pending to unavailable for a reason that is no code", nil, "UPDATE execution_jobs SET state = 'unavailable', reason = 'bogus', finished_at = '" + execAt + "'", "execution_jobs_reason_check"},
+		{"pending to cancelled for a reason of unavailable", nil, "UPDATE execution_jobs SET state = 'cancelled', reason = 'no-executor', finished_at = '" + execAt + "'", "execution_jobs_reason_check"},
+		{"leased to unavailable without a reason", toLeased, "UPDATE execution_jobs SET state = 'unavailable', reason = NULL, lease_expires_at = NULL, deadline_at = NULL, finished_at = '" + execAt + "'",
+			"execution_jobs_reason_check"},
 		{"a new key", nil, "UPDATE execution_jobs SET job_key = '" + execKey(9) + "'", "execution_jobs_identity"},
 		{"a new repository", nil, "UPDATE execution_jobs SET repository_id = 11", "execution_jobs_identity"},
 		{"a new pull", nil, "UPDATE execution_jobs SET pull_number = 2", "execution_jobs_identity"},

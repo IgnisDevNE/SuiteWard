@@ -59,6 +59,18 @@ func (ns NullRiverJobState) Value() (driver.Value, error) {
 	return string(ns.RiverJobState), nil
 }
 
+type ApprovalReceipt struct {
+	RepositoryID int64
+	CommentID    int64
+	HeadSha      string
+	ReceiptLevel string
+	RunState     string
+	JobID        pgtype.Int8
+	Summary      pgtype.Text
+	Unblocked    bool
+	DecidedAt    pgtype.Timestamptz
+}
+
 type Assessment struct {
 	ProjectID          string
 	SuiteID            string
@@ -94,6 +106,76 @@ type ConsentResult struct {
 	Outcome         string
 	Reason          string
 	Seq             int64
+}
+
+type ExecutionJob struct {
+	JobID             int64
+	JobKey            string
+	RepositoryID      int64
+	PullNumber        int32
+	Plan              string
+	Profile           string
+	HeadSha           string
+	BaseSha           pgtype.Text
+	GoverningDigest   string
+	GoverningSource   string
+	DeclarationDigest string
+	CanonicalLevel    string
+	ReceiptLevel      string
+	UnapprovedPaths   []string
+	ChangedPaths      []string
+	ChangedTotal      int32
+	State             string
+	Reason            pgtype.Text
+	Attempts          int32
+	Failures          int32
+	GithubSince       pgtype.Timestamptz
+	NotBefore         pgtype.Timestamptz
+	LeaseID           pgtype.Text
+	LeaseExpiresAt    pgtype.Timestamptz
+	LeasedAt          pgtype.Timestamptz
+	DeadlineAt        pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+}
+
+type ExecutionResult struct {
+	JobID           int64
+	Status          string
+	Origin          string
+	Reason          pgtype.Text
+	ExecutorVersion pgtype.Text
+	ExecutorSha256  pgtype.Text
+	ImageDigest     pgtype.Text
+	Toolchain       pgtype.Text
+	Runtime         pgtype.Text
+	StartedAt       pgtype.Timestamptz
+	EndedAt         pgtype.Timestamptz
+	ReceivedAt      pgtype.Timestamptz
+	BodyDigest      pgtype.Text
+	Markers         []byte
+	Submodules      []string
+}
+
+type ExecutionTest struct {
+	JobID          int64
+	Package        string
+	Name           string
+	File           string
+	Kind           string
+	ExcludedReason pgtype.Text
+	HeadRuns       []string
+	BaseRuns       []string
+	State          string
+}
+
+type ExecutionUnblock struct {
+	RepositoryID int64
+	CommentID    int64
+	JobID        int64
+	PullNumber   int32
+	HeadSha      string
+	DecidedAt    pgtype.Timestamptz
 }
 
 type GithubCommentVersion struct {
@@ -224,6 +306,7 @@ type PrCommand struct {
 	Disposition  string
 	OperationID  pgtype.Text
 	DecidedAt    pgtype.Timestamptz
+	Mode         pgtype.Text
 }
 
 type PrMerge struct {
@@ -238,6 +321,21 @@ type PrMerge struct {
 	ProposalID        pgtype.Text
 	RevisionID        pgtype.Text
 	RecordedAt        pgtype.Timestamptz
+}
+
+type PrReceiptCheck struct {
+	RepositoryID int64
+	PullNumber   int32
+	HeadSha      string
+	HeadSince    pgtype.Timestamptz
+	State        string
+	Reason       string
+	Reference    string
+	JobID        int64
+	Unblocked    bool
+	Generation   int64
+	MessageKey   string
+	DecidedAt    pgtype.Timestamptz
 }
 
 type Promotion struct {

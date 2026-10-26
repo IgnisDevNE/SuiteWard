@@ -146,7 +146,8 @@ func (c ReceiptCounts) judgeRefactor() ModeSummary {
 //   - off and advisory never refuse.
 //   - before-approval refuses only while the receipt is pending: an unavailable one does not refuse, whatever the tests say.
 //   - required refuses unless the receipt is complete, the approve carries a mode, and the summary of that mode is met.
-//   - A receipt that is not applicable never refuses, and the approve needs no mode.
+//   - A receipt that is not applicable, or complete with no evaluated test (empty, or nothing but EXCLUDED tests), never
+//     refuses, and the approve needs no mode. A mode that is given must still be one.
 //   - unblocked is the owner's /suiteward unblock for the head. It lifts an unavailable receipt under required: there is
 //     nothing to judge, so the approve goes through with or without a mode. It never lifts a pending receipt, or a summary
 //     that is not met.
@@ -184,11 +185,11 @@ func (c ReceiptCounts) approveRequired(status RunStatus, mode Mode, unblocked bo
 		if !unblocked {
 			return ReasonReceiptUnavailable, nil
 		}
-		if mode == ModeNone {
-			return ReasonNone, nil // there is nothing to judge, so the approve needs no mode
-		}
-		return modeGiven(mode) // a mode that is given must still be one
+		return ReasonNone, checkMode(mode) // there is nothing to judge, so the approve needs no mode
 	case RunComplete:
+		if c.Evaluated() == 0 {
+			return ReasonNone, checkMode(mode) // an empty receipt, or one of nothing but EXCLUDED tests, has nothing to judge either
+		}
 		if reason, err := modeGiven(mode); err != nil || reason != ReasonNone {
 			return reason, err
 		}
@@ -201,15 +202,20 @@ func (c ReceiptCounts) approveRequired(status RunStatus, mode Mode, unblocked bo
 	return ReasonNone, fmt.Errorf("%w: %d", ErrInvalidRunStatus, status)
 }
 
+// checkMode refuses a value that is neither ModeNone nor a mode.
+func checkMode(mode Mode) error {
+	if _, ok := modeNames[mode]; !ok && mode != ModeNone {
+		return fmt.Errorf("%w: %d", ErrInvalidMode, mode)
+	}
+	return nil
+}
+
 // modeGiven is ReasonModeRequired when the approve carries no mode, and an error for a value that is not a mode.
 func modeGiven(mode Mode) (Reason, error) {
 	if mode == ModeNone {
 		return ReasonModeRequired, nil
 	}
-	if _, ok := modeNames[mode]; !ok {
-		return ReasonNone, fmt.Errorf("%w: %d", ErrInvalidMode, mode)
-	}
-	return ReasonNone, nil
+	return ReasonNone, checkMode(mode)
 }
 
 // CheckGate decides whether the canonical run of the current head lets the Contract check pass; the reason is none when
@@ -261,11 +267,10 @@ var conclusionNames = map[Conclusion]string{
 	ConclusionSuccess:    "success",
 	ConclusionFailure:    "failure",
 	ConclusionNeutral:    "neutral",
-	ConclusionNone:       "none",
 }
 
-// String returns the name GitHub gives the status or conclusion ("none" for ConclusionNone, which GitHub does not know),
-// or empty for a value that is not a conclusion.
+// String returns the name GitHub gives the status or conclusion; ConclusionNone has none, so that no caller can send one to GitHub.
+// It is empty for ConclusionNone and for a value that is not a conclusion.
 func (c Conclusion) String() string { return conclusionNames[c] }
 
 // ReceiptConclusion is the conclusion of the Receipt check: in progress while the receipt is pending, neutral when it is

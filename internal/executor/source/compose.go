@@ -8,6 +8,7 @@ import (
 	"maps"
 	"path"
 	"slices"
+	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
@@ -19,6 +20,13 @@ const (
 	executableMode = 0o755
 	symlinkMode    = 0o777
 )
+
+// TreeDir is the directory of the sandbox's /work that holds the tree: Compose writes every tree entry below it, so that go's own state (the
+// module proxy, the caches) lives beside the tree and not in it. The Appender's names are relative to /work and never lie in it. A caller
+// that runs the tests of a package of the tree takes TreeDir + "/" + the directory of the package as its work directory.
+const TreeDir = "src"
+
+func inTree(name string) string { return TreeDir + "/" + name }
 
 // plan is the files of a composed tree by where their bytes come from.
 type plan struct {
@@ -64,10 +72,10 @@ type composer struct {
 	limits Limits
 	total  int64
 	files  []execution.ExtractedFile // what was written, for the check of the composed tree
-	paths  map[string]bool
 }
 
-// Compose writes to w the uncompressed tar of exactly the files of tree, which the domain's tree functions produce, and returns the
+// Compose writes to w the uncompressed tar of exactly the files of tree, which the domain's tree functions produce, each below
+// TreeDir (the links of the tree stay inside it: its root is their boundary), and returns the
 // Appender that adds the module files to the same tar. The files of the head and the base come from their archive streams, which
 // are opened for the sides the tree uses only; each is checked against the tree entries of its side (the blob SHA-1, from the size
 // in the tar header) and against the SHA-256 that the plan expects, while it is copied. The files of the manifest come from files,
@@ -87,7 +95,7 @@ func Compose(ctx context.Context, w io.Writer, tree []execution.TreeFile, archiv
 	if err != nil {
 		return nil, err
 	}
-	c := &composer{tw: tar.NewWriter(w), limits: l, paths: map[string]bool{}}
+	c := &composer{tw: tar.NewWriter(w), limits: l}
 	for _, side := range []Side{SideHead, SideBase} {
 		if want := p.archives[side]; len(want) > 0 {
 			if err := c.fromArchive(ctx, archives, side, want, entries[side]); err != nil {
@@ -177,7 +185,7 @@ func (c *composer) copyEntry(e entry, f execution.TreeFile, te execution.TreeEnt
 		if execution.BlobSHA1([]byte(e.target)) != te.BlobSHA1 || artifact.Hash([]byte(e.target)) != f.Content {
 			return mismatch("the symlink %q is not the tree's", e.path)
 		}
-		if err := c.tw.WriteHeader(&tar.Header{Name: e.path, Typeflag: tar.TypeSymlink, Linkname: e.target, Mode: symlinkMode}); err != nil {
+		if err := c.tw.WriteHeader(&tar.Header{Name: inTree(e.path), Typeflag: tar.TypeSymlink, Linkname: e.target, Mode: symlinkMode}); err != nil {
 			return err
 		}
 		c.record(execution.ExtractedFile{Path: e.path, Mode: execution.GitSymlink, Target: e.target}, 0)
@@ -187,7 +195,7 @@ func (c *composer) copyEntry(e entry, f execution.TreeFile, te execution.TreeEnt
 	if e.exec {
 		mode, gitMode = executableMode, execution.GitExecutable
 	}
-	if err := c.tw.WriteHeader(&tar.Header{Name: e.path, Typeflag: tar.TypeReg, Mode: mode, Size: e.size}); err != nil {
+	if err := c.tw.WriteHeader(&tar.Header{Name: inTree(e.path), Typeflag: tar.TypeReg, Mode: mode, Size: e.size}); err != nil {
 		return err
 	}
 	blob, content, err := digests(c.tw, e)
@@ -231,7 +239,7 @@ func (c *composer) fromManifest(ctx context.Context, files FileOpener, f executi
 	if headMode == execution.GitExecutable {
 		mode, gitMode = executableMode, execution.GitExecutable
 	}
-	if err := c.tw.WriteHeader(&tar.Header{Name: f.Path, Typeflag: tar.TypeReg, Mode: mode, Size: int64(len(data))}); err != nil {
+	if err := c.tw.WriteHeader(&tar.Header{Name: inTree(f.Path), Typeflag: tar.TypeReg, Mode: mode, Size: int64(len(data))}); err != nil {
 		return err
 	}
 	if _, err := c.tw.Write(data); err != nil {
@@ -251,7 +259,6 @@ func (c *composer) reserve(name string, size int64) error {
 
 func (c *composer) record(f execution.ExtractedFile, size int64) {
 	c.files = append(c.files, f)
-	c.paths[f.Path] = true
 	c.total += size
 }
 
@@ -275,16 +282,13 @@ func (c *composer) checkLinks() error {
 // against the same budget as the tree. An Appender is for one goroutine.
 type Appender struct {
 	c      *composer
-	dirs   map[string]bool // the directories of the files so far
+	paths  map[string]bool // the files added so far
+	dirs   map[string]bool // and their directories
 	closed bool
 }
 
 func newAppender(c *composer) *Appender {
-	a := &Appender{c: c, dirs: map[string]bool{}}
-	for p := range c.paths {
-		a.markDirs(p)
-	}
-	return a
+	return &Appender{c: c, paths: map[string]bool{}, dirs: map[string]bool{}}
 }
 
 func (a *Appender) markDirs(name string) {
@@ -293,21 +297,22 @@ func (a *Appender) markDirs(name string) {
 	}
 }
 
-// conflicts reports a name that is a file or a directory of the tar already, or that lies below a file of it.
+// conflicts reports a name that is the tree directory or lies in it, or that is a file or a directory of the files added already, or
+// lies below one of them. The files of the tree are all below TreeDir, so no other name can meet them.
 func (a *Appender) conflicts(name string) bool {
-	if a.c.paths[name] || a.dirs[name] {
+	if name == TreeDir || strings.HasPrefix(name, TreeDir+"/") || a.paths[name] || a.dirs[name] {
 		return true
 	}
 	for dir := path.Dir(name); dir != "."; dir = path.Dir(dir) {
-		if a.c.paths[dir] {
+		if a.paths[dir] {
 			return true
 		}
 	}
 	return false
 }
 
-// Add writes the file name of exactly size bytes, read from r. The name is a clean relative path that no file of the tar has, is
-// below or is the directory of. A file that would pass the budget is ErrTooLarge and is not written, and a name or a size that
+// Add writes the file name of exactly size bytes, read from r. The name is a clean relative path to /work that is not TreeDir or
+// below it, and that no file added before has, is below or is the directory of. A file that would pass the budget is ErrTooLarge and is not written, and a name or a size that
 // cannot be written is ErrInvalidPlan, also before anything is written. After any other error the tar is not to be used.
 func (a *Appender) Add(name string, size int64, r io.Reader) error {
 	switch {
@@ -332,7 +337,7 @@ func (a *Appender) Add(name string, size int64, r io.Reader) error {
 	if _, err := io.CopyN(io.Discard, r, 1); err == nil {
 		return fmt.Errorf("%w: %q has more than the %d bytes it declared", ErrInvalidPlan, name, size)
 	}
-	a.c.paths[name] = true
+	a.paths[name] = true
 	a.c.total += size
 	a.markDirs(name)
 	return nil

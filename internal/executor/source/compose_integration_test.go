@@ -85,8 +85,8 @@ func TestTheComposedTarIsExtractedByTheSandbox(t *testing.T) {
 		files:  files,
 		limits: generous,
 	}
-	script := `cat a.go; stat -c %a bin/run.sh; readlink lnk; cat "$1"; cat .suiteward.yml; cat proxy/m/@v/v1.zip; echo; ./bin/run.sh`
-	stdin := pipeCompose(c, t, map[string]string{"proxy/m/@v/v1.zip": "zipbytes"})
+	script := `cat a.go; stat -c %a bin/run.sh; readlink lnk; cat "$1"; cat .suiteward.yml; cat ../.suiteward/proxy/m/@v/v1.zip; echo; ./bin/run.sh`
+	stdin := pipeCompose(c, t, map[string]string{".suiteward/proxy/m/@v/v1.zip": "zipbytes"})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	out, err := rt.Run(ctx, sandboxSpec(t, stdin, "sh", "-c", script, "sh", long))

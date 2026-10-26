@@ -34,6 +34,22 @@ const (
 // ("." for the root), Name the function and File the declaring file, a slash path relative to the root.
 type TestID struct{ Package, Name, File string }
 
-// Declared is what a tree declares: the tests the sandbox can run, and the ones it cannot (the build context leaves
-// their file out), which are listed and never run.
-type Declared struct{ Tests, Excluded []TestID }
+// The reasons that a declared test is excluded: the build context leaves its file out (a constraint, or a name for
+// another system), or its file is under a directory with a go.mod of its own, which the module's invocation cannot reach.
+const (
+	ReasonBuildConstraint = "build-constraint"
+	ReasonNestedModule    = "nested-module"
+)
+
+// ExcludedTest is a declared test that the sandbox does not run, and why.
+type ExcludedTest struct {
+	TestID
+	Reason string
+}
+
+// Declared is what a tree declares: the tests the sandbox can run, and the ones it cannot, which are listed with their
+// reason and never run.
+type Declared struct {
+	Tests    []TestID
+	Excluded []ExcludedTest
+}

@@ -47,7 +47,7 @@ func DeclaredTests(files map[string][]byte, goarch string) (Declared, error) {
 		if d.runnable {
 			declared.Tests = append(declared.Tests, d.id)
 		} else {
-			declared.Excluded = append(declared.Excluded, d.id)
+			declared.Excluded = append(declared.Excluded, ExcludedTest{TestID: d.id})
 		}
 	}
 	return declared, nil

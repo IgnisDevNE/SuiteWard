@@ -1,9 +1,11 @@
 package goprofile
 
 import (
+	"maps"
 	"path"
 	"slices"
 	"testing"
+	"time"
 )
 
 const header = "package p\n\nimport \"testing\"\n\n"
@@ -23,6 +25,22 @@ func sameIDs(t *testing.T, what string, got, want []TestID) {
 	if !slices.Equal(got, want) {
 		t.Errorf("%s:\n got %v\nwant %v", what, got, want)
 	}
+}
+
+func excludedIDs(excluded []ExcludedTest) []TestID {
+	var ids []TestID
+	for _, e := range excluded {
+		ids = append(ids, e.TestID)
+	}
+	return ids
+}
+
+func reasons(excluded []ExcludedTest) map[string]string {
+	out := map[string]string{}
+	for _, e := range excluded {
+		out[e.Name] = e.Reason
+	}
+	return out
 }
 
 func TestDeclaredTestsAreTheTopLevelFunctionsOfTheTestingSignature(t *testing.T) {
@@ -61,7 +79,7 @@ type suite struct{}
 		idOf(file, "Test"), idOf(file, "TestBlank"), idOf(file, "TestMainLike"), idOf(file, "TestOne"), idOf(file, "TestTwo"),
 		idOf(file, "TestUnnamed"), idOf(file, "Test_underscore"), idOf(file, "TestÉcole"),
 	})
-	sameIDs(t, "excluded", declared.Excluded, nil)
+	sameIDs(t, "excluded", excludedIDs(declared.Excluded), nil)
 }
 
 func TestDeclaredTestsReadTheSignatureThroughTheImportName(t *testing.T) {
@@ -112,8 +130,13 @@ func TestDeclaredTestsFollowTheBuildContextOfTheSandbox(t *testing.T) {
 		if got, want := names(declared.Tests), slices.Sorted(slices.Values(append([]string{arch[0]}, always...))); !slices.Equal(got, want) {
 			t.Errorf("%s tests: got %v want %v", goarch, got, want)
 		}
-		if got, want := names(declared.Excluded), slices.Sorted(slices.Values(append([]string{arch[1]}, never...))); !slices.Equal(got, want) {
+		if got, want := names(excludedIDs(declared.Excluded)), slices.Sorted(slices.Values(append([]string{arch[1]}, never...))); !slices.Equal(got, want) {
 			t.Errorf("%s excluded: got %v want %v", goarch, got, want)
+		}
+		for name, reason := range reasons(declared.Excluded) {
+			if reason != ReasonBuildConstraint {
+				t.Errorf("%s: %s is excluded for %q", goarch, name, reason)
+			}
 		}
 	}
 }
@@ -134,7 +157,7 @@ func TestDeclaredTestsListANameOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	sameIDs(t, "tests", declared.Tests, []TestID{idOf("p/path_linux_test.go", "TestPath"), idOf("q/dup_test.go", "TestDup")})
-	sameIDs(t, "excluded", declared.Excluded, []TestID{idOf("r/e_darwin_test.go", "TestElsewhere")})
+	sameIDs(t, "excluded", excludedIDs(declared.Excluded), []TestID{idOf("r/e_darwin_test.go", "TestElsewhere")})
 }
 
 func TestDeclaredTestsRefuseAFileThatDoesNotParse(t *testing.T) {
@@ -180,7 +203,7 @@ func TestDeclaredTestsSkipWhatGoDoesNotBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	sameIDs(t, "tests", declared.Tests, []TestID{idOf("a/testdata_helpers_test.go", "TestRealOne")})
-	sameIDs(t, "excluded", declared.Excluded, nil)
+	sameIDs(t, "excluded", excludedIDs(declared.Excluded), nil)
 }
 
 func TestDeclaredTestsNamePackagesByDirectoryFromTheRoot(t *testing.T) {
@@ -309,5 +332,95 @@ func TestChangedTestsRefuseAFileThatDoesNotParse(t *testing.T) {
 	}
 	if _, _, err := ChangedTests(good, bad, "amd64"); err == nil {
 		t.Error("a canonical that does not parse was not an error")
+	}
+}
+
+// A directory with a go.mod of its own is another module: the invocation of the root module cannot name its packages,
+// so its tests are excluded, whatever else leaves them out. The go.mod files of the tree are among files.
+func TestDeclaredTestsExcludeWhatLivesUnderANestedModule(t *testing.T) {
+	files := map[string][]byte{
+		"go.mod":                    []byte("module example.com/root\n"),
+		"root_test.go":              src("func TestRoot(t *testing.T) {}\n"),
+		"a/a_test.go":               src("func TestA(t *testing.T) {}\n"),
+		"a/go.mod.txt":              []byte("not a module file"),
+		"pkg/vgo.mod":               []byte("not a module file"),
+		"pkg/p_test.go":             src("func TestPkg(t *testing.T) {}\n"),
+		"a/b/go.mod":                []byte("module example.com/b\n"),
+		"a/b/b_test.go":             src("func TestB(t *testing.T) {}\n"),
+		"nested/go.mod":             []byte("module example.com/nested\n"),
+		"nested/n_test.go":          src("func TestN(t *testing.T) {}\n"),
+		"nested/deep/er/d_test.go":  src("func TestDeep(t *testing.T) {}\n"),
+		"nested/w_windows_test.go":  src("func TestNestedAndWindows(t *testing.T) {}\n"),
+		"other/o_windows_test.go":   src("func TestWindowsOnly(t *testing.T) {}\n"),
+		"nested/testdata/t_test.go": src("func TestFixture(t *testing.T) {}\n"),
+		"nested/vendor/v/v_test.go": src("func TestVendored(t *testing.T) {}\n"),
+	}
+	declared, err := DeclaredTests(files, "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameIDs(t, "tests", declared.Tests, []TestID{
+		idOf("root_test.go", "TestRoot"), idOf("a/a_test.go", "TestA"), idOf("pkg/p_test.go", "TestPkg"),
+	})
+	want := map[string]string{
+		"TestB": ReasonNestedModule, "TestN": ReasonNestedModule, "TestDeep": ReasonNestedModule,
+		"TestNestedAndWindows": ReasonNestedModule, "TestWindowsOnly": ReasonBuildConstraint,
+	}
+	if got := reasons(declared.Excluded); !maps.Equal(got, want) {
+		t.Errorf("excluded:\n got %v\nwant %v", got, want)
+	}
+	// The files of a nested module's testdata and vendor are no test of any module.
+	for _, e := range declared.Excluded {
+		if e.Name == "TestFixture" || e.Name == "TestVendored" {
+			t.Errorf("%s is listed", e.Name)
+		}
+	}
+}
+
+// The tests that are run are the tests that are declared and not excluded: no package of a nested module reaches a
+// go test invocation.
+func TestNoPackageOfANestedModuleIsNamedInTheInvocation(t *testing.T) {
+	declared, err := DeclaredTests(map[string][]byte{
+		"a/a_test.go":      src("func TestA(t *testing.T) {}\n"),
+		"nested/go.mod":    []byte("module example.com/nested\n"),
+		"nested/n_test.go": src("func TestN(t *testing.T) {}\n"),
+	}, "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, _ := Command(declared.Tests, time.Minute, false)
+	if !slices.Contains(argv, "./a") || slices.Contains(argv, "./nested") {
+		t.Errorf("packages in %q", argv)
+	}
+	if !slices.Contains(argv, "^(TestA)$") {
+		t.Errorf("-run in %q", argv)
+	}
+}
+
+// ChangedTests lists the functions of excluded files too, a nested module's among them: the caller finds the reason in
+// DeclaredTests. A test whose module becomes nested in the head is the same text, so it is not changed.
+func TestChangedTestsSeeANestedModule(t *testing.T) {
+	canonical := map[string][]byte{"go.mod": []byte("module example.com/root\n"), "a/a_test.go": src("func TestA(t *testing.T) {}\n")}
+	head := map[string][]byte{
+		"go.mod":           []byte("module example.com/root\n"),
+		"a/go.mod":         []byte("module example.com/a\n"),
+		"a/a_test.go":      src("func TestA(t *testing.T) {}\n"),
+		"n/go.mod":         []byte("module example.com/n\n"),
+		"n/n_test.go":      src("func TestN(t *testing.T) {}\n"),
+		"n/sub/s_test.go":  src("func TestSub(t *testing.T) {}\n"),
+		"root_new_test.go": src("func TestNew(t *testing.T) {}\n"),
+	}
+	added, changed, err := ChangedTests(head, canonical, "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameIDs(t, "added", added, []TestID{idOf("root_new_test.go", "TestNew"), idOf("n/n_test.go", "TestN"), idOf("n/sub/s_test.go", "TestSub")})
+	sameIDs(t, "changed", changed, nil)
+	declared, err := DeclaredTests(head, "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := reasons(declared.Excluded), map[string]string{"TestA": ReasonNestedModule, "TestN": ReasonNestedModule, "TestSub": ReasonNestedModule}; !maps.Equal(got, want) {
+		t.Errorf("excluded: got %v want %v", got, want)
 	}
 }

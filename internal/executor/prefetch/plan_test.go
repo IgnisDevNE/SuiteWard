@@ -297,3 +297,37 @@ func TestPlanSideRefusalDoesNotEchoTheCandidateAtLength(t *testing.T) {
 		t.Errorf("the refusal is %d bytes long", len(err.Error()))
 	}
 }
+
+// go uses the target of a replace as it is, and never replaces it again: a module that is a target is fetched even when another replace
+// covers its path.
+func TestPlanSideFetchesTheTargetOfAReplaceEvenWhenAReplaceCoversItsPath(t *testing.T) {
+	for name, tc := range map[string]struct {
+		replaces []string
+		sum      []string
+		want     []string
+	}{
+		"a pin to a version of the same module": {
+			[]string{"replace example.com/x => example.com/x v1.2.3"},
+			[]string{"example.com/x v1.2.3", "example.com/x v1.2.3/go.mod", "example.com/x v1.0.0/go.mod"},
+			[]string{"example.com/x/@v/v1.2.3.mod", "example.com/x/@v/v1.2.3.zip"},
+		},
+		"a pin of one version, the other versions of the module as they are": {
+			[]string{"replace example.com/x v1.0.0 => example.com/x v1.2.3"},
+			[]string{"example.com/x v1.0.0/go.mod", "example.com/x v1.1.0/go.mod", "example.com/x v1.2.3", "example.com/x v1.2.3/go.mod"},
+			[]string{"example.com/x/@v/v1.1.0.mod", "example.com/x/@v/v1.2.3.mod", "example.com/x/@v/v1.2.3.zip"},
+		},
+		"a target that another replace covers": {
+			[]string{"replace example.com/a => example.com/b v1.0.0", "replace example.com/b => example.com/c v1.0.0"},
+			[]string{"example.com/a v1.0.0", "example.com/b v1.0.0", "example.com/b v1.0.0/go.mod", "example.com/b v1.5.0/go.mod", "example.com/c v1.0.0", "example.com/c v1.0.0/go.mod"},
+			[]string{"example.com/b/@v/v1.0.0.mod", "example.com/b/@v/v1.0.0.zip", "example.com/c/@v/v1.0.0.mod", "example.com/c/@v/v1.0.0.zip"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			plan, err := PlanSide(goModOf(tc.replaces...), goSumOf(tc.sum...), false, anyLimits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantNames(t, plan, tc.want...)
+		})
+	}
+}

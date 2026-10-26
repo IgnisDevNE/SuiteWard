@@ -160,6 +160,14 @@ func TestCheckSourceRefusesASymlinkThatLeavesTheTree(t *testing.T) {
 		"a loop":                      {link("a", "b"), link("b", "a")},
 		"a link to itself":            {link("a", "a")},
 		"more links than the cap":     {link("l1", "l2"), link("l2", "l3"), link("l3", "l4"), link("l4", "l5"), link("l5", "l6"), link("l6", "l7"), link("l7", "l8"), link("l8", "l9"), link("l9", "l10"), link("a", "l1")},
+		"a backslash target":          {link("a", `..\..\evil`)},
+		"a backslash inside a target": {link("a", `dir\b.go`)},
+		"a drive-letter target":       {link("a", "C:/x")},
+		"a colon in a target":         {link("a", "dir/b:stream")},
+		"a NUL in a target":           {link("a", "b\x00.go")},
+		"a backslash target mid-chain": {
+			link("a", "l/b.go"), link("l", `..\x`),
+		},
 		"an escape after a link":      {link("d/t", ".."), link("s", "d/t/..")},
 		"an escape through two links": {link("s/y", ".."), link("s/x", "y/../..")},
 	} {

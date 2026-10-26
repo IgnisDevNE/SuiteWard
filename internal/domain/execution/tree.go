@@ -74,37 +74,6 @@ func sortTree(tree []TreeFile) {
 	slices.SortFunc(tree, func(a, b TreeFile) int { return strings.Compare(a.Path, b.Path) })
 }
 
-// CanonicalTree is the tree of the canonical plan: the head with the governing manifest overlaid. Every head file matched
-// by the selection is replaced by the manifest file, and removed when the manifest lacks it; other head files are kept;
-// a manifest file the head lacks is added, whether or not the selection matches it. The files are in path order.
-func CanonicalTree(head, governing artifact.Manifest, sel Selection) ([]TreeFile, error) {
-	if err := refuseAbsent(head, governing); err != nil {
-		return nil, err
-	}
-	manifest := digestsOf(governing)
-	inHead := map[string]bool{}
-	var tree []TreeFile
-	for _, entry := range head.Entries() {
-		inHead[entry.Path] = true
-		matched, err := sel.Matches(entry.Path)
-		if err != nil {
-			return nil, err
-		}
-		if !matched {
-			tree = append(tree, TreeFile{Path: entry.Path, Content: entry.Content, Source: FromHead})
-		} else if digest, ok := manifest[entry.Path]; ok {
-			tree = append(tree, TreeFile{Path: entry.Path, Content: digest, Source: FromManifest})
-		}
-	}
-	for _, entry := range governing.Entries() {
-		if !inHead[entry.Path] {
-			tree = append(tree, TreeFile{Path: entry.Path, Content: entry.Content, Source: FromManifest})
-		}
-	}
-	sortTree(tree)
-	return tree, nil
-}
-
 // EvaluatedFiles lists the head files the receipt evaluates: those matched by the canonical selection whose bytes differ
 // from the governing manifest, or that the manifest lacks. They are added or changed relative to the canonical, not to the
 // merge base. The Go profile picks the tests within them. The paths are in path order.
@@ -126,39 +95,12 @@ func EvaluatedFiles(head, governing artifact.Manifest, sel Selection) ([]string,
 	return files, nil
 }
 
-// BaseSideTree is the tree of the receipt's base side: the base commit, with the head version of each file that holds an
-// evaluated test and nothing else from the head, so source, go.mod, go.sum, runner files and .suiteward.yml stay the
-// base's. A carried file must exist in the head and be matched by the canonical selection, or the tree is refused. The
-// files are in path order.
-func BaseSideTree(base, head artifact.Manifest, sel Selection, carried []string) ([]TreeFile, error) {
-	if err := refuseAbsent(base, head); err != nil {
-		return nil, err
-	}
-	headDigests := digestsOf(head)
-	fromHead := map[string]artifact.Digest{}
-	for _, path := range carried {
-		digest, ok := headDigests[path]
-		if !ok {
-			return nil, fmt.Errorf("%w: %q is not in the head", ErrInvalidTree, path)
-		}
-		matched, err := sel.Matches(path)
-		if err != nil {
-			return nil, err
-		}
-		if !matched {
-			return nil, fmt.Errorf("%w: %q is not matched by the canonical include", ErrInvalidTree, path)
-		}
-		fromHead[path] = digest
-	}
-	var tree []TreeFile
-	for _, entry := range base.Entries() {
-		if _, ok := fromHead[entry.Path]; !ok {
-			tree = append(tree, TreeFile{Path: entry.Path, Content: entry.Content, Source: FromBase})
-		}
-	}
-	for path, digest := range fromHead {
-		tree = append(tree, TreeFile{Path: path, Content: digest, Source: FromHead})
-	}
-	sortTree(tree)
-	return tree, nil
+// CanonicalTree is the tree of the canonical plan.
+func CanonicalTree(head, governing artifact.Manifest, governingScope scope.Scope) ([]TreeFile, error) {
+	return nil, errNotImplemented
+}
+
+// BaseSideTree is the tree of the receipt's base side.
+func BaseSideTree(base, head, expected artifact.Manifest, sel Selection) ([]TreeFile, error) {
+	return nil, errNotImplemented
 }

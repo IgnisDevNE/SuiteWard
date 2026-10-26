@@ -2,15 +2,15 @@
 {"ImportPath":"example.com/fx/nope","Action":"build-output","Output":"setup/setup_test.go:6:2: no required module provides package example.com/fx/nope; to add it:\n"}
 {"ImportPath":"example.com/fx/nope","Action":"build-output","Output":"\tgo get example.com/fx/nope\n"}
 {"ImportPath":"example.com/fx/nope","Action":"build-fail"}
-{"Time":"2026-10-26T22:10:55.78281571Z","Action":"start","Package":"example.com/fx/setup"}
-{"Time":"2026-10-26T22:10:55.782857018Z","Action":"output","Package":"example.com/fx/setup","Output":"FAIL\texample.com/fx/setup [setup failed]\n","OutputType":"frame"}
-{"Time":"2026-10-26T22:10:55.782903341Z","Action":"fail","Package":"example.com/fx/setup","Elapsed":0,"FailedBuild":"example.com/fx/nope"}
-{"Time":"2026-10-26T22:10:59.334967749Z","Action":"start","Package":"example.com/fx/good"}
-{"Time":"2026-10-26T22:10:59.336312786Z","Action":"output","Package":"example.com/fx/good","Output":"-test.shuffle 1793052659336266701\n"}
-{"Time":"2026-10-26T22:10:59.336377653Z","Action":"run","Package":"example.com/fx/good","Test":"TestGood"}
-{"Time":"2026-10-26T22:10:59.336380272Z","Action":"output","Package":"example.com/fx/good","Test":"TestGood","Output":"=== RUN   TestGood\n","OutputType":"frame"}
-{"Time":"2026-10-26T22:10:59.33643879Z","Action":"output","Package":"example.com/fx/good","Test":"TestGood","Output":"--- PASS: TestGood (0.00s)\n","OutputType":"frame"}
-{"Time":"2026-10-26T22:10:59.336452397Z","Action":"pass","Package":"example.com/fx/good","Test":"TestGood","Elapsed":0}
-{"Time":"2026-10-26T22:10:59.336457175Z","Action":"output","Package":"example.com/fx/good","Output":"PASS\n","OutputType":"frame"}
-{"Time":"2026-10-26T22:10:59.336833904Z","Action":"output","Package":"example.com/fx/good","Output":"ok  \texample.com/fx/good\t0.002s\n"}
-{"Time":"2026-10-26T22:10:59.336879035Z","Action":"pass","Package":"example.com/fx/good","Elapsed":0.002}
+{"Time":"2026-10-26T22:27:16.924720239Z","Action":"start","Package":"example.com/fx/setup"}
+{"Time":"2026-10-26T22:27:16.924745067Z","Action":"output","Package":"example.com/fx/setup","Output":"FAIL\texample.com/fx/setup [setup failed]\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:27:16.924755454Z","Action":"fail","Package":"example.com/fx/setup","Elapsed":0,"FailedBuild":"example.com/fx/nope"}
+{"Time":"2026-10-26T22:27:19.887935312Z","Action":"start","Package":"example.com/fx/good"}
+{"Time":"2026-10-26T22:27:19.889859409Z","Action":"output","Package":"example.com/fx/good","Output":"-test.shuffle 1793053639889809063\n"}
+{"Time":"2026-10-26T22:27:19.889967413Z","Action":"run","Package":"example.com/fx/good","Test":"TestGood"}
+{"Time":"2026-10-26T22:27:19.889999142Z","Action":"output","Package":"example.com/fx/good","Test":"TestGood","Output":"=== RUN   TestGood\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:27:19.890013847Z","Action":"output","Package":"example.com/fx/good","Test":"TestGood","Output":"--- PASS: TestGood (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:27:19.890017504Z","Action":"pass","Package":"example.com/fx/good","Test":"TestGood","Elapsed":0}
+{"Time":"2026-10-26T22:27:19.890022269Z","Action":"output","Package":"example.com/fx/good","Output":"PASS\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:27:19.890273667Z","Action":"output","Package":"example.com/fx/good","Output":"ok  \texample.com/fx/good\t0.002s\n"}
+{"Time":"2026-10-26T22:27:19.890307903Z","Action":"pass","Package":"example.com/fx/good","Elapsed":0.002}

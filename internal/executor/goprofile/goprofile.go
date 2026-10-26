@@ -3,10 +3,9 @@
 // and how the run's output becomes one observation per test. It runs nothing and reads no file.
 package goprofile
 
-import "errors"
-
-// Image is the Go image of every sandbox, pinned by digest. It is the builder image of deploy/Containerfile.
-const Image = ""
+// Image is the Go image of every sandbox, pinned by digest. It is the builder image of deploy/Containerfile, so the Go
+// that builds the release is the Go that runs the protected tests.
+const Image = "docker.io/library/golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd"
 
 // The directories of the sandbox's /work that go needs beside the repository, as tar entry names. The caller writes the
 // prefetched module proxy under ProxyDir and a placeholder file in HomeDir and in TmpDir: go stops when TMPDIR does not
@@ -24,5 +23,3 @@ type TestID struct{ Package, Name, File string }
 // Declared is what a tree declares: the tests the sandbox can run, and the ones it cannot (the build context leaves
 // their file out), which are listed and never run.
 type Declared struct{ Tests, Excluded []TestID }
-
-var errNotImplemented = errors.New("not implemented")

@@ -58,8 +58,9 @@ func wantObservations(t *testing.T, got, want map[TestID]execution.Observation) 
 	}
 }
 
-// Each fixture is the output of the invocation in its comment (the arguments are those of Command), with the exit
-// status that the container returned.
+// Each fixture is the output of the go test that its comment shows, which is what Command builds for the expected
+// tests (-json -count=1 -shuffle=on -timeout=1m0s unless the comment says more), run in the sandbox of Command, with the
+// exit status that the container returned. The shuffle is random: a fixture that depends on the order says so.
 func TestParseReadsRecordedGoTestOutput(t *testing.T) {
 	cases := []struct {
 		fixture  string
@@ -67,19 +68,19 @@ func TestParseReadsRecordedGoTestOutput(t *testing.T) {
 		expected []TestID
 		want     map[TestID]execution.Observation
 	}{
-		// -run '^(TestPass|TestFail|TestSkip|TestSub|TestSubFail|TestRootOK|TestGood|TestMissing)$' ./good . ./mixed
+		// -run '^(TestFail|TestGood|TestMissing|TestPass|TestRootOK|TestSkip|TestSub|TestSubFail)$' . ./good ./mixed
 		{"pass-fail-skip", 1,
 			[]TestID{at(".", "TestRootOK"), at("good", "TestGood"), at("mixed", "TestPass"), at("mixed", "TestFail"), at("mixed", "TestSkip"),
 				at("mixed", "TestSub"), at("mixed", "TestSubFail"), at("mixed", "TestMissing")},
 			map[TestID]execution.Observation{at(".", "TestRootOK"): pass, at("good", "TestGood"): pass, at("mixed", "TestPass"): pass,
 				at("mixed", "TestFail"): fail, at("mixed", "TestSkip"): skip, at("mixed", "TestSub"): pass, at("mixed", "TestSubFail"): fail,
 				at("mixed", "TestMissing"): absent}},
-		// -run '^(TestPass|TestSkip|TestSub|TestRootOK|TestGood)$' . ./good ./mixed
+		// -run '^(TestGood|TestPass|TestRootOK|TestSkip|TestSub)$' . ./good ./mixed
 		{"all-pass", 0,
 			[]TestID{at(".", "TestRootOK"), at("good", "TestGood"), at("mixed", "TestPass"), at("mixed", "TestSkip"), at("mixed", "TestSub")},
 			map[TestID]execution.Observation{at(".", "TestRootOK"): pass, at("good", "TestGood"): pass, at("mixed", "TestPass"): pass,
 				at("mixed", "TestSkip"): skip, at("mixed", "TestSub"): pass}},
-		// -run '^(TestGood|TestBroken|TestOnSource)$' ./broken ./brokensrc ./good: a compile error in a test file and in a source file
+		// -run '^(TestBroken|TestGood|TestOnSource)$' ./broken ./brokensrc ./good: a compile error in a test file and in a source file; TestNeverRan is expected too, and did not build with its package
 		{"build-error", 1,
 			[]TestID{at("good", "TestGood"), at("broken", "TestBroken"), at("broken", "TestNeverRan"), at("brokensrc", "TestOnSource")},
 			map[TestID]execution.Observation{at("good", "TestGood"): pass, at("broken", "TestBroken"): buildErr,
@@ -88,7 +89,7 @@ func TestParseReadsRecordedGoTestOutput(t *testing.T) {
 		{"dependency-build-error", 1,
 			[]TestID{at("good", "TestGood"), at("usesdep", "TestUse")},
 			map[TestID]execution.Observation{at("good", "TestGood"): pass, at("usesdep", "TestUse"): buildErr}},
-		// -run '^TestVet$' ./vet: go vet fails the build of the test binary
+		// -run '^(TestVet)$' ./vet: go vet fails the build of the test binary
 		{"vet", 1, []TestID{at("vet", "TestVet")}, map[TestID]execution.Observation{at("vet", "TestVet"): buildErr}},
 		// -run '^(TestGood|TestSetup)$' ./good ./setup: the package imports one that does not exist; FailedBuild names that one
 		{"setup-failed", 1,
@@ -98,19 +99,19 @@ func TestParseReadsRecordedGoTestOutput(t *testing.T) {
 		{"duplicate-name", 1,
 			[]TestID{at("dup", "TestDup"), at("dup", "TestOnlyInternal")},
 			map[TestID]execution.Observation{at("dup", "TestDup"): fail, at("dup", "TestOnlyInternal"): pass}},
-		// -run '^(TestAfter|TestPanic)$' ./panics: the panic stops the binary before TestAfter runs
+		// -run '^(TestAfter|TestPanic)$' ./panics: the panic stops the binary before TestAfter runs (the shuffled order put TestPanic first)
 		{"panic", 1,
 			[]TestID{at("panics", "TestPanic"), at("panics", "TestAfter")},
 			map[TestID]execution.Observation{at("panics", "TestPanic"): fail, at("panics", "TestAfter"): absent}},
-		// -timeout=2s -run '^(TestAfterHang|TestHang)$' ./hang: TestHang starts and never ends, and go test reports no result for it
+		// -timeout=2s -run '^(TestAfterHang|TestHang)$' ./hang: TestHang starts and never ends, and go test reports no result for it; the shuffled order put it first
 		{"timeout", 1,
 			[]TestID{at("hang", "TestHang"), at("hang", "TestAfterHang")},
 			map[TestID]execution.Observation{at("hang", "TestHang"): fail, at("hang", "TestAfterHang"): absent}},
-		// -run '^(TestExitZero|TestOther)$' ./exits: a test that calls os.Exit(0)
+		// -run '^(TestExitZero|TestOther)$' ./exits: a test that calls os.Exit(0); the shuffled order put TestOther first
 		{"exit-in-test", 1,
 			[]TestID{at("exits", "TestExitZero"), at("exits", "TestOther")},
 			map[TestID]execution.Observation{at("exits", "TestExitZero"): fail, at("exits", "TestOther"): pass}},
-		// -run '^TestNothing$' ./good ./notests: nothing matched, nothing ran, and go test says "ok"
+		// -run '^(TestNothing)$' ./good: nothing matched, nothing ran, and go test says "ok"
 		{"no-tests-ran", 0,
 			[]TestID{at("good", "TestNothing")},
 			map[TestID]execution.Observation{at("good", "TestNothing"): absent}},
@@ -176,7 +177,7 @@ func TestParseDoesNotLetAnUnexpectedFailureExplainTheStatus(t *testing.T) {
 		map[TestID]execution.Observation{at("good", "TestGood"): fail, at("mixed", "TestPass"): fail})
 }
 
-func event(action, pkg, test string) string {
+func line(action, pkg, test string) string {
 	return fmt.Sprintf(`{"Action":%q,"Package":%q,"Test":%q}`, action, pkg, test)
 }
 
@@ -202,7 +203,7 @@ func TestParseTakesTheWorstOfTheResultsOfOneName(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var lines []string
 			for _, action := range c.results {
-				lines = append(lines, event(action, p, "TestA"))
+				lines = append(lines, line(action, p, "TestA"))
 			}
 			// A failing status over a passing report would read fail, so the status is the one that agrees.
 			exit := 0
@@ -217,12 +218,12 @@ func TestParseTakesTheWorstOfTheResultsOfOneName(t *testing.T) {
 func TestParseReadsOnlyTheTopLevelTestsOfTheExpectedPackages(t *testing.T) {
 	a, b := at("a", "TestA"), at("b", "TestA")
 	got := observe(t, stream(
-		event("pass", module+"/a", "TestA/sub"),
-		event("fail", module+"/a", "TestA/other"),
-		event("fail", module+"/a", "TestOther"),
-		event("pass", module+"/b", "TestA"),
-		event("fail", module+"/c", "TestA"),
-		event("pass", "example.org/elsewhere/a", "TestA"),
+		line("pass", module+"/a", "TestA/sub"),
+		line("fail", module+"/a", "TestA/other"),
+		line("fail", module+"/a", "TestOther"),
+		line("pass", module+"/b", "TestA"),
+		line("fail", module+"/c", "TestA"),
+		line("pass", "example.org/elsewhere/a", "TestA"),
 	), 0, a, b)
 	wantObservations(t, got, map[TestID]execution.Observation{a: absent, b: pass})
 }
@@ -230,7 +231,7 @@ func TestParseReadsOnlyTheTopLevelTestsOfTheExpectedPackages(t *testing.T) {
 func TestParseNamesPackagesByTheirImportPathUnderTheModule(t *testing.T) {
 	const v2 = "example.com/m/v2"
 	root, deep := at(".", "TestRoot"), at("a/b", "TestDeep")
-	stdout := stream(event("pass", v2, "TestRoot"), event("pass", v2+"/a/b", "TestDeep"), event("fail", "example.com/m/a/b", "TestDeep"))
+	stdout := stream(line("pass", v2, "TestRoot"), line("pass", v2+"/a/b", "TestDeep"), line("fail", "example.com/m/a/b", "TestDeep"))
 	got, err := Parse(stdout, 0, v2, []TestID{root, deep})
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +245,7 @@ func TestParseNamesPackagesByTheirImportPathUnderTheModule(t *testing.T) {
 func TestParseGivesTwoIDsOfOneTestTheSameObservation(t *testing.T) {
 	one := TestID{Package: "a", Name: "TestA", File: "a/a_test.go"}
 	other := TestID{Package: "a", Name: "TestA", File: "a/a_x_test.go"}
-	got := observe(t, stream(event("pass", module+"/a", "TestA")), 0, one, other)
+	got := observe(t, stream(line("pass", module+"/a", "TestA")), 0, one, other)
 	wantObservations(t, got, map[TestID]execution.Observation{one: pass, other: pass})
 }
 

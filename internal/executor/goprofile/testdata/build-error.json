@@ -1,21 +1,21 @@
-{"ImportPath":"example.com/fx/broken [example.com/fx/broken.test]","Action":"build-output","Output":"# example.com/fx/broken [example.com/fx/broken.test]\n"}
-{"ImportPath":"example.com/fx/broken [example.com/fx/broken.test]","Action":"build-output","Output":"broken/broken_test.go:5:33: undefined: undefinedSymbol\n"}
-{"ImportPath":"example.com/fx/broken [example.com/fx/broken.test]","Action":"build-fail"}
 {"ImportPath":"example.com/fx/brokensrc [example.com/fx/brokensrc.test]","Action":"build-output","Output":"# example.com/fx/brokensrc [example.com/fx/brokensrc.test]\n"}
 {"ImportPath":"example.com/fx/brokensrc [example.com/fx/brokensrc.test]","Action":"build-output","Output":"brokensrc/x.go:3:25: cannot use \"text\" (untyped string constant) as int value in return statement\n"}
 {"ImportPath":"example.com/fx/brokensrc [example.com/fx/brokensrc.test]","Action":"build-fail"}
-{"Time":"2026-10-26T22:10:24.562170111Z","Action":"start","Package":"example.com/fx/broken"}
-{"Time":"2026-10-26T22:10:24.562320444Z","Action":"output","Package":"example.com/fx/broken","Output":"FAIL\texample.com/fx/broken [build failed]\n","OutputType":"frame"}
-{"Time":"2026-10-26T22:10:24.562335309Z","Action":"fail","Package":"example.com/fx/broken","Elapsed":0,"FailedBuild":"example.com/fx/broken [example.com/fx/broken.test]"}
-{"Time":"2026-10-26T22:10:24.56239528Z","Action":"start","Package":"example.com/fx/brokensrc"}
-{"Time":"2026-10-26T22:10:24.562401041Z","Action":"output","Package":"example.com/fx/brokensrc","Output":"FAIL\texample.com/fx/brokensrc [build failed]\n","OutputType":"frame"}
-{"Time":"2026-10-26T22:10:24.562406794Z","Action":"fail","Package":"example.com/fx/brokensrc","Elapsed":0,"FailedBuild":"example.com/fx/brokensrc [example.com/fx/brokensrc.test]"}
-{"Time":"2026-10-26T22:10:24.720668002Z","Action":"start","Package":"example.com/fx/good"}
-{"Time":"2026-10-26T22:10:24.72247093Z","Action":"output","Package":"example.com/fx/good","Output":"-test.shuffle 1793052624722411183\n"}
-{"Time":"2026-10-26T22:10:24.722579094Z","Action":"run","Package":"example.com/fx/good","Test":"TestGood"}
-{"Time":"2026-10-26T22:10:24.722583834Z","Action":"output","Package":"example.com/fx/good","Test":"TestGood","Output":"=== RUN   TestGood\n","OutputType":"frame"}
-{"Time":"2026-10-26T22:10:24.722628528Z","Action":"output","Package":"example.com/fx/good","Test":"TestGood","Output":"--- PASS: TestGood (0.00s)\n","OutputType":"frame"}
-{"Time":"2026-10-26T22:10:24.722647283Z","Action":"pass","Package":"example.com/fx/good","Test":"TestGood","Elapsed":0}
-{"Time":"2026-10-26T22:10:24.722651417Z","Action":"output","Package":"example.com/fx/good","Output":"PASS\n","OutputType":"frame"}
-{"Time":"2026-10-26T22:10:24.722962528Z","Action":"output","Package":"example.com/fx/good","Output":"ok  \texample.com/fx/good\t0.002s\n"}
-{"Time":"2026-10-26T22:10:24.72299362Z","Action":"pass","Package":"example.com/fx/good","Elapsed":0.002}
+{"ImportPath":"example.com/fx/broken [example.com/fx/broken.test]","Action":"build-output","Output":"# example.com/fx/broken [example.com/fx/broken.test]\n"}
+{"ImportPath":"example.com/fx/broken [example.com/fx/broken.test]","Action":"build-output","Output":"broken/broken_test.go:5:33: undefined: undefinedSymbol\n"}
+{"ImportPath":"example.com/fx/broken [example.com/fx/broken.test]","Action":"build-fail"}
+{"Time":"2026-10-26T22:27:09.015484408Z","Action":"start","Package":"example.com/fx/broken"}
+{"Time":"2026-10-26T22:27:09.015567937Z","Action":"output","Package":"example.com/fx/broken","Output":"FAIL\texample.com/fx/broken [build failed]\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:27:09.01557593Z","Action":"fail","Package":"example.com/fx/broken","Elapsed":0,"FailedBuild":"example.com/fx/broken [example.com/fx/broken.test]"}
+{"Time":"2026-10-26T22:27:09.015612704Z","Action":"start","Package":"example.com/fx/brokensrc"}
+{"Time":"2026-10-26T22:27:09.015615429Z","Action":"output","Package":"example.com/fx/brokensrc","Output":"FAIL\texample.com/fx/brokensrc [build failed]\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:27:09.01562103Z","Action":"fail","Package":"example.com/fx/brokensrc","Elapsed":0,"FailedBuild":"example.com/fx/brokensrc [example.com/fx/brokensrc.test]"}
+{"Time":"2026-10-26T22:27:09.082449937Z","Action":"start","Package":"example.com/fx/good"}
+{"Time":"2026-10-26T22:27:09.083991124Z","Action":"output","Package":"example.com/fx/good","Output":"-test.shuffle 1793053629083938486\n"}
+{"Time":"2026-10-26T22:27:09.084080303Z","Action":"run","Package":"example.com/fx/good","Test":"TestGood"}
+{"Time":"2026-10-26T22:27:09.084086109Z","Action":"output","Package":"example.com/fx/good","Test":"TestGood","Output":"=== RUN   TestGood\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:27:09.084092582Z","Action":"output","Package":"example.com/fx/good","Test":"TestGood","Output":"--- PASS: TestGood (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:27:09.084095273Z","Action":"pass","Package":"example.com/fx/good","Test":"TestGood","Elapsed":0}
+{"Time":"2026-10-26T22:27:09.084099182Z","Action":"output","Package":"example.com/fx/good","Output":"PASS\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:27:09.084279808Z","Action":"output","Package":"example.com/fx/good","Output":"ok  \texample.com/fx/good\t0.002s\n"}
+{"Time":"2026-10-26T22:27:09.084304648Z","Action":"pass","Package":"example.com/fx/good","Elapsed":0.002}

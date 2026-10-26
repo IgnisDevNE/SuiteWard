@@ -72,13 +72,13 @@ func TestMarkers(t *testing.T) {
 func TestMarkersLookOnlyAtNonTestGoFiles(t *testing.T) {
 	const everything = "package p\n\nimport (\n\t\"os\"\n\t\"testing\"\n)\n\nfunc init() { os.Exit(testingLine()) }\n\nfunc testingLine() int {\n\t_ = os.Getenv(\"CI\")\n\treturn len(os.Args[0] + \"a_test.go\")\n}\n\nvar _ = testing.Testing\n"
 	got := Markers(map[string][]byte{
-		"a_test.go":         []byte(everything),
-		"dir/b_test.go":     []byte(everything),
-		"README.md":         []byte(everything),
-		"script.sh":         []byte(everything),
-		"dir/not_a_test.go": []byte("package p\n\nimport \"os\"\n\nvar _ = os.Getenv(\"CI\")\n"),
+		"a_test.go":     []byte(everything),
+		"dir/b_test.go": []byte(everything),
+		"README.md":     []byte(everything),
+		"script.sh":     []byte(everything),
+		"dir/helper.go": []byte("package p\n\nimport \"os\"\n\nvar _ = os.Getenv(\"CI\")\n"),
 	})
-	want := []Marker{{"env-read", "dir/not_a_test.go", 5}}
+	want := []Marker{{"env-read", "dir/helper.go", 5}}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v\nwant %v", got, want)
 	}

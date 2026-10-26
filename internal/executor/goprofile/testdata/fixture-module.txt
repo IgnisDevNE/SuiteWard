@@ -9,7 +9,9 @@ image with no network, a read-only root and a tmpfs /work, the argv and the envi
   tar -x -C /work && cd /work && exec go test -json -count=1 -shuffle=on -timeout=<t> -run '^(A|B)$' <packages>
 
 with GOTOOLCHAIN=local GOWORK=off GOFLAGS= GOPROXY=file:///work/.suiteward/proxy GOSUMDB=off and HOME, TMPDIR, GOCACHE and
-GOMODCACHE under /work/.suiteward. The invocation of each fixture is in parse_test.go.
+GOMODCACHE under /work/.suiteward. The invocation of each fixture is in parse_test.go. The shuffle is random: the panic, timeout
+and exit-in-test fixtures were run again until the shuffled order put the test that ends the run first, and the rest are the
+first run.
 
 -- baddep/baddep.go --
 package baddep

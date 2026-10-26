@@ -143,7 +143,7 @@ func checkPath(p string, seen map[string]bool) error {
 // spellings of one name, or a path below a file. paths holds every path, directories included; files holds the paths that
 // are not directories, with a true value.
 func refuseNameConflicts(paths, files map[string]bool, invalid error) error {
-	for p := range paths {
+	for _, p := range slices.Sorted(maps.Keys(paths)) {
 		if shortNameAlias(p) {
 			return fmt.Errorf("%w: %q has a name spelled like an 8.3 short name, which NTFS may resolve to another name", invalid, p)
 		}

@@ -50,5 +50,14 @@ func OpenOS(ctx context.Context, in io.Reader, version string, plain bool) (*Scr
 	return Open(o)
 }
 
-// inputFlusher is Options.FlushInput of the terminal behind f.
-func inputFlusher(f *os.File) func() error { return func() error { return flushInput(f) } }
+// inputFlusher is Options.FlushInput of the terminal behind f, nil where the input cannot be flushed, as inputReadiness is nil where it cannot
+// be waited on. It flushes once to find out, which drops what was typed before the screen opened, as the first question would. That a handle
+// cannot be flushed (a console opened for reading only, whose mode cannot be set either) only degrades the screen: the drop is a guard against
+// stray keys and no more, so no question fails for it, and the screen is never given a flush that is known to fail. shortcut: the reason is
+// not reported, only that the guard is off; report it if a reader of the logs ever needs to know why stray keys answered a question.
+func inputFlusher(f *os.File) func() error {
+	if flushInput(f) != nil {
+		return nil
+	}
+	return func() error { return flushInput(f) }
+}

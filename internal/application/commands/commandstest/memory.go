@@ -175,6 +175,11 @@ func (m *Memory) Skipped(ctx context.Context, repositoryID int64, pull int, sinc
 	return false, nil
 }
 
+// PreviewMode implements commands.Store.
+func (m *Memory) PreviewMode(context.Context, int64, int, time.Time) (string, bool, error) {
+	return "", false, nil
+}
+
 // Instance implements commands.Store.
 func (m *Memory) Instance(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {

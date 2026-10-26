@@ -133,6 +133,11 @@ func (s *Store) Skipped(ctx context.Context, repositoryID int64, pull int, since
 	return skipped, nil
 }
 
+// PreviewMode implements commands.Store.
+func (s *Store) PreviewMode(context.Context, int64, int, time.Time) (string, bool, error) {
+	return "", false, nil
+}
+
 // Instance implements commands.Store.
 func (s *Store) Instance(ctx context.Context) (string, error) {
 	id, err := dbgen.New(s.pool).GetInstanceID(ctx)

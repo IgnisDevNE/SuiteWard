@@ -49,6 +49,11 @@ const (
 	Suggested        Disposition = "suggested"         // owner-authored /suiteward suggest that was answered, or that found no Suite yet (the acknowledgment says the bootstrap is pending); no operation id, never a command for the check
 	SuggestRefused   Disposition = "suggest-refused"   // owner-authored /suiteward suggest on a fork or a closed pull request, or from a source it cannot answer from; always acknowledged; no operation id, never a command for the check
 	OtherPull        Disposition = "other-pull"        // owner-authored approve or revoke whose reference names a proposal carried by another pull request; refused before a step is used; no operation id, never a command for the check
+	ReceiptRefused   Disposition = "receipt-refused"   // owner-authored approve with a good code that the receipt gate refused; consumes the step, records no consent; no operation id, never a command for the check
+	ModeSet          Disposition = "mode-set"          // owner-authored /suiteward mode: the preview mode was recorded (Entry.Mode); no code, no step, no operation id
+	ModeRefused      Disposition = "mode-refused"      // owner-authored /suiteward mode on a fork or a pull request that is not open; acknowledged, nothing else recorded; no operation id
+	Unblocked        Disposition = "unblocked"         // owner-authored /suiteward unblock with a good code that lifted the unavailable jobs of the head; no operation id, never a command for the check
+	UnblockRefused   Disposition = "unblock-refused"   // owner-authored /suiteward unblock with a good code that was refused (fork, not-open, not-unavailable); the step stays consumed; no operation id
 )
 
 var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed, Proposed, ProposeRefused, Skipped, SkipRefused, Suggested, SuggestRefused, OtherPull}
@@ -63,6 +68,7 @@ type Entry struct {
 	BodyDigest   artifact.Digest // of the first observed version
 	Disposition  Disposition
 	Operation    contract.OperationID // set when, and only when, Processed
+	Mode         string               // fix, feature or refactor when the command carried one, otherwise empty; always set for ModeSet
 	DecidedAt    time.Time
 }
 
@@ -97,6 +103,9 @@ type Store interface {
 	// Skipped reports whether the pull has a `skipped` entry whose comment was created at or after since (the current
 	// enrollment's enrolled_at). ErrInvalid for a non-positive id or a pull out of range.
 	Skipped(ctx context.Context, repositoryID int64, pull int, since time.Time) (bool, error)
+	// PreviewMode returns the mode of the pull's mode-set entry with the greatest comment id among those created at or after since
+	// (the current enrollment's enrolled_at), and false when there is none. ErrInvalid for a non-positive id or a pull out of range.
+	PreviewMode(ctx context.Context, repositoryID int64, pull int, since time.Time) (string, bool, error)
 	// Instance returns this installation's random identifier, created by migration 00013 and never changed.
 	Instance(ctx context.Context) (string, error)
 }

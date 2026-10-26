@@ -197,7 +197,7 @@ func CountReceipt(states []ReceiptState) (ReceiptCounts, error) {
 	return c, nil
 }
 
-// Evaluated is the number of tests that ran: all but the EXCLUDED ones.
+// Evaluated is the number of tests the receipt judges: all but the EXCLUDED ones. A MISSING test is evaluated, though it did not run.
 func (c ReceiptCounts) Evaluated() int {
 	return c.Missing + c.Flaky + c.Skipped + c.Fails + c.NewAPI + c.Detects + c.Inert
 }

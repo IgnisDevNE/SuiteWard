@@ -5,6 +5,9 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $files = @(git -C $Root -c core.quotepath=false ls-files --cached --others --exclude-standard)
 if ($LASTEXITCODE -ne 0 -or $files.Count -eq 0) { throw 'Cannot list the repository files.' }
+# The Containerfile writes the Go tag as ${GO_VERSION}-alpine and other copies of that image write the version out, so every tag is compared with the default of the ARG filled in.
+$containerfileText = Get-Content -LiteralPath (Join-Path $Root 'deploy/Containerfile') -Raw -ErrorAction SilentlyContinue
+$goVersion = [regex]::Match([string]$containerfileText, '(?m)^ARG GO_VERSION=(?<v>\S+)\s*$').Groups['v'].Value
 # Copies are grouped by the repository name alone, so a copy whose tag and digest both drifted still disagrees with the others.
 $copies = @{}
 foreach ($file in $files) {
@@ -13,7 +16,7 @@ foreach ($file in $files) {
     foreach ($m in [regex]::Matches((Get-Content -LiteralPath $path -Raw), '(?<name>[\w.\-/]+)(?::(?<tag>[\w.${}\-]+))?@sha256:(?<digest>[a-f0-9]{64})')) {
         $key = $m.Groups['name'].Value.Split('/')[-1]
         if (-not $copies.ContainsKey($key)) { $copies[$key] = [Collections.Generic.List[object]]::new() }
-        $copies[$key].Add([pscustomobject]@{ File = $file; Tag = $m.Groups['tag'].Value; Digest = $m.Groups['digest'].Value })
+        $copies[$key].Add([pscustomobject]@{ File = $file; Tag = $m.Groups['tag'].Value.Replace('${GO_VERSION}', $goVersion); Digest = $m.Groups['digest'].Value })
     }
 }
 foreach ($key in $copies.Keys) {

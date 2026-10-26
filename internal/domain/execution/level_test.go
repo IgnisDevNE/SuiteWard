@@ -57,25 +57,6 @@ func TestParseReceiptLevelRejectsEverythingElse(t *testing.T) {
 	}
 }
 
-func TestLevelsAreOrderedFromWeakestToStrongest(t *testing.T) {
-	canonical := []execution.CanonicalLevel{execution.CanonicalLevelOff, execution.CanonicalLevelAdvisory, execution.CanonicalLevelRequired}
-	for i, l := range canonical {
-		for j, other := range canonical {
-			if got, want := l.Weaker(other), i < j; got != want {
-				t.Errorf("canonical %v.Weaker(%v) = %v, want %v", l, other, got, want)
-			}
-		}
-	}
-	receipt := []execution.ReceiptLevel{execution.ReceiptLevelOff, execution.ReceiptLevelAdvisory, execution.ReceiptLevelBeforeApproval, execution.ReceiptLevelRequired}
-	for i, l := range receipt {
-		for j, other := range receipt {
-			if got, want := l.Weaker(other), i < j; got != want {
-				t.Errorf("receipt %v.Weaker(%v) = %v, want %v", l, other, got, want)
-			}
-		}
-	}
-}
-
 func TestLevelStringIsEmptyForAValueThatIsNotALevel(t *testing.T) {
 	if got := execution.CanonicalLevel(0).String(); got != "" {
 		t.Errorf("zero CanonicalLevel.String() = %q, want empty", got)

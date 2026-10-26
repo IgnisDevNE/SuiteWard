@@ -32,9 +32,6 @@ func ParseCanonicalLevel(s string) (CanonicalLevel, error) {
 // String returns the level as .suiteward.yml spells it, or empty for a value that is not a level.
 func (l CanonicalLevel) String() string { return canonicalLevelNames[l] }
 
-// Weaker reports whether the level is strictly weaker than than. It is defined for the levels of ParseCanonicalLevel.
-func (l CanonicalLevel) Weaker(than CanonicalLevel) bool { return l < than }
-
 // ReceiptLevel is the policy for the receipt, from the weakest to the strongest: off, advisory, before-approval, required.
 type ReceiptLevel uint8
 
@@ -60,6 +57,3 @@ func ParseReceiptLevel(s string) (ReceiptLevel, error) {
 
 // String returns the level as .suiteward.yml spells it, or empty for a value that is not a level.
 func (l ReceiptLevel) String() string { return receiptLevelNames[l] }
-
-// Weaker reports whether the level is strictly weaker than than. It is defined for the levels of ParseReceiptLevel.
-func (l ReceiptLevel) Weaker(than ReceiptLevel) bool { return l < than }

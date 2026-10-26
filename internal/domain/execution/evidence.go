@@ -45,6 +45,7 @@ type EvidenceInput struct {
 	ExecutorVersion   string
 	ExecutorSHA256    artifact.Digest // the executor binary
 	ImageDigest       artifact.Digest // the sandbox image
+	Runtime           string          // the container runtime, name and version, such as podman 5.5.0
 	StartedAt         time.Time
 	FinishedAt        time.Time
 }

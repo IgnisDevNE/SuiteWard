@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -240,5 +241,27 @@ func TestInputFlusherDropsWhatWasTypedAheadOfAConsoleThatCanBeFlushed(t *testing
 	}
 	if n := pendingEvents(t, conin); n != 0 {
 		t.Errorf("%d events typed ahead are still queued", n)
+	}
+}
+
+// A console handle opened for reading only is a terminal that cannot be flushed (Access denied). The screen asks and gets its answers all the
+// same: the first question tries the flush, it fails, no question fails for it, and the flush is not tried again.
+func TestQuestionsAreAnsweredAtAConsoleThatCannotBeFlushed(t *testing.T) {
+	conin := openConsoleInputFor(t, windows.GENERIC_READ)
+	if err := flushInput(conin); err == nil {
+		t.Skip("this console lets a handle opened for reading flush it: there is no handle that cannot be flushed to test with")
+	}
+	var flushes atomic.Int32
+	s, in := flushingScreen(t, func() error { flushes.Add(1); return flushInput(conin) })
+	for i := 1; i <= 2; i++ {
+		asked := make(chan error, 1)
+		go func() { _, err := s.Ask("Owner", "alice"); asked <- err }()
+		in.Type("bob\n")
+		if err := within(t, asked); err != nil {
+			t.Fatalf("question %d failed at a console that cannot be flushed: %v", i, err)
+		}
+	}
+	if n := flushes.Load(); n != 1 {
+		t.Errorf("the flush of a console that cannot be flushed was tried %d times, want once", n)
 	}
 }

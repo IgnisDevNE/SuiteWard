@@ -16,19 +16,25 @@ import (
 
 var errFlushDenied = errors.New("access denied")
 
-// deniedFlush opens a full screen on the keyboard of a test whose flush always fails, and counts the flushes that were tried.
-func deniedFlush(t *testing.T) (*Screen, *typedInput, *atomic.Int32) {
+// flushingScreen opens a full screen on the keyboard of a test, as a terminal whose input is flushed by flush.
+func flushingScreen(t *testing.T, flush func() error) (*Screen, *typedInput) {
 	t.Helper()
 	in := newTypedInput(t)
-	flushes := &atomic.Int32{}
 	o := fullOptions(ColorNone)
-	o.Out, o.In, o.Version, o.KeyInput, o.InputIsTerminal = io.Discard, in, testVersion, (&fakeKeys{}).toggle, true
-	o.FlushInput = func() error { flushes.Add(1); return errFlushDenied }
+	o.Out, o.In, o.Version, o.KeyInput, o.InputIsTerminal, o.FlushInput = io.Discard, in, testVersion, (&fakeKeys{}).toggle, true, flush
 	s, err := Open(o)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
+	return s, in
+}
+
+// deniedFlush is flushingScreen with a flush that always fails, and counts the flushes that were tried.
+func deniedFlush(t *testing.T) (*Screen, *typedInput, *atomic.Int32) {
+	t.Helper()
+	flushes := &atomic.Int32{}
+	s, in := flushingScreen(t, func() error { flushes.Add(1); return errFlushDenied })
 	return s, in, flushes
 }
 
@@ -131,5 +137,30 @@ func TestInputFlusherIsNilForAnInputThatCannotBeFlushed(t *testing.T) {
 	})
 	if inputFlusher(f) != nil {
 		t.Error("a flush was offered for a file, which cannot be flushed")
+	}
+}
+
+// A flush that works runs before every question, not only the first: a screen that stopped flushing after a success would let a key typed
+// before the later questions answer them. The test types only after the flush of the question has run, as the user does after the question is
+// drawn, so what it types is the answer.
+func TestAFlushThatWorksRunsOncePerQuestion(t *testing.T) {
+	var in *typedInput
+	flushed := make(chan struct{}, 8)
+	s, in := flushingScreen(t, func() error { err := in.Flush(); flushed <- struct{}{}; return err })
+	for i := 1; i <= 3; i++ {
+		asked := make(chan error, 1)
+		go func() { _, err := s.Ask("Owner", "alice"); asked <- err }()
+		select {
+		case <-flushed:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("question %d was asked without a flush", i)
+		}
+		in.Type("bob\n")
+		if err := within(t, asked); err != nil {
+			t.Fatalf("question %d: %v", i, err)
+		}
+	}
+	if extra := len(flushed); extra != 0 {
+		t.Errorf("%d flushes more than there were questions", extra)
 	}
 }

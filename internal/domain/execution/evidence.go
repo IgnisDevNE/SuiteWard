@@ -58,7 +58,8 @@ type EvidenceBinding struct {
 }
 
 // NewEvidenceBinding validates in and keeps it. Every field is required, a receipt needs a base SHA and a canonical run
-// refuses one, and the times are kept in UTC with the end not before the start. Nothing defaults.
+// refuses one, the runtime is 1 to 64 printable ASCII bytes, and the times are kept in UTC with the end not before the
+// start. Nothing defaults.
 func NewEvidenceBinding(in EvidenceInput) (EvidenceBinding, error) {
 	_, canonical := canonicalLevelNames[in.Canonical]
 	_, receipt := receiptLevelNames[in.Receipt]
@@ -78,6 +79,7 @@ func NewEvidenceBinding(in EvidenceInput) (EvidenceBinding, error) {
 		{"executor version", versionPattern.MatchString(in.ExecutorVersion)},
 		{"executor binary digest", !in.ExecutorSHA256.IsZero()},
 		{"image digest", !in.ImageDigest.IsZero()},
+		{"runtime", validRuntime(in.Runtime)},
 		{"start time", !in.StartedAt.IsZero()},
 		{"end time", !in.FinishedAt.IsZero() && !in.FinishedAt.Before(in.StartedAt)},
 	} {
@@ -87,6 +89,22 @@ func NewEvidenceBinding(in EvidenceInput) (EvidenceBinding, error) {
 	}
 	in.StartedAt, in.FinishedAt = in.StartedAt.UTC(), in.FinishedAt.UTC()
 	return EvidenceBinding{input: in, valid: true}, nil
+}
+
+// maxRuntimeBytes is the length of the runtime, the rule of the result's sandbox.runtime.
+const maxRuntimeBytes = 64
+
+// validRuntime is true for 1 to 64 printable ASCII bytes, spaces included: the name and version of the container runtime.
+func validRuntime(s string) bool {
+	if s == "" || len(s) > maxRuntimeBytes {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < ' ' || s[i] > '~' {
+			return false
+		}
+	}
+	return true
 }
 
 // validBaseSHA is true for a receipt with a valid base SHA, and for a canonical run with none; another plan is not valid

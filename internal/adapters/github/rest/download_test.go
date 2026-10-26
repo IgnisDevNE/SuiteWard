@@ -641,7 +641,10 @@ func TestDownloadRefusesAnyOtherRedirectWithoutRepeatingTheAddress(t *testing.T)
 			if !errors.Is(err, rest.ErrInsecureRedirect) {
 				t.Fatalf("err = %v, want ErrInsecureRedirect", err)
 			}
-			for _, leak := range []string{location, redirectQuery, tokenValue} {
+			address, _, _ := strings.Cut(location, "?")
+			_, host, _ := strings.Cut(address, "://")
+			host, _, _ = strings.Cut(host, "/")
+			for _, leak := range []string{location, address, host, redirectQuery, tokenValue} {
 				if strings.Contains(err.Error(), leak) {
 					t.Errorf("error %q contains %q", err, leak)
 				}

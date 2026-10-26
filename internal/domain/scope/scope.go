@@ -109,7 +109,10 @@ func (s Scope) Digest() artifact.Digest {
 // Reductions lists the rule-level scope reductions from governing to
 // proposed, sorted and never nil: "rule <p>" for each protecting pattern
 // (default, include or runner) of governing that proposed no longer
-// protects with, and "exclude <p>" for each exclude pattern proposed adds.
+// protects with, "exclude <p>" for each exclude pattern proposed adds, and
+// "execution canonical: <from> -> <to>" or "execution receipt: <from> -> <to>"
+// for each execution level proposed lowers (without a profile both levels are
+// off, so removing the profile or the section lowers every level that was on).
 // It is syntactic: moving a pattern between include and runner is not a
 // reduction, and file-level effects are not considered.
 func Reductions(governing, proposed Scope) []string {
@@ -125,6 +128,14 @@ func Reductions(governing, proposed Scope) []string {
 		if !slices.Contains(excluded, p) {
 			reductions = append(reductions, "exclude "+p)
 		}
+	}
+	governingCanonical, governingReceipt := governing.declaration.execution.levels()
+	proposedCanonical, proposedReceipt := proposed.declaration.execution.levels()
+	if proposedCanonical < governingCanonical {
+		reductions = append(reductions, "execution canonical: "+canonicalLevels[governingCanonical]+" -> "+canonicalLevels[proposedCanonical])
+	}
+	if proposedReceipt < governingReceipt {
+		reductions = append(reductions, "execution receipt: "+receiptLevels[governingReceipt]+" -> "+receiptLevels[proposedReceipt])
 	}
 	slices.Sort(reductions)
 	return reductions

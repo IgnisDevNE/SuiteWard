@@ -2,9 +2,12 @@ package prefetch
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 )
 
 const goModHead = "module example.com/app\n\ngo 1.21\n"
@@ -295,6 +298,35 @@ func TestPlanSideRefusalDoesNotEchoTheCandidateAtLength(t *testing.T) {
 	}
 	if len(err.Error()) > 500 {
 		t.Errorf("the refusal is %d bytes long", len(err.Error()))
+	}
+}
+
+// What a refusal says of the candidate is quoted and cut on a rune boundary: no control character and no broken UTF-8 leaves the package.
+func TestPlanSideRefusalQuotesTheCandidateAndCutsItOnARuneBoundary(t *testing.T) {
+	candidates := map[string]string{
+		"a control character":   "frob\x1b[31mnicate",
+		"a newline":             "frob\nnicate",
+		"invalid UTF-8":         "frob\xff\xfenicate",
+		"a long run of letters": strings.Repeat("é", 400),
+	}
+	for name, verb := range candidates {
+		// The cut falls at another byte of the message for each padding, so it lands inside a two-byte rune for some of them.
+		for pad := range 3 {
+			t.Run(fmt.Sprintf("%s, padded by %d", name, pad), func(t *testing.T) {
+				goMod := []byte(goModHead + "\n" + strings.Repeat("a", pad) + verb + " y\n")
+				_, err := PlanSide(goMod, nil, false, anyLimits)
+				if !errors.Is(err, ErrInstallFailed) {
+					t.Fatalf("err = %v, want ErrInstallFailed", err)
+				}
+				msg := err.Error()
+				if !utf8.ValidString(msg) {
+					t.Errorf("the refusal is not valid UTF-8: %q", msg)
+				}
+				if i := strings.IndexFunc(msg, unicode.IsControl); i >= 0 {
+					t.Errorf("the refusal holds the control character %q: %q", msg[i], msg)
+				}
+			})
+		}
 	}
 }
 

@@ -516,6 +516,8 @@ func TestFetchRequestsOnlyOverHTTPS(t *testing.T) {
 		"no host":    "https://",
 		"a query":    tlsSrv.URL + "?x=1",
 		"a fragment": tlsSrv.URL + "#x",
+		// Built in pieces: a URL with a password in it is what a secret scanner looks for.
+		"user info": "https://" + "user" + ":pw@" + hostOf(t, tlsSrv.URL),
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Fetch(context.Background(), clientFor(t, tlsSrv, ""), base, planOf(modName), &memSink{}, Limits{Bytes: 1 << 20})
@@ -612,6 +614,18 @@ func TestFetchFollowsARedirectOnlyToTheAllowedHost(t *testing.T) {
 			t.Errorf("err = %v, want ErrFetchFailed", err)
 		}
 	})
+}
+
+// The executor's egress goes direct, so that an allow-list for proxy.golang.org holds: HTTP_PROXY, HTTPS_PROXY and NO_PROXY are not read. A
+// proxy, if one is ever needed, will be an explicit setting of the executor.
+func TestClientDoesNotHonorTheProxyEnvironment(t *testing.T) {
+	tr, ok := Client(time.Second).Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("the transport is a %T, want *http.Transport", Client(time.Second).Transport)
+	}
+	if tr.Proxy != nil {
+		t.Error("the transport has a Proxy function: the environment of the executor would decide where its requests go")
+	}
 }
 
 func TestClientAllowsARedirectOnlyToStorageGoogleapisOverHTTPS(t *testing.T) {

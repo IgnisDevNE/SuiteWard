@@ -33,7 +33,7 @@ type Changes struct {
 	Markers                  Markers
 	Truncated                bool
 	// Reduced says that the revision reduces the protected scope, so that a removed file left the protected files and may still exist.
-	// RevisionComment sets it from Revision.Reduced; ChangesOf does not know it.
+	// RevisionComment sets it from Revision.Reduced, and not for a reduction that only lowers the execution policy; ChangesOf does not know it.
 	Reduced bool
 }
 
@@ -204,7 +204,7 @@ func changesSection(r Revision) []string {
 		return parts
 	}
 	c := *r.Changes
-	c.Reduced = r.Reduced
+	c.Reduced = r.Reduced && !r.lowersPolicyOnly() // a policy that only gets weaker removes nothing from the scope, so a removed file was deleted
 	parts := []string{
 		"**What changed in the protected files.** SuiteWard counts the changed lines and points out some of them as marker lines; it does not judge them.",
 		strings.Join(changeFacts(c, true), "\n"),

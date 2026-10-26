@@ -15,7 +15,7 @@
 // RevokedAfterPromotion, ApprovedAfterPromotion, OtherPullRequest, ProposeRefused, SkipRefused or SuggestRefused with a Refusal, AlreadyProposed,
 // ProposeFailed, Skipped or NothingUncovered), BootstrapSummary renders
 // a Summary (from the default branch or from a pull request; at most 20 entries per listing, each shortened to 300 bytes),
-// RevisionComment renders a Revision the same way (with the rules and paths a reduction removes), and BootstrapNotice and
+// RevisionComment renders a Revision the same way (with the rules and paths a reduction removes and the levels of the execution policy it lowers), and BootstrapNotice and
 // BootstrapCancelled render the comments of a pull request before the first contract. SuggestDeclaration renders a
 // DeclarationSuggestion (include and runner patterns, a cut notice and the mixed files it does not suggest) as the reply
 // to a propose without a declaration, or, with Suggest set, as the reply to /suiteward suggest. After the first contract, ScopeNoticeComment renders a ScopeNotice, the test-like

@@ -613,8 +613,12 @@ const rollback = "a separately approved rollback (corrective) proposal: a new PR
 // Revision is what the comment of a new change-proposal revision states. Previous is the reference this revision
 // supersedes (an earlier revision of the same proposal), empty for the first. Each list shows at most 20 entries
 // of the total; a total below the list is taken as its length. Reduced says that the revision reduces the
-// protected scope; ReducedRules and ReducedPaths (at most 20 each, of ReducedPathsTotal paths) detail what it removes and
-// are set only with Reduced. ReducedOmitted says that the detail did not fit the message and was left out: the comment states
+// protected scope or lowers the execution policy; ReducedRules and ReducedPaths (at most 20 each, of ReducedPathsTotal paths) detail
+// what it removes and are set only with Reduced. A ReducedRules entry is one that scope.Reductions writes: "rule <p>" for a
+// pattern that no longer protects, "exclude <p>" for an exclude that is added, and "execution canonical: <from> -> <to>" or
+// "execution receipt: <from> -> <to>" for a level of the execution policy that gets weaker. A reduction whose entries are all of the
+// last kind, with no ReducedPaths and no ReducedPathsTotal, removes no path: the comment says that it lowers the execution policy.
+// ReducedOmitted says that the detail did not fit the message and was left out: the comment states
 // that, and counts the paths from ReducedPathsTotal; it excludes ReducedRules and ReducedPaths.
 //
 // Changes, when set, replaces the three lists with the numbers of the change report and names the files to look at;
@@ -680,8 +684,10 @@ func validateRevision(r Revision) error {
 		return fmt.Errorf("commandtext: %d reduced rules, %d reduced paths and a total of %d", len(r.ReducedRules), len(r.ReducedPaths), r.ReducedPathsTotal)
 	case !r.Reduced && (len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0 || r.ReducedPathsTotal != 0):
 		return errors.New("commandtext: reduction detail on a revision that does not reduce the scope")
-	case slices.ContainsFunc(r.ReducedRules, func(e string) bool { return !strings.HasPrefix(e, "rule ") && !strings.HasPrefix(e, "exclude ") }):
-		return errors.New("commandtext: a reduced rule that is neither a \"rule \" nor an \"exclude \" entry")
+	case slices.ContainsFunc(r.ReducedRules, func(e string) bool {
+		return !strings.HasPrefix(e, "rule ") && !strings.HasPrefix(e, "exclude ") && !executionEntry(e)
+	}):
+		return errors.New("commandtext: a reduced rule that is none of a \"rule \", an \"exclude \", an \"execution canonical: \" and an \"execution receipt: \" entry")
 	case r.ReducedOmitted && (!r.Reduced || len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0):
 		return errors.New("commandtext: reduction detail omitted on a revision that does not reduce the scope or that lists it")
 	}
@@ -700,17 +706,42 @@ func validateRevision(r Revision) error {
 	return nil
 }
 
-// reductionParts are the paragraphs that say a revision reduces the protected scope, with what it removes.
+// executionPrefixes start the entries that scope.Reductions writes for a level of the execution policy that gets weaker.
+var executionPrefixes = []string{"execution canonical: ", "execution receipt: "}
+
+// executionEntry reports whether entry lowers a level of the execution policy.
+func executionEntry(entry string) bool {
+	return slices.ContainsFunc(executionPrefixes, func(p string) bool { return strings.HasPrefix(entry, p) })
+}
+
+// lowersPolicyOnly reports whether the reduction of r lowers the execution policy and removes nothing from the scope: every entry
+// it lists is an execution entry, and it has no path, no total of paths and no detail that was left out.
+func (r Revision) lowersPolicyOnly() bool {
+	return r.Reduced && len(r.ReducedRules) > 0 && len(r.ReducedPaths) == 0 && r.ReducedPathsTotal == 0 && !r.ReducedOmitted &&
+		!slices.ContainsFunc(r.ReducedRules, func(e string) bool { return !executionEntry(e) })
+}
+
+// reductionParts are the paragraphs that say a revision reduces the protected scope or lowers the execution policy, with what it removes.
 func reductionParts(r Revision) []string {
-	parts := []string{"**This revision reduces the protected scope.** Review it carefully before approving."}
-	var rules, excludes []string // scope.Reductions marks each entry "rule <p>" or "exclude <p>"
+	var rules, excludes, levels []string // scope.Reductions marks each entry "rule <p>", "exclude <p>" or "execution <level>: <from> -> <to>"
 	for _, entry := range r.ReducedRules {
-		if p, ok := strings.CutPrefix(entry, "exclude "); ok {
+		switch p, isExclude := strings.CutPrefix(entry, "exclude "); {
+		case isExclude:
 			excludes = append(excludes, p)
-		} else {
+		case executionEntry(entry):
+			levels = append(levels, strings.TrimPrefix(entry, "execution "))
+		default:
 			rules = append(rules, strings.TrimPrefix(entry, "rule "))
 		}
 	}
+	lead := "This revision reduces the protected scope."
+	switch {
+	case r.lowersPolicyOnly():
+		lead = "This revision lowers the execution policy."
+	case len(levels) > 0:
+		lead = "This revision reduces the protected scope and lowers the execution policy."
+	}
+	parts := []string{"**" + lead + "** Review it carefully before approving."}
 	if r.ReducedOmitted {
 		omitted := "The detail of this reduction was omitted because it did not fit in this comment. Compare `.suiteward.yml` with the canonical one before approving."
 		if r.ReducedPathsTotal > 0 {
@@ -726,6 +757,9 @@ func reductionParts(r Revision) []string {
 	}
 	if len(r.ReducedPaths) > 0 {
 		parts = append(parts, listingAndMore("Paths that the scope no longer covers", r.ReducedPaths, r.ReducedPathsTotal))
+	}
+	if len(levels) > 0 {
+		parts = append(parts, listing("Execution policy lowered", levels, len(levels)))
 	}
 	return parts
 }

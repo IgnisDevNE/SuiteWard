@@ -142,6 +142,9 @@ func TestCheckSourceRefusesTwoSpellingsOfOneName(t *testing.T) {
 		{"two files in two cases", nil, []execution.ExtractedFile{regular("a.go", "a"), regular("A.go", "b")}},
 		{"two directories in two cases, extracted", nil, []execution.ExtractedFile{regular("Dir/a.go", "a"), regular("dir/b.go", "b")}},
 		{"two links in two cases", nil, []execution.ExtractedFile{link("a", "x"), link("A", "y")}},
+		{"an entry spelled as an 8.3 short name", []execution.TreeEntry{entry("PROGRA~1/x", execution.GitRegular, "x")}, nil},
+		{"an extracted file spelled as an 8.3 short name", nil, []execution.ExtractedFile{regular("a~1.go", "a")}},
+		{"two entries, one with a dotless i", []execution.TreeEntry{entry("i.go", execution.GitRegular, "a"), entry("ı.go", execution.GitRegular, "b")}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

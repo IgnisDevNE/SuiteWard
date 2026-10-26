@@ -389,6 +389,8 @@ func TestCanonicalTreeRefusesTwoSpellingsOfOneName(t *testing.T) {
 		{"two head files, one with a trailing dot", map[string]string{"x": "x", "x.": "y"}, map[string]string{"a_test.go": "t"}},
 		{"two manifest directories", map[string]string{"go.mod": "m"}, map[string]string{"Docs/a_test.go": "a", "docs/b_test.go": "b"}},
 		{"a directory and a file in another case", map[string]string{"Docs": "a file"}, map[string]string{"docs/a_test.go": "t"}},
+		{"a head directory spelled as an 8.3 short name", map[string]string{"INTEGR~1/evil.go": "e"}, map[string]string{"integration/a_test.go": "t"}},
+		{"a head directory with a dotless i", map[string]string{"ıntegration/evil.go": "e"}, map[string]string{"integration/a_test.go": "t"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

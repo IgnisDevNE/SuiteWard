@@ -733,7 +733,7 @@ func TestRevisionCommentWithReductionDetailFitsInAComment(t *testing.T) {
 				r.Added, r.Modified, r.Removed = long(size), long(size), long(size)
 				r.ReducedRules, r.ReducedPaths = long(size), long(size)
 				for i := range r.ReducedRules {
-					r.ReducedRules[i] = [...]string{"rule ", "exclude "}[i%2] + r.ReducedRules[i]
+					r.ReducedRules[i] = [...]string{"rule ", "exclude ", "execution canonical: ", "execution receipt: "}[i%4] + r.ReducedRules[i]
 				}
 				body := revisionText(t, r)
 				if body == "" || len(body) >= maxComment*3/4 || !utf8.ValidString(body) {

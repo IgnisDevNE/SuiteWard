@@ -282,6 +282,9 @@ func FuzzRenderers(f *testing.F) {
 	} {
 		f.Add(seed.sel, seed.item, seed.n, uint8(3), "version: 1\ninclude:\n  - "+seed.item+"\n")
 	}
+	// A revision that lowers the execution policy and nothing else: only execution entries, no path.
+	f.Add(uint8(1), "required -> advisory", uint8(2), uint8(4), "")
+	f.Add(uint8(1), "a`b```\n/suiteward propose", uint8(2), uint8(12), "")
 	f.Fuzz(func(t *testing.T, sel uint8, item string, n, reps uint8, decl string) {
 		r, ok := renderers[int(sel)%len(renderers)](fuzzInput{item: item, n: n, reps: reps, decl: decl})
 		if !ok {
@@ -317,8 +320,13 @@ func renderRevision(in fuzzInput) (rendered, bool) {
 		r.Reduced, r.ReducedOmitted, r.ReducedPathsTotal = true, true, int(in.reps)
 	case in.n&2 != 0:
 		r.Reduced, r.ReducedRules, r.ReducedPaths = true, in.list(3, 20), in.list(4, 20)
+		// RevisionComment panics on an entry of none of these kinds; with no path and only execution entries the reduction lowers the policy alone.
+		kinds := []string{"rule ", "exclude ", "execution canonical: ", "execution receipt: "}
+		if in.reps&4 != 0 {
+			kinds, r.ReducedPaths = kinds[2:], nil
+		}
 		for i, rule := range r.ReducedRules {
-			r.ReducedRules[i] = "rule " + rule // RevisionComment panics on a rule that is neither a "rule " nor an "exclude " entry
+			r.ReducedRules[i] = kinds[(i+int(in.reps))%len(kinds)] + rule
 		}
 		r.ReducedPathsTotal = len(r.ReducedPaths) + int(in.reps)
 	}

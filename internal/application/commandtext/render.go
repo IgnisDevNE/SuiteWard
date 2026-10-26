@@ -514,7 +514,7 @@ const (
 // fences that follow would be read out of step and a copyable command in one would read as a command. The cut
 // applies to the shown text, which is valid UTF-8, so it never splits a rune.
 func display(s string) string {
-	if hasHidden(s) || strings.Contains(s, "<!--") {
+	if !shownAsIs(s) {
 		s = strings.ReplaceAll(escapeHidden(strconv.QuoteToGraphic(s)), "<!--", `\u003c!--`)
 	}
 	if len(s) <= maxShown {
@@ -553,6 +553,12 @@ func escapeHidden(quoted string) string {
 // hasHidden reports whether s is not UTF-8 or holds a hidden rune: display quotes such a string.
 func hasHidden(s string) bool {
 	return !utf8.ValidString(s) || strings.IndexFunc(s, hidden) >= 0
+}
+
+// shownAsIs reports whether display writes s as it is: it is UTF-8 with no hidden rune and holds no HTML comment opener, so it is not quoted.
+// What display shows differently from the text itself is not the text to copy, so a comment that offers the text to paste asks this too.
+func shownAsIs(s string) bool {
+	return !hasHidden(s) && !strings.Contains(s, "<!--")
 }
 
 // declarationLayout removes the layout of a declaration: a CRLF line ending (the form of a file written on Windows), a newline and a tab.

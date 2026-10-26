@@ -187,17 +187,24 @@ func indexExtraction(files []ExtractedFile) (map[string]blob, map[string]string,
 	return extracted, links, nil
 }
 
+// unsafeTarget reports a link target no tree may hold: empty, absolute, or spelled with a character that a path of the tree
+// never has. A backslash or a colon (a drive letter, a stream name) steps out of the tree on Windows, where the executor can
+// run, and NUL ends a path in C.
+func unsafeTarget(target string) bool {
+	return target == "" || strings.HasPrefix(target, "/") || strings.ContainsAny(target, "\\:\x00")
+}
+
 // resolveInside walks target from the directory of link one name at a time, following the links of the extraction, as a
-// filesystem does, and fails when the walk steps above the root of the tree, meets an absolute or empty target, or follows
-// more than maxLinkHops links. A lexical clean of the target would miss a ".." that comes after a link, which steps above
-// the directory the link points to and not above the one that holds its name.
+// filesystem does, and fails when the walk steps above the root of the tree, meets an unsafe target, or follows more than
+// maxLinkHops links. A lexical clean of the target would miss a ".." that comes after a link, which steps above the
+// directory the link points to and not above the one that holds its name.
 func resolveInside(link, target string, links map[string]string) error {
 	unsafe := fmt.Errorf("%w: %q -> %q", ErrUnsafeSymlink, link, target)
 	var here []string
 	if dir := path.Dir(link); dir != "." {
 		here = strings.Split(dir, "/")
 	}
-	if target == "" || strings.HasPrefix(target, "/") {
+	if unsafeTarget(target) {
 		return unsafe
 	}
 	todo := strings.Split(target, "/")
@@ -218,7 +225,7 @@ func resolveInside(link, target string, links map[string]string) error {
 				here = next
 				continue
 			}
-			if hops++; hops > maxLinkHops || linked == "" || strings.HasPrefix(linked, "/") {
+			if hops++; hops > maxLinkHops || unsafeTarget(linked) {
 				return unsafe
 			}
 			todo = slices.Concat(strings.Split(linked, "/"), todo)

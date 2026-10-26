@@ -195,7 +195,7 @@ func TestThePurgePageSaysWhichTokenFileItKeeps(t *testing.T) {
 	}
 	v := run.question(t, 0)
 	mustSay(t, v, with(purgeLists, "is kept", "may belong to another instance", "--token-file <path>")...)
-	if strings.Contains(v.text(), "deletes the MCP token file") || strings.Contains(v.text(), trimmed) {
+	if strings.Contains(v.text(), "the MCP token file") || strings.Contains(v.text(), trimmed) {
 		t.Errorf("the page lists the kept token file among what is deleted, or is trimmed:\n%s", v.dump())
 	}
 }
@@ -231,4 +231,33 @@ func TestThePurgeByYesListsWhatItDeletesBeforeItActs(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A GitHub App that an install was setting up has a record beside the settings file, which a purge deletes too: the list names it when it is
+// there, and only then.
+func TestThePurgeListsTheRecordOfAGitHubAppOnlyWhenThereIsOne(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		record bool
+	}{{"with a record", true}, {"without one", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := purgeHarness(t)
+			pending := pendingAppPath(h.settingsPath())
+			if tc.record {
+				if err := os.WriteFile(pending, []byte("app_id: 1\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := h.uninstallOn(false, "", "--purge", "--yes", "--instance", testInstance); err != nil {
+				t.Fatal(err)
+			}
+			line := "the record of the GitHub App that is being set up, " + pending
+			if said := strings.Contains(h.out.String(), line); said != tc.record {
+				t.Errorf("the record is there: %v, the list names it: %v:\n%s", tc.record, said, h.out.String())
+			}
+			if exists(pending) {
+				t.Error("the record is still there after the purge")
+			}
+		})
+	}
 }

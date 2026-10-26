@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // Outcome is the processed result an acknowledgment reports.
@@ -40,6 +42,13 @@ const (
 	SuggestRefused
 	// OtherPullRequest answers an approve or a revoke whose reference names a proposal that another pull request carries.
 	OtherPullRequest
+	// The execution commands (M2.1): ReceiptRefused carries the Gate reason that refused an approve, ModeSet the Mode it recorded, ModeRefused and
+	// UnblockRefused a Refusal, and Unblocked the Plans it lifted.
+	ReceiptRefused
+	ModeSet
+	ModeRefused
+	Unblocked
+	UnblockRefused
 	// lastOutcome is no outcome: it ends the list, so ValidateAck knows a new outcome added above it.
 	lastOutcome
 )
@@ -55,6 +64,8 @@ const (
 	InvalidSource
 	NotOpen
 	BaseNotTarget
+	// NotUnavailable is the refusal of an unblock when no run of the head is unavailable.
+	NotUnavailable
 )
 
 // Rejection is the domain reason of a Rejected outcome.
@@ -102,9 +113,23 @@ type Ack struct {
 	// with a Base (the file refused), and ProposeRefused for an InvalidSource with a Base of pull or default-branch.
 	// Branch is the branch of that file, the pull request's head ref or the default branch; both or neither, and none is no link.
 	Repo, Branch string
-	// Refusal is set exactly for ProposeRefused and SkipRefused.
+	// Refusal is set exactly for the refusals: ProposeRefused, SkipRefused, SuggestRefused, ModeRefused and UnblockRefused.
 	Refusal Refusal
+	// Gate is the reason the receipt gate refused an approve (the receipt-pending, receipt-unavailable, mode-required and mode-not-met reasons
+	// of the execution package), set exactly for ReceiptRefused.
+	Gate execution.Reason
+	// Mode is the mode ModeSet recorded, and the mode the refused approve carried: none for a Gate of mode-required, set for mode-not-met,
+	// and optional for the other reasons, whose text does not depend on it. It is none for every other outcome.
+	Mode execution.Mode
+	// Counts and Markers state the receipt of a ReceiptRefused whose Gate is mode-not-met, and are zero for every other outcome.
+	Counts  execution.ReceiptCounts
+	Markers int
+	// Plans are the plans of the jobs an Unblocked lifted, at least one, and none for every other outcome.
+	Plans Plans
 }
+
+// Plans says which plans of a head an unblock lifted: its canonical run, its receipt, or both.
+type Plans struct{ Canonical, Receipt bool }
 
 // Tier is the installation tier (ADR 0027, D-TIER).
 type Tier uint8
@@ -169,8 +194,10 @@ func acknowledgment(a Ack) string {
 		return consentAck(a)
 	case InvalidCode, ReplayedCode, NoSuite, MalformedCommand, EditedFirst, OtherPullRequest:
 		return commandAck(a)
-	case ProposeRefused, SkipRefused, SuggestRefused:
+	case ProposeRefused, SkipRefused, SuggestRefused, ModeRefused, UnblockRefused:
 		return refusal(a)
+	case ReceiptRefused, ModeSet, Unblocked:
+		return executionAck(a)
 	case AlreadyProposed, ProposeFailed, Skipped, NothingUncovered, BootstrapPromoted:
 		return bootstrapAck(a)
 	}
@@ -262,7 +289,8 @@ func commandAck(a Ack) string {
 			"Wait for SuiteWard to finish setting up this repository, then comment `/suiteward propose` on the pull request that should carry the first contract.")
 	case MalformedCommand:
 		return paragraphs("Your `/suiteward` command was not understood: " + malformedText(a.Malformed) + ". Nothing changed.\n" +
-			"Comment again in the form `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>` or `/suiteward suggest`, " +
+			"Comment again in the form `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>`, `/suiteward suggest`, " +
+			"`/suiteward mode <fix|feature|refactor>` or `/suiteward unblock <code>`, " +
 			"with a current code from your authenticator app where the command takes one.")
 	case OtherPullRequest:
 		return paragraphs(ref + " belongs to another pull request; comment the command on that pull request. Nothing changed.")
@@ -331,7 +359,7 @@ func rejectionText(r Rejection, ref, who string) (reason, next string) {
 func malformedText(r Reason) string {
 	switch r {
 	case UnknownVerb:
-		return "the action must be `approve`, `revoke`, `propose`, `skip` or `suggest`"
+		return "the action must be `approve`, `revoke`, `propose`, `skip`, `suggest`, `mode` or `unblock`"
 	case MissingReference:
 		return "the proposal reference is missing"
 	case BadReference:
@@ -342,6 +370,10 @@ func malformedText(r Reason) string {
 		return "the confirmation code must be exactly 6 digits"
 	case ExtraText:
 		return "nothing may follow the end of the command"
+	case MissingMode:
+		return "the mode is missing, it must be `fix`, `feature` or `refactor`"
+	case BadMode:
+		return "the mode must be `fix`, `feature` or `refactor`"
 	}
 	panic(fmt.Sprintf("commandtext: unknown malformed reason %d", r))
 }
@@ -476,12 +508,14 @@ const (
 )
 
 // display returns s as one printable line of at most maxShown bytes, plus a
-// marker when it was cut: as is when every rune is graphic, otherwise
-// Go-quoted so newlines, bidi controls and invalid UTF-8 are visible. The cut
+// marker when it was cut: as is when every rune is graphic and holds no HTML comment opener, otherwise
+// Go-quoted so newlines, bidi controls and invalid UTF-8 are visible. An opener is written \u003c!--: Parse hides every line
+// from one that holds "<!--" to the next that holds "-->", whatever Markdown makes of it (a code span shows it as text), so the
+// fences that follow would be read out of step and a copyable command in one would read as a command. The cut
 // applies to the shown text, which is valid UTF-8, so it never splits a rune.
 func display(s string) string {
-	if hasHidden(s) {
-		s = escapeHidden(strconv.QuoteToGraphic(s))
+	if !shownAsIs(s) {
+		s = strings.ReplaceAll(escapeHidden(strconv.QuoteToGraphic(s)), "<!--", `\u003c!--`)
 	}
 	if len(s) <= maxShown {
 		return s
@@ -519,6 +553,12 @@ func escapeHidden(quoted string) string {
 // hasHidden reports whether s is not UTF-8 or holds a hidden rune: display quotes such a string.
 func hasHidden(s string) bool {
 	return !utf8.ValidString(s) || strings.IndexFunc(s, hidden) >= 0
+}
+
+// shownAsIs reports whether display writes s as it is: it is UTF-8 with no hidden rune and holds no HTML comment opener, so it is not quoted.
+// What display shows differently from the text itself is not the text to copy, so a comment that offers the text to paste asks this too.
+func shownAsIs(s string) bool {
+	return !hasHidden(s) && !strings.Contains(s, "<!--")
 }
 
 // declarationLayout removes the layout of a declaration: a CRLF line ending (the form of a file written on Windows), a newline and a tab.
@@ -608,8 +648,12 @@ const rollback = "a separately approved rollback (corrective) proposal: a new PR
 // Revision is what the comment of a new change-proposal revision states. Previous is the reference this revision
 // supersedes (an earlier revision of the same proposal), empty for the first. Each list shows at most 20 entries
 // of the total; a total below the list is taken as its length. Reduced says that the revision reduces the
-// protected scope; ReducedRules and ReducedPaths (at most 20 each, of ReducedPathsTotal paths) detail what it removes and
-// are set only with Reduced. ReducedOmitted says that the detail did not fit the message and was left out: the comment states
+// protected scope or lowers the execution policy; ReducedRules and ReducedPaths (at most 20 each, of ReducedPathsTotal paths) detail
+// what it removes and are set only with Reduced. A ReducedRules entry is one that scope.Reductions writes: "rule <p>" for a
+// pattern that no longer protects, "exclude <p>" for an exclude that is added, and "execution canonical: <from> -> <to>" or
+// "execution receipt: <from> -> <to>" for a level of the execution policy that gets weaker. A reduction whose entries are all of the
+// last kind, with no ReducedPaths and no ReducedPathsTotal, removes no path: the comment says that it lowers the execution policy.
+// ReducedOmitted says that the detail did not fit the message and was left out: the comment states
 // that, and counts the paths from ReducedPathsTotal; it excludes ReducedRules and ReducedPaths.
 //
 // Changes, when set, replaces the three lists with the numbers of the change report and names the files to look at;
@@ -675,8 +719,10 @@ func validateRevision(r Revision) error {
 		return fmt.Errorf("commandtext: %d reduced rules, %d reduced paths and a total of %d", len(r.ReducedRules), len(r.ReducedPaths), r.ReducedPathsTotal)
 	case !r.Reduced && (len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0 || r.ReducedPathsTotal != 0):
 		return errors.New("commandtext: reduction detail on a revision that does not reduce the scope")
-	case slices.ContainsFunc(r.ReducedRules, func(e string) bool { return !strings.HasPrefix(e, "rule ") && !strings.HasPrefix(e, "exclude ") }):
-		return errors.New("commandtext: a reduced rule that is neither a \"rule \" nor an \"exclude \" entry")
+	case slices.ContainsFunc(r.ReducedRules, func(e string) bool {
+		return !strings.HasPrefix(e, "rule ") && !strings.HasPrefix(e, "exclude ") && !executionEntry(e)
+	}):
+		return errors.New("commandtext: a reduced rule that is none of a \"rule \", an \"exclude \", an \"execution canonical: \" and an \"execution receipt: \" entry")
 	case r.ReducedOmitted && (!r.Reduced || len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0):
 		return errors.New("commandtext: reduction detail omitted on a revision that does not reduce the scope or that lists it")
 	}
@@ -695,17 +741,42 @@ func validateRevision(r Revision) error {
 	return nil
 }
 
-// reductionParts are the paragraphs that say a revision reduces the protected scope, with what it removes.
+// executionPrefixes start the entries that scope.Reductions writes for a level of the execution policy that gets weaker.
+var executionPrefixes = []string{"execution canonical: ", "execution receipt: "}
+
+// executionEntry reports whether entry lowers a level of the execution policy.
+func executionEntry(entry string) bool {
+	return slices.ContainsFunc(executionPrefixes, func(p string) bool { return strings.HasPrefix(entry, p) })
+}
+
+// lowersPolicyOnly reports whether the reduction of r lowers the execution policy and removes nothing from the scope: every entry
+// it lists is an execution entry, and it has no path, no total of paths and no detail that was left out.
+func (r Revision) lowersPolicyOnly() bool {
+	return r.Reduced && len(r.ReducedRules) > 0 && len(r.ReducedPaths) == 0 && r.ReducedPathsTotal == 0 && !r.ReducedOmitted &&
+		!slices.ContainsFunc(r.ReducedRules, func(e string) bool { return !executionEntry(e) })
+}
+
+// reductionParts are the paragraphs that say a revision reduces the protected scope or lowers the execution policy, with what it removes.
 func reductionParts(r Revision) []string {
-	parts := []string{"**This revision reduces the protected scope.** Review it carefully before approving."}
-	var rules, excludes []string // scope.Reductions marks each entry "rule <p>" or "exclude <p>"
+	var rules, excludes, levels []string // scope.Reductions marks each entry "rule <p>", "exclude <p>" or "execution <level>: <from> -> <to>"
 	for _, entry := range r.ReducedRules {
-		if p, ok := strings.CutPrefix(entry, "exclude "); ok {
+		switch p, isExclude := strings.CutPrefix(entry, "exclude "); {
+		case isExclude:
 			excludes = append(excludes, p)
-		} else {
+		case executionEntry(entry):
+			levels = append(levels, strings.TrimPrefix(entry, "execution "))
+		default:
 			rules = append(rules, strings.TrimPrefix(entry, "rule "))
 		}
 	}
+	lead := "This revision reduces the protected scope."
+	switch {
+	case r.lowersPolicyOnly():
+		lead = "This revision lowers the execution policy."
+	case len(levels) > 0:
+		lead = "This revision reduces the protected scope and lowers the execution policy."
+	}
+	parts := []string{"**" + lead + "** Review it carefully before approving."}
 	if r.ReducedOmitted {
 		omitted := "The detail of this reduction was omitted because it did not fit in this comment. Compare `.suiteward.yml` with the canonical one before approving."
 		if r.ReducedPathsTotal > 0 {
@@ -721,6 +792,9 @@ func reductionParts(r Revision) []string {
 	}
 	if len(r.ReducedPaths) > 0 {
 		parts = append(parts, listingAndMore("Paths that the scope no longer covers", r.ReducedPaths, r.ReducedPathsTotal))
+	}
+	if len(levels) > 0 {
+		parts = append(parts, listing("Execution policy lowered", levels, len(levels)))
 	}
 	return parts
 }
@@ -831,9 +905,20 @@ var refusals = map[Outcome]refusalSet{
 		InvalidSource: {"SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest a declaration",
 			"Fix the files or the declaration, then comment `/suiteward suggest` again.", ""},
 	}},
+	ModeRefused: {"/suiteward mode", map[Refusal]refusalText{
+		Fork:    {forkReason, "Open the pull request from a branch of this repository, then comment `/suiteward mode <fix|feature|refactor>` there.", ""},
+		NotOpen: {notOpenReason, "Comment `/suiteward mode <fix|feature|refactor>` on an open pull request.", ""},
+	}},
+	// An unblock that is refused has consumed its code, as a receipt refusal has.
+	UnblockRefused: {"/suiteward unblock", map[Refusal]refusalText{
+		Fork:    {forkReason, "Open the pull request from a branch of this repository. " + codeUsedAgain, ""},
+		NotOpen: {notOpenReason, "Comment `/suiteward unblock <code>` on an open pull request. " + codeUsedAgain, ""},
+		NotUnavailable: {"no run of this head is unavailable, so there is nothing to unblock",
+			"An unblock lifts only a run that is unavailable on the current head: a pending, failing or complete run is never lifted. " + codeUsedAgain, ""},
+	}},
 }
 
-// refusal renders the refusal of a propose, a skip or a suggest. A suggest whose file is invalid names the file that failed, not quoted.
+// refusal renders the refusal of a propose, a skip, a suggest, a mode or an unblock. A suggest whose file is invalid names the file that failed, not quoted.
 func refusal(a Ack) string {
 	set := refusals[a.Outcome]
 	text, known := set.reasons[a.Refusal]

@@ -1,20 +1,21 @@
 // Package commandtext parses the owner's PR command comments and renders the
 // comment bodies SuiteWard posts (D-COMMANDS, ADRs 0010, 0011 and 0027). It
 // takes plain values, returns plain values and depends only on the
-// domain packages (scope) and the YAML library.
+// domain packages (scope, execution) and the YAML library.
 //
 // Parsing: Parse returns a Parsed whose Kind is KindNotCommand, KindCommand
-// (with its Command: Verb Approve, Revoke, Propose, Skip or Suggest, Proposal, Revision and Code; Propose and Suggest have
-// neither reference nor code, Skip only a code) or KindMalformed (with its Reason: UnknownVerb, MissingReference, BadReference,
-// MissingCode, BadCode or ExtraText). Reference writes P<n>-R<m> and ParseReference reads it.
+// (with its Command: Verb Approve, Revoke, Propose, Skip, Suggest, SetMode or Unblock, Proposal, Revision, Code and Mode; Propose and
+// Suggest have neither reference nor code, Skip and Unblock only a code, SetMode only a mode, and Approve may name a mode before its code)
+// or KindMalformed (with its Reason: UnknownVerb, MissingReference, BadReference, MissingCode, BadCode, ExtraText, MissingMode or BadMode).
+// Reference writes P<n>-R<m> and ParseReference reads it.
 //
 // Rendering: Acknowledge renders an Ack (Outcome Approved, Revoked,
 // NoActiveApproval, Rejected with a Rejection, MalformedCommand with a Reason,
 // InvalidCode, ReplayedCode, NoSuite, EditedFirst, BootstrapPromoted,
-// RevokedAfterPromotion, ApprovedAfterPromotion, OtherPullRequest, ProposeRefused, SkipRefused or SuggestRefused with a Refusal, AlreadyProposed,
-// ProposeFailed, Skipped or NothingUncovered), BootstrapSummary renders
+// RevokedAfterPromotion, ApprovedAfterPromotion, OtherPullRequest, ProposeRefused, SkipRefused, SuggestRefused, ModeRefused or UnblockRefused with a Refusal, AlreadyProposed,
+// ProposeFailed, Skipped, NothingUncovered, ReceiptRefused with the Gate reason that refused an approve, ModeSet or Unblocked with its Plans), BootstrapSummary renders
 // a Summary (from the default branch or from a pull request; at most 20 entries per listing, each shortened to 300 bytes),
-// RevisionComment renders a Revision the same way (with the rules and paths a reduction removes), and BootstrapNotice and
+// RevisionComment renders a Revision the same way (with the rules and paths a reduction removes and the levels of the execution policy it lowers), and BootstrapNotice and
 // BootstrapCancelled render the comments of a pull request before the first contract. SuggestDeclaration renders a
 // DeclarationSuggestion (include and runner patterns, a cut notice and the mixed files it does not suggest) as the reply
 // to a propose without a declaration, or, with Suggest set, as the reply to /suiteward suggest. After the first contract, ScopeNoticeComment renders a ScopeNotice, the test-like
@@ -34,7 +35,11 @@
 // is not graphic other than a newline (LF or CRLF) and a tab.
 package commandtext
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
+)
 
 // Kind is the kind of a parsed comment body.
 type Kind uint8
@@ -56,6 +61,9 @@ const (
 	Skip
 	// Suggest takes neither reference nor code.
 	Suggest
+	// SetMode takes a mode and nothing else; Unblock takes only a code, as Skip does.
+	SetMode
+	Unblock
 )
 
 // Reason says why a command line is malformed.
@@ -69,6 +77,8 @@ const (
 	MissingCode
 	BadCode
 	ExtraText
+	MissingMode
+	BadMode
 	// lastReason is no reason: it ends the list (see lastOutcome in render.go).
 	lastReason
 )
@@ -80,6 +90,8 @@ type Command struct {
 	Proposal int
 	Revision int
 	Code     string
+	// Mode is the mode an approve names or a SetMode sets, and ModeNone for every other command and for an approve that names none.
+	Mode execution.Mode
 }
 
 // Parsed is the result of Parse. Command is set only for KindCommand and
@@ -268,31 +280,58 @@ func parseLine(rest string) Parsed {
 		}
 		return Parsed{Kind: KindCommand, Command: Command{Verb: Suggest}}
 	case asciiLower(tokens[0]) == "skip":
-		return parseSkip(tokens[1:])
+		return parseCode(Skip, tokens[1:])
+	case asciiLower(tokens[0]) == "unblock":
+		return parseCode(Unblock, tokens[1:])
+	case asciiLower(tokens[0]) == "mode":
+		return parseMode(tokens[1:])
 	default:
 		return bad(UnknownVerb)
 	}
-	if len(tokens) < 2 {
-		return bad(MissingReference)
-	}
-	proposal, revision, ok := ParseReference(tokens[1])
-	if !ok {
-		return bad(BadReference)
-	}
-	if len(tokens) < 3 {
-		return bad(MissingCode)
-	}
-	if len(tokens[2]) != 6 || !digits(tokens[2]) {
-		return bad(BadCode)
-	}
-	if len(tokens) > 3 {
-		return bad(ExtraText)
-	}
-	return Parsed{Kind: KindCommand, Command: Command{Verb: verb, Proposal: proposal, Revision: revision, Code: tokens[2]}}
+	return parseReferenced(verb, tokens[1:])
 }
 
-// parseSkip reads the arguments of skip: a code and nothing else, so a reference is a bad code.
-func parseSkip(args []string) Parsed {
+// parseReferenced reads the arguments of approve and revoke: a reference, for approve a mode word, and a code. A word after the reference that is
+// not a mode word is the code, so a misspelled mode is a bad code, and revoke, which takes no mode, reads a mode word the same way.
+func parseReferenced(verb Verb, args []string) Parsed {
+	if len(args) == 0 {
+		return Parsed{Kind: KindMalformed, Reason: MissingReference}
+	}
+	proposal, revision, ok := ParseReference(args[0])
+	if !ok {
+		return Parsed{Kind: KindMalformed, Reason: BadReference}
+	}
+	args = args[1:]
+	var mode execution.Mode
+	if verb == Approve && len(args) > 0 {
+		if m, err := execution.ParseMode(asciiLower(args[0])); err == nil {
+			mode, args = m, args[1:]
+		}
+	}
+	parsed := parseCode(verb, args)
+	if parsed.Kind == KindCommand {
+		parsed.Command.Proposal, parsed.Command.Revision, parsed.Command.Mode = proposal, revision, mode
+	}
+	return parsed
+}
+
+// parseMode reads the arguments of mode: a mode word and nothing else.
+func parseMode(args []string) Parsed {
+	if len(args) == 0 {
+		return Parsed{Kind: KindMalformed, Reason: MissingMode}
+	}
+	mode, err := execution.ParseMode(asciiLower(args[0]))
+	switch {
+	case err != nil:
+		return Parsed{Kind: KindMalformed, Reason: BadMode}
+	case len(args) > 1:
+		return Parsed{Kind: KindMalformed, Reason: ExtraText}
+	}
+	return Parsed{Kind: KindCommand, Command: Command{Verb: SetMode, Mode: mode}}
+}
+
+// parseCode reads the arguments of a command that ends in a code: a code and nothing else, so a reference is a bad code.
+func parseCode(verb Verb, args []string) Parsed {
 	switch {
 	case len(args) == 0:
 		return Parsed{Kind: KindMalformed, Reason: MissingCode}
@@ -301,7 +340,7 @@ func parseSkip(args []string) Parsed {
 	case len(args) > 1:
 		return Parsed{Kind: KindMalformed, Reason: ExtraText}
 	}
-	return Parsed{Kind: KindCommand, Command: Command{Verb: Skip, Code: args[0]}}
+	return Parsed{Kind: KindCommand, Command: Command{Verb: verb, Code: args[0]}}
 }
 
 func digits(s string) bool {

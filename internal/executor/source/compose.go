@@ -334,3 +334,7 @@ func (a *Appender) Close() error {
 	a.closed = true
 	return a.c.tw.Close()
 }
+
+// Spend charges n bytes against the budget without writing anything, for what the tar will hold once it is unpacked and does not
+// carry itself: the unpacked size of the module zips that Add wrote. Past the budget it is ErrTooLarge and charges nothing.
+func (a *Appender) Spend(n int64) error { return fmt.Errorf("not implemented") }

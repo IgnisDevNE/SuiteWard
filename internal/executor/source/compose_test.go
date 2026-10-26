@@ -476,3 +476,89 @@ func TestAppenderRefusesFilesAfterClose(t *testing.T) {
 		t.Errorf("a closed tar takes no file")
 	}
 }
+
+func TestComposeGivesAManifestFileTheModeOfTheHeadsFileAtItsPath(t *testing.T) {
+	// The canonical manifest records no mode, so a protected script keeps the mode that the head has for it.
+	sha := strings.Repeat("4", 40)
+	headEntry := func(mode execution.GitMode) map[Side][]execution.TreeEntry {
+		return map[Side][]execution.TreeEntry{SideHead: {{Path: "scripts/run.sh", Mode: mode, BlobSHA1: sha}}}
+	}
+	for name, tc := range map[string]struct {
+		entries map[Side][]execution.TreeEntry
+		want    int64
+	}{
+		"an executable file":             {headEntry(execution.GitExecutable), 0o755},
+		"a regular file":                 {headEntry(execution.GitRegular), 0o644},
+		"git's legacy regular mode":      {headEntry("100664"), 0o644},
+		"a symlink":                      {headEntry(execution.GitSymlink), 0o644},
+		"no entry of the head at a path": {map[Side][]execution.TreeEntry{SideHead: {{Path: "other.sh", Mode: execution.GitExecutable, BlobSHA1: sha}}}, 0o644},
+		"no head tree at all":            {nil, 0o644},
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := &manifestFiles{}
+			c := &composition{
+				tree:        []execution.TreeFile{{Path: "scripts/run.sh", Content: files.serve("#!/bin/sh\n"), Source: execution.FromManifest}},
+				files:       files,
+				treeEntries: tc.entries,
+			}
+			out, app, err := c.compose(t)
+			if err != nil || app == nil {
+				t.Fatalf("Compose: %v", err)
+			}
+			if found := readTar(t, out.Bytes()); found["scripts/run.sh"].mode != tc.want {
+				t.Errorf("mode %o, want %o", found["scripts/run.sh"].mode, tc.want)
+			}
+		})
+	}
+}
+
+func TestAppenderSpendChargesTheBudgetWithoutWriting(t *testing.T) {
+	// A budget of 512 KiB, of which the tree takes 300 KiB.
+	zeros := strings.Repeat("0", 300<<10)
+	compose := func(t *testing.T) (*bytes.Buffer, *Appender) {
+		c := &composition{
+			head:   []member{file("a.bin", zeros)},
+			tree:   []execution.TreeFile{treeFile("a.bin", zeros, execution.FromHead)},
+			limits: Limits{ArchiveBytes: 1 << 20, FileBytes: 1 << 20, TmpfsMiB: 1},
+		}
+		out, app, err := c.compose(t)
+		if err != nil {
+			t.Fatalf("Compose: %v", err)
+		}
+		return out, app
+	}
+	t.Run("what is spent is not left for a file", func(t *testing.T) {
+		out, app := compose(t)
+		before := out.Len()
+		if err := app.Spend(150 << 10); err != nil {
+			t.Fatalf("Spend: %v", err)
+		}
+		if out.Len() != before {
+			t.Errorf("Spend must write nothing")
+		}
+		more := strings.Repeat("m", 100<<10)
+		onlyError(t, app.Add("m.zip", int64(len(more)), strings.NewReader(more)), ErrTooLarge)
+	})
+	t.Run("a file fits what is left", func(t *testing.T) {
+		_, app := compose(t)
+		if err := app.Spend(50 << 10); err != nil {
+			t.Fatalf("Spend: %v", err)
+		}
+		small := strings.Repeat("m", 100<<10)
+		if err := app.Add("m.zip", int64(len(small)), strings.NewReader(small)); err != nil {
+			t.Errorf("Add: %v", err)
+		}
+	})
+	t.Run("past the budget it is refused and charges nothing", func(t *testing.T) {
+		_, app := compose(t)
+		onlyError(t, app.Spend(300<<10), ErrTooLarge)
+		small := strings.Repeat("m", 100<<10)
+		if err := app.Add("m.zip", int64(len(small)), strings.NewReader(small)); err != nil {
+			t.Errorf("a refused Spend must not take budget: %v", err)
+		}
+	})
+	t.Run("a negative amount", func(t *testing.T) {
+		_, app := compose(t)
+		onlyError(t, app.Spend(-1), ErrInvalidPlan)
+	})
+}

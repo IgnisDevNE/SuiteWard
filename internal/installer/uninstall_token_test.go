@@ -35,14 +35,15 @@ func pageHarness(t *testing.T) *harness {
 	return h
 }
 
-// mainInstanceToken is the token copy of the main instance of the user, at the default place of a configuration directory that is the test's
-// own: a purge that reached a real file would be the incident again.
-func mainInstanceToken(t *testing.T, h *harness) string {
+// defaultTokenPlace points the per-user directories at one of the test's own, and gives the default place of the token file in it: a purge
+// that reached a real file would be the incident again.
+func defaultTokenPlace(t *testing.T, h *harness) string {
 	t.Helper()
 	dir := shortDir(t)
 	for _, key := range []string{"APPDATA", "XDG_CONFIG_HOME", "HOME"} {
 		t.Setenv(key, dir)
 	}
+	h.f.env["LOCALAPPDATA"] = dir // where the Windows default is
 	path, err := defaultTokenFile(h.f.deps())
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +51,13 @@ func mainInstanceToken(t *testing.T, h *harness) string {
 	if !strings.HasPrefix(path, dir) {
 		t.Fatalf("the default token file %s is outside the test's configuration directory %s: a purge would delete a real file", path, dir)
 	}
+	return path
+}
+
+// mainInstanceToken is the token copy of the main instance of the user, at its default place.
+func mainInstanceToken(t *testing.T, h *harness) string {
+	t.Helper()
+	path := defaultTokenPlace(t, h)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -225,9 +233,27 @@ func TestThePurgeByYesListsWhatItDeletesBeforeItActs(t *testing.T) {
 		}
 		out := run.output()
 		drawn := out[:strings.LastIndex(out, leaveAlt)] // the frames, before the screen was left
+		scrollback := strings.Join(strings.Fields(run.console.tail()), " ")
 		for _, want := range with(purgeLists, "the MCP token file "+h.tokenPath()) {
 			if !strings.Contains(drawn, want) {
 				t.Errorf("no frame drew %q:\n%s", want, drawn)
+			}
+			if !strings.Contains(scrollback, want) { // the page is gone when the command ends: what stays on the screen is the scrollback
+				t.Errorf("the scrollback lacks %q:\n%s", want, run.console.tail())
+			}
+		}
+	})
+	t.Run("full screen, a token file that is kept", func(t *testing.T) {
+		h := pageHarness(t)
+		mainToken := mainInstanceToken(t, h)
+		run := newScreenRun(termWidth, termHeight, "\n")
+		if err := Uninstall(liveContext(t), h.secondInstanceArgs("--yes", "--instance", testInstance), run.on(h.newEnv())); err != nil {
+			t.Fatalf("Uninstall: %v\n%s", err, run.output())
+		}
+		scrollback := strings.Join(strings.Fields(run.console.tail()), " ")
+		for _, want := range with(purgeLists, "The MCP token file "+mainToken+" is kept", "--token-file <path>") {
+			if !strings.Contains(scrollback, want) {
+				t.Errorf("the scrollback lacks %q:\n%s", want, run.console.tail())
 			}
 		}
 	})
@@ -257,6 +283,81 @@ func TestThePurgeListsTheRecordOfAGitHubAppOnlyWhenThereIsOne(t *testing.T) {
 			}
 			if exists(pending) {
 				t.Error("the record is still there after the purge")
+			}
+		})
+	}
+}
+
+// ---- a token file that is kept but not there is not mentioned ----
+
+// With another settings file and no --token-file, the default token file is kept: when there is no such file, there is nothing to say about it.
+func TestThePurgeSaysNothingOfAKeptTokenFileThatIsNotThere(t *testing.T) {
+	const aboutIt = "MCP token file"
+	t.Run("plain", func(t *testing.T) {
+		h := purgeHarness(t)
+		defaultTokenPlace(t, h) // the default place is in the test's directory, and nothing is there
+		if err := Uninstall(context.Background(), h.secondInstanceArgs("--yes", "--instance", testInstance), h.newEnv()); err != nil {
+			t.Fatal(err)
+		}
+		if out := h.out.String(); strings.Contains(out, aboutIt) || strings.Contains(out, "--token-file") {
+			t.Errorf("the output speaks of a token file that is not there:\n%s", out)
+		}
+	})
+	t.Run("full screen", func(t *testing.T) {
+		h := pageHarness(t)
+		defaultTokenPlace(t, h)
+		run := newScreenRun(termWidth, termHeight, testInstance+"\n", "\n")
+		if err := Uninstall(liveContext(t), h.secondInstanceArgs(), run.on(h.newEnv())); err != nil {
+			t.Fatalf("Uninstall: %v\n%s", err, run.output())
+		}
+		if text := run.question(t, 0).text(); strings.Contains(text, aboutIt) || strings.Contains(text, "--token-file") {
+			t.Errorf("the page speaks of a token file that is not there:\n%s", text)
+		}
+		if tail := run.console.tail(); strings.Contains(tail, aboutIt) || strings.Contains(tail, "--token-file") {
+			t.Errorf("the scrollback speaks of a token file that is not there:\n%s", tail)
+		}
+	})
+}
+
+// ---- --settings that names the default settings file ----
+
+// The main instance's own purge may name its default settings file: that is still the default settings file, so its default token file is its own.
+func TestThePurgeThatNamesTheDefaultSettingsFileRemovesTheDefaultTokenFile(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		goos   string
+		id     string              // the instance id the purge is confirmed with: a Windows host reads /status inside the Podman machine, which the fake does not answer
+		spell  func(string) string // how --settings spells the default path
+		caseOK bool                // the spelling needs a file system that ignores case
+	}{
+		{"as it is, unix", "linux", testInstance, func(p string) string { return p }, false},
+		{"as it is, windows", "windows", unknownValue, func(p string) string { return p }, false},
+		{"not cleaned, unix", "linux", testInstance, func(p string) string { return filepath.Dir(p) + string(filepath.Separator) + "." + string(filepath.Separator) + filepath.Base(p) }, false},
+		{"in another case, windows", "windows", unknownValue, strings.ToUpper, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, tc.goos)
+			podmanStackExists(h)
+			mainToken := mainInstanceToken(t, h)
+			settings, err := DefaultSettingsPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := colocatedSettings()
+			s.Connection = "pm"
+			if err := SaveSettings(settings, s); err != nil {
+				t.Fatal(err)
+			}
+			spelled := tc.spell(settings)
+			if tc.caseOK && !settingsExist(spelled) {
+				t.Skip("this file system tells the file apart by case: the spelling does not name it")
+			}
+			args := []string{"--settings", spelled, "--runtime", "podman", "--connection", "pm", "--purge", "--yes", "--instance", tc.id}
+			if err := Uninstall(context.Background(), args, h.newEnv()); err != nil {
+				t.Fatal(err)
+			}
+			if exists(settings) || exists(mainToken) {
+				t.Errorf("the settings file (%v) or the default token file (%v) of the main instance are still there", exists(settings), exists(mainToken))
 			}
 		})
 	}

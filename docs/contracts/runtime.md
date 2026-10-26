@@ -710,7 +710,7 @@ A test is `{package, name, file, kind, head, base, excluded}`:
 - `head` has 1 to 3 observations in run order, each `pass`, `fail`, `build-error`, `skip` or `absent`. `base` is the same, and is present exactly for a `receipt` test that is not excluded. A package that does not build reports `build-error` for every expected test of it.
 - `excluded` is `build-constraint` †. A test with it has no `head` and no `base`.
 - `(package, name)` is unique in the result. An internal and an external test package of one directory share one `package` value. A name that both declare is reported once, and its observation is the worst of the two (a failure of either reads `fail`), because `go test -run` selects by name alone. That is a limit, not a feature.
-- When the exit status of a `go test` invocation contradicts its report (a non-zero exit with every expected test reported passing or skipped, or a zero exit with a test reported failing or a package reported as not building), the executor reports every expected test of that invocation as `fail`. An invocation covers the packages of one side; the exit status is the container's, with `go test` as its process.
+- When the exit status of a `go test` invocation contradicts its report (a non-zero exit with no failing test event and no package build failure in the report, expected or not, or a zero exit with one), the executor reports every expected test of that invocation as `fail`. A failing test that was not expected (one of the same name in another package, selected by `-run`) explains a non-zero exit. An invocation covers the packages of one side; the exit status is the container's, with `go test` as its process.
 
 The service validates, in this order:
 1. the token;

@@ -37,6 +37,9 @@ const (
 	GitTree       GitMode = "040000"
 )
 
+// gitLegacyRegular is git's old mode for a regular file with group write; a tree may still hold it, and it reads as GitRegular.
+const gitLegacyRegular GitMode = "100664"
+
 // TreeEntry is one entry of a commit's tree, as the service reads it from GitHub with a recursive tree request: its path,
 // its mode and the SHA-1 of its object. A directory entry (GitTree) names no file and is ignored.
 type TreeEntry struct {
@@ -151,6 +154,8 @@ func indexTree(entries []TreeEntry) (map[string]blob, []string, error) {
 			submodules = append(submodules, e.Path)
 		case GitRegular, GitExecutable, GitSymlink:
 			files[e.Path] = blob{e.Mode, e.BlobSHA1}
+		case gitLegacyRegular:
+			files[e.Path] = blob{GitRegular, e.BlobSHA1}
 		default:
 			return nil, nil, fmt.Errorf("%w: %q has the unknown mode %q", ErrInvalidSource, e.Path, e.Mode)
 		}

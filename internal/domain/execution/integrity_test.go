@@ -125,6 +125,14 @@ func TestCheckSourceOfAnEmptyTreeAndExtraction(t *testing.T) {
 	}
 }
 
+func TestCheckSourceAllowsDirectoriesThatDifferInCase(t *testing.T) {
+	entries := []execution.TreeEntry{entry("Dir/a.go", execution.GitRegular, "a"), entry("dir/b.go", execution.GitRegular, "b")}
+	files := []execution.ExtractedFile{regular("Dir/a.go", "a"), regular("dir/b.go", "b")}
+	if got, err := execution.CheckSource(entries, files); err != nil || !got.Intact() {
+		t.Errorf("CheckSource = %+v, %v; want intact: only a file where a directory is makes a conflict", got, err)
+	}
+}
+
 func TestCheckSourceAllowsANameThatOnlyPrefixesAnother(t *testing.T) {
 	entries := []execution.TreeEntry{entry("d", execution.GitRegular, "d"), entry("d.go", execution.GitRegular, "g"), entry("dd/x", execution.GitRegular, "x")}
 	files := []execution.ExtractedFile{regular("d", "d"), regular("d.go", "g"), regular("dd/x", "x")}
@@ -237,6 +245,14 @@ func TestCheckSourceRefusesInputItCannotRead(t *testing.T) {
 		{"a file below a file", nil, []execution.ExtractedFile{regular("d", "d"), regular("d/x", "x")}},
 		{"a file below a symlink", nil, []execution.ExtractedFile{link("d", "."), regular("d/x", "x")}},
 		{"a link below a link", nil, []execution.ExtractedFile{link("d", "."), link("d/x", "../y")}},
+
+		// A filesystem that ignores case, and drops trailing dots and spaces, sees these as one name.
+		{"an entry below a file in another case", []execution.TreeEntry{entry("d", execution.GitRegular, "d"), entry("D/x", execution.GitRegular, "x")}, nil},
+		{"an entry below a file spelled with a dot", []execution.TreeEntry{entry("d.", execution.GitRegular, "d"), entry("d/x", execution.GitRegular, "x")}, nil},
+		{"an entry below a submodule in another case", []execution.TreeEntry{{Path: "Vendor", Mode: execution.GitSubmodule, BlobSHA1: gitBlob("commit")}, entry("vendor/x", execution.GitRegular, "x")}, nil},
+		{"a file below a link in another case", nil, []execution.ExtractedFile{link("D", "."), regular("d/x", "x")}},
+		{"a link below a file in another case", nil, []execution.ExtractedFile{regular("d", "d"), link("D/x", "../y")}},
+		{"a file below a link spelled with a space", nil, []execution.ExtractedFile{link("d ", "."), regular("d/x", "x")}},
 		{"an unknown entry mode", []execution.TreeEntry{entry("a.go", "100600", "a")}, nil},
 		{"an entry with no blob SHA-1", []execution.TreeEntry{{Path: "a.go", Mode: execution.GitRegular}}, nil},
 		{"an entry with an upper-case SHA-1", []execution.TreeEntry{{Path: "a.go", Mode: execution.GitRegular, BlobSHA1: strings.ToUpper(gitBlob("a"))}}, nil},

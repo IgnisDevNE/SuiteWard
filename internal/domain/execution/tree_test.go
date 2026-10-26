@@ -333,6 +333,10 @@ func TestCanonicalTreeRefusesAPathBelowAnotherPathOfTheTree(t *testing.T) {
 		{"not next to it in path order", map[string]string{"a": "a file", "a.txt": "x"}, map[string]string{"a/b_test.go": "t"}},
 		{"a manifest file and a head path below it", map[string]string{"docs/x.txt": "x"}, map[string]string{"docs": "a file"}},
 		{"two manifest paths", map[string]string{"go.mod": "m"}, map[string]string{"a_test.go": "t", "a_test.go/b": "x"}},
+		// A filesystem that ignores case, and drops trailing dots and spaces, sees these as one name.
+		{"a head file and a manifest path below it in another case", map[string]string{"Tests": "a symlink"}, map[string]string{"tests/a_test.go": "t"}},
+		{"a head file spelled with a dot", map[string]string{"d.": "a symlink"}, map[string]string{"d/x_test.go": "t"}},
+		{"a manifest file and a head path below it in another case", map[string]string{"docs/x.txt": "x"}, map[string]string{"Docs": "a file"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -353,6 +357,8 @@ func TestBaseSideTreeRefusesAPathBelowAnotherPathOfTheTree(t *testing.T) {
 		{"a base file and a carried path below it", map[string]string{"x": "a file"}, map[string]string{"x/y_test.go": "t"}},
 		{"a carried file and a base path below it", map[string]string{"x_test.go/inner.go": "i"}, map[string]string{"x_test.go": "a file"}},
 		{"not next to it in path order", map[string]string{"a": "a file", "a.txt": "x"}, map[string]string{"a/b_test.go": "t"}},
+		{"a base file and a carried path below it in another case", map[string]string{"X": "a file"}, map[string]string{"x/y_test.go": "t"}},
+		{"a carried file and a base path below it in another case", map[string]string{"X_TEST.go/inner.go": "i"}, map[string]string{"x_test.go": "a file"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -115,7 +115,7 @@ func CheckSource(entries []TreeEntry, files []ExtractedFile) (SourceIntegrity, e
 	return report, nil
 }
 
-func validBlobID(s string) bool {
+func validSHA1(s string) bool {
 	decoded, err := hex.DecodeString(s)
 	return err == nil && len(decoded) == sha1.Size && hex.EncodeToString(decoded) == s
 }
@@ -141,7 +141,7 @@ func indexTree(entries []TreeEntry) (map[string]blob, []string, error) {
 		if err := checkPath(e.Path, seen); err != nil {
 			return nil, nil, err
 		}
-		if !validBlobID(e.BlobSHA1) {
+		if !validSHA1(e.BlobSHA1) {
 			return nil, nil, fmt.Errorf("%w: %q has no valid SHA-1", ErrInvalidSource, e.Path)
 		}
 		switch e.Mode {
@@ -170,7 +170,7 @@ func indexExtraction(files []ExtractedFile) (map[string]blob, map[string]string,
 		}
 		switch f.Mode {
 		case GitRegular, GitExecutable:
-			if !validBlobID(f.BlobSHA1) || f.Target != "" {
+			if !validSHA1(f.BlobSHA1) || f.Target != "" {
 				return nil, nil, fmt.Errorf("%w: %q must carry a blob SHA-1 and no target", ErrInvalidSource, f.Path)
 			}
 			extracted[f.Path] = blob{f.Mode, f.BlobSHA1}

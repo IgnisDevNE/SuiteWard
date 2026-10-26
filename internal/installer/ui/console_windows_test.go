@@ -3,9 +3,12 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -40,18 +43,6 @@ func TestEnableKeysRejectsANonConsole(t *testing.T) {
 	}
 }
 
-// inputRecord is the INPUT_RECORD of a key event: what the console queues for a key that nobody is reading.
-type inputRecord struct {
-	eventType uint16
-	_         uint16
-	keyDown   int32
-	repeat    uint16
-	virtual   uint16
-	scan      uint16
-	char      uint16
-	control   uint32
-}
-
 // openConsoleInput opens the input of the console of the test, as the program reads its keys. A process with no console (a runner with
 // none attached) gets one for the length of the test; where none can be had, the test is skipped.
 func openConsoleInput(t *testing.T) *os.File {
@@ -79,6 +70,24 @@ func openConsoleInput(t *testing.T) *os.File {
 	return f
 }
 
+// typeIntoConsole queues events in the input of the console, as the keyboard does.
+func typeIntoConsole(t *testing.T, f *os.File, events ...inputRecord) {
+	t.Helper()
+	var written uint32
+	write := windows.NewLazySystemDLL("kernel32.dll").NewProc("WriteConsoleInputW")
+	if r, _, err := write.Call(f.Fd(), uintptr(unsafe.Pointer(&events[0])), uintptr(len(events)), uintptr(unsafe.Pointer(&written))); r == 0 {
+		t.Fatalf("type into the console: %v", err)
+	}
+}
+
+// keyEvents are the events of a key that is pressed and let go: the key down comes with the character, and the key up has none.
+func keyEvents(char uint16, virtual, scan uint16) []inputRecord {
+	return []inputRecord{
+		{eventType: 1, keyDown: 1, repeat: 1, virtual: virtual, scan: scan, char: char},
+		{eventType: 1, keyDown: 0, repeat: 1, virtual: virtual, scan: scan, char: char},
+	}
+}
+
 func pendingEvents(t *testing.T, f *os.File) uint32 {
 	t.Helper()
 	var n uint32
@@ -92,15 +101,7 @@ func pendingEvents(t *testing.T, f *os.File) uint32 {
 // nobody pressed for it. Key mode starts by dropping them.
 func TestEnableKeysDropsWhatWasTypedBeforeKeyMode(t *testing.T) {
 	conin := openConsoleInput(t)
-	enter := []inputRecord{
-		{eventType: 1, keyDown: 1, repeat: 1, virtual: 0x0d, scan: 0x1c, char: '\r'}, // KEY_EVENT: Enter down
-		{eventType: 1, keyDown: 0, repeat: 1, virtual: 0x0d, scan: 0x1c, char: '\r'}, // and up
-	}
-	var written uint32
-	write := windows.NewLazySystemDLL("kernel32.dll").NewProc("WriteConsoleInputW")
-	if r, _, err := write.Call(conin.Fd(), uintptr(unsafe.Pointer(&enter[0])), uintptr(len(enter)), uintptr(unsafe.Pointer(&written))); r == 0 {
-		t.Fatalf("type into the console: %v", err)
-	}
+	typeIntoConsole(t, conin, keyEvents('\r', 0x0d, 0x1c)...)
 	if pendingEvents(t, conin) == 0 {
 		t.Fatal("the console queued nothing of what was typed: the test cannot see what key mode does with it")
 	}
@@ -111,5 +112,60 @@ func TestEnableKeysDropsWhatWasTypedBeforeKeyMode(t *testing.T) {
 	t.Cleanup(func() { _ = restore() })
 	if n := pendingEvents(t, conin); n != 0 {
 		t.Errorf("%d events typed before key mode are still queued", n)
+	}
+}
+
+// The wait for a key sees a key that makes a character, and nothing else: a key let go, a modifier or a window event that the console queues
+// would only end it for a read that then waits for the key. It takes nothing a read needs, and it ends with its context.
+func TestInputReadinessWaitsForACharacterWithoutReadingItAndEndsWithItsContext(t *testing.T) {
+	conin := openConsoleInput(t)
+	restore, err := enableKeys(conin)
+	if err != nil {
+		t.Fatalf("enableKeys: %v", err)
+	}
+	t.Cleanup(func() { _ = restore() })
+	ready := inputReadiness(conin)
+	if ready == nil {
+		t.Fatal("this console cannot be waited on for a key")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	waited := make(chan error, 1)
+	go func() { waited <- ready(ctx) }()
+	typeIntoConsole(t, conin, inputRecord{eventType: 0x10}, inputRecord{eventType: 1, keyDown: 1, repeat: 1, virtual: 0x10, scan: 0x2a}) // a focus event, and Shift
+	typeIntoConsole(t, conin, keyEvents(0, 0x26, 0x48)...)                                                                               // an arrow
+	select {
+	case err := <-waited:
+		t.Fatalf("the wait ended with no character typed: %v", err)
+	case <-time.After(350 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-waited:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("the wait ended with %v, want the end of its context", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the context did not end the wait")
+	}
+
+	typeIntoConsole(t, conin, keyEvents('a', 0x41, 0x1e)...)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+	if err := ready(ctx2); err != nil {
+		t.Fatalf("a character was typed and the wait did not see it: %v", err)
+	}
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 1)
+		n, _ := conin.Read(buf)
+		got <- string(buf[:n])
+	}()
+	select {
+	case s := <-got:
+		if s != "a" {
+			t.Errorf("the read after the wait got %q, want the character that was typed (a)", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the wait took the character: the read after it has nothing to read")
 	}
 }

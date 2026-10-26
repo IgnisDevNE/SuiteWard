@@ -3,6 +3,8 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"io"
 	"os"
 	"strconv"
@@ -135,5 +137,49 @@ func TestEnableKeysDropsWhatWasTypedBeforeKeyMode(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("the key typed after key mode started did not arrive")
+	}
+}
+
+// The wait for a key sees a byte without reading it, and ends with its context.
+func TestInputReadinessWaitsForAKeyWithoutReadingItAndEndsWithItsContext(t *testing.T) {
+	master, slave := openPty(t)
+	restore, err := enableKeys(slave)
+	if err != nil {
+		t.Fatalf("enableKeys: %v", err)
+	}
+	t.Cleanup(func() { _ = restore() })
+	ready := inputReadiness(slave)
+	if ready == nil {
+		t.Fatal("this terminal cannot be waited on for a key")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	waited := make(chan error, 1)
+	go func() { waited <- ready(ctx) }()
+	select {
+	case err := <-waited:
+		t.Fatalf("the wait ended with no key typed: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-waited:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("the wait ended with %v, want the end of its context", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the context did not end the wait")
+	}
+
+	if _, err := master.WriteString("a"); err != nil {
+		t.Fatal(err)
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+	if err := ready(ctx2); err != nil {
+		t.Fatalf("a key was typed and the wait did not see it: %v", err)
+	}
+	buf := make([]byte, 1)
+	if n, err := slave.Read(buf); n != 1 || buf[0] != 'a' || err != nil {
+		t.Errorf("the read after the wait got %q, %v, want the key that was typed (a): the wait must not take it", buf[:n], err)
 	}
 }

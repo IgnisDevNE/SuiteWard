@@ -111,6 +111,9 @@ type Options struct {
 	// arrow arrives as an escape sequence. Ctrl-C must stay a signal that cancels Context, not a character. restore puts the previous
 	// mode back and is called once, when the Select ends, whatever the way. Optional; nil, or an error, makes Select ask by number.
 	KeyInput func() (restore func() error, err error)
+	// InputReady waits until the terminal has a key to read, without reading it, and returns the error of ctx when ctx is done first. Optional.
+	// With it, a HiddenLine ends with its context and leaves no read pending, so the next question has the input to itself.
+	InputReady func(ctx context.Context) error
 }
 
 // Choice is one numbered answer of Choose.
@@ -1115,3 +1118,7 @@ func answered(label, answer string) string {
 	}
 	return label + ": " + answer
 }
+
+// HiddenLineStopsCleanly says that the context of a HiddenLine ends its read with nothing left pending on the input: the screen can wait for a
+// key (Options.InputReady). Without it a read that its context ended stays on the input until the user presses Enter.
+func (s *Screen) HiddenLineStopsCleanly() bool { return false }

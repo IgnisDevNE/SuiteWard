@@ -206,7 +206,7 @@ Every run gets disposable containers from a container runtime CLI (`podman` or `
 SuiteWard cannot prove that code under test behaves the same outside the sandbox. It adds layers that detect and flag:
 
 - the expected tests come from static analysis (`go/parser`), so a test that does not report is `MISSING`;
-- the runner's report is cross-checked with the process exit status. When they contradict each other (a non-zero exit with every test reported passing, or the reverse), every expected test of that package reads `fail`;
+- the runner's report is cross-checked with the process exit status. When they contradict each other (a non-zero exit with every test reported passing, or the reverse), every expected test of that `go test` invocation (one side) reads `fail`;
 - deterministic markers flag test-aware code in the non-test Go files that differ between the base and the head: `testing` imported outside `_test.go`, `testing.Testing()`, `flag.Lookup("test.`, `os.Exit` inside `init`, reads of `_test.go` paths, and reads of `TESTING` or `CI`. Markers belong to the receipt, which has a base commit; the canonical plan has none;
 - tests run in a shuffled order with no CI variables.
 

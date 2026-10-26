@@ -105,3 +105,35 @@ func TestEnableKeysReadsKeysAtOnceKeepsSignalsAndRestoresTheMode(t *testing.T) {
 		t.Errorf("the terminal mode was not restored.\nbefore: %+v\nafter:  %+v", before, after)
 	}
 }
+
+// Keys typed while nothing reads are queued by the terminal (the line discipline), and key mode would hand them to the question that opens
+// next: an Enter that nobody pressed for it. Key mode starts by dropping them, and keeps what is typed after.
+func TestEnableKeysDropsWhatWasTypedBeforeKeyMode(t *testing.T) {
+	master, slave := openPty(t)
+	if _, err := master.WriteString("x\r"); err != nil { // a whole line, typed ahead
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond) // the line is in the queue of the terminal
+	restore, err := enableKeys(slave)
+	if err != nil {
+		t.Fatalf("enableKeys: %v", err)
+	}
+	t.Cleanup(func() { _ = restore() })
+	if _, err := master.WriteString("a"); err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 1)
+		n, _ := io.ReadFull(slave, buf)
+		got <- string(buf[:n])
+	}()
+	select {
+	case s := <-got:
+		if s != "a" {
+			t.Errorf("the first key the question reads is %q, want the key typed after key mode started (a)", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the key typed after key mode started did not arrive")
+	}
+}

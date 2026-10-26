@@ -386,7 +386,7 @@ func TestSettingsNamedByPathAreTheDefaultFileByTheRulesOfTheSystem(t *testing.T)
 		{"a relative path", "linux", filepath.Base(def), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got, err := isDefaultSettings(tc.goos, tc.path); err != nil || got != tc.want {
+			if got, err := isDefaultSettings(tc.goos, tc.path, false); err != nil || got != tc.want {
 				t.Errorf("isDefaultSettings(%q, %q) = %v, %v, want %v", tc.goos, tc.path, got, err, tc.want)
 			}
 		})

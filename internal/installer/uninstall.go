@@ -58,6 +58,12 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	// --settings may name the default file in some spelling: it is still the file of the main instance, so it takes the same guards. A named
+	// file must exist all the same (loadSaved).
+	isDefault, err := isDefaultSettings(env.Deps.GOOS, settingsPath, defaultPath)
+	if err != nil {
+		return err
+	}
 	saved, haveSaved, err := loadSaved(env.Deps.command(), settingsPath, !defaultPath)
 	if err != nil {
 		return err
@@ -80,7 +86,7 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := guardDefaultSettings(installTarget{settingsPath: settingsPath, defaultPath: defaultPath, saved: saved, haveSaved: haveSaved}, rt.Name(), connection); err != nil {
+	if err := guardDefaultSettings(installTarget{settingsPath: settingsPath, defaultPath: isDefault, saved: saved, haveSaved: haveSaved}, rt.Name(), connection); err != nil {
 		return err
 	}
 	// The same guard as the install: a stack that is not this installer's, or that was edited, is left alone.
@@ -94,14 +100,9 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	var token tokenCopy
 	var listing []string
 	if purge { // before anything is removed: a place that cannot be found refuses the purge, it does not stop it half way
-		if token, err = tokenFileOf(r, env.Deps, settingsPath, defaultPath); err != nil {
+		if token, question, listing, err = purgePlan(r, env.Deps, settingsPath, isDefault); err != nil {
 			return err
 		}
-		question = "Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network, the MCP token copy and the settings file?"
-		if !token.mine {
-			question = "Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network and the settings file?"
-		}
-		listing = purgeLines(settingsPath, token)
 	}
 	inst := instance{rt: rt, settingsPath: settingsPath, haveSettings: haveSaved, status: service.readStatus}
 	if err := inst.confirmRemoval(ctx, r, purge, question, listing...); err != nil {
@@ -145,6 +146,18 @@ func removeStack(ctx context.Context, r *Resolver, rt Runtime, purge bool, token
 	return nil
 }
 
+// purgePlan is what a purge knows before it removes anything: its token file, the question that asks for it and the list of what it deletes.
+func purgePlan(r *Resolver, d Deps, settingsPath string, isDefault bool) (token tokenCopy, question string, listing []string, err error) {
+	if token, err = tokenFileOf(r, d, isDefault); err != nil {
+		return tokenCopy{}, "", nil, err
+	}
+	question = "Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network, the MCP token copy and the settings file?"
+	if !token.mine {
+		question = "Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network and the settings file?"
+	}
+	return token, question, purgeLines(settingsPath, token), nil
+}
+
 // tokenCopy is the copy of the MCP token that a purge may remove.
 type tokenCopy struct {
 	path string
@@ -155,7 +168,7 @@ type tokenCopy struct {
 // tokenFileOf is where the copy of the MCP token is, and whether it is this instance's: the file --token-file names is. The default file is
 // only with the default settings file: any other settings file is another instance's, whose default file may be the main instance's (the
 // install refuses to adopt it for a second one), so a purge keeps it.
-func tokenFileOf(r *Resolver, d Deps, settingsPath string, defaultPath bool) (tokenCopy, error) {
+func tokenFileOf(r *Resolver, d Deps, defaultSettings bool) (tokenCopy, error) {
 	if file := r.preset("token-file", ""); file != "" {
 		return tokenCopy{path: file, mine: true}, nil
 	}
@@ -163,19 +176,17 @@ func tokenFileOf(r *Resolver, d Deps, settingsPath string, defaultPath bool) (to
 	if err != nil {
 		return tokenCopy{}, err
 	}
-	mine := defaultPath
-	if !mine {
-		if mine, err = isDefaultSettings(d.GOOS, settingsPath); err != nil {
-			return tokenCopy{}, err
-		}
-	}
 	_, statErr := os.Stat(file)
-	return tokenCopy{path: file, mine: mine, kept: !mine && !errors.Is(statErr, os.ErrNotExist)}, nil
+	return tokenCopy{path: file, mine: defaultSettings, kept: !defaultSettings && !errors.Is(statErr, os.ErrNotExist)}, nil
 }
 
-// isDefaultSettings says that --settings names the per-user default settings file, however it spells it: the same path once cleaned, and on
-// Windows whatever the case. A relative path is not resolved, so one that names it is not recognised: the purge then keeps the token file.
-func isDefaultSettings(goos, path string) (bool, error) {
+// isDefaultSettings says that the settings file is the per-user default one: it is when --settings is left out (defaultPath), and when --settings
+// names it however it spells it: the same path once cleaned, and on Windows whatever the case. A relative path is not resolved, so one that names
+// it is not recognised: the guards and the token file then treat it as another instance's, which is the safe side for the token file.
+func isDefaultSettings(goos, path string, defaultPath bool) (bool, error) {
+	if defaultPath {
+		return true, nil
+	}
 	def, err := DefaultSettingsPath()
 	if err != nil {
 		return false, err

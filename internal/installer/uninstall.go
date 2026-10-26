@@ -13,10 +13,11 @@ import (
 )
 
 // Uninstall is `suiteward uninstall [--purge] [--yes] [--instance ID]` for the co-located tier: it removes the three containers and keeps
-// the state, or with --purge also the volumes, the secrets, the network, the MCP token copy and the settings file. It says which instance
-// it is about to remove and asks first (a purge, which deletes the database, asks for the instance id, as a restore does), and it never
-// touches an instance that is not this one: the guards of the install apply, and so does the settings file: one that is named must exist,
-// and with none the engine must be named, so that a purge never runs on defaults that were not read from a settings file.
+// the state, or with --purge also the volumes, the secrets, the network, the settings file and the MCP token copy when it is this instance's
+// (see tokenFileOf). It says which instance it is about to remove and asks first (a purge, which deletes the database, asks for the instance
+// id, as a restore does), and it never touches an instance that is not this one: the guards of the install apply, and so does the settings
+// file: one that is named must exist, and with none the engine must be named, so that a purge never runs on defaults that were not read from
+// a settings file.
 func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if err := env.validate(); err != nil {
 		return err
@@ -28,7 +29,7 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 			fs.String(f.name, "", f.usage)
 		}
 	}
-	fs.Bool("purge", false, "also remove the volumes (the database!), the secrets, the network, the MCP token copy and the settings file; it needs --instance, or asks you to type the instance id")
+	fs.Bool("purge", false, "also remove the volumes (the database!), the secrets, the network and the settings file, and the MCP token copy only when it is this instance's (the file --token-file names, or the default token file with the default settings file); it needs --instance, or asks you to type the instance id")
 	fs.Bool("yes", false, "do not ask before removing (with --purge, give --instance too)")
 	fs.String("instance", "", "with --purge --yes: the instance id that /status shows (the first 8 characters of the instance id; unknown when nothing names it)")
 	fs.Bool("plain", false, plainUsage)

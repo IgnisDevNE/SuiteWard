@@ -31,7 +31,7 @@ Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret sett
 | `INSTALLATION_TIER` (M1.5) | no | `co-located` | `isolated` or `co-located` (D-TIER). Declared by the deployment, never detected; the remote quadlet sets `isolated`, and `suiteward install` sets it on the service container to the tier it installs (`--tier`, `co-located` by default; `internal/installer/stack.go` for the co-located containers, the rendered quadlet for the isolated ones). |
 | `REPORT_BASE_URL` (M1.13) | no | none | `http://127.0.0.1:<port>` or `http://localhost:<port>` (the host is lowercased, the port is 1 to 65535 without a leading zero, no path, query, fragment or user info, and a trailing slash is dropped): the origin that the change report links of a revision comment name, the HTTP port of the instance as the machine that runs it sees it (on the isolated tier, the end of a port forward). Anything else is refused at startup; the value is not echoed. Unset: the revision comment has no link. `suiteward install` sets it on both tiers from `--http-port` (`http://127.0.0.1:<HTTP port>`); a stack of an earlier release lacks it until `install --upgrade` adds it ([install guide, section 12](../install.md#what-the-installer-does-for-review)). |
 | `EXECUTOR_TOKEN` (M2.1) | yes | none | The bearer token of the executor API ([Execution](#execution-m21-normative)), at least 32 bytes like `MCP_TOKEN`, normally given as `EXECUTOR_TOKEN_FILE`. Unset: the executor routes are not served (404) and no execution job is created. A build without the Go image stamp has the same effect. |
-| `EXECUTOR_JOB_TIMEOUT` (M2.1) † | no | `30m` | Go duration, 1m to 6h: how long a job may wait for a lease, and how long one attempt may run once leased ([job lifecycle](#job-lifecycle)). Not `JOB_TIMEOUT`, which bounds a River job. |
+| `EXECUTOR_JOB_TIMEOUT` (M2.1) † | no | `30m` | Go duration, 1m to 6h: how long a job may wait for a lease, and how long one attempt may run once leased ([job lifecycle](#job-lifecycle)). Each wait that passes unleased is a failed attempt, so with 3 attempts a missing executor reads `unavailable` after about three of these durations plus the backoffs. Not `JOB_TIMEOUT`, which bounds a River job. |
 
 Later phases add settings under the same rules. A † in this document marks a choice of task A0 (M2.1) inside [ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md): a name, a size or a duration that the integrator may change. The GitHub settings of M1.4 are an interim operator configuration: they do not establish the trusted App installation association, which D-IDENTITY and M1.5 decide (see [github](github.md#configuration-interim-m14)).
 
@@ -613,12 +613,13 @@ A revision that is not found, one that expects no canonical (a baseline), a cano
 | `sandbox-unavailable` | executor | the sandbox could not be built, or the runtime cannot honor a required property | yes |
 | `archive-unavailable` | executor | an archive or a manifest file could not be read | yes |
 | `attempts-exhausted` | service | a lease expired with no result: the executor was lost | yes |
-| `timeout` | service | a run went past its deadline (retried); or no executor leased the job within the job timeout (final) | see text |
+| `timeout` | service | a run went past its deadline, or no executor leased the job within the job timeout | yes |
 | `toolchain-mismatch` | executor | the repository needs a Go that the pinned image does not have | no |
 | `source-mismatch` | executor | the source check failed: a missing, extra or mismatched file, or an unsafe symlink | no |
 | `too-large` | executor, service | an archive, a tree or a result passed its limit | no |
 | `profile-unsupported` | executor | the job names a profile that this executor lacks | no |
 | `executor-not-configured` | service | no executor token, or no Go image stamp; no job is created | no |
+| `no-merge-base` | service | GitHub has no merge base for the head and the base branch; the receipt job is created already `unavailable` | no |
 
 A job is cancelled, not unavailable, when its binding is no longer wanted: `head-moved` (the pull request has another head), `closed` (the pull request is not open) or `obsolete` (the governing manifest or the policy changed) †.
 
@@ -713,10 +714,11 @@ States of a job †: `pending`, `leased`, `complete`, `unavailable`, `cancelled`
 | From | To | When |
 | --- | --- | --- |
 | (none) | `pending` | the checks job creates it, with `deadline_at` the job timeout from now |
+| (none) | `unavailable` | the checks job creates a receipt job that is already final, for `no-merge-base`: it has no `base_sha` |
 | `pending` | `leased` | a lease is granted once `not_before` is reached; `attempts` goes up by one; `deadline_at` is set to the job timeout from now |
 | `leased` | `pending` | the attempt failed with a retried reason (a lease that expired, a run past its deadline, or such a reason from the executor) and `attempts` is below 3 †; `reason` keeps that reason, `not_before` is 30 s † after the first failure and 2 min † after the second, and `deadline_at` is the job timeout after `not_before` |
-| `leased` | `unavailable` | the attempt failed on the third attempt (its reason), or the executor reported a reason that is not retried |
-| `pending` | `unavailable` | `deadline_at` passed and no executor leased the job (`timeout`) |
+| `pending` | `pending` | `deadline_at` passed and no executor leased the job: that is a failed attempt too (`timeout`; `attempts` goes up by one) and the job is queued again as above, while `attempts` is below 3 |
+| `leased`, `pending` | `unavailable` | the attempt failed and it was the third (its reason), or the executor reported a reason that is not retried |
 | `leased` | `complete` | a result is stored |
 | `pending`, `leased` | `cancelled` | the binding is no longer wanted |
 
@@ -726,7 +728,7 @@ The lease query applies expiry when it picks a job. The checks job applies the r
 1. It sweeps expiry and deadlines. It cancels the jobs of a pull request that is closed or has another head (`closed`, `head-moved`), and the jobs whose binding is no longer the wanted one (`obsolete`).
 2. For each open, non-fork pull request of a repository with a canonical, a policy that is not `(off, off)`, an executor token and a Go image stamp, after the head assessment, it wants:
    - when `canonical` is not `off`: the **canonical** plan. The governing manifest is the current revision's manifest when that revision has an eligible exact approval and a passed assessment of this head (the condition for `ready`), and the canonical's manifest otherwise;
-   - when `receipt` is not `off`, the head has a revision and the receipt is applicable: the **receipt** plan, with the canonical's manifest and, as the base, the merge base of the head and the pull request's base branch ([GitHub contract](github.md#m21-execution-reads-normative)). It also computes the paths "not evaluated: pattern not approved yet": the files that the pull request adds or changes and that the head's `include` matches but the canonical `include` does not, at most 100 paths.
+   - when `receipt` is not `off`, the head has a revision and the receipt is applicable: the **receipt** plan, with the canonical's manifest and, as the base, the merge base of the head and the pull request's base branch ([GitHub contract](github.md#m21-execution-reads-normative)). When GitHub answers that there is none (404), it creates the receipt job already `unavailable` with `no-merge-base`, so that the gates, the check and the unblock read it as unavailable. Another failure of the read (GitHub, the budget) is transient: it creates nothing, and the receipt reads `pending` until a run reads the merge base. It also computes the paths "not evaluated: pattern not approved yet": the files that the pull request adds or changes and that the head's `include` matches but the canonical `include` does not, at most 100 paths.
 3. It creates the job for each wanted plan unless a job with the same key exists and is not cancelled. The **job key** is the SHA-256, in lowercase hex, of six lines, each ended by a newline †: the plan, the profile, the head SHA, the base SHA (empty for the canonical plan), the governing manifest digest and the digest of the canonical declaration. The policy levels are inside that declaration, so a changed policy is a new job.
 4. Without an executor token or a Go image stamp it creates nothing, and every run reads `unavailable` with `executor-not-configured`.
 

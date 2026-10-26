@@ -58,7 +58,7 @@ The head can therefore add a test but not silence one, and it cannot change the 
 - **Evaluated tests** are the top-level test functions added or changed, by declaration text, in those files. "Changed" is against the canonical version the revision expects, not against the merge base and not against the consented manifest, so the receipt does not turn empty after an approval. Per-function selection belongs to the profile.
 - **Head side:** the head tree.
 - **Base side:** the base commit's tree plus the head's version of **every** file that the canonical `include` matches and the head adds or changes: test files, `testdata/` and helpers in other `_test.go` files. Nothing else of the head crosses: source, `go.mod`, `go.sum`, `vendor/`, runner files and `.suiteward.yml` all come from the base commit.
-- **The base commit** is the merge base of the head and the pull request's base branch.
+- **The base commit** is the merge base of the head and the pull request's base branch. When GitHub says there is none (no common ancestor, or a commit that a force push removed), the receipt is `unavailable` with the reason `no-merge-base`, final for that head.
 - **Not evaluated.** Files that the pull request adds or changes and the head's own `include` matches but the canonical `include` does not are listed as "not evaluated: pattern not approved yet". The service computes the list and stores it with the job. It is display only.
 
 Why this base side:
@@ -103,9 +103,9 @@ Each side of each test yields one observation: `pass`, `fail` (a failed assertio
 
 `EXCLUDED` tests are left out of every rule below: they neither satisfy "at least one DETECTS" nor block.
 
-**Run status**, for each plan and head: `pending`, `complete` or `unavailable`, and for a receipt also `not-applicable`. A run is unavailable when the executor fails, the job times out, the sandbox cannot be built, the toolchain does not match, the source check of section 3 fails, or the instance has no executor configured. **Unavailable is never treated as a pass.** Both gates read it as "not complete" unless the owner unblocks the head (section 7).
+**Run status**, for each plan and head: `pending`, `complete` or `unavailable`, and for a receipt also `not-applicable`. A run is unavailable when the executor fails, the job times out, the sandbox cannot be built, the toolchain does not match, the source check of section 3 fails, the receipt has no merge base, or the instance has no executor configured. **Unavailable is never treated as a pass.** Both gates read it as "not complete" unless the owner unblocks the head (section 7).
 
-**Retry.** An unavailable run that the infrastructure caused (a lost lease, an executor that cannot be reached, a run past its time, a runtime error) is retried automatically, up to 3 attempts with a backoff. One that the repository caused (a failed source check, a toolchain mismatch, a size cap) is final for its head and binding, because another attempt would give the same answer. A job that no executor leased within the job timeout is unavailable at once (open item 1).
+**Retry.** An unavailable run that the infrastructure caused (a lost lease, an executor that cannot be reached, so that nobody leases the job within the job timeout, a run past its time, a runtime error) is retried automatically, up to 3 attempts with a backoff. One that the repository caused (a failed source check, a toolchain mismatch, a size cap, no merge base) is final for its head and binding, because another attempt would give the same answer. With the default job timeout of 30 minutes, an executor that is gone for good reads `unavailable` only after three timeouts and the backoffs, about an hour and a half, and the owner's unblock is not reachable sooner. A shorter `EXECUTOR_JOB_TIMEOUT` shortens that.
 
 ### 6. Mode summaries of a receipt
 
@@ -212,7 +212,7 @@ Every stored result records: the head SHA; the base SHA (receipt); the governing
 
 - SuiteWard can run tests, and says what it ran. ADR 0015 says "Success never means that SuiteWard executed the tests". Under `canonical: required` that is no longer true, and the Contract check summary then states the executed counts. ADR 0015 carries a note for this, and D-CHECKS ("never claims that tests ran") is amended in [D-M2.1](../plan/decisions.md#d-m21-canonical-execution-the-receipt-and-the-go-profile).
 - Turning execution on is a governed change. An installation that never names a profile is unchanged.
-- Under `required` levels, a missing or broken executor blocks work until it is fixed or the owner unblocks each head. The unblock needs a TOTP code for every head.
+- Under `required` levels, a missing or broken executor blocks work until it is fixed or the owner unblocks each head. The unblock needs a TOTP code for every head, and it is reachable only once the run reads `unavailable`, which takes about an hour and a half by default (section 5).
 - A new component runs candidate code. The sandbox, the executor's isolation and the pins are part of the [threat model](../security/threat-model.md).
 - The service answers on `/executor/v1` a request that changes state. The runtime contract's "no endpoint changes state" is amended for it.
 - Execution cost: one canonical run per head of every open pull request, plus one receipt run per head whose revision is applicable. Both are bounded by a job timeout, and their GitHub reads share the synchronization's budget.
@@ -221,12 +221,10 @@ Every stored result records: the head SHA; the base SHA (receipt); the governing
 
 These are not decided. Each names the rule the contracts use meanwhile.
 
-1. **A job that no executor leases.** Used: it becomes `unavailable` (`timeout`) once the job timeout passes, with no retry, so that the unblock is reachable after one timeout (30 minutes by default †) and not after three. The owner's answer lists a job timeout among the infrastructure failures that are retried. It may be meant for a run that started, which is what the contracts retry.
-2. **What an unblock covers.** Used: the runs that are `unavailable` when the command is processed. A run of the same head that becomes unavailable later needs another unblock.
-3. **A receipt with changed files but no evaluated test.** Used: it is applicable and empty, so `receipt: required` needs `refactor`. It happens when only `testdata` or helpers changed.
-4. **A merge base that GitHub cannot give** (no common ancestor). Used: the receipt is `unavailable` with `archive-unavailable`.
-5. **"Not evaluated: pattern not approved yet"** exists only for an applicable receipt, because it is stored with the job. A revision that is `not-applicable` has no such list.
-6. **Pruning.** No stored result is deleted in M2.1. Whether and when to prune old per-test rows is open.
+1. **What an unblock covers.** Used: the runs that are `unavailable` when the command is processed. A run of the same head that becomes unavailable later needs another unblock.
+2. **A receipt with changed files but no evaluated test.** Used: it is applicable and empty, so `receipt: required` needs `refactor`. It happens when only `testdata` or helpers changed.
+3. **"Not evaluated: pattern not approved yet"** exists only for an applicable receipt, because it is stored with the job. A revision that is `not-applicable` has no such list.
+4. **Pruning.** No stored result is deleted in M2.1. Whether and when to prune old per-test rows is open.
 
 Deferred, not open:
 

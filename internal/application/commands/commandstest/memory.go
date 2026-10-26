@@ -134,7 +134,7 @@ func (m *Memory) Record(ctx context.Context, e commands.Entry, ack *governance.O
 
 func sameEntry(a, b commands.Entry) bool {
 	return a.RepositoryID == b.RepositoryID && a.CommentID == b.CommentID && a.PullNumber == b.PullNumber && a.AuthorID == b.AuthorID &&
-		a.CreatedAt.Equal(b.CreatedAt) && a.BodyDigest == b.BodyDigest && a.Disposition == b.Disposition && a.Operation == b.Operation && a.DecidedAt.Equal(b.DecidedAt)
+		a.CreatedAt.Equal(b.CreatedAt) && a.BodyDigest == b.BodyDigest && a.Disposition == b.Disposition && a.Operation == b.Operation && a.Mode == b.Mode && a.DecidedAt.Equal(b.DecidedAt)
 }
 
 // LatestOwnerCommand implements commands.Store.
@@ -176,8 +176,23 @@ func (m *Memory) Skipped(ctx context.Context, repositoryID int64, pull int, sinc
 }
 
 // PreviewMode implements commands.Store.
-func (m *Memory) PreviewMode(context.Context, int64, int, time.Time) (string, bool, error) {
-	return "", false, nil
+func (m *Memory) PreviewMode(ctx context.Context, repositoryID int64, pull int, since time.Time) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	if err := commands.ValidatePreview(repositoryID, pull); err != nil {
+		return "", false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var latest commands.Entry
+	found := false
+	for _, e := range m.ledger {
+		if e.RepositoryID == repositoryID && e.PullNumber == pull && e.Disposition == commands.ModeSet && !e.CreatedAt.Before(since) && (!found || e.CommentID > latest.CommentID) {
+			latest, found = e, true
+		}
+	}
+	return latest.Mode, found, nil
 }
 
 // Instance implements commands.Store.

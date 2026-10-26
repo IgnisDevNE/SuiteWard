@@ -17,6 +17,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 var (
@@ -56,7 +57,7 @@ const (
 	UnblockRefused   Disposition = "unblock-refused"   // owner-authored /suiteward unblock with a good code that was refused (fork, not-open, not-unavailable); the step stays consumed; no operation id
 )
 
-var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed, Proposed, ProposeRefused, Skipped, SkipRefused, Suggested, SuggestRefused, OtherPull}
+var dispositions = []Disposition{NotCommand, BeforeEnrollment, NoSuite, EditedFirst, Failed, IgnoredAuthor, Malformed, InvalidCode, ReplayedCode, UnknownProposal, Processed, Proposed, ProposeRefused, Skipped, SkipRefused, Suggested, SuggestRefused, OtherPull, ReceiptRefused, ModeSet, ModeRefused, Unblocked, UnblockRefused}
 
 // Entry is the decision about the first observed version of one comment.
 type Entry struct {
@@ -129,9 +130,19 @@ func (e Entry) Validate() error {
 		return invalid("unknown disposition %q", e.Disposition)
 	case (e.Disposition == Processed) != (e.Operation != ""):
 		return invalid("an operation is required for the disposition %q and only for it", Processed)
+	case e.Disposition == ModeSet && e.Mode == "":
+		return invalid("the disposition %q needs a mode", ModeSet)
+	}
+	if e.Mode != "" {
+		if _, err := execution.ParseMode(e.Mode); err != nil {
+			return invalid("the mode %q is not fix, feature or refactor", e.Mode)
+		}
 	}
 	return nil
 }
+
+// ValidatePreview reports why PreviewMode cannot answer, as ErrInvalid.
+func ValidatePreview(repositoryID int64, pull int) error { return ValidateSkipped(repositoryID, pull) }
 
 // ValidateLatest reports why LatestOwnerCommand cannot answer, as ErrInvalid.
 func ValidateLatest(repositoryID int64, pull int, ownerID, before int64) error {

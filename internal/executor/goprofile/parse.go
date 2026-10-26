@@ -28,10 +28,12 @@ import (
 // a pass, and a test that only such a line mentions is absent.
 //
 // Last, the exit status is read against the report, as go test's own: when they contradict each other, the report was
-// not go test's, and every expected test reads fail. That is a failing status over expected tests that all passed or
-// skipped, and a zero status over a failure or a package that did not build. The expected tests are all the rule looks
-// at: a test that was not named, with the name of one that was in another package of the invocation, can fail the
-// status and so fail every test that was named.
+// not go test's, and every expected test reads fail. The report shows a failure when any test of the invocation failed
+// (a subtest, and a test that nobody expected, included), any package did not build, or an expected test reads fail
+// or build-error (that includes one that started and never ended). A failing status with no such failure contradicts
+// the report, and so does a zero status with one. So a test that was not named but has the name of one that was (go test
+// applies -run to every package) explains a failing status when it fails, and fails the invocation when the status is
+// zero.
 func Parse(stdout []byte, exitCode int, module string, expected []TestID) (map[TestID]execution.Observation, error) {
 	if module == "" {
 		return nil, errors.New("go test output: no module path to name the packages by")
@@ -41,7 +43,7 @@ func Parse(stdout []byte, exitCode int, module string, expected []TestID) (map[T
 	for _, id := range expected {
 		obs[id] = r.observation(importPath(module, id.Package), id.Name)
 	}
-	if contradicts(obs, exitCode) {
+	if r.failure(obs) == (exitCode == 0) {
 		for id := range obs {
 			obs[id] = execution.ObservedFail
 		}
@@ -54,11 +56,13 @@ type event struct {
 	Action, Package, Test, FailedBuild string
 }
 
-// report is what the events say: the packages that did not build, the tests that started, and their results.
+// report is what the events say: the packages that did not build, the tests that started, their results, and whether any
+// test of any package, a subtest included, failed.
 type report struct {
-	notBuilt map[string]bool
-	started  map[key]bool
-	results  map[key][]execution.Observation
+	notBuilt   map[string]bool
+	started    map[key]bool
+	results    map[key][]execution.Observation
+	testFailed bool
 }
 
 var resultOf = map[string]execution.Observation{
@@ -75,6 +79,9 @@ func read(stdout []byte) report {
 			continue
 		}
 		k := key{ev.Package, ev.Test}
+		if ev.Test != "" && ev.Action == "fail" {
+			r.testFailed = true
+		}
 		switch {
 		case ev.Test == "":
 			if ev.Action == "fail" && ev.FailedBuild != "" {
@@ -123,17 +130,14 @@ func importPath(module, dir string) string {
 	return module + "/" + dir
 }
 
-// contradicts is whether the exit status says what the report does not.
-func contradicts(obs map[TestID]execution.Observation, exitCode int) bool {
-	failed, allFine := false, true
+// failure is whether the report shows the invocation failing: a test of it failed, a package did not build, or an
+// expected test reads fail or build-error.
+func (r report) failure(obs map[TestID]execution.Observation) bool {
+	failed := r.testFailed || len(r.notBuilt) > 0
 	for _, o := range obs {
 		failed = failed || o == execution.ObservedFail || o == execution.ObservedBuildError
-		allFine = allFine && (o == execution.ObservedPass || o == execution.ObservedSkip)
 	}
-	if exitCode == 0 {
-		return failed
-	}
-	return allFine
+	return failed
 }
 
 // Reruns lists, sorted, the tests of obs (their latest results) that failed and may run again: a test is run limit times

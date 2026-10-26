@@ -18,13 +18,15 @@ const (
 // the -run pattern has no quotes of its own), and the whole environment of that process: the sandbox inherits nothing.
 // One invocation runs the named tests, sorted and each once, in their packages, sorted and each once (./dir, and . for
 // the root: a dot in front keeps a directory that starts with a dash from reading as a flag). go test applies -run to
-// every package of the invocation, so a test of the same name in another package of it runs too; the output of a test
-// that was not named is not looked at. timeout is go test's own -timeout. With vendor, go reads vendor/ and nothing is
-// fetched, so GOPROXY is off; otherwise it is the prefetched module files under ProxyDir. tests is not empty.
+// every package of the invocation, so a test of the same name in another package of it runs too: Parse gives it no
+// observation, and counts its failure as a failure of the invocation. timeout is go test's own -timeout. With vendor, go
+// reads vendor/ and nothing is fetched, so GOPROXY is off; otherwise it is the prefetched module files under ProxyDir.
+// tests is not empty.
 //
-// GOFLAGS is empty, so go picks -mod=vendor for a vendor/ that agrees with go.mod and -mod=readonly otherwise, as in
-// CI. GOTOOLCHAIN=local makes a go.mod that needs a newer Go fail. There is no GOPATH, GOPRIVATE, GONOSUMDB, GOINSECURE,
-// GONOPROXY or CI variable.
+// The process runs in TreeDir, the module root (the layout is in goprofile.go). GOFLAGS is empty, so go picks
+// -mod=vendor for a vendor/ that agrees with go.mod and -mod=readonly otherwise, as in CI. GOENV=off keeps go from
+// reading an env file. GOTOOLCHAIN=local makes a go.mod that needs a newer Go fail. There is no GOPATH, GOPRIVATE,
+// GONOSUMDB, GOINSECURE, GONOPROXY or CI variable.
 func Command(tests []TestID, timeout time.Duration, vendor bool) (argv, env []string) {
 	var names, dirs []string
 	for _, t := range tests {
@@ -50,6 +52,7 @@ func Command(tests []TestID, timeout time.Duration, vendor bool) (argv, env []st
 		proxy = "file://" + work + "/" + ProxyDir
 	}
 	env = []string{
+		"GOENV=off",
 		"GOTOOLCHAIN=local",
 		"GOWORK=off",
 		"GOFLAGS=",

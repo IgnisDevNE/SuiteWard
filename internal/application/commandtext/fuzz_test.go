@@ -12,6 +12,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // FuzzParse feeds a hostile comment body to Parse. A command it reads must have the documented shape, and text
@@ -22,6 +23,9 @@ func FuzzParse(f *testing.F) {
 		"/SUITEWARD Approve P999999999-R1 000000", "/suiteward approve P01-R2 123456", "/suiteward skip 123456",
 		"/suiteward approve P1-R2 12345\u0663", "text\n \t/suiteward\trevoke P1-R1 111111 \t\r\n",
 		"\u017fuiteward approve P1-R1 123456", "````\n```\n/suiteward propose\n````", "-->\n/suiteward approve P1-R2 123456", "```\n/suiteward approve P1-R2 123456",
+		"/suiteward approve P1-R2 fix 123456", "/SUITEWARD Approve P1-R2 REFACTOR 123456", "/suiteward approve P1-R2 fixx 123456", "/suiteward approve P1-R2 feature",
+		"/suiteward revoke P1-R2 fix 123456", "/suiteward mode feature", "/suiteward mode", "/suiteward mode fix extra", "/suiteward unblock 123456", "/suiteward unblock P1-R1",
+		"```\n/suiteward mode fix\n```", "```\n/suiteward unblock 123456",
 	} {
 		f.Add(seed)
 	}
@@ -76,7 +80,7 @@ func checkParsed(t *testing.T, body string, p commandtext.Parsed) {
 			t.Fatalf("not a command, yet %+v for %q", p, body)
 		}
 	case commandtext.KindMalformed:
-		if p.Command != (commandtext.Command{}) || p.Reason < commandtext.UnknownVerb || p.Reason > commandtext.ExtraText {
+		if p.Command != (commandtext.Command{}) || p.Reason < commandtext.UnknownVerb || p.Reason > commandtext.BadMode {
 			t.Fatalf("malformed with %+v for %q", p, body)
 		}
 	case commandtext.KindCommand:
@@ -91,6 +95,9 @@ func checkParsed(t *testing.T, body string, p commandtext.Parsed) {
 
 func checkCommand(t *testing.T, body string, c commandtext.Command) {
 	t.Helper()
+	if c.Mode != execution.ModeNone && c.Verb != commandtext.Approve && c.Verb != commandtext.SetMode {
+		t.Fatalf("verb %d carries the mode %d: %+v from %q", c.Verb, c.Mode, c, body)
+	}
 	switch c.Verb {
 	case commandtext.Approve, commandtext.Revoke:
 		ref := commandtext.Reference(c.Proposal, c.Revision) // panics outside 1..999999999
@@ -98,9 +105,17 @@ func checkCommand(t *testing.T, body string, c commandtext.Command) {
 		if !ok || proposal != c.Proposal || revision != c.Revision || !isCode(c.Code) || !strings.Contains(body, ref) || !strings.Contains(body, c.Code) {
 			t.Fatalf("command %+v does not hold its reference and 6-digit code, or they are not in %q", c, body)
 		}
-	case commandtext.Skip:
+		// The mode is the word the comment spells, in any case.
+		if c.Mode != execution.ModeNone && !strings.Contains(strings.ToLower(body), c.Mode.String()) {
+			t.Fatalf("command %+v names a mode that %q does not spell", c, body)
+		}
+	case commandtext.Skip, commandtext.Unblock:
 		if c.Proposal != 0 || c.Revision != 0 || !isCode(c.Code) || !strings.Contains(body, c.Code) {
-			t.Fatalf("skip %+v is not only a 6-digit code from %q", c, body)
+			t.Fatalf("verb %d %+v is not only a 6-digit code from %q", c.Verb, c, body)
+		}
+	case commandtext.SetMode:
+		if c.Proposal != 0 || c.Revision != 0 || c.Code != "" || c.Mode.String() == "" || !strings.Contains(strings.ToLower(body), c.Mode.String()) {
+			t.Fatalf("mode %+v is not only a mode that %q spells", c, body)
 		}
 	case commandtext.Propose, commandtext.Suggest:
 		if c.Proposal != 0 || c.Revision != 0 || c.Code != "" {

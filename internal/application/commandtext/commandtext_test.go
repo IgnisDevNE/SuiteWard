@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 const (
@@ -44,6 +45,12 @@ func render(t *testing.T, f func() string) (body string) {
 
 func command(verb commandtext.Verb, proposal, revision int, code string) commandtext.Parsed {
 	return commandtext.Parsed{Kind: commandtext.KindCommand, Command: commandtext.Command{Verb: verb, Proposal: proposal, Revision: revision, Code: code}}
+}
+
+// withMode is p, a command, with the mode it names.
+func withMode(p commandtext.Parsed, mode execution.Mode) commandtext.Parsed {
+	p.Command.Mode = mode
+	return p
 }
 
 func malformed(reason commandtext.Reason) commandtext.Parsed {
@@ -89,6 +96,28 @@ func TestParse(t *testing.T) {
 		{"upper case suggest", "/SUITEWARD SUGGEST", command(commandtext.Suggest, 0, 0, "")},
 		{"mixed case propose", "/Suiteward Propose", command(commandtext.Propose, 0, 0, "")},
 		{"mixed case on a later line", "On my phone\n/SuiteWard suggest", command(commandtext.Suggest, 0, 0, "")},
+
+		// The optional mode of approve (M2.1): the word between the reference and the code, stored as the mode it names.
+		{"approve with fix", "/suiteward approve P1-R2 fix 123456", withMode(command(commandtext.Approve, 1, 2, "123456"), execution.ModeFix)},
+		{"approve with feature", "/suiteward approve P1-R2 feature 123456", withMode(command(commandtext.Approve, 1, 2, "123456"), execution.ModeFeature)},
+		{"approve with refactor", "/suiteward approve P1-R2 refactor 123456", withMode(command(commandtext.Approve, 1, 2, "123456"), execution.ModeRefactor)},
+		{"approve with a mode in capitals", "/SUITEWARD APPROVE P1-R2 FIX 123456", withMode(command(commandtext.Approve, 1, 2, "123456"), execution.ModeFix)},
+		{"approve with a mixed case mode", "/suiteward approve P1-R2 ReFactor 123456", withMode(command(commandtext.Approve, 1, 2, "123456"), execution.ModeRefactor)},
+		{"approve with a mode and extra spaces", "/suiteward  approve \tP1-R2  \tfeature\t 123456 ", withMode(command(commandtext.Approve, 1, 2, "123456"), execution.ModeFeature)},
+		{"approve without a mode", "/suiteward approve P1-R2 123456", command(commandtext.Approve, 1, 2, "123456")},
+
+		// The mode verb: the owner's preview mode, no code.
+		{"mode fix", "/suiteward mode fix", withMode(command(commandtext.SetMode, 0, 0, ""), execution.ModeFix)},
+		{"mode feature", "/suiteward mode feature", withMode(command(commandtext.SetMode, 0, 0, ""), execution.ModeFeature)},
+		{"mode refactor", "/suiteward mode refactor", withMode(command(commandtext.SetMode, 0, 0, ""), execution.ModeRefactor)},
+		{"mode in capitals", "/SUITEWARD MODE REFACTOR", withMode(command(commandtext.SetMode, 0, 0, ""), execution.ModeRefactor)},
+		{"mode with a mixed case word", "/SuiteWard Mode Feature", withMode(command(commandtext.SetMode, 0, 0, ""), execution.ModeFeature)},
+		{"mode on a later line", "Preview this one\n/suiteward mode fix", withMode(command(commandtext.SetMode, 0, 0, ""), execution.ModeFix)},
+
+		// The unblock verb: the owner's escape, a code and nothing else, as skip.
+		{"unblock", "/suiteward unblock 123456", command(commandtext.Unblock, 0, 0, "123456")},
+		{"unblock in capitals", "/SUITEWARD UNBLOCK 000000", command(commandtext.Unblock, 0, 0, "000000")},
+		{"unblock with a mixed case verb", "/SuiteWard Unblock 654321", command(commandtext.Unblock, 0, 0, "654321")},
 
 		// Not a command.
 		{"empty body", "", notCommand},
@@ -184,6 +213,35 @@ func TestParse(t *testing.T) {
 		{"code with no-break space", "/suiteward approve P1-R1 123456\u00a0", malformed(commandtext.BadCode)},
 		{"text after the code", "/suiteward approve P1-R1 123456 please", malformed(commandtext.ExtraText)},
 		{"second code after the code", "/suiteward revoke P1-R1 123456 654321", malformed(commandtext.ExtraText)},
+
+		// A third token that is not a mode word is the code, so a misspelled mode is a bad code. After a mode word the fourth token is the code.
+		{"misspelled mode", "/suiteward approve P1-R2 fixx 123456", malformed(commandtext.BadCode)},
+		{"a word that is not a mode", "/suiteward approve P1-R2 features 123456", malformed(commandtext.BadCode)},
+		{"mode and no code", "/suiteward approve P1-R2 fix", malformed(commandtext.MissingCode)},
+		{"mode and a short code", "/suiteward approve P1-R2 fix 12345", malformed(commandtext.BadCode)},
+		{"mode and a word that is no code", "/suiteward approve P1-R2 fix please", malformed(commandtext.BadCode)},
+		{"mode twice", "/suiteward approve P1-R2 fix fix 123456", malformed(commandtext.BadCode)},
+		{"mode and a code and more text", "/suiteward approve P1-R2 fix 123456 please", malformed(commandtext.ExtraText)},
+		{"mode and two codes", "/suiteward approve P1-R2 feature 123456 654321", malformed(commandtext.ExtraText)},
+		{"the mode after the code", "/suiteward approve P1-R2 123456 fix", malformed(commandtext.ExtraText)},
+		{"revoke with a mode", "/suiteward revoke P1-R2 fix 123456", malformed(commandtext.BadCode)},
+		{"revoke with a mode and no code", "/suiteward revoke P1-R2 refactor", malformed(commandtext.BadCode)},
+		{"mode without a word", "/suiteward mode", malformed(commandtext.MissingMode)},
+		{"mode with a trailing tab", "/suiteward mode\t", malformed(commandtext.MissingMode)},
+		{"mode that is no mode", "/suiteward mode x", malformed(commandtext.BadMode)},
+		{"mode misspelled", "/suiteward mode fixx", malformed(commandtext.BadMode)},
+		{"mode with a code", "/suiteward mode 123456", malformed(commandtext.BadMode)},
+		{"mode with a bad word and more text", "/suiteward mode x extra", malformed(commandtext.BadMode)},
+		{"mode with more text", "/suiteward mode fix extra", malformed(commandtext.ExtraText)},
+		{"mode with a code after it", "/suiteward mode feature 123456", malformed(commandtext.ExtraText)},
+		{"unblock without a code", "/suiteward unblock", malformed(commandtext.MissingCode)},
+		{"unblock with a trailing space", "/suiteward unblock ", malformed(commandtext.MissingCode)},
+		{"unblock with a reference", "/suiteward unblock P1-R1", malformed(commandtext.BadCode)},
+		{"unblock with a short code", "/suiteward unblock 12345", malformed(commandtext.BadCode)},
+		{"unblock with a mode", "/suiteward unblock fix", malformed(commandtext.BadCode)},
+		{"unblock with more text", "/suiteward unblock 123456 x", malformed(commandtext.ExtraText)},
+		{"unblock with a reference and a code", "/suiteward unblock P1-R1 123456", malformed(commandtext.BadCode)},
+		{"the mode verb is not read through a no-break space", "/suiteward mode fix", malformed(commandtext.UnknownVerb)},
 
 		// Only the first command line counts.
 		{"first of two valid lines", "/suiteward approve P1-R1 111111\n/suiteward revoke P2-R2 222222", command(commandtext.Approve, 1, 1, "111111")},
@@ -342,8 +400,21 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"malformed unknown verb",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.UnknownVerb, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: the action must be `approve`, `revoke`, `propose`, `skip` or `suggest`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`", "`/suiteward propose`", "`/suiteward skip <code>`", "`/suiteward suggest`"},
+			[]string{"Your `/suiteward` command was not understood: the action must be `approve`, `revoke`, `propose`, `skip`, `suggest`, `mode` or `unblock`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`", "`/suiteward propose`", "`/suiteward skip <code>`", "`/suiteward suggest`",
+				"`/suiteward mode <fix|feature|refactor>`", "`/suiteward unblock <code>`"},
 			[]string{"eligible"},
+		},
+		{
+			"malformed missing mode",
+			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.MissingMode, Source: source, Owner: owner},
+			[]string{"Your `/suiteward` command was not understood: the mode is missing, it must be `fix`, `feature` or `refactor`. Nothing changed.", "`/suiteward mode <fix|feature|refactor>`"},
+			[]string{"eligible", "code is missing"},
+		},
+		{
+			"malformed bad mode",
+			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.BadMode, Source: source, Owner: owner},
+			[]string{"Your `/suiteward` command was not understood: the mode must be `fix`, `feature` or `refactor`. Nothing changed.", "`/suiteward mode <fix|feature|refactor>`"},
+			[]string{"eligible", "6 digits"},
 		},
 		{
 			"malformed missing reference",

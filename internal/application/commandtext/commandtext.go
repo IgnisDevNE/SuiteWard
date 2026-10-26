@@ -34,7 +34,11 @@
 // is not graphic other than a newline (LF or CRLF) and a tab.
 package commandtext
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
+)
 
 // Kind is the kind of a parsed comment body.
 type Kind uint8
@@ -56,6 +60,9 @@ const (
 	Skip
 	// Suggest takes neither reference nor code.
 	Suggest
+	// SetMode takes a mode and nothing else; Unblock takes only a code, as Skip does.
+	SetMode
+	Unblock
 )
 
 // Reason says why a command line is malformed.
@@ -69,6 +76,8 @@ const (
 	MissingCode
 	BadCode
 	ExtraText
+	MissingMode
+	BadMode
 	// lastReason is no reason: it ends the list (see lastOutcome in render.go).
 	lastReason
 )
@@ -80,6 +89,8 @@ type Command struct {
 	Proposal int
 	Revision int
 	Code     string
+	// Mode is the mode an approve names or a SetMode sets, and ModeNone for every other command and for an approve that names none.
+	Mode execution.Mode
 }
 
 // Parsed is the result of Parse. Command is set only for KindCommand and

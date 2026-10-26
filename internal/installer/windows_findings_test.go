@@ -1,6 +1,8 @@
 package installer
 
 import (
+	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -106,5 +108,53 @@ func TestEveryFindingOfAProtectionHasItsWords(t *testing.T) {
 	both := protection.Result{Kind: protection.KindFindings, Findings: []protection.Code{protection.MissingContractCheck, protection.MissingTestCheck}}
 	if got, want := unfinishedText(both), "missing-contract-check (SuiteWard / Contract is not required), missing-test-check (the test check is not required)"; got != want {
 		t.Errorf("two findings read %q, want %q", got, want)
+	}
+}
+
+// upgradeOnAPC runs install --upgrade of the harness on the PC of pc, whose running program is reached by its path (swCmd), for image.
+func upgradeOnAPC(t *testing.T, pc *aPC, image string) string {
+	t.Helper()
+	u := newUpgradeHarness(t, nil)
+	u.f.env["LOCALAPPDATA"] = pc.local
+	env := u.env()
+	env.Self, env.Version = &pc.self, pc.version
+	env.Deps.Command = swCmd
+	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--upgrade", "--backup-dir", u.backups, "--runtime", "podman", "--connection", "pm", "--image", image, "--yes"}
+	if err := Install(context.Background(), args, env); err != nil {
+		t.Fatal(err)
+	}
+	return u.out.String()
+}
+
+// WIN-6: an upgrade that updated the copy of the program names it as the shell finds it, suiteward, in the hints that follow, and not by the
+// path of the build that ran.
+func TestAnUpgradeThatUpdatedTheCopyNamesTheProgramSuiteward(t *testing.T) {
+	for name, image := range map[string]string{"nothing to upgrade": oldImage, "an upgrade": testImage} {
+		t.Run(name+"/the shell finds the copy", func(t *testing.T) {
+			pc := newPC(t)
+			writeText(t, pc.target(), "OLD BUILD")
+			pc.found = pc.target()
+			out := upgradeOnAPC(t, pc, image)
+			if readText(t, pc.target()) != "NEW BUILD" || !strings.Contains(out, "`suiteward doctor") {
+				t.Errorf("the copy holds %q and the output has no hint that names suiteward:\n%s", readText(t, pc.target()), out)
+			}
+			if strings.Contains(out, swCmd) {
+				t.Errorf("a hint still names the program by the path of the build:\n%s", out)
+			}
+		})
+		t.Run(name+"/the shell finds another suiteward", func(t *testing.T) {
+			pc := newPC(t)
+			writeText(t, pc.target(), "OLD BUILD")
+			pc.found = filepath.Join(t.TempDir(), "suiteward.exe") // another program: the copy does not answer to the name
+			if out := upgradeOnAPC(t, pc, image); !strings.Contains(out, "`"+swCmd+" doctor") {
+				t.Errorf("the hint does not name the program by its path, which is what runs it:\n%s", out)
+			}
+		})
+		t.Run(name+"/there is no copy", func(t *testing.T) {
+			pc := newPC(t)
+			if out := upgradeOnAPC(t, pc, image); !strings.Contains(out, "`"+swCmd+" doctor") {
+				t.Errorf("the hint does not name the program by its path:\n%s", out)
+			}
+		})
 	}
 }

@@ -234,7 +234,7 @@ CREATE TABLE execution_tests (
     CONSTRAINT execution_tests_name_check CHECK (octet_length(name) BETWEEN 1 AND 200),
     CONSTRAINT execution_tests_file_check CHECK (octet_length(file) BETWEEN 1 AND 1024),
     CONSTRAINT execution_tests_kind_check CHECK (kind IN ('declared', 'added', 'changed')),
-    CONSTRAINT execution_tests_excluded_check CHECK ((state = 'excluded') = (excluded_reason IS NOT NULL) AND (excluded_reason IS NULL OR excluded_reason IN ('build-constraint'))),
+    CONSTRAINT execution_tests_excluded_check CHECK ((state = 'excluded') = (excluded_reason IS NOT NULL) AND (excluded_reason IS NULL OR excluded_reason IN ('build-constraint', 'nested-module'))),
     CONSTRAINT execution_tests_head_runs_check CHECK (head_runs <@ ARRAY['pass', 'fail', 'build-error', 'skip', 'absent']
         AND (CASE WHEN state = 'excluded' THEN cardinality(head_runs) = 0 ELSE cardinality(head_runs) BETWEEN 1 AND 3 END)),
     CONSTRAINT execution_tests_base_runs_check CHECK (base_runs IS NULL OR (base_runs <@ ARRAY['pass', 'fail', 'build-error', 'skip', 'absent']

@@ -270,8 +270,8 @@ func (t Test) validate(plan Plan) error {
 		return invalid("a test of kind %q does not belong in a %s result", t.Kind, plan)
 	case !contains(states, t.State):
 		return invalid("the state %q is not one of a %s result", t.State, plan)
-	case excluded != (t.ExcludedReason != ""), t.ExcludedReason != "" && t.ExcludedReason != ExcludedBuildConstraint:
-		return invalid("a test is excluded exactly when it has the reason %q", ExcludedBuildConstraint)
+	case excluded != (t.ExcludedReason != ""), t.ExcludedReason != "" && t.ExcludedReason != ExcludedBuildConstraint && t.ExcludedReason != ExcludedNestedModule:
+		return invalid("a test is excluded exactly when it has the reason %q or %q", ExcludedBuildConstraint, ExcludedNestedModule)
 	case excluded && (len(t.HeadRuns) > 0 || len(t.BaseRuns) > 0):
 		return invalid("an excluded test has no runs")
 	case excluded:

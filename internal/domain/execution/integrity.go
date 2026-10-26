@@ -138,18 +138,27 @@ func checkPath(p string, seen map[string]bool) error {
 	return nil
 }
 
-// refuseBelowFile fails with invalid when a path of paths sits below another path that is in files. A tree holds no such
-// path, and an extraction that does would write below a link or through a file.
+// refuseBelowFile fails with invalid when a path of paths sits below another path that is a file of files (a key with a true
+// value). A tree holds no such path, and an extraction that does would write below a link or through a file. Names are
+// compared folded (foldPath), as NTFS and APFS compare them, so a file D above d/x conflicts; only a file where a directory
+// is does, and two directories that differ in case do not.
 func refuseBelowFile(paths, files map[string]bool, invalid error) error {
+	folded := map[string]bool{}
+	for p, isFile := range files {
+		if isFile {
+			folded[foldPath(p)] = true
+		}
+	}
 	for _, p := range slices.Sorted(maps.Keys(paths)) {
 		for dir := path.Dir(p); dir != "."; dir = path.Dir(dir) {
-			if files[dir] {
+			if folded[foldPath(dir)] {
 				return fmt.Errorf("%w: %q is below the file %q", invalid, p, dir)
 			}
 		}
 	}
 	return nil
 }
+
 
 // indexTree validates the entries of a commit's tree. It returns its files by path, and the sorted paths of its submodules.
 func indexTree(entries []TreeEntry) (map[string]blob, []string, error) {

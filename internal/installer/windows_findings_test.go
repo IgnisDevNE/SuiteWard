@@ -126,28 +126,45 @@ func upgradeOnAPC(t *testing.T, pc *aPC, image string) string {
 	return u.out.String()
 }
 
-// WIN-6: an upgrade that updated the copy of the program names it as the shell finds it, suiteward, in the hints that follow, and not by the
-// path of the build that ran.
+// WIN-6: an upgrade that updated the copy of the program names it as a new terminal finds it, suiteward, in the hints that follow, and not
+// by the path of the build that ran. The name is promised only where the copy answers to it: the folder is on the PATH of the user, and the
+// shell of this terminal finds either nothing yet (it started before the entry was added) or the copy itself, not another suiteward.
 func TestAnUpgradeThatUpdatedTheCopyNamesTheProgramSuiteward(t *testing.T) {
+	// onPath puts the folder of the copy on the PATH of the user, as the install that made the copy did.
+	onPath := func(pc *aPC) { pc.path.value += ";" + pc.dir() }
 	for name, image := range map[string]string{"nothing to upgrade": oldImage, "an upgrade": testImage} {
-		t.Run(name+"/the shell finds the copy", func(t *testing.T) {
-			pc := newPC(t)
-			writeText(t, pc.target(), "OLD BUILD")
-			pc.found = pc.target()
-			out := upgradeOnAPC(t, pc, image)
-			if readText(t, pc.target()) != "NEW BUILD" || !strings.Contains(out, "`suiteward doctor") {
-				t.Errorf("the copy holds %q and the output has no hint that names suiteward:\n%s", readText(t, pc.target()), out)
-			}
-			if strings.Contains(out, swCmd) {
-				t.Errorf("a hint still names the program by the path of the build:\n%s", out)
-			}
-		})
+		for when, found := range map[string]func(pc *aPC) string{
+			"the shell finds the copy":                              func(pc *aPC) string { return pc.target() },
+			"this terminal started before the PATH entry was added": func(*aPC) string { return "" },
+		} {
+			t.Run(name+"/"+when, func(t *testing.T) {
+				pc := newPC(t)
+				writeText(t, pc.target(), "OLD BUILD")
+				onPath(pc)
+				pc.found = found(pc)
+				out := upgradeOnAPC(t, pc, image)
+				if readText(t, pc.target()) != "NEW BUILD" || !strings.Contains(out, "`suiteward doctor") {
+					t.Errorf("the copy holds %q and the output has no hint that names suiteward:\n%s", readText(t, pc.target()), out)
+				}
+				if strings.Contains(out, swCmd) {
+					t.Errorf("a hint still names the program by the path of the build:\n%s", out)
+				}
+			})
+		}
 		t.Run(name+"/the shell finds another suiteward", func(t *testing.T) {
 			pc := newPC(t)
 			writeText(t, pc.target(), "OLD BUILD")
+			onPath(pc)
 			pc.found = filepath.Join(t.TempDir(), "suiteward.exe") // another program: the copy does not answer to the name
 			if out := upgradeOnAPC(t, pc, image); !strings.Contains(out, "`"+swCmd+" doctor") {
 				t.Errorf("the hint does not name the program by its path, which is what runs it:\n%s", out)
+			}
+		})
+		t.Run(name+"/the PATH of the user lacks the folder", func(t *testing.T) {
+			pc := newPC(t)
+			writeText(t, pc.target(), "OLD BUILD")
+			if out := upgradeOnAPC(t, pc, image); !strings.Contains(out, "`"+swCmd+" doctor") {
+				t.Errorf("the hint does not name the program by its path, as no name reaches the copy:\n%s", out)
 			}
 		})
 		t.Run(name+"/there is no copy", func(t *testing.T) {

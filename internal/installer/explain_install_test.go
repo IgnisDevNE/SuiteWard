@@ -39,7 +39,7 @@ func TestTheTierQuestionHasAPageThatExplainsBothTiers(t *testing.T) {
 	if !strings.HasPrefix(v.rows[0], "Where SuiteWard runs") {
 		t.Errorf("the page of the tier question is titled %q, want \"Where SuiteWard runs\"", v.rows[0])
 	}
-	mustSay(t, v, "next to the coding agent", "reduced assurance", "can reach SuiteWard's key, its database and its secret",
+	mustSay(t, v, "On this computer, next to the coding agent", "reduced assurance", "can reach SuiteWard's key, its database and its secret",
 		"separate Linux host or account that the agent cannot reach", "Full assurance", "Recommended: co-located to start", "Installation tier")
 	if !strings.Contains(v.hint, "Enter takes the default") {
 		t.Errorf("the hint is %q, want it to say that Enter takes the default", v.hint)
@@ -124,7 +124,7 @@ func TestThePortsAreExplainedOnOnePageBeforeTheTwoQuestions(t *testing.T) {
 		t.Errorf("the page of the ports is titled %q, want \"Ports\"", v.rows[0])
 	}
 	mustSay(t, v, "only on 127.0.0.1", "/status", "change report page", "MCP", "coding agent's client", "token", "27081", "27091",
-		"Change a port only if something else on this PC uses it", "HTTP port on 127.0.0.1")
+		"Change a port only if something else on this computer uses it", "nothing outside this computer can reach them", "HTTP port on 127.0.0.1")
 	if second := run.question(t, 3); !strings.Contains(second.text(), "Ports") || !strings.Contains(second.text(), "MCP port on 127.0.0.1") {
 		t.Errorf("the second port question is not on the page of the ports:\n%s", second.dump())
 	}

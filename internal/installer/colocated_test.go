@@ -1018,7 +1018,7 @@ func TestInstallEnablesPodmanRestartInTheMachine(t *testing.T) {
 	if len(got) != len(want) || got[0].line() != want[0] || got[1].line() != want[1] {
 		t.Fatalf("got %v, want %v", got, want)
 	}
-	if !strings.Contains(h.out.String(), "podman machine start") {
+	if !strings.Contains(h.out.String(), "After this computer restarts, run `podman machine start`") {
 		t.Errorf("the machine-at-logon gap is not noted:\n%s", h.out.String())
 	}
 }

@@ -811,7 +811,7 @@ func TestTheChecksJobIsTheOnlyWriterOfCheckStates(t *testing.T) {
 	repository := os.DirFS(filepath.Join("..", ".."))
 	var callers []string
 	err := fs.WalkDir(repository, "internal", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || strings.Contains(filepath.ToSlash(path), "/checkstest/") { // the in-memory ledger and its conformance suite are test support
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || strings.Contains(filepath.ToSlash(path), "/checkstest/") || strings.Contains(filepath.ToSlash(path), "/executiontest/") { // the in-memory ledgers and their conformance suites are test support
 			return err
 		}
 		source, err := fs.ReadFile(repository, path)

@@ -51,7 +51,7 @@ func (n NewJob) Validate() error {
 	case n.Unavailable != "" && !n.Unavailable.createdFinal():
 		return invalid("a job is created unavailable only for no-merge-base, executor-not-configured or github-unavailable, not %q", n.Unavailable)
 	}
-	return n.Spec.validate(n.Unavailable != "")
+	return n.validate(n.Unavailable != "")
 }
 
 func validPaths(name string, paths []string) error {
@@ -212,7 +212,7 @@ func (m Marker) validate() error {
 
 // Validate reports why the result cannot be stored for a job of the plan, as ErrInvalidRequest.
 func (r Result) Validate(plan Plan) error {
-	if err := r.Report.validate(); err != nil {
+	if err := r.validate(); err != nil {
 		return err
 	}
 	switch {

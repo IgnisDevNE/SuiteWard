@@ -64,13 +64,13 @@ func (j Job) Current() bool {
 	if j.State == StateCancelled {
 		return false
 	}
-	return !(j.State == StateUnavailable && (j.Reason == ReasonNotConfigured || j.Reason == ReasonNoExecutor))
+	return j.State != StateUnavailable || (j.Reason != ReasonNotConfigured && j.Reason != ReasonNoExecutor)
 }
 
 // Job is the job that n creates, without its id.
 func (n NewJob) Job() Job {
 	at := Stored(n.At)
-	j := Job{Spec: n.Spec, Key: n.Spec.Key(), State: StatePending, NotBefore: at, CreatedAt: at}
+	j := Job{Spec: n.Spec, Key: n.Key(), State: StatePending, NotBefore: at, CreatedAt: at}
 	if n.Unavailable != "" {
 		j.State, j.Reason, j.FinishedAt = StateUnavailable, n.Unavailable, at
 	}

@@ -5,7 +5,7 @@
 # VOL: the module cache volume (install writes it, test mounts it read-only). FP: a volume laid out as a module proxy; with FP, install runs
 # from file:///fp (NET=none works) and test needs no VOL at all: go extracts the modules it needs into the tmpfs. (FP is a convenience of the
 # spike: the product puts the module files in the same stdin tar as the source, and no volume.)
-# RT=podman runs only inside the throwaway distro m21s0-alma (guard.sh): on the PC `podman` may be the client of the Podman machine.
+# RT=podman runs only inside the throwaway distro m21s0-alma (guard.sh): on the PC `podman` may be the client of the Podman machine. RT=podman-remote is not guarded on purpose: executor-shapes.sh uses it inside a container.
 set -eu
 . "$(dirname "$0")/image.sh"; D=$(dirname "$0")
 RT=${RT:-docker}; IMAGE=${IMAGE:-$ALPINE}
@@ -33,7 +33,7 @@ kill $sampler
 echo "METRIC wall_s=$(echo "$e $s" | awk "{print \$1-\$2}") exit=$rc peak_bytes=$(cat /sys/fs/cgroup/memory.peak) anon_shmem_peak=$(sort -n /work/mem.log | tail -1) pids_peak=$(cat /sys/fs/cgroup/pids.peak) cpu_usec=$(awk "/^usage_usec/{print \$2}" /sys/fs/cgroup/cpu.stat) throttled=$(awk "/^nr_throttled/{print \$2}" /sys/fs/cgroup/cpu.stat) oom=$(awk "/^oom_kill /{print \$2}" /sys/fs/cgroup/memory.events) tmpfs_mb=$(du -sm /work | cut -f1)" >&2'
 
 case $cmd in
-prep) # a named volume is root-owned and the sandbox user is not: hand it to 65532 once
+prep) # a named volume is root-owned and the sandbox user is not: hand it to 65534 once
 	$RT volume create "$VOL" >/dev/null
 	$RT run --rm --network=none --user 0 --cap-drop=ALL --cap-add=CHOWN -v "$VOL":/gomod "$IMAGE" chown $SUID:$SUID /gomod ;;
 install) # networked, no repository code runs: go mod download only fetches and verifies against go.sum

@@ -51,7 +51,7 @@ The sandbox run uses `--rm -i --network=none --read-only --tmpfs /work:rw,exec,n
 | `GOPATH` | harmless offline; the install step, when `go.sum` lacks an entry, fails with `open /go/pkg/sumdb/sum.golang.org/latest: no such file or directory` | `GOPATH=/work/go` |
 | the module cache volume owned by the sandbox user | the install step fails with `go: writing go.mod cache: mkdir /gomod/cache: permission denied` | `sandbox.sh prep` hands the volume to the user once, with a helper container that has only `CAP_CHOWN` |
 | a dependency missing from `go.sum` | `missing go.sum entry for module providing package …` (the package fails to build) | none needed: it is the safe outcome |
-| a wrong hash in `go.sum` (met by accident, in the install step) | `SECURITY ERROR … checksum mismatch`; nothing is stored | none needed: `go.sum` is the integrity anchor of the install |
+| a wrong hash in `go.sum` (met by accident, in the install step) | `SECURITY ERROR … checksum mismatch`; nothing is stored | none needed: `go.sum` refuses a damaged download (not a hostile candidate, 3.3) |
 | `go.mod` that needs a newer `go` than the image | `go: go.mod requires go >= 1.99.0 (running go 1.27.3; GOTOOLCHAIN=local)`; a `toolchain go1.99.0` line alone is ignored | none: maps to `unavailable` (toolchain mismatch) |
 | `GOWORK=off` | with a candidate `go.work` and `GOWORK` unset, `go: cannot load module ../nonexistent listed in go.work file`; with `GOWORK=off` the test ran | keep `GOWORK=off` |
 
@@ -208,7 +208,7 @@ On 2026-10-26 the owner chose this over a networked install step. The executor p
 - **What the bytes are worth.** `go` checks every file against `go.sum`, and that `go.sum` is the candidate's. TLS to the proxy protects the download on the way; the candidate can still name any module the proxy serves, with its hash. The result is equivalent to a networked install, not stronger. A wrong hash is refused (`SECURITY ERROR`, 1.1) and so is a file that is not a zip (3.2), but that protects against a damaged download, not against a hostile candidate.
 - **`replace`.** One to a directory inside the tree needs no fetch: the files come from the source tar. One outside the tree fails the run (deterministic). A module the proxy does not serve (private) fails it too.
 - **Egress.** The executor's own network is now the only one. Its HTTP client allows `proxy.golang.org` and the redirect host of its zips, `storage.googleapis.com`, and nothing else (an `http.Client` with `CheckRedirect`, as in the mirror of 3.1). A host-level egress allow-list is recommended on top, but **not built from IP addresses**: the addresses of Google's front ends rotate. In 4.6 the name `proxy.golang.org` resolved to 142.250.219.49 in one run and to 142.251.132.241 in another, an hour apart, so a rule that names an address would have broken. The firewall rule of 4.6 therefore rejects the metadata addresses by destination, which do not change, and leaves the proxy to the client's allow-list.
-- **The prototype's shortcuts, which T5 must not copy.** It uses `curl -L`, which follows a redirect to any host, and `|| echo FAILED`, which prints and carries on, so a failed or partial download would not stop the job. It also writes to a host directory and has no limit on the number of files or the bytes. T5 fails the job on any fetch error (an infrastructure failure, retried with backoff) and refuses a redirect to any host but `storage.googleapis.com`.
+- **The prototype's shortcuts, which T5 must not copy.** It uses `curl -L`, which follows a redirect to any host, and `|| echo FAILED`, which prints and carries on, so a failed or partial download would not stop the job. Its validation filter prints "refused" and calls `exit`, but in the middle of a pipeline without `pipefail` that drops the refused lines and the script still exits 0. It also writes to a host directory and has no limit on the number of files or the bytes. T5 fails the job on any fetch error (an infrastructure failure, retried with backoff) and refuses a redirect to any host but `storage.googleapis.com`.
 - The file set is a superset of what `go mod download` fetches: 73 MB for the 170 files of this repository's `go.sum`, against 30 MB in the `cache/download` that `go mod download` left (I did not find out which entries account for the difference).
 - Whether the executor may keep the downloaded files between jobs is open: they are not the composed tree and the executor never unpacks them, but the owner's rule says nothing of the tree touches a host filesystem. `go` verifies every file against the candidate's `go.sum` whatever its origin. Not decided here.
 
@@ -344,6 +344,12 @@ A known limit, from the installer rather than from this spike: a Podman machine'
 - **`hidepid`** persistence and its group exemption, and its effect on `systemd-logind` and other services (documentation only; the remount was reverted at once).
 - **Other platforms and versions:** Docker Desktop on macOS, Podman 5.5 (the installer's minimum; 5.8.2 was tested), an AlmaLinux other than 9.8, a cgroup v1 host, a kernel other than WSL's 6.6.
 - **Larger suites:** a repository whose tar, modules and build cache do not fit the 1 GiB tmpfs, and a test output that is very large.
+- **The 73 MB versus 30 MB** difference between the prototype's fetch and a prepared module cache (3.3): not explained.
+- **`-race` and the bookworm image on Podman:** both ran on Docker only; Podman ran the alpine pin only.
+- **`.State.OOMKilled` read through a remote client** (podman-remote, or a Podman machine's Windows client), which is how a co-located executor would read it.
+- **A hostile stdin tar:** very many files, deep paths, symlinks, entries at the 8 MiB cap, extracted by busybox `tar` in the sandbox.
+- **Seccomp profiles:** the differences between Docker Desktop's and rootless Podman's defaults.
+- **Reproduce gaps:** the commands of the persistent-`GOCACHE` run (2.2) and of the timeout experiments (2.3) were not recorded.
 - **Whether the executor may cache the downloaded module files** between jobs (3.3), and how much disk they and the images take over time.
 
 

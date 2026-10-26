@@ -1,5 +1,5 @@
 #!/bin/sh
-# Writes the small test target: one module, one dependency, four tests (one fails on purpose, one skips).
+# Writes the small test target: one module, one dependency, five tests (three pass, one fails on purpose, one skips).
 # usage: smallmod.sh <dir>
 set -eu
 mkdir -p "$1" && cd "$1"

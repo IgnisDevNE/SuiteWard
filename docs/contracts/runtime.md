@@ -638,6 +638,7 @@ Base path `/executor/v1` on the service's HTTP listener. It is not served (404, 
 - *204:* no job is ready.
 - *200:* the job, as below. The service reads the tree entries of each commit when it grants the lease. A GitHub failure is 502 and leaves the job pending with its attempts unchanged. A truncated tree makes the job `unavailable` (`too-large`).
 - *Also:* 401, 503.
+- *Not idempotent:* each call that grants a lease takes a job. An executor that restarts asks again and gets the next job; the job it had leased comes back when its lease expires.
 - *Rules:* the oldest job that is `pending`, or `leased` with an expired lease, goes first. Granting increments `attempts` and sets a new `leaseId` and `leaseExpiresAt` (60 s from now †, never beyond `deadlineAt`). The answer is at most 16 MiB †.
 
 | Field | Type | Notes |
@@ -664,6 +665,7 @@ A tree entry is `{path, mode, sha}`: `path` is at most 4096 bytes, `mode` is one
 **`GET /jobs/{id}/files/{digest}`.** One file of `manifest.files`, from the service's store.
 - *200:* `application/octet-stream` with `X-Content-Type-Options: nosniff`, at most `limits.fileBytes`. The executor re-checks the digest of what it received.
 - *404:* a digest that is not in this job's manifest. The service never reads another one. *409:* the lease. *500:* the store has no valid content for a digest of the manifest (logged at Error). Also 401.
+- *Idempotent:* it may be repeated.
 
 **`POST /jobs/{id}/heartbeat`.**
 - *Request:* no body. *200:* `{"leaseExpiresAt": "..."}`, 60 s from now, never beyond `deadlineAt`. *409:* the lease was lost (another lease, or the job is cancelled or finished). Also 401, 404.

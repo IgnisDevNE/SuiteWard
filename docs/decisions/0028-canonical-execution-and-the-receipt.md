@@ -51,7 +51,9 @@ Each plan runs on a head and is evidence about that head. Neither enters the con
 
 The head can therefore add a test but not silence one. The expected tests are the top-level test functions declared in the manifest's Go test files.
 
-**The receipt** runs for a head that has a change proposal revision, when `receipt` is not `off`. Its **evaluated tests** are the top-level test functions added or changed, by declaration text, in the files that the **canonical** `include` matches and whose bytes differ from the canonical manifest. "Changed" means against the canonical version the revision expects, not against the merge base. Test files under patterns that only the head adds are listed as "not evaluated: pattern not approved yet".
+Fork pull requests get no run: they fail closed, as in [D-INTEGRATION](../plan/decisions.md#d-integration-merge-methods-and-the-integrated-source).
+
+**The receipt** runs for a head that has a change proposal revision, when `receipt` is not `off`. (This is provisional. The design note says "a pull request whose revision changes protected test files", and the service cannot tell test files from other protected files without parsing Go; see open item 2.) Its **evaluated tests** are the top-level test functions added or changed, by declaration text, in the files that the **canonical** `include` matches and whose bytes differ from the canonical manifest. "Changed" means against the canonical version the revision expects, not against the merge base. Test files under patterns that only the head adds are listed as "not evaluated: pattern not approved yet".
 
 - **Head side:** the head tree.
 - **Base side:** the base commit's tree plus the head's version of the files that hold evaluated tests. Nothing else of the head crosses: source, `go.mod`, `go.sum`, `vendor/`, runner files and `.suiteward.yml` all come from the base commit.
@@ -217,6 +219,7 @@ These need the owner. Each names the provisional rule the contracts use meanwhil
 12. **Levels without a profile are inert.** `execution: {canonical: required}` with no `profile` runs nothing and is not an error. Whether it should be invalid is open.
 13. **The reference of the receipt.** The design note says the evaluated tests differ from the "governing manifest", and glosses it as "relative to the canonical". The contracts use the canonical version the revision expects. Against the governing manifest, the receipt of a head would turn empty the moment a consent covers it.
 14. **`before-approval` and an unavailable receipt.** The design refuses unless the receipt is `complete`, so unavailable refuses. The phase page says "a pending one". The contracts follow the design.
+15. **The GitHub budget.** A run reads two trees, the merge base and two archives, on top of the synchronization. The pacing of [D-SYNC](../plan/decisions.md#d-sync-polling-budget-and-mcp-boundary) counts only the synchronization's own requests. Whether execution reads count toward the same budget, and what a burst of pushes does to it, is not decided.
 
 Deferred, not open:
 

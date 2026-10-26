@@ -1268,7 +1268,7 @@ Insert-only. One row for each test of a `complete` result. The head and base obs
 | `base_runs` | `text[]` | the same elements; null when excluded and for a canonical job; otherwise 1 to 3 elements |
 | `state` | `text NOT NULL` | the lower-case form of a state of ADR 0028. Canonical states: `pass`, `fail`, `skipped`, `missing`, `flaky`, `excluded`. Receipt states: `excluded`, `missing`, `flaky`, `skipped`, `fails`, `new_api`, `detects`, `inert`. One `CHECK` lists the union; `fail` and `fails` are two states, as in the ADR. `state = 'excluded'` exactly when `excluded_reason` is set |
 
-The store also checks, against the job's plan: a `canonical` job has only `declared` rows with no `base_runs`, and a `receipt` job has only `added` and `changed` rows, each with `base_runs` unless excluded, and only receipt states. A violation is `ErrInvalidRequest` and nothing is written.
+The store also checks, against the job's plan: a `canonical` job has only `declared` rows with no `base_runs`, and a `receipt` job has only `added` and `changed` rows, each with `base_runs` unless excluded, and only receipt states. A violation is `ErrInvalidRequest` and nothing is written. So is a result with more than 10,000 test rows †: the bound of a result is checked when it is written, and not only by the wire.
 
 ### Table `pr_receipt_checks`
 

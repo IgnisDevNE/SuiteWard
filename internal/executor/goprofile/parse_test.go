@@ -131,14 +131,17 @@ func TestParseTakesTheExitStatusAsTheLastWord(t *testing.T) {
 		exit     int
 		expected []TestID
 	}{
-		"a failing exit over tests that all passed or skipped":  {"all-pass", 1, passing},
-		"a failing exit that is not 1":                          {"all-pass", 137, passing},
-		"a zero exit over a failure":                            {"pass-fail-skip", 0, mixed},
-		"a zero exit over a package that does not build":        {"build-error", 0, []TestID{at("good", "TestGood"), at("broken", "TestBroken")}},
-		"a zero exit over a build failure of a dependency":      {"dependency-build-error", 0, []TestID{at("good", "TestGood"), at("usesdep", "TestUse")}},
-		"a zero exit over a test that never reported":           {"panic", 0, []TestID{at("panics", "TestPanic"), at("panics", "TestAfter")}},
-		"a zero exit over a test that started and never ended":  {"timeout", 0, []TestID{at("hang", "TestHang"), at("hang", "TestAfterHang")}},
-		"a zero exit over a failure of one duplicate of a name": {"duplicate-name", 0, []TestID{at("dup", "TestDup")}},
+		"a failing exit over tests that all passed or skipped":          {"all-pass", 1, passing},
+		"a failing exit that is not 1":                                  {"all-pass", 137, passing},
+		"a zero exit over a failure":                                    {"pass-fail-skip", 0, mixed},
+		"a zero exit over a package that does not build":                {"build-error", 0, []TestID{at("good", "TestGood"), at("broken", "TestBroken")}},
+		"a zero exit over a build failure of a dependency":              {"dependency-build-error", 0, []TestID{at("good", "TestGood"), at("usesdep", "TestUse")}},
+		"a zero exit over a test that never reported":                   {"panic", 0, []TestID{at("panics", "TestPanic"), at("panics", "TestAfter")}},
+		"a zero exit over a test that started and never ended":          {"timeout", 0, []TestID{at("hang", "TestHang"), at("hang", "TestAfterHang")}},
+		"a zero exit over a failure of one duplicate of a name":         {"duplicate-name", 0, []TestID{at("dup", "TestDup")}},
+		"a failing exit with nothing reported and nothing failed":       {"no-tests-ran", 1, []TestID{at("good", "TestNothing")}},
+		"a zero exit over a failure of a test nobody expected":          {"pass-fail-skip", 0, []TestID{at("good", "TestGood"), at("mixed", "TestPass")}},
+		"a zero exit over a build failure of a package nobody expected": {"build-error", 0, []TestID{at("good", "TestGood")}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -151,30 +154,34 @@ func TestParseTakesTheExitStatusAsTheLastWord(t *testing.T) {
 	}
 }
 
-// An absent test is not a pass, so a status with nothing reported to contradict it stands, and so do a failing status
-// that something explains and a passing one that nothing contradicts.
-func TestParseLeavesWhatTheStatusDoesNotContradict(t *testing.T) {
-	wantObservations(t, observe(t, fixture(t, "no-tests-ran"), 1, at("good", "TestNothing")),
-		map[TestID]execution.Observation{at("good", "TestNothing"): absent})
-	wantObservations(t, observe(t, fixture(t, "pass-fail-skip"), 1, at("good", "TestGood"), at("mixed", "TestFail")),
-		map[TestID]execution.Observation{at("good", "TestGood"): pass, at("mixed", "TestFail"): fail})
-	if got := observe(t, fixture(t, "all-pass"), 0); len(got) != 0 {
-		t.Errorf("no expected test gave %v", got)
+// A failing status is explained by a failure anywhere in the invocation, the tests that nobody expected included: those
+// are in the report as go test wrote it. What the status then says of the expected tests is what the report says.
+func TestParseLetsAnyFailureOfTheInvocationExplainAFailingStatus(t *testing.T) {
+	cases := map[string]struct {
+		fixture  string
+		expected []TestID
+		want     map[TestID]execution.Observation
+	}{
+		"a test that nobody expected failed": {"pass-fail-skip", []TestID{at("good", "TestGood"), at("mixed", "TestPass")},
+			map[TestID]execution.Observation{at("good", "TestGood"): pass, at("mixed", "TestPass"): pass}},
+		"a package that nobody expected did not build": {"build-error", []TestID{at("good", "TestGood")},
+			map[TestID]execution.Observation{at("good", "TestGood"): pass}},
+		"a failing test explains the status of the test that did not run": {"panic", []TestID{at("panics", "TestAfter")},
+			map[TestID]execution.Observation{at("panics", "TestAfter"): absent}},
+		"the expected test failed itself": {"pass-fail-skip", []TestID{at("good", "TestGood"), at("mixed", "TestFail")},
+			map[TestID]execution.Observation{at("good", "TestGood"): pass, at("mixed", "TestFail"): fail}},
 	}
-	if got := observe(t, fixture(t, "all-pass"), 1); len(got) != 0 {
-		t.Errorf("no expected test gave %v under a failing status", got)
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			wantObservations(t, observe(t, fixture(t, c.fixture), 1, c.expected...), c.want)
+		})
 	}
-}
-
-// The status is read against the expected tests only. A test that nobody expected and that fails explains a failing
-// status to a reader of the stream, but to this rule the expected tests all passed under a status that says they did
-// not, so every one of them reads fail. The contract says so ("a non-zero exit with every expected test reported
-// passing or skipped"); the hazard (an unexpected test with the name of an expected one in another package) is for
-// the report of the task.
-func TestParseDoesNotLetAnUnexpectedFailureExplainTheStatus(t *testing.T) {
-	expected := []TestID{at("good", "TestGood"), at("mixed", "TestPass")}
-	wantObservations(t, observe(t, fixture(t, "pass-fail-skip"), 1, expected...),
-		map[TestID]execution.Observation{at("good", "TestGood"): fail, at("mixed", "TestPass"): fail})
+	// With no expected test there is nothing to read, under either status.
+	for _, exit := range []int{0, 1} {
+		if got := observe(t, fixture(t, "all-pass"), exit); len(got) != 0 {
+			t.Errorf("exit %d: no expected test gave %v", exit, got)
+		}
+	}
 }
 
 func line(action, pkg, test string) string {
@@ -224,7 +231,7 @@ func TestParseReadsOnlyTheTopLevelTestsOfTheExpectedPackages(t *testing.T) {
 		line("pass", module+"/b", "TestA"),
 		line("fail", module+"/c", "TestA"),
 		line("pass", "example.org/elsewhere/a", "TestA"),
-	), 0, a, b)
+	), 1, a, b)
 	wantObservations(t, got, map[TestID]execution.Observation{a: absent, b: pass})
 }
 
@@ -232,7 +239,7 @@ func TestParseNamesPackagesByTheirImportPathUnderTheModule(t *testing.T) {
 	const v2 = "example.com/m/v2"
 	root, deep := at(".", "TestRoot"), at("a/b", "TestDeep")
 	stdout := stream(line("pass", v2, "TestRoot"), line("pass", v2+"/a/b", "TestDeep"), line("fail", "example.com/m/a/b", "TestDeep"))
-	got, err := Parse(stdout, 0, v2, []TestID{root, deep})
+	got, err := Parse(stdout, 1, v2, []TestID{root, deep})
 	if err != nil {
 		t.Fatal(err)
 	}

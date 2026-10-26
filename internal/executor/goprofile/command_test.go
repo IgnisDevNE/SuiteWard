@@ -57,6 +57,7 @@ func TestCommandEnvironmentIsExactlyTheSandboxs(t *testing.T) {
 	t.Setenv("GOPROXY", "https://example.invalid")
 	tests := []TestID{{"a", "TestA", "a/a_test.go"}}
 	common := []string{
+		"GOENV=off",
 		"GOTOOLCHAIN=local",
 		"GOWORK=off",
 		"GOFLAGS=",
@@ -87,6 +88,20 @@ func TestCommandEnvironmentPointsAtTheDirectoriesTheCallerFills(t *testing.T) {
 	for _, dir := range []string{ProxyDir, HomeDir, TmpDir} {
 		if strings.HasPrefix(dir, "/") || strings.Contains(dir, "..") {
 			t.Errorf("%q is not a relative tar name", dir)
+		}
+	}
+}
+
+// The tree is extracted into /work/<TreeDir> and go's own state is under /work/<StateDir>: neither is inside the other,
+// so no path of the tree can be a file that go reads as its own (an env file, a cache entry, a module proxy file).
+func TestTheTreeAndGosStateAreDisjoint(t *testing.T) {
+	inside := func(dir, parent string) bool { return strings.HasPrefix(dir+"/", parent+"/") }
+	if TreeDir == "" || StateDir == "" || inside(TreeDir, StateDir) || inside(StateDir, TreeDir) {
+		t.Errorf("the tree %q and go's state %q overlap", TreeDir, StateDir)
+	}
+	for _, dir := range []string{ProxyDir, HomeDir, TmpDir} {
+		if !inside(dir, StateDir) {
+			t.Errorf("%q is not under %q", dir, StateDir)
 		}
 	}
 }

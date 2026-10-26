@@ -2,16 +2,16 @@ The module the *.json files in this directory were recorded from. They are the u
 `go test -json` (Go 1.27.3, the image of goprofile.Image, linux/amd64). Nothing here is compiled: the module is one text
 file so that the failing tests in it are not live test files of this repository.
 
-To record one again, extract the sections below into a directory (with an empty .suiteward/home/.keep and
-.suiteward/tmp/.keep, which create the HOME and TMPDIR that go needs), pack the directory as a tar and run, in the pinned
+To record one again, extract the sections below into a directory src/ and add the empty files .suiteward/home/.keep and
+.suiteward/tmp/.keep beside it (they create the HOME and TMPDIR that go needs). Pack both as a tar and run, in the pinned
 image with no network, a read-only root and a tmpfs /work, the argv and the environment that goprofile.Command returns:
 
-  tar -x -C /work && cd /work && exec go test -json -count=1 -shuffle=on -timeout=<t> -run '^(A|B)$' <packages>
+  tar -x -C /work && cd /work/src && exec go test -json -count=1 -shuffle=on -timeout=<t> -run '^(A|B)$' <packages>
 
-with GOTOOLCHAIN=local GOWORK=off GOFLAGS= GOPROXY=file:///work/.suiteward/proxy GOSUMDB=off and HOME, TMPDIR, GOCACHE and
-GOMODCACHE under /work/.suiteward. The invocation of each fixture is in parse_test.go. The shuffle is random: the panic, timeout
-and exit-in-test fixtures were run again until the shuffled order put the test that ends the run first, and the rest are the
-first run.
+with GOENV=off GOTOOLCHAIN=local GOWORK=off GOFLAGS= GOPROXY=file:///work/.suiteward/proxy GOSUMDB=off and HOME, TMPDIR,
+GOCACHE and GOMODCACHE under /work/.suiteward. The invocation of each fixture is in parse_test.go. The shuffle is random:
+the panic, timeout and exit-in-test fixtures were run again until the shuffled order put the test that ends the run first,
+and the rest are the first run.
 
 -- baddep/baddep.go --
 package baddep

@@ -14,6 +14,9 @@ const Image = "docker.io/library/golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c
 // form of a package. The caller refuses such a tree.
 const StateDir = ".suiteward"
 
+// TreeDir is the directory of the sandbox's /work that holds the repository.
+const TreeDir = ""
+
 // The directories under StateDir that the caller fills, as tar entry names: the prefetched module proxy goes under
 // ProxyDir, and a placeholder file in HomeDir and in TmpDir creates them (go stops when TMPDIR does not exist, and tar
 // creates the directories of the files it extracts).

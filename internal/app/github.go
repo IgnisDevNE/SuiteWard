@@ -200,6 +200,8 @@ var (
 	commentPermissions = map[string]string{"metadata": "read", "pull_requests": "write"}
 	// checkPermissions is the map of the check run publisher, used for check runs only.
 	checkPermissions = map[string]string{"metadata": "read", "checks": "write"}
+	// archivePermissions is a stub that its test is written against.
+	archivePermissions = map[string]string{}
 )
 
 // githubAccess is what every token of the GitHub settings shares: the App, the

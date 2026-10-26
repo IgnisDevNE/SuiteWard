@@ -303,6 +303,14 @@ func (c *Client) Post(ctx context.Context, path string, body []byte) (Response, 
 	return out, nil
 }
 
+// ErrTooLarge matches a download that exceeds its size limit.
+var ErrTooLarge = errors.New("github: download exceeds the size limit")
+
+// Download is the stub that the streaming tests are written against.
+func (c *Client) Download(ctx context.Context, path string, dst io.Writer, limit int64) (int64, error) {
+	return 0, errors.New("not implemented")
+}
+
 func (c *Client) get(ctx context.Context, path string, useCache bool) (Response, error) {
 	if !strings.HasPrefix(path, "/") {
 		return Response{}, fmt.Errorf("github GET %q: path must start with /", path)

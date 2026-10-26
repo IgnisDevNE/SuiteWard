@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // Outcome is the processed result an acknowledgment reports.
@@ -40,6 +42,13 @@ const (
 	SuggestRefused
 	// OtherPullRequest answers an approve or a revoke whose reference names a proposal that another pull request carries.
 	OtherPullRequest
+	// The execution commands (M2.1): ReceiptRefused carries the Gate reason that refused an approve, ModeSet the Mode it recorded, ModeRefused and
+	// UnblockRefused a Refusal, and Unblocked the Plans it lifted.
+	ReceiptRefused
+	ModeSet
+	ModeRefused
+	Unblocked
+	UnblockRefused
 	// lastOutcome is no outcome: it ends the list, so ValidateAck knows a new outcome added above it.
 	lastOutcome
 )
@@ -55,6 +64,8 @@ const (
 	InvalidSource
 	NotOpen
 	BaseNotTarget
+	// NotUnavailable is the refusal of an unblock when no run of the head is unavailable.
+	NotUnavailable
 )
 
 // Rejection is the domain reason of a Rejected outcome.
@@ -102,9 +113,23 @@ type Ack struct {
 	// with a Base (the file refused), and ProposeRefused for an InvalidSource with a Base of pull or default-branch.
 	// Branch is the branch of that file, the pull request's head ref or the default branch; both or neither, and none is no link.
 	Repo, Branch string
-	// Refusal is set exactly for ProposeRefused and SkipRefused.
+	// Refusal is set exactly for the refusals: ProposeRefused, SkipRefused, SuggestRefused, ModeRefused and UnblockRefused.
 	Refusal Refusal
+	// Gate is the reason the receipt gate refused an approve (the receipt-pending, receipt-unavailable, mode-required and mode-not-met reasons
+	// of the execution package), set exactly for ReceiptRefused.
+	Gate execution.Reason
+	// Mode is the mode ModeSet recorded, and the mode the refused approve carried: none for a Gate of mode-required, set for mode-not-met,
+	// and optional for the other reasons, whose text does not depend on it. It is none for every other outcome.
+	Mode execution.Mode
+	// Counts and Markers state the receipt of a ReceiptRefused whose Gate is mode-not-met, and are zero for every other outcome.
+	Counts  execution.ReceiptCounts
+	Markers int
+	// Plans are the plans of the jobs an Unblocked lifted, at least one, and none for every other outcome.
+	Plans Plans
 }
+
+// Plans says which plans of a head an unblock lifted: its canonical run, its receipt, or both.
+type Plans struct{ Canonical, Receipt bool }
 
 // Tier is the installation tier (ADR 0027, D-TIER).
 type Tier uint8

@@ -860,6 +860,19 @@ func TestRenderedBodiesNeverEchoTheComment(t *testing.T) {
 			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.Rejected, Rejection: rejection, Proposal: c.Proposal, Revision: c.Revision, Source: source, Owner: owner})
 		}))
 	}
+	for _, ack := range []commandtext.Ack{
+		{Outcome: commandtext.ReceiptRefused, Proposal: c.Proposal, Revision: c.Revision, Gate: execution.ReasonReceiptPending},
+		{Outcome: commandtext.ReceiptRefused, Proposal: c.Proposal, Revision: c.Revision, Gate: execution.ReasonReceiptUnavailable},
+		{Outcome: commandtext.ReceiptRefused, Proposal: c.Proposal, Revision: c.Revision, Gate: execution.ReasonModeRequired},
+		{Outcome: commandtext.ReceiptRefused, Proposal: c.Proposal, Revision: c.Revision, Gate: execution.ReasonModeNotMet, Mode: execution.ModeFix, Counts: execution.ReceiptCounts{Inert: 1}},
+		{Outcome: commandtext.ModeSet, Mode: execution.ModeRefactor},
+		{Outcome: commandtext.ModeRefused, Refusal: commandtext.NotOpen},
+		{Outcome: commandtext.Unblocked, Plans: commandtext.Plans{Canonical: true, Receipt: true}},
+		{Outcome: commandtext.UnblockRefused, Refusal: commandtext.NotUnavailable},
+	} {
+		ack.Source, ack.Owner = source, owner
+		bodies = append(bodies, render(t, func() string { return commandtext.Acknowledge(ack) }))
+	}
 	bodies = append(bodies,
 		render(t, func() string {
 			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: c.Proposal, Revision: c.Revision, Version: 1, Owner: owner})

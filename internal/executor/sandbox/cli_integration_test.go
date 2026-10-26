@@ -7,9 +7,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os/exec"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/sandbox"
@@ -185,5 +187,33 @@ func TestAnImageTheRuntimeLacksIsUnavailableAndNothingIsPulled(t *testing.T) {
 	defer cancel()
 	if _, err := rt.Run(ctx, s); !errors.Is(err, sandbox.ErrUnavailable) {
 		t.Errorf("want ErrUnavailable, got %v", err)
+	}
+}
+
+func TestABrokenStdinStopsTheContainerBeforeArgvStarts(t *testing.T) {
+	rt := docker(t)
+	var buf bytes.Buffer
+	w := tar.NewWriter(&buf)
+	if err := w.WriteHeader(&tar.Header{Name: "top.txt", Mode: 0o644, Size: 3, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("top")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil { // the tar stops at a file boundary, which busybox tar takes for a finished tar
+		t.Fatal(err)
+	}
+	boom := errors.New("the archive stream broke")
+	s := spec(nil, "sleep", "300")
+	s.Stdin = io.MultiReader(&buf, iotest.ErrReader(boom))
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if _, err := rt.Run(ctx, s); !errors.Is(err, boom) {
+		t.Fatalf("want the error of the standard input, got %v", err)
+	}
+	// Had tar taken the stream for a whole tar, `sleep 300` would have run until KillAfter.
+	if took := time.Since(start); took > 30*time.Second {
+		t.Errorf("Argv ran on a part of the tree: the run took %s", took)
 	}
 }

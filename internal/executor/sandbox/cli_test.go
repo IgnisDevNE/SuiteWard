@@ -17,7 +17,7 @@ const pinned = "docker.io/library/golang:1.27.3-alpine@sha256:f2c872bcee949b7be9
 
 const (
 	exitedState = `{"Status":"exited","Running":false,"OOMKilled":false,"ExitCode":0,"Error":"","StartedAt":"2026-10-26T21:58:19.830463123Z"}`
-	script      = `tar -x -C /work && cd "/work/$1" && shift && exec "$@"`
+	wantScript  = `tar -x -C /work && cd "/work/$1" && shift && exec "$@"`
 )
 
 type call struct {
@@ -145,7 +145,7 @@ func TestRunBuildsTheIsolationOfADR0028ForBothRuntimes(t *testing.T) {
 				"--cap-drop=ALL", "--security-opt", "no-new-privileges", "--user", "65534:65534",
 				"--pids-limit", "512", "--memory", "3072m", "--memory-swap", "3072m", "--cpus", "4",
 				"--env", "HOME=/work/home", "--env", "GOFLAGS=",
-				pinned, "sh", "-c", script, "sh", "pkg/x", "go", "test", "./...",
+				pinned, "sh", "-c", wantScript, "sh", "pkg/x", "go", "test", "./...",
 			}
 			if !slices.Equal(got, want) {
 				t.Errorf("the run arguments differ\n got %q\nwant %q", got, want)

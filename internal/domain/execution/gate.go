@@ -39,6 +39,7 @@ const (
 	RunPending RunStatus = iota + 1
 	RunComplete
 	RunUnavailable
+	RunNotApplicable
 )
 
 var runStatusNames = map[RunStatus]string{RunPending: "pending", RunComplete: "complete", RunUnavailable: "unavailable"}
@@ -153,7 +154,7 @@ func settled(status RunStatus, pending, unavailable Reason) (Reason, error) {
 // ApproveGate decides whether the receipt of the current head lets an approve proceed; the reason is none when it does.
 // off and advisory never refuse. before-approval refuses unless the receipt is complete. required also refuses when the
 // approve carries no mode, or the summary of its mode is not met.
-func (l ReceiptLevel) ApproveGate(status RunStatus, counts ReceiptCounts, mode Mode) (Reason, error) {
+func (l ReceiptLevel) ApproveGate(status RunStatus, counts ReceiptCounts, mode Mode, unblocked bool) (Reason, error) {
 	switch l {
 	case ReceiptLevelOff, ReceiptLevelAdvisory:
 		return ReasonNone, nil
@@ -184,7 +185,7 @@ func (c ReceiptCounts) judgeApprove(mode Mode) (Reason, error) {
 
 // CheckGate decides whether the canonical run of the current head lets the Contract check pass; the reason is none when
 // it may. off and advisory never hold it. required holds it unless the run is complete with no FAIL, MISSING or FLAKY test.
-func (l CanonicalLevel) CheckGate(status RunStatus, counts CanonicalCounts) (Reason, error) {
+func (l CanonicalLevel) CheckGate(status RunStatus, counts CanonicalCounts, unblocked bool) (Reason, error) {
 	switch l {
 	case CanonicalLevelOff, CanonicalLevelAdvisory:
 		return ReasonNone, nil
@@ -209,6 +210,7 @@ const (
 	ConclusionSuccess
 	ConclusionFailure
 	ConclusionNeutral
+	ConclusionNone
 )
 
 var conclusionNames = map[Conclusion]string{

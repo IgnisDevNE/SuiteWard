@@ -29,7 +29,7 @@ func TestParseMode(t *testing.T) {
 }
 
 func TestParseRunStatus(t *testing.T) {
-	for text, want := range map[string]execution.RunStatus{"pending": execution.RunPending, "complete": execution.RunComplete, "unavailable": execution.RunUnavailable} {
+	for text, want := range map[string]execution.RunStatus{"pending": execution.RunPending, "complete": execution.RunComplete, "unavailable": execution.RunUnavailable, "not-applicable": execution.RunNotApplicable} {
 		got, err := execution.ParseRunStatus(text)
 		if err != nil || got != want {
 			t.Errorf("ParseRunStatus(%q) = %v, %v; want %v", text, got, err, want)
@@ -110,15 +110,17 @@ func TestSummarize(t *testing.T) {
 }
 
 func TestReceiptApproveGate(t *testing.T) {
-	statuses := []execution.RunStatus{execution.RunPending, execution.RunUnavailable, execution.RunComplete}
+	statuses := []execution.RunStatus{execution.RunPending, execution.RunUnavailable, execution.RunComplete, execution.RunNotApplicable}
 	failing := execution.ReceiptCounts{Fails: 1, Missing: 1, Flaky: 1}
 
 	// off and advisory never refuse: not on a pending, unavailable or failing receipt, and not without a mode.
 	for _, level := range []execution.ReceiptLevel{execution.ReceiptLevelOff, execution.ReceiptLevelAdvisory} {
 		for _, status := range statuses {
 			for _, mode := range []execution.Mode{execution.ModeNone, execution.ModeFix, execution.ModeRefactor} {
-				if got, err := level.ApproveGate(status, failing, mode); err != nil || got != execution.ReasonNone {
-					t.Errorf("%v gate, %v receipt, mode %v = %q, %v; want no refusal", level, status, mode, got, err)
+				for _, unblocked := range []bool{false, true} {
+					if got, err := level.ApproveGate(status, failing, mode, unblocked); err != nil || got != execution.ReasonNone {
+						t.Errorf("%v gate, %v receipt, mode %v, unblocked %v = %q, %v; want no refusal", level, status, mode, unblocked, got, err)
+					}
 				}
 			}
 		}
@@ -132,9 +134,10 @@ func TestReceiptApproveGate(t *testing.T) {
 		mode   execution.Mode
 		want   execution.Reason
 	}{
-		// before-approval: only a complete receipt, whatever it says and whatever the mode.
+		// before-approval: only a pending receipt refuses; the rest is whatever it says and whatever the mode.
 		{"before-approval, pending", execution.ReceiptLevelBeforeApproval, execution.RunPending, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonReceiptPending},
-		{"before-approval, unavailable", execution.ReceiptLevelBeforeApproval, execution.RunUnavailable, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonReceiptUnavailable},
+		{"before-approval, unavailable does not refuse", execution.ReceiptLevelBeforeApproval, execution.RunUnavailable, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonNone},
+		{"before-approval, not applicable", execution.ReceiptLevelBeforeApproval, execution.RunNotApplicable, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonNone},
 		{"before-approval, complete and failing, no mode", execution.ReceiptLevelBeforeApproval, execution.RunComplete, failing, execution.ModeNone, execution.ReasonNone},
 		{"before-approval, complete and empty", execution.ReceiptLevelBeforeApproval, execution.RunComplete, execution.ReceiptCounts{}, execution.ModeFix, execution.ReasonNone},
 
@@ -152,10 +155,14 @@ func TestReceiptApproveGate(t *testing.T) {
 		{"required, refactor met by an empty receipt", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{}, execution.ModeRefactor, execution.ReasonNone},
 		{"required, refactor not met by a detection", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Inert: 1, Detects: 1}, execution.ModeRefactor, execution.ReasonModeNotMet},
 		{"required, fix over an empty receipt", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{}, execution.ModeFix, execution.ReasonModeNotMet},
+
+		// not applicable: no evaluated file, so no receipt, and the approve needs no mode.
+		{"required, not applicable and no mode", execution.ReceiptLevelRequired, execution.RunNotApplicable, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonNone},
+		{"required, not applicable with a mode", execution.ReceiptLevelRequired, execution.RunNotApplicable, execution.ReceiptCounts{}, execution.ModeFix, execution.ReasonNone},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.level.ApproveGate(tt.status, tt.counts, tt.mode)
+			got, err := tt.level.ApproveGate(tt.status, tt.counts, tt.mode, false)
 			if err != nil || got != tt.want {
 				t.Errorf("ApproveGate = %q, %v; want %q", got, err, tt.want)
 			}
@@ -163,16 +170,51 @@ func TestReceiptApproveGate(t *testing.T) {
 	}
 }
 
+// The owner's /suiteward unblock lifts an unavailable receipt for the current head and nothing else.
+func TestReceiptApproveGateUnblocked(t *testing.T) {
+	failing := execution.ReceiptCounts{Detects: 1, Fails: 1}
+	tests := []struct {
+		name   string
+		level  execution.ReceiptLevel
+		status execution.RunStatus
+		counts execution.ReceiptCounts
+		mode   execution.Mode
+		want   execution.Reason
+	}{
+		{"required, unavailable and unblocked, with a mode", execution.ReceiptLevelRequired, execution.RunUnavailable, execution.ReceiptCounts{}, execution.ModeFix, execution.ReasonNone},
+		{"required, unavailable and unblocked, whatever the mode: nothing to judge", execution.ReceiptLevelRequired, execution.RunUnavailable, execution.ReceiptCounts{}, execution.ModeRefactor, execution.ReasonNone},
+		{"required, unavailable and unblocked, still needs a mode", execution.ReceiptLevelRequired, execution.RunUnavailable, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonModeRequired},
+		{"before-approval, unavailable and unblocked", execution.ReceiptLevelBeforeApproval, execution.RunUnavailable, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonNone},
+		// It never lifts a pending run, or failing tests.
+		{"required, pending and unblocked", execution.ReceiptLevelRequired, execution.RunPending, execution.ReceiptCounts{}, execution.ModeFix, execution.ReasonReceiptPending},
+		{"before-approval, pending and unblocked", execution.ReceiptLevelBeforeApproval, execution.RunPending, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonReceiptPending},
+		{"required, complete with a failing test, unblocked", execution.ReceiptLevelRequired, execution.RunComplete, failing, execution.ModeFix, execution.ReasonModeNotMet},
+		{"required, complete without a mode, unblocked", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Detects: 1}, execution.ModeNone, execution.ReasonModeRequired},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.level.ApproveGate(tt.status, tt.counts, tt.mode, true)
+			if err != nil || got != tt.want {
+				t.Errorf("ApproveGate = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+	// An unblock does not excuse an invalid mode either.
+	if got, err := execution.ReceiptLevelRequired.ApproveGate(execution.RunUnavailable, execution.ReceiptCounts{}, execution.Mode(9), true); !errors.Is(err, execution.ErrInvalidMode) {
+		t.Errorf("unblocked with an invalid mode = %q, %v; want ErrInvalidMode", got, err)
+	}
+}
+
 func TestReceiptApproveGateRefusesInvalidInput(t *testing.T) {
-	if got, err := execution.ReceiptLevel(0).ApproveGate(execution.RunComplete, execution.ReceiptCounts{}, execution.ModeFix); !errors.Is(err, execution.ErrInvalidLevel) {
+	if got, err := execution.ReceiptLevel(0).ApproveGate(execution.RunComplete, execution.ReceiptCounts{}, execution.ModeFix, false); !errors.Is(err, execution.ErrInvalidLevel) {
 		t.Errorf("invalid level = %q, %v; want ErrInvalidLevel", got, err)
 	}
 	for _, level := range []execution.ReceiptLevel{execution.ReceiptLevelBeforeApproval, execution.ReceiptLevelRequired} {
-		if got, err := level.ApproveGate(execution.RunStatus(0), execution.ReceiptCounts{}, execution.ModeFix); !errors.Is(err, execution.ErrInvalidRunStatus) {
+		if got, err := level.ApproveGate(execution.RunStatus(0), execution.ReceiptCounts{}, execution.ModeFix, false); !errors.Is(err, execution.ErrInvalidRunStatus) {
 			t.Errorf("%v with an invalid status = %q, %v; want ErrInvalidRunStatus", level, got, err)
 		}
 	}
-	if got, err := execution.ReceiptLevelRequired.ApproveGate(execution.RunComplete, execution.ReceiptCounts{}, execution.Mode(9)); !errors.Is(err, execution.ErrInvalidMode) {
+	if got, err := execution.ReceiptLevelRequired.ApproveGate(execution.RunComplete, execution.ReceiptCounts{}, execution.Mode(9), false); !errors.Is(err, execution.ErrInvalidMode) {
 		t.Errorf("required with an invalid mode = %q, %v; want ErrInvalidMode", got, err)
 	}
 }
@@ -204,17 +246,46 @@ func TestCanonicalCheckGate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.level.CheckGate(tt.status, tt.counts)
+			got, err := tt.level.CheckGate(tt.status, tt.counts, false)
 			if err != nil || got != tt.want {
 				t.Errorf("CheckGate = %q, %v; want %q", got, err, tt.want)
 			}
 		})
 	}
-	if got, err := execution.CanonicalLevel(0).CheckGate(execution.RunComplete, healthy); !errors.Is(err, execution.ErrInvalidLevel) {
+	if got, err := execution.CanonicalLevel(0).CheckGate(execution.RunComplete, healthy, false); !errors.Is(err, execution.ErrInvalidLevel) {
 		t.Errorf("invalid level = %q, %v; want ErrInvalidLevel", got, err)
 	}
-	if got, err := execution.CanonicalLevelRequired.CheckGate(execution.RunStatus(7), healthy); !errors.Is(err, execution.ErrInvalidRunStatus) {
+	if got, err := execution.CanonicalLevelRequired.CheckGate(execution.RunStatus(7), healthy, false); !errors.Is(err, execution.ErrInvalidRunStatus) {
 		t.Errorf("invalid status = %q, %v; want ErrInvalidRunStatus", got, err)
+	}
+}
+
+// The owner's /suiteward unblock lifts an unavailable canonical run for the current head and nothing else.
+func TestCanonicalCheckGateUnblocked(t *testing.T) {
+	healthy := execution.CanonicalCounts{Pass: 5}
+	failing := execution.CanonicalCounts{Pass: 5, Fail: 1}
+	tests := []struct {
+		name   string
+		status execution.RunStatus
+		counts execution.CanonicalCounts
+		want   execution.Reason
+	}{
+		{"unavailable and unblocked", execution.RunUnavailable, execution.CanonicalCounts{}, execution.ReasonNone},
+		{"pending and unblocked", execution.RunPending, healthy, execution.ReasonCanonicalPending},
+		{"complete with a failure, unblocked", execution.RunComplete, failing, execution.ReasonCanonicalFailing},
+		{"complete and healthy, unblocked", execution.RunComplete, healthy, execution.ReasonNone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := execution.CanonicalLevelRequired.CheckGate(tt.status, tt.counts, true)
+			if err != nil || got != tt.want {
+				t.Errorf("CheckGate = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+	// There is no canonical run that does not apply: a repository with no declared test completes with zero tests.
+	if got, err := execution.CanonicalLevelRequired.CheckGate(execution.RunNotApplicable, healthy, false); !errors.Is(err, execution.ErrInvalidRunStatus) {
+		t.Errorf("a not-applicable canonical run = %q, %v; want ErrInvalidRunStatus", got, err)
 	}
 }
 
@@ -228,6 +299,8 @@ func TestReceiptConclusion(t *testing.T) {
 	}{
 		{"pending", execution.RunPending, execution.ReceiptCounts{Fails: 3}, execution.ConclusionInProgress, "in_progress"},
 		{"unavailable, whatever the counts", execution.RunUnavailable, execution.ReceiptCounts{Fails: 3}, execution.ConclusionNeutral, "neutral"},
+		// Not applicable is no check at all: the caller publishes nothing, so it must not send this name to GitHub.
+		{"not applicable, whatever the counts", execution.RunNotApplicable, execution.ReceiptCounts{Fails: 3}, execution.ConclusionNone, "none"},
 		{"a failing test", execution.RunComplete, execution.ReceiptCounts{Fails: 1, Detects: 4}, execution.ConclusionFailure, "failure"},
 		{"a missing test", execution.RunComplete, execution.ReceiptCounts{Missing: 1, Detects: 4}, execution.ConclusionFailure, "failure"},
 		{"detections", execution.RunComplete, execution.ReceiptCounts{Detects: 2}, execution.ConclusionSuccess, "success"},

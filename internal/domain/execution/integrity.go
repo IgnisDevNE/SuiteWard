@@ -138,13 +138,13 @@ func checkPath(p string, seen map[string]bool) error {
 	return nil
 }
 
-// refuseBelowFile fails when a path of paths sits below another path that is in files. A tree holds no such path, and an
-// extraction that does would write below a link or through a file.
-func refuseBelowFile(paths, files map[string]bool) error {
+// refuseBelowFile fails with invalid when a path of paths sits below another path that is in files. A tree holds no such
+// path, and an extraction that does would write below a link or through a file.
+func refuseBelowFile(paths, files map[string]bool, invalid error) error {
 	for _, p := range slices.Sorted(maps.Keys(paths)) {
 		for dir := path.Dir(p); dir != "."; dir = path.Dir(dir) {
 			if files[dir] {
-				return fmt.Errorf("%w: %q is below the file %q", ErrInvalidSource, p, dir)
+				return fmt.Errorf("%w: %q is below the file %q", invalid, p, dir)
 			}
 		}
 	}
@@ -177,7 +177,7 @@ func indexTree(entries []TreeEntry) (map[string]blob, []string, error) {
 			return nil, nil, fmt.Errorf("%w: %q has the unknown mode %q", ErrInvalidSource, e.Path, e.Mode)
 		}
 	}
-	if err := refuseBelowFile(seen, notDirs); err != nil {
+	if err := refuseBelowFile(seen, notDirs, ErrInvalidSource); err != nil {
 		return nil, nil, err
 	}
 	slices.Sort(submodules)
@@ -209,7 +209,7 @@ func indexExtraction(files []ExtractedFile) (map[string]blob, map[string]string,
 			return nil, nil, fmt.Errorf("%w: %q has the mode %q, which no extracted file has", ErrInvalidSource, f.Path, f.Mode)
 		}
 	}
-	if err := refuseBelowFile(seen, seen); err != nil {
+	if err := refuseBelowFile(seen, seen, ErrInvalidSource); err != nil {
 		return nil, nil, err
 	}
 	return extracted, links, nil

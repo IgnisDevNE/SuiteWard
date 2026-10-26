@@ -10,7 +10,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
-// ErrInvalidTree reports an input the tree rules refuse: an absent manifest, or a file that may not cross from the head.
+// ErrInvalidTree reports an input the tree rules refuse: an absent manifest, or a composed tree with a path below another path of it.
 var ErrInvalidTree = errors.New("invalid tree composition")
 
 // Source says whose bytes a file of a composed tree holds.
@@ -70,8 +70,19 @@ func refuseAbsent(manifests ...artifact.Manifest) error {
 	return nil
 }
 
-func sortTree(tree []TreeFile) {
+// finishTree puts the files of a composed tree in path order, and refuses a tree that holds a path below another path of it,
+// as the head's file x and the manifest's x/y would make: a file and a directory on one name. The check is by set, because
+// the sort order does not put a file next to its descendants ("a", "a.txt", "a/b").
+func finishTree(tree []TreeFile) ([]TreeFile, error) {
 	slices.SortFunc(tree, func(a, b TreeFile) int { return strings.Compare(a.Path, b.Path) })
+	paths := map[string]bool{}
+	for _, f := range tree {
+		paths[f.Path] = true
+	}
+	if err := refuseBelowFile(paths, paths, ErrInvalidTree); err != nil {
+		return nil, err
+	}
+	return tree, nil
 }
 
 // CanonicalTree is the tree of the canonical plan: the head with the whole governing manifest overlaid. Every manifest file
@@ -99,8 +110,7 @@ func CanonicalTree(head, governing artifact.Manifest, governingScope scope.Scope
 			tree = append(tree, TreeFile{Path: entry.Path, Content: entry.Content, Source: FromHead})
 		}
 	}
-	sortTree(tree)
-	return tree, nil
+	return finishTree(tree)
 }
 
 // EvaluatedFiles lists the head files the receipt evaluates: those matched by the canonical selection whose bytes differ
@@ -148,6 +158,5 @@ func BaseSideTree(base, head, expected artifact.Manifest, sel Selection) ([]Tree
 			tree = append(tree, TreeFile{Path: entry.Path, Content: entry.Content, Source: FromBase})
 		}
 	}
-	sortTree(tree)
-	return tree, nil
+	return finishTree(tree)
 }

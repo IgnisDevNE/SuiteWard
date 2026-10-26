@@ -46,6 +46,8 @@ var (
 	ErrUnprocessable = errors.New("github: unprocessable")
 	// ErrRateLimited matches a *RateLimitedError.
 	ErrRateLimited = errors.New("github: rate limited")
+	// ErrTooLarge matches a download that exceeds its size limit.
+	ErrTooLarge = errors.New("github: download exceeds the size limit")
 )
 
 // maxBody bounds any response body read into memory; a variable only so tests can lower it.
@@ -303,12 +305,115 @@ func (c *Client) Post(ctx context.Context, path string, body []byte) (Response, 
 	return out, nil
 }
 
-// ErrTooLarge matches a download that exceeds its size limit.
-var ErrTooLarge = errors.New("github: download exceeds the size limit")
-
-// Download is the stub that the streaming tests are written against.
+// Download reads an archive: it sends a GET of path with the token, follows the one redirect that answers it
+// without the token and copies the body to dst in chunks, so a large archive is never held in memory. It counts
+// once in the budget, from the API's answer; the archive host's answer is not an API request. It never retries.
+// The copy stops at limit bytes with ErrTooLarge (a declared length over the limit before a byte is copied) and
+// a body that ends before its declared length is an error. Both requests go through the client's transport and
+// not through the client, which would follow the redirect with its own rules, bound the whole exchange (the
+// body included) by its Timeout, and quote the redirect's address in its errors: ctx bounds the download, and
+// no error repeats the address, whose query carries a short-lived credential for a private repository.
 func (c *Client) Download(ctx context.Context, path string, dst io.Writer, limit int64) (int64, error) {
-	return 0, errors.New("not implemented")
+	if !strings.HasPrefix(path, "/") {
+		return 0, fmt.Errorf("github download %q: path must start with /", path)
+	}
+	if limit <= 0 {
+		return 0, fmt.Errorf("github download %s: limit %d is not positive", path, limit)
+	}
+	if err := c.budget.acquire(); err != nil {
+		return 0, fmt.Errorf("github download %s: %w", path, err)
+	}
+	transport := c.http.Transport
+	if transport == nil { // the optional field: a nil Transport is http.DefaultTransport
+		transport = http.DefaultTransport
+	}
+	location, err := c.redirect(ctx, transport, path)
+	if err != nil {
+		return 0, fmt.Errorf("github download %s: %w", path, err)
+	}
+	n, err := c.copyBody(ctx, transport, location, dst, limit)
+	if err != nil {
+		return n, fmt.Errorf("github download %s: %w", path, err)
+	}
+	return n, nil
+}
+
+// redirect sends the GET of path with the token and returns where GitHub redirects it. It settles the
+// reservation of Download with the answer's rate-limit headers.
+func (c *Client) redirect(ctx context.Context, transport http.RoundTripper, path string) (*url.URL, error) {
+	value, _, err := c.token(ctx)
+	if err != nil {
+		c.budget.release()
+		return nil, fmt.Errorf("%w: token: %w", ErrNotSent, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	if err != nil {
+		c.budget.release()
+		return nil, err
+	}
+	setAPIHeaders(req, value)
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		c.budget.release()
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }() // the body of a redirect is not read
+	c.budget.record(resp.StatusCode, resp.Header)
+	if err := c.expect(resp, http.StatusFound); err != nil {
+		return nil, err
+	}
+	location, err := resp.Location()
+	if err != nil {
+		return nil, errors.New("the redirect has no usable Location") // the parse error would quote the address
+	}
+	return location, nil
+}
+
+// copyBody copies the body of a GET of location, sent without the token, to dst: at most limit bytes.
+func (c *Client) copyBody(ctx context.Context, transport http.RoundTripper, location *url.URL, dst io.Writer, limit int64) (int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location.String(), nil)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", location.Host, err)
+	}
+	req.Header.Set("Accept-Encoding", "identity") // the bytes of the archive, which the transport must not unpack
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", location.Host, err)
+	}
+	defer func() { _ = resp.Body.Close() }() // a close error cannot change the outcome of a read that ended
+	if err := c.expect(resp, http.StatusOK); err != nil {
+		return 0, err
+	}
+	if resp.ContentLength > limit {
+		return 0, fmt.Errorf("%w: the answer declares %d bytes, the limit is %d", ErrTooLarge, resp.ContentLength, limit)
+	}
+	n, err := io.Copy(dst, io.LimitReader(resp.Body, limit))
+	if err != nil {
+		return n, fmt.Errorf("copy the body: %w", err)
+	}
+	if n < limit {
+		return n, nil
+	}
+	// limit bytes were copied: the body ends here or goes on past the limit.
+	switch _, err := io.ReadFull(resp.Body, make([]byte, 1)); {
+	case err == nil:
+		return n, fmt.Errorf("%w: the body goes on past the limit of %d bytes", ErrTooLarge, limit)
+	case !errors.Is(err, io.EOF):
+		return n, fmt.Errorf("read past the limit: %w", err)
+	}
+	return n, nil
+}
+
+// expect is nil when resp answers want and otherwise the typed error of its status. It never reads the body:
+// GitHub's answer text can quote repository text.
+func (c *Client) expect(resp *http.Response, want int) error {
+	if resp.StatusCode == want {
+		return nil
+	}
+	if _, err := c.interpret(answer{status: resp.StatusCode, header: resp.Header}); err != nil {
+		return err
+	}
+	return fmt.Errorf("answered %d, want %d", resp.StatusCode, want)
 }
 
 func (c *Client) get(ctx context.Context, path string, useCache bool) (Response, error) {
@@ -373,9 +478,7 @@ func (c *Client) send(ctx context.Context, method, path string, payload []byte, 
 	if len(payload) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Authorization", "Bearer "+value)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	setAPIHeaders(req, value)
 	if hadCache {
 		req.Header.Set("If-None-Match", entry.etag)
 	}
@@ -392,6 +495,13 @@ func (c *Client) send(ctx context.Context, method, path string, payload []byte, 
 		return answer{}, fmt.Errorf("response body exceeds the limit of %d bytes", maxBody)
 	}
 	return answer{path: path, identity: identity, useCache: useCache, status: resp.StatusCode, header: resp.Header, body: body, cached: entry, hadCache: hadCache}, nil
+}
+
+// setAPIHeaders sets the token and the media type of a request to the API.
+func setAPIHeaders(req *http.Request, token string) {
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 }
 
 // interpret turns GitHub's answer into a Response or a typed error, and keeps

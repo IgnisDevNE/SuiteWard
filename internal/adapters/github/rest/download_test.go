@@ -19,8 +19,8 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 )
 
-// redirectSecret stands for the short-lived credential GitHub puts in the query of an archive's redirect.
-const redirectSecret = "redirect-credential-7731"
+// redirectQuery stands for the short-lived credential GitHub puts in the query of an archive's redirect.
+const redirectQuery = "redirect-credential-7731"
 
 // archivePath is the path of a tarball read, as the github adapter builds it.
 const archivePath = "/repos/o/r/tarball/0123456789abcdef0123456789abcdef01234567"
@@ -128,7 +128,7 @@ func TestDownloadSendsTheTokenToTheAPIOnlyAndCopiesWhatTheRedirectServes(t *test
 	body := payload(100 << 10)
 	target, targetLog := startLogged(t, serveBody(body, true))
 	// Both servers answer on 127.0.0.1 and differ in the port only: net/http's own redirect rule compares hostnames, so it would forward the token here.
-	api, apiLog := startLogged(t, found(target.URL+"/legacy.tar.gz/abc?token="+redirectSecret))
+	api, apiLog := startLogged(t, found(target.URL+"/legacy.tar.gz/abc?token="+redirectQuery))
 	dst := newRecordingWriter()
 
 	n, err := downloadClient(t, api.URL).Download(t.Context(), archivePath, dst, 1<<20)
@@ -141,7 +141,7 @@ func TestDownloadSendsTheTokenToTheAPIOnlyAndCopiesWhatTheRedirectServes(t *test
 	if got := apiLog.all(); len(got) != 1 || got[0] != (seenRequest{http.MethodGet, archivePath, "Bearer " + tokenValue}) {
 		t.Errorf("the API saw %+v, want one GET of the path with the bearer token", got)
 	}
-	if got := targetLog.all(); len(got) != 1 || got[0] != (seenRequest{http.MethodGet, "/legacy.tar.gz/abc?token=" + redirectSecret, ""}) {
+	if got := targetLog.all(); len(got) != 1 || got[0] != (seenRequest{http.MethodGet, "/legacy.tar.gz/abc?token=" + redirectQuery, ""}) {
 		t.Errorf("the redirect target saw %+v, want one GET of the Location with no Authorization", got)
 	}
 }
@@ -238,25 +238,50 @@ func TestDownloadReportsABrokenBodyAndNeverSucceeds(t *testing.T) {
 	}
 }
 
+// wantFailure is what a failed Download says: a rate limit, a StatusError of status, or neither, the sentinel it matches and a text it names.
+type wantFailure struct {
+	limited  bool
+	status   int
+	sentinel error
+	text     string
+}
+
+// assertFailure checks err against want, for a server that answered with status, and that it repeats none of the secrets.
+func assertFailure(t *testing.T, err error, answered int, want wantFailure, secrets ...string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("Download succeeded")
+	}
+	assertPostErrorType(t, err, answered, want.limited, want.status)
+	if want.sentinel != nil && !errors.Is(err, want.sentinel) {
+		t.Errorf("err = %v, want it to match %v", err, want.sentinel)
+	}
+	if !strings.Contains(err.Error(), want.text) {
+		t.Errorf("err = %v, want it to say %q", err, want.text)
+	}
+	for _, secret := range secrets {
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("error %q contains %q", err, secret)
+		}
+	}
+}
+
 func TestDownloadMapsTheAnswerOfTheAPIAndNeverRetries(t *testing.T) {
 	reset := "1800000060" // a minute after t0
 	for _, tc := range []struct {
-		name        string
-		status      int
-		header      map[string]string
-		wantLimited bool
-		wantStatus  int // the StatusError status; 0 when none is expected
-		sentinel    error
-		text        string // a part the error must name
+		name   string
+		status int
+		header map[string]string
+		want   wantFailure
 	}{
-		{"404", 404, nil, false, 404, rest.ErrNotFound, ""},
-		{"401", 401, nil, false, 401, rest.ErrUnauthorized, ""},
-		{"403 without limit signals", 403, nil, false, 403, rest.ErrForbidden, ""},
-		{"403 with Retry-After", 403, map[string]string{"Retry-After": "30"}, true, 0, rest.ErrRateLimited, ""},
-		{"429 with remaining 0", 429, map[string]string{"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset}, true, 0, rest.ErrRateLimited, ""},
-		{"500", 500, nil, false, 500, nil, ""},
-		{"301 is not followed", 301, nil, false, 301, nil, ""},
-		{"200 is not a redirect", 200, nil, false, 0, nil, "answered 200, want 302"},
+		{"404", 404, nil, wantFailure{status: 404, sentinel: rest.ErrNotFound}},
+		{"401", 401, nil, wantFailure{status: 401, sentinel: rest.ErrUnauthorized}},
+		{"403 without limit signals", 403, nil, wantFailure{status: 403, sentinel: rest.ErrForbidden}},
+		{"403 with Retry-After", 403, map[string]string{"Retry-After": "30"}, wantFailure{limited: true, sentinel: rest.ErrRateLimited}},
+		{"429 with remaining 0", 429, map[string]string{"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset}, wantFailure{limited: true, sentinel: rest.ErrRateLimited}},
+		{"500", 500, nil, wantFailure{status: 500}},
+		{"301 is not followed", 301, nil, wantFailure{status: 301}},
+		{"200 is not a redirect", 200, nil, wantFailure{text: "answered 200, want 302"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			target, targetLog := startLogged(t, serveBody(payload(100), true))
@@ -273,21 +298,7 @@ func TestDownloadMapsTheAnswerOfTheAPIAndNeverRetries(t *testing.T) {
 			dst := newRecordingWriter()
 
 			_, err := downloadClient(t, api.URL).Download(t.Context(), archivePath, dst, 1<<20)
-			if err == nil {
-				t.Fatal("Download succeeded")
-			}
-			assertPostErrorType(t, err, tc.status, tc.wantLimited, tc.wantStatus)
-			if tc.sentinel != nil && !errors.Is(err, tc.sentinel) {
-				t.Errorf("err = %v, want it to match %v", err, tc.sentinel)
-			}
-			if !strings.Contains(err.Error(), tc.text) {
-				t.Errorf("err = %v, want it to say %q", err, tc.text)
-			}
-			for _, secret := range []string{secretAnswer, tokenValue} {
-				if strings.Contains(err.Error(), secret) {
-					t.Errorf("error %q contains %q", err, secret)
-				}
-			}
+			assertFailure(t, err, tc.status, tc.want, secretAnswer, tokenValue)
 			if n := len(apiLog.all()); n != 1 {
 				t.Errorf("the API saw %d requests, want 1 (no retry)", n)
 			}
@@ -300,15 +311,13 @@ func TestDownloadMapsTheAnswerOfTheAPIAndNeverRetries(t *testing.T) {
 
 func TestDownloadMapsTheAnswerOfTheRedirectTargetAndNeverRetries(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		status     int
-		wantStatus int
-		sentinel   error
-		text       string
+		name   string
+		status int
+		want   wantFailure
 	}{
-		{"404", 404, 404, rest.ErrNotFound, ""},
-		{"500", 500, 500, nil, ""},
-		{"204 is not an archive", 204, 0, nil, "answered 204, want 200"},
+		{"404", 404, wantFailure{status: 404, sentinel: rest.ErrNotFound}},
+		{"500", 500, wantFailure{status: 500}},
+		{"204 is not an archive", 204, wantFailure{text: "answered 204, want 200"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			target, targetLog := startLogged(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -317,25 +326,11 @@ func TestDownloadMapsTheAnswerOfTheRedirectTargetAndNeverRetries(t *testing.T) {
 					_, _ = io.WriteString(w, secretAnswer)
 				}
 			}))
-			api, _ := startLogged(t, found(target.URL+"/a.tar.gz?token="+redirectSecret))
+			api, _ := startLogged(t, found(target.URL+"/a.tar.gz?token="+redirectQuery))
 			dst := newRecordingWriter()
 
 			_, err := downloadClient(t, api.URL).Download(t.Context(), archivePath, dst, 1<<20)
-			if err == nil {
-				t.Fatal("Download succeeded")
-			}
-			assertPostErrorType(t, err, tc.status, false, tc.wantStatus)
-			if tc.sentinel != nil && !errors.Is(err, tc.sentinel) {
-				t.Errorf("err = %v, want it to match %v", err, tc.sentinel)
-			}
-			if !strings.Contains(err.Error(), tc.text) {
-				t.Errorf("err = %v, want it to say %q", err, tc.text)
-			}
-			for _, secret := range []string{secretAnswer, redirectSecret, tokenValue} {
-				if strings.Contains(err.Error(), secret) {
-					t.Errorf("error %q contains %q", err, secret)
-				}
-			}
+			assertFailure(t, err, tc.status, tc.want, secretAnswer, redirectQuery, tokenValue)
 			if n := len(targetLog.all()); n != 1 || len(dst.written()) != 0 {
 				t.Errorf("the target saw %d requests and the writer %d bytes, want 1 and none (no retry)", n, len(dst.written()))
 			}
@@ -353,9 +348,9 @@ func TestDownloadErrorsNeverCarryTheRedirectURL(t *testing.T) {
 		location string
 		text     string
 	}{
-		"target is down":      {downURL + "/a.tar.gz?token=" + redirectSecret, strings.TrimPrefix(downURL, "http://")}, // the error names the host it could not reach
+		"target is down":      {downURL + "/a.tar.gz?token=" + redirectQuery, strings.TrimPrefix(downURL, "http://")}, // the error names the host it could not reach
 		"missing Location":    {"", "Location"},
-		"unparsable Location": {"http://bad host/a.tar.gz?token=" + redirectSecret, "Location"},
+		"unparsable Location": {"http://bad host/a.tar.gz?token=" + redirectQuery, "Location"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			api, _ := startLogged(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -369,7 +364,7 @@ func TestDownloadErrorsNeverCarryTheRedirectURL(t *testing.T) {
 			if err == nil {
 				t.Fatal("Download succeeded")
 			}
-			if strings.Contains(err.Error(), redirectSecret) || strings.Contains(err.Error(), tokenValue) {
+			if strings.Contains(err.Error(), redirectQuery) || strings.Contains(err.Error(), tokenValue) {
 				t.Errorf("error %q repeats the redirect credential or the token", err)
 			}
 			if !strings.Contains(err.Error(), tc.text) {

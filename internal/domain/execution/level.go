@@ -18,14 +18,22 @@ const (
 	CanonicalLevelRequired
 )
 
+var canonicalLevelNames = map[CanonicalLevel]string{
+	CanonicalLevelOff:      "off",
+	CanonicalLevelAdvisory: "advisory",
+	CanonicalLevelRequired: "required",
+}
+
 // ParseCanonicalLevel reads off, advisory or required, exactly as spelled.
-func ParseCanonicalLevel(string) (CanonicalLevel, error) { return 0, errNotImplemented }
+func ParseCanonicalLevel(s string) (CanonicalLevel, error) {
+	return parseEnum(canonicalLevelNames, s, ErrInvalidLevel)
+}
 
 // String returns the level as .suiteward.yml spells it, or empty for a value that is not a level.
-func (CanonicalLevel) String() string { return "" }
+func (l CanonicalLevel) String() string { return canonicalLevelNames[l] }
 
 // Weaker reports whether the level is strictly weaker than than. It is defined for the levels of ParseCanonicalLevel.
-func (CanonicalLevel) Weaker(CanonicalLevel) bool { return false }
+func (l CanonicalLevel) Weaker(than CanonicalLevel) bool { return l < than }
 
 // ReceiptLevel is the policy for the receipt, from the weakest to the strongest: off, advisory, before-approval, required.
 type ReceiptLevel uint8
@@ -38,11 +46,20 @@ const (
 	ReceiptLevelRequired
 )
 
+var receiptLevelNames = map[ReceiptLevel]string{
+	ReceiptLevelOff:            "off",
+	ReceiptLevelAdvisory:       "advisory",
+	ReceiptLevelBeforeApproval: "before-approval",
+	ReceiptLevelRequired:       "required",
+}
+
 // ParseReceiptLevel reads off, advisory, before-approval or required, exactly as spelled.
-func ParseReceiptLevel(string) (ReceiptLevel, error) { return 0, errNotImplemented }
+func ParseReceiptLevel(s string) (ReceiptLevel, error) {
+	return parseEnum(receiptLevelNames, s, ErrInvalidLevel)
+}
 
 // String returns the level as .suiteward.yml spells it, or empty for a value that is not a level.
-func (ReceiptLevel) String() string { return "" }
+func (l ReceiptLevel) String() string { return receiptLevelNames[l] }
 
 // Weaker reports whether the level is strictly weaker than than. It is defined for the levels of ParseReceiptLevel.
-func (ReceiptLevel) Weaker(ReceiptLevel) bool { return false }
+func (l ReceiptLevel) Weaker(than ReceiptLevel) bool { return l < than }

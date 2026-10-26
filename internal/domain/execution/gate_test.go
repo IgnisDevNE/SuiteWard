@@ -183,7 +183,7 @@ func TestReceiptApproveGateUnblocked(t *testing.T) {
 	}{
 		{"required, unavailable and unblocked, with a mode", execution.ReceiptLevelRequired, execution.RunUnavailable, execution.ReceiptCounts{}, execution.ModeFix, execution.ReasonNone},
 		{"required, unavailable and unblocked, whatever the mode: nothing to judge", execution.ReceiptLevelRequired, execution.RunUnavailable, execution.ReceiptCounts{}, execution.ModeRefactor, execution.ReasonNone},
-		{"required, unavailable and unblocked, still needs a mode", execution.ReceiptLevelRequired, execution.RunUnavailable, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonModeRequired},
+		{"required, unavailable and unblocked, needs no mode: nothing to judge", execution.ReceiptLevelRequired, execution.RunUnavailable, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonNone},
 		{"before-approval, unavailable and unblocked", execution.ReceiptLevelBeforeApproval, execution.RunUnavailable, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonNone},
 		// It never lifts a pending run, or failing tests.
 		{"required, pending and unblocked", execution.ReceiptLevelRequired, execution.RunPending, execution.ReceiptCounts{}, execution.ModeFix, execution.ReasonReceiptPending},

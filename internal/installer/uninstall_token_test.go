@@ -14,11 +14,35 @@ import (
 // settings file in use is the default one, or when --token-file names it; with any other settings file a purge keeps it and says so. What a
 // purge deletes is said before it acts, on the page, at the prompt and with --yes.
 
+// shortDir is a directory of the test with a short path: a page wraps the paths that it names, and long ones trim it.
+func shortDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+// pageHarness is purgeHarness with files at a short path.
+func pageHarness(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness(t, "linux")
+	h.dir = shortDir(t)
+	podmanStackExists(h)
+	h.writeFiles()
+	return h
+}
+
 // mainInstanceToken is the token copy of the main instance of the user, at the default place of a configuration directory that is the test's
 // own: a purge that reached a real file would be the incident again.
 func mainInstanceToken(t *testing.T, h *harness) string {
 	t.Helper()
-	dir := useDefaultConfigDir(t)
+	dir := shortDir(t)
+	for _, key := range []string{"APPDATA", "XDG_CONFIG_HOME", "HOME"} {
+		t.Setenv(key, dir)
+	}
 	path, err := defaultTokenFile(h.f.deps())
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +145,7 @@ func TestThePlainPurgeListsWhatItDeletesBeforeItAsks(t *testing.T) {
 			t.Errorf("%q is not said before the prompt (at %d, the prompt at %d):\n%s", want, at, prompt, out)
 		}
 	}
-	if strings.Contains(out, "It keeps the MCP token file") {
+	if strings.Contains(out, "is kept: it may belong") {
 		t.Errorf("a token file that is removed is said to be kept:\n%s", out)
 	}
 }
@@ -134,7 +158,7 @@ func TestThePlainPurgeThatKeepsTheDefaultTokenFileSaysSoBeforeItAsks(t *testing.
 	}
 	out := h.out.String()
 	prompt := strings.Index(out, "Type the instance id")
-	for _, want := range with(purgeLists, h.settingsPath(), "It keeps the MCP token file "+mainToken, "--token-file <path>") {
+	for _, want := range with(purgeLists, h.settingsPath(), "The MCP token file "+mainToken+" is kept", "--token-file <path>") {
 		if at := strings.Index(out, want); at < 0 || at > prompt {
 			t.Errorf("%q is not said before the prompt (at %d, the prompt at %d):\n%s", want, at, prompt, out)
 		}
@@ -146,7 +170,7 @@ func TestThePlainPurgeThatKeepsTheDefaultTokenFileSaysSoBeforeItAsks(t *testing.
 
 // The words of the list that a person reads on the page, as the page wraps them.
 func TestThePurgePageListsWhatItDeletesAndTheTokenFileItRemoves(t *testing.T) {
-	h := purgeHarness(t)
+	h := pageHarness(t)
 	run := newScreenRun(termWidth, termHeight, testInstance+"\n", "\n")
 	args := h.screenArgs("--runtime", "podman", "--purge")
 	if err := Uninstall(liveContext(t), args, run.on(h.newEnv())); err != nil {
@@ -154,7 +178,7 @@ func TestThePurgePageListsWhatItDeletesAndTheTokenFileItRemoves(t *testing.T) {
 	}
 	v := run.question(t, 0)
 	mustSay(t, v, with(purgeLists, "the MCP token file")...)
-	if strings.Contains(v.text(), "keeps the MCP token file") || strings.Contains(v.text(), trimmed) {
+	if strings.Contains(v.text(), "is kept: it may belong") || strings.Contains(v.text(), trimmed) {
 		t.Errorf("the page keeps a token file that it removes, or is trimmed:\n%s", v.dump())
 	}
 	if strings.Contains(v.text(), "?") {
@@ -163,20 +187,21 @@ func TestThePurgePageListsWhatItDeletesAndTheTokenFileItRemoves(t *testing.T) {
 }
 
 func TestThePurgePageSaysWhichTokenFileItKeeps(t *testing.T) {
-	h := purgeHarness(t)
+	h := pageHarness(t)
 	mainInstanceToken(t, h)
 	run := newScreenRun(termWidth, termHeight, testInstance+"\n", "\n")
 	if err := Uninstall(liveContext(t), h.secondInstanceArgs(), run.on(h.newEnv())); err != nil {
 		t.Fatalf("Uninstall: %v\n%s", err, run.output())
 	}
 	v := run.question(t, 0)
-	mustSay(t, v, with(purgeLists, "keeps the MCP token file", "may belong to another instance", "--token-file <path>")...)
+	mustSay(t, v, with(purgeLists, "is kept", "may belong to another instance", "--token-file <path>")...)
 	if strings.Contains(v.text(), "deletes the MCP token file") || strings.Contains(v.text(), trimmed) {
 		t.Errorf("the page lists the kept token file among what is deleted, or is trimmed:\n%s", v.dump())
 	}
 }
 
-// --yes asks nothing, so the list comes before the first removal and stays in the scrollback of a full screen.
+// --yes asks nothing, so the list is shown before the first removal: as lines in plain mode, and as the page on a full screen, which is on
+// the screen while the removal runs.
 func TestThePurgeByYesListsWhatItDeletesBeforeItActs(t *testing.T) {
 	t.Run("plain", func(t *testing.T) {
 		h := purgeHarness(t)
@@ -192,16 +217,17 @@ func TestThePurgeByYesListsWhatItDeletesBeforeItActs(t *testing.T) {
 		}
 	})
 	t.Run("full screen", func(t *testing.T) {
-		h := purgeHarness(t)
+		h := pageHarness(t)
 		run := newScreenRun(termWidth, termHeight, "\n")
 		args := h.screenArgs("--runtime", "podman", "--purge", "--yes", "--instance", testInstance)
 		if err := Uninstall(liveContext(t), args, run.on(h.newEnv())); err != nil {
 			t.Fatalf("Uninstall: %v\n%s", err, run.output())
 		}
-		tail := strings.Join(strings.Fields(run.console.tail()), " ")
-		for _, want := range with(purgeLists, "the MCP token file") {
-			if !strings.Contains(tail, want) {
-				t.Errorf("the scrollback lacks %q:\n%s", want, run.console.tail())
+		out := run.output()
+		drawn := out[:strings.LastIndex(out, leaveAlt)] // the frames, before the screen was left
+		for _, want := range with(purgeLists, "the MCP token file "+h.tokenPath()) {
+			if !strings.Contains(drawn, want) {
+				t.Errorf("no frame drew %q:\n%s", want, drawn)
 			}
 		}
 	})

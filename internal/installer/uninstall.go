@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
@@ -90,20 +91,23 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	base.Connection = connection
 	service := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: base}}
 	question := "Remove the containers " + ContainerServe + ", " + ContainerMigrate + " and " + ContainerDB + "? The data stays."
-	if purge {
-		question = "Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network, the MCP token copy and the settings file?"
-	}
-	tokenFile := ""
+	var token tokenCopy
+	var listing []string
 	if purge { // before anything is removed: a place that cannot be found refuses the purge, it does not stop it half way
-		if tokenFile, err = tokenFileOf(r, env.Deps); err != nil {
+		if token, err = tokenFileOf(r, env.Deps, defaultPath); err != nil {
 			return err
 		}
+		question = "Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network, the MCP token copy and the settings file?"
+		if !token.mine {
+			question = "Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network and the settings file?"
+		}
+		listing = purgeLines(settingsPath, token)
 	}
 	inst := instance{rt: rt, settingsPath: settingsPath, haveSettings: haveSaved, status: service.readStatus}
-	if err := inst.confirmRemoval(ctx, r, purge, question); err != nil {
+	if err := inst.confirmRemoval(ctx, r, purge, question, listing...); err != nil {
 		return err
 	}
-	if err := removeStack(ctx, r, rt, purge, tokenFile, settingsPath); err != nil {
+	if err := removeStack(ctx, r, rt, purge, token, settingsPath); err != nil {
 		return err
 	}
 	if purge {
@@ -112,8 +116,9 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	return holdPage(scr)
 }
 
-// removeStack removes the three containers and, with purge, what they leave behind. The instance has been named and confirmed.
-func removeStack(ctx context.Context, r *Resolver, rt Runtime, purge bool, tokenFile, settingsPath string) error {
+// removeStack removes the three containers and, with purge, what they leave behind. The instance has been named and confirmed. A token file
+// that is not this instance's is kept and named.
+func removeStack(ctx context.Context, r *Resolver, rt Runtime, purge bool, token tokenCopy, settingsPath string) error {
 	r.screen.Step(2) // Uninstall set the steps on this screen
 	for _, name := range []string{ContainerServe, ContainerMigrate, ContainerDB} {
 		if err := working(r.screen, "Stopping "+name, func() error { return rt.Remove(ctx, name) }); err != nil {
@@ -125,19 +130,58 @@ func removeStack(ctx context.Context, r *Resolver, rt Runtime, purge bool, token
 		r.say("The volumes, the secrets and the settings are kept: run the install again to start the stack, or use --purge to remove them too.\n")
 		return nil
 	}
-	if err := purgeState(ctx, rt, tokenFile, settingsPath); err != nil {
+	remove := ""
+	removed := "the network and " + settingsPath
+	if token.mine {
+		remove, removed = token.path, "the network, "+token.path+" and "+settingsPath
+	}
+	if err := purgeState(ctx, rt, remove, settingsPath); err != nil {
 		return err
 	}
-	r.say("Removed the volumes, the secrets, the network, %s and %s. Backups under %s (or the --backup-dir an upgrade was given) are kept.\n", tokenFile, settingsPath, backupParent(r, filepath.Dir(tokenFile)))
+	r.say("Removed the volumes, the secrets, %s. Backups under %s (or the --backup-dir an upgrade was given) are kept.\n", removed, backupParent(r, filepath.Dir(token.path)))
+	if !token.mine {
+		r.say("Kept the MCP token file %s: it may belong to another instance. Delete it yourself if it is this instance's.\n", token.path)
+	}
 	return nil
 }
 
-// tokenFileOf is where the copy of the MCP token is: --token-file, else the default place.
-func tokenFileOf(r *Resolver, d Deps) (string, error) {
+// tokenCopy is the copy of the MCP token that a purge may remove.
+type tokenCopy struct {
+	path string
+	mine bool // this instance's, so a purge removes it
+}
+
+// tokenFileOf is where the copy of the MCP token is, and whether it is this instance's: the file --token-file names is. The default file is
+// only with the default settings file: any other settings file is another instance's, whose default file may be the main instance's (the
+// install refuses to adopt it for a second one), so a purge keeps it.
+func tokenFileOf(r *Resolver, d Deps, defaultSettings bool) (tokenCopy, error) {
 	if file := r.preset("token-file", ""); file != "" {
-		return file, nil
+		return tokenCopy{path: file, mine: true}, nil
 	}
-	return defaultTokenFile(d)
+	file, err := defaultTokenFile(d)
+	return tokenCopy{path: file, mine: defaultSettings}, err
+}
+
+// purgeLines say what a purge deletes before it does, and which token file it keeps and how to name the one it should remove. The token file
+// comes first: it is the one fact that nothing else on the page or above it says, and a window that is too small trims a page from its end.
+// The settings file is on the line above the lines in plain mode, and on the page.
+func purgeLines(settingsPath string, token tokenCopy) []string {
+	var lines []string
+	if !token.mine {
+		lines = append(lines, "The MCP token file "+token.path+" is kept: it may belong to another instance. To delete a token file with this purge, give it as --token-file <path>.")
+	}
+	lines = append(lines, "This purge deletes:")
+	if token.mine {
+		lines = append(lines, "  the MCP token file "+token.path)
+	}
+	lines = append(lines,
+		"  the volumes "+VolumeData+" and "+VolumeDBData,
+		"  the secrets of the instance and the network "+NetworkName,
+		"  the settings file")
+	if pending := pendingAppPath(settingsPath); settingsExist(pending) {
+		lines = append(lines, "  the record of the GitHub App that is being set up, "+pending)
+	}
+	return lines
 }
 
 // engineNamed refuses a run that has no settings file and does not say which engine it works on: the runtime and the Podman connection
@@ -154,8 +198,9 @@ func engineNamed(flags map[string]string, settingsPath string) error {
 }
 
 // confirmRemoval says which instance is about to be removed (its id, its engine and its settings file) and asks. A plain uninstall asks yes
-// or no; a purge, which deletes the database, asks for the instance id: typed, or --yes with --instance where nobody can type.
-func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, question string) error {
+// or no; a purge, which deletes the database, asks for the instance id: typed, or --yes with --instance where nobody can type. listing is
+// what the removal deletes, said under the instance before anything is asked.
+func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, question string, listing ...string) error {
 	id, why := i.currentID(ctx)
 	shown, settings := id, i.settingsPath
 	if why != nil {
@@ -164,7 +209,7 @@ func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, q
 	if !i.haveSettings {
 		settings = "none (there is no file at " + i.settingsPath + ")"
 	}
-	showRemoval(r, purge, shown, engineLine(i.rt.Engine()), settings)
+	showRemoval(r, purge, shown, engineLine(i.rt.Engine()), settings, listing)
 	if purge {
 		// The line it always was in plain mode; a red box under the page on a full screen, where it is a statement: the typed id is the one question.
 		warning := question
@@ -195,10 +240,14 @@ func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, q
 }
 
 // showRemoval says which instance is about to be removed: a page on a full screen, and the line it always printed otherwise. The page
-// says that nothing is removed before the confirmation only where a question is going to ask for it: --yes answers for the person.
-func showRemoval(r *Resolver, purge bool, id, engine, settings string) {
+// says that nothing is removed before the confirmation only where a question is going to ask for it: --yes answers for the person. The
+// listing, what a purge deletes, comes under the instance on the page, and as lines otherwise: --yes shows it before it acts too.
+func showRemoval(r *Resolver, purge bool, id, engine, settings string, listing []string) {
 	if !r.screen.FullScreen() {
 		r.say("This is the instance %s on %s. Its settings file: %s.\n", id, engine, settings)
+		for _, line := range listing {
+			r.say("%s\n", line)
+		}
 		return
 	}
 	title := "Remove the containers"
@@ -206,6 +255,9 @@ func showRemoval(r *Resolver, purge bool, id, engine, settings string) {
 		title = "Remove everything of this instance"
 	}
 	blocks := []ui.Block{ui.Fields(ui.KV{Key: "Instance", Value: id}, ui.KV{Key: "Engine", Value: engine}, ui.KV{Key: "Settings", Value: settings})}
+	if len(listing) > 0 {
+		blocks = append(blocks, ui.Para(strings.Join(listing, "\n")))
+	}
 	if yes, _ := r.yes(); r.term.IsTerminal && !yes { // a --yes that cannot be read is refused by the confirmation itself
 		blocks = append([]ui.Block{ui.Para("Nothing is removed until you confirm.")}, blocks...)
 	}
@@ -236,8 +288,8 @@ func (i instance) refuseUnnamed(ctx context.Context, r *Resolver, id string) err
 		"Type the id on a terminal (the word %s), or pass --settings with the settings file of the instance; nothing was removed", unknownValue, VolumeDBData, unknownValue)
 }
 
-// purgeState removes what the containers leave behind: the volumes, the secrets, the network, one more file (the MCP token copy, or the GitHub env file) and
-// the settings file. The containers are gone by now.
+// purgeState removes what the containers leave behind: the volumes, the secrets, the network, one more file (the MCP token copy, or the GitHub env file;
+// "" when it is not this instance's to remove) and the settings file. The containers are gone by now.
 func purgeState(ctx context.Context, rt Runtime, file, settingsPath string) error {
 	for _, volume := range []string{VolumeData, VolumeDBData} {
 		if err := rt.Delete(ctx, KindVolume, volume); err != nil {
@@ -251,6 +303,9 @@ func purgeState(ctx context.Context, rt Runtime, file, settingsPath string) erro
 		return err
 	}
 	for _, path := range []string{file, settingsPath, pendingAppPath(settingsPath)} {
+		if path == "" {
+			continue
+		}
 		if err := os.Remove(filepath.Clean(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove %s: %w", path, err)
 		}

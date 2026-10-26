@@ -336,6 +336,9 @@ func TestThePurgeThatNamesTheDefaultSettingsFileRemovesTheDefaultTokenFile(t *te
 			return filepath.Dir(p) + string(filepath.Separator) + "." + string(filepath.Separator) + filepath.Base(p)
 		}, false},
 		{"in another case, windows", "windows", unknownValue, strings.ToUpper, true},
+		// A relative path is resolved against the folder the command runs in: from the folder of the default file, it names it.
+		{"relative, from its folder, unix", "linux", testInstance, func(p string) string { return "." + string(filepath.Separator) + filepath.Base(p) }, false},
+		{"relative, from its folder, windows", "windows", unknownValue, func(p string) string { return strings.ToUpper(filepath.Base(p)) }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, tc.goos)
@@ -351,6 +354,9 @@ func TestThePurgeThatNamesTheDefaultSettingsFileRemovesTheDefaultTokenFile(t *te
 				t.Fatal(err)
 			}
 			spelled := tc.spell(settings)
+			if !filepath.IsAbs(spelled) {
+				t.Chdir(filepath.Dir(settings))
+			}
 			if tc.caseOK && !settingsExist(spelled) {
 				t.Skip("this file system tells the file apart by case: the spelling does not name it")
 			}
@@ -383,7 +389,39 @@ func TestSettingsNamedByPathAreTheDefaultFileByTheRulesOfTheSystem(t *testing.T)
 		{"in another case, unix", "linux", strings.ToUpper(def), false},
 		{"in another case, windows", "windows", strings.ToUpper(def), true},
 		{"another file of the same directory", "windows", filepath.Join(filepath.Dir(def), "other.yaml"), false},
-		{"a relative path", "linux", filepath.Base(def), false},
+		{"a relative path, from another folder", "linux", filepath.Base(def), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, err := isDefaultSettings(tc.goos, tc.path, false); err != nil || got != tc.want {
+				t.Errorf("isDefaultSettings(%q, %q) = %v, %v, want %v", tc.goos, tc.path, got, err, tc.want)
+			}
+		})
+	}
+}
+
+// A relative --settings is resolved against the folder the command runs in: it names the default file when that is the folder of the default
+// file, and another file when it is not, whatever the spelling.
+func TestARelativeSettingsPathIsTheDefaultFileFromTheFolderOfTheDefaultFile(t *testing.T) {
+	useDefaultConfigDir(t)
+	def, err := DefaultSettingsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, name, sep := filepath.Dir(def), filepath.Base(def), string(filepath.Separator)
+	if err := os.MkdirAll(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(folder)
+	for _, tc := range []struct {
+		name, goos, path string
+		want             bool
+	}{
+		{"its name", "linux", name, true},
+		{"with the folder named", "linux", "." + sep + name, true},
+		{"in another case, windows", "windows", strings.ToUpper(name), true},
+		{"in another case, unix", "linux", strings.ToUpper(name), false},
+		{"another file of the folder", "windows", "other.yaml", false},
+		{"the file of the folder above", "linux", ".." + sep + name, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got, err := isDefaultSettings(tc.goos, tc.path, false); err != nil || got != tc.want {
@@ -418,6 +456,10 @@ func TestThePurgeThatNamesTheDefaultSettingsFileOfAnotherInstanceRefusesAndRemov
 		{"not cleaned", "linux", false, dockerMain, []string{"--runtime", "podman", "--connection", "pm"}, testInstance,
 			func(p string) string { return filepath.Dir(p) + sep + "." + sep + filepath.Base(p) }},
 		{"on Windows", "windows", false, dockerMain, []string{"--runtime", "podman", "--connection", "pm"}, unknownValue, exact},
+		{"relative, from its folder", "linux", false, dockerMain, []string{"--runtime", "podman", "--connection", "pm"}, testInstance,
+			func(p string) string { return "." + sep + filepath.Base(p) }},
+		{"relative, from its folder, on Windows", "windows", false, dockerMain, []string{"--runtime", "podman", "--connection", "pm"}, unknownValue,
+			func(p string) string { return filepath.Base(p) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, tc.goos)
@@ -440,7 +482,11 @@ func TestThePurgeThatNamesTheDefaultSettingsFileOfAnotherInstanceRefusesAndRemov
 			if err := SaveSettings(settings, s); err != nil {
 				t.Fatal(err)
 			}
-			args := append([]string{"--settings", tc.spell(settings), "--purge", "--yes", "--instance", tc.id}, tc.flags...)
+			spelled := tc.spell(settings)
+			if !filepath.IsAbs(spelled) {
+				t.Chdir(filepath.Dir(settings))
+			}
+			args := append([]string{"--settings", spelled, "--purge", "--yes", "--instance", tc.id}, tc.flags...)
 			err = Uninstall(context.Background(), args, h.newEnv())
 			if err == nil || !strings.Contains(err.Error(), "the default settings file") {
 				t.Fatalf("got %v, want the refusal of a command that would take over the default settings file", err)

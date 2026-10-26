@@ -45,14 +45,18 @@ func TestEnableKeysRejectsANonConsole(t *testing.T) {
 
 // openConsoleInput opens the input of the console of the test, as the program reads its keys. A process with no console (a runner with
 // none attached) gets one for the length of the test; where none can be had, the test is skipped.
-func openConsoleInput(t *testing.T) *os.File {
+func openConsoleInput(t *testing.T) *os.File { return openConsoleInputFor(t, windows.GENERIC_READ|windows.GENERIC_WRITE) }
+
+// openConsoleInputFor is openConsoleInput with the access the handle is opened for: a handle for reading only has a mode that can be read
+// and not set, and its input buffer cannot be flushed.
+func openConsoleInputFor(t *testing.T, access uint32) *os.File {
 	t.Helper()
 	open := func() (windows.Handle, error) {
 		name, err := windows.UTF16PtrFromString("CONIN$")
 		if err != nil {
 			t.Fatal(err)
 		}
-		return windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
+		return windows.CreateFile(name, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
 	}
 	h, err := open()
 	if err != nil {
@@ -202,5 +206,36 @@ func TestFlushInputDropsWhatWasTypedAheadAndLeavesTheModeAlone(t *testing.T) {
 func TestFlushInputRejectsANonConsole(t *testing.T) {
 	if err := flushInput(notAConsole(t)); err == nil {
 		t.Fatal("flushInput accepted a file")
+	}
+}
+
+// A console handle that is a terminal and cannot be flushed (opened for reading only: its mode can be read, and neither set nor flushed) is
+// offered no flush, so that OpenOS leaves FlushInput nil and the questions are asked as they were before the guard existed. One that can be
+// flushed is offered a flush that drops what was typed ahead.
+func TestInputFlusherIsNilForAConsoleOpenedForReadingOnly(t *testing.T) {
+	conin := openConsoleInputFor(t, windows.GENERIC_READ)
+	if err := flushInput(conin); err == nil {
+		t.Skip("this console lets a handle opened for reading flush it: there is no handle that cannot be flushed to test with")
+	}
+	if inputFlusher(conin) != nil {
+		t.Error("a flush that is known to fail was offered for a console opened for reading only")
+	}
+}
+
+func TestInputFlusherDropsWhatWasTypedAheadOfAConsoleThatCanBeFlushed(t *testing.T) {
+	conin := openConsoleInput(t)
+	flush := inputFlusher(conin)
+	if flush == nil {
+		t.Fatal("no flush was offered for a console that can be flushed")
+	}
+	typeIntoConsole(t, conin, keyEvents('', 0x0d, 0x1c)...)
+	if pendingEvents(t, conin) == 0 {
+		t.Fatal("the console queued nothing of what was typed: the test cannot see what the flush does with it")
+	}
+	if err := flush(); err != nil {
+		t.Fatalf("the flush: %v", err)
+	}
+	if n := pendingEvents(t, conin); n != 0 {
+		t.Errorf("%d events typed ahead are still queued", n)
 	}
 }

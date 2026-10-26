@@ -1198,7 +1198,7 @@ The [runtime contract](runtime.md#scope-discovery-m19) gives the behavior. This 
 
 **Evidence, not authority.** Nothing here is read by `Tx`, consent or promotion. The use cases that decide a state (the executor API and the checks job) call `internal/domain/execution` and hand the store rows that already carry their states. The store checks the shape (codes, sizes, the plan against the rows) and never re-runs a decision.
 
-**Retention: none in M2.1.** No row of these tables is deleted, as for `pr_commands` and the outbox. The bounds are in the wire contract: at most 10,000 test rows for a result, and two jobs for each head. Pruning old per-test rows is an open item (ADR 0028, open item 4).
+**Retention: none in M2.1.** No row of these tables is deleted, as for `pr_commands` and the outbox. The bounds are in the wire contract: at most 10,000 test rows for a result, and two jobs for each head. Pruning old per-test rows is an open item (ADR 0028, deferred work).
 
 ### Table `execution_jobs`
 
@@ -1219,20 +1219,22 @@ One row for each wanted run: a plan on a head. A not-applicable receipt has no r
 | `declaration_digest` | `text NOT NULL` | `^sha256:[0-9a-f]{64}$`: the canonical declaration, the source of the policy |
 | `canonical_level`, `receipt_level` | `text NOT NULL` | the effective levels when the job was created. `canonical_level` is `off`, `advisory` or `required`, and not `off` for a `canonical` job. `receipt_level` is `off`, `advisory`, `before-approval` or `required`, and not `off` for a `receipt` job |
 | `unapproved_paths` | `text[] NOT NULL DEFAULT '{}'` | the paths "not evaluated: pattern not approved yet", computed by the service when it creates the job: at most 100, each at most 1024 bytes; empty for a `canonical` job. Display only |
+| `changed_paths` | `text[] NOT NULL DEFAULT '{}'` | the files that the canonical `include` matches and the revision adds or changes, computed by the service when it creates the job: at most 100, each at most 1024 bytes; empty for a `canonical` job. Display only |
+| `changed_total` | `integer NOT NULL DEFAULT 0` | `>= 0`; how many such files there are |
 | `state` | `text NOT NULL DEFAULT 'pending'` | `pending`, `leased`, `complete`, `unavailable` or `cancelled` |
 | `reason` | `text` | not null when `state` is `unavailable` or `cancelled`, null when it is `complete`, and for an open job it holds the reason of the last failed attempt (so it is null until an attempt has failed). For `unavailable`, one of the reasons of the [runtime contract](runtime.md#execution-m21-normative); for `cancelled`, `head-moved`, `closed` or `obsolete` |
-| `attempts` | `integer NOT NULL DEFAULT 0` | `>= 0`; the number of attempts: a lease granted, or a wait that passed its `deadline_at` with no lease, each of which ends as a failed attempt or as a result |
+| `attempts` | `integer NOT NULL DEFAULT 0` | `>= 0`; the number of leases granted |
 | `not_before` | `timestamptz NOT NULL` | the earliest time a lease may be granted; the creation time at first, and the backoff time after a failed attempt |
 | `lease_id` | `text` | `^[0-9a-f]{32}$`; not null exactly when `state = 'leased'` |
 | `lease_expires_at` | `timestamptz` | not null exactly when `state = 'leased'` |
-| `leased_at` | `timestamptz` | the time of the latest lease, null while the job was never leased |
-| `deadline_at` | `timestamptz NOT NULL` | for a `pending` job, when it becomes `unavailable` if nobody leased it; for a `leased` job, the deadline of the run. Set at creation, at each lease and at each re-queue. After `created_at` |
+| `leased_at` | `timestamptz` | not null exactly when `attempts > 0`: the time of the latest lease |
+| `deadline_at` | `timestamptz NOT NULL` | for a `pending` job, when it becomes `unavailable` (`no-executor`) if no executor leased it: the lease wait after creation or after `not_before`; for a `leased` job, the deadline of the run. Set at creation, at each lease and at each re-queue. After `created_at` |
 | `created_at` | `timestamptz NOT NULL` | |
 | `finished_at` | `timestamptz` | not null exactly when `state` is `complete`, `unavailable` or `cancelled` |
 
 There is no foreign key to `github_pulls` (observation rows are state, not history), as `pr_checks` has none. Indexes: the partial unique index on `job_key`; `(not_before, job_id) WHERE state IN ('pending', 'leased')`, which the lease query reads; and `(repository_id, pull_number, head_sha)`.
 
-**Update guard `guard_execution_job_update`.** A `BEFORE UPDATE` trigger. A row whose state is `complete`, `unavailable` or `cancelled` cannot change. The identity columns (`job_id`, `job_key`, `repository_id`, `pull_number`, `plan`, `profile`, `head_sha`, `base_sha`, `governing_digest`, `governing_source`, `declaration_digest`, `canonical_level`, `receipt_level`, `unapproved_paths`, `created_at`) never change. The state moves only along the table of the [runtime contract](runtime.md#job-lifecycle): `pending` to `pending` (a wait that passed its deadline is queued again), `leased`, `unavailable` or `cancelled`; `leased` to `pending`, `complete`, `unavailable` or `cancelled`. `DELETE` and `TRUNCATE` are rejected. A row is inserted `pending`, or already `unavailable` with reason `no-merge-base` (`finished_at` set, `attempts` 0).
+**Update guard `guard_execution_job_update`.** A `BEFORE UPDATE` trigger. A row whose state is `complete`, `unavailable` or `cancelled` cannot change. The identity columns (`job_id`, `job_key`, `repository_id`, `pull_number`, `plan`, `profile`, `head_sha`, `base_sha`, `governing_digest`, `governing_source`, `declaration_digest`, `canonical_level`, `receipt_level`, `unapproved_paths`, `changed_paths`, `changed_total`, `created_at`) never change. The state moves only along the table of the [runtime contract](runtime.md#job-lifecycle): `pending` to `leased`, `unavailable` or `cancelled`; `leased` to `pending`, `complete`, `unavailable` or `cancelled`. `DELETE` and `TRUNCATE` are rejected. A row is inserted `pending`, or already `unavailable` with reason `no-merge-base` (`finished_at` set, `attempts` 0).
 
 ### Table `execution_results`
 
@@ -1320,7 +1322,7 @@ Insert-only. The receipt state at the moment of an `approve`, whether it was ref
 | `receipt_level` | `text NOT NULL` | `advisory`, `before-approval` or `required` |
 | `run_state` | `text NOT NULL` | `none` (no job yet), `pending`, `complete`, `unavailable` or `not-applicable` |
 | `job_id` | `bigint` | foreign key to `execution_jobs`; not null for `pending` and `complete`, null for `none` and `not-applicable`, and either for `unavailable` (null when no executor is configured, because no job exists) |
-| `summary` | `text` | `met` or `not-met`; set only when `run_state = 'complete'` and the comment carried a mode |
+| `summary` | `text` | `met` or `not-met`; set only when `run_state = 'complete'`, the receipt is not empty and the comment carried a mode (a complete empty receipt passes the gate, so it has none) |
 | `unblocked` | `boolean NOT NULL DEFAULT false` | true when the gate passed an `unavailable` run because the owner unblocked the head |
 | `decided_at` | `timestamptz NOT NULL` | |
 
@@ -1337,7 +1339,7 @@ The mode of the approve is in `pr_commands.mode`, next to the disposition, so th
 
 The behavior is in the [runtime contract](runtime.md#the-executor-api); these are the semantics that the store must guarantee. The signatures belong to the port that task P1 writes.
 - **Enqueue.** Idempotent by `job_key` among the jobs that are not `cancelled`: it returns the existing job and writes nothing. It also creates a receipt job that is already `unavailable` with reason `no-merge-base`, with no `base_sha`. A job that breaks a constraint is `ErrInvalidRequest`.
-- **Lease.** In one transaction, picks the oldest job that is `pending` with `not_before` reached, or `leased` with an expired lease, with `FOR UPDATE SKIP LOCKED`. A candidate that is `pending` and past its `deadline_at` counts as a failed attempt with reason `timeout` (`attempts` goes up by one), and a candidate that is `leased` and expired counts as a failed attempt with reason `attempts-exhausted`, or `timeout` when it ran past its `deadline_at`: with fewer than 3 attempts it goes back to `pending` with its `not_before` and a new `deadline_at`, otherwise it becomes `unavailable` with that reason. The transaction goes on to the next candidate. Otherwise it increments `attempts`, sets `leased_at`, a new `lease_id`, `lease_expires_at` and `deadline_at`, and returns the job. It returns none when nothing is ready. Two concurrent leases never return one job.
+- **Lease.** In one transaction, picks the oldest job that is `pending` with `not_before` reached, or `leased` with an expired lease, with `FOR UPDATE SKIP LOCKED`. A candidate that is `pending` and past its `deadline_at` becomes `unavailable` with reason `no-executor`, at once and with no retry, and a candidate that is `leased` and expired counts as a failed attempt with reason `attempts-exhausted`, or `timeout` when it ran past its `deadline_at`: with fewer than 3 attempts it goes back to `pending` with its `not_before` and a new `deadline_at`, otherwise it becomes `unavailable` with that reason. The transaction goes on to the next candidate. Otherwise it increments `attempts`, sets `leased_at`, a new `lease_id`, `lease_expires_at` and `deadline_at`, and returns the job. It returns none when nothing is ready. Two concurrent leases never return one job.
 - **Heartbeat.** Extends `lease_expires_at`, never beyond `deadline_at`, when the job is `leased`, the lease matches and has not expired. Anything else is a lost lease (`ErrLeaseLost`, P1's name †).
 - **Complete.** Validates the lease as the heartbeat does, then, for a reason that is retried while attempts are left, queues the job again and stores no result; otherwise it writes the `execution_results` row, the `execution_tests` rows and the job's state in one transaction. For a finished job it returns the stored outcome when `body_digest` equals the stored one, and `ErrConflict` otherwise.
 - **Cancel** and **Expire.** Cancel moves a `pending` or `leased` job to `cancelled` with its reason and does nothing to a final job. Expire applies the expiry, deadline and attempt rules to every open job and returns the number it changed.
@@ -1350,7 +1352,7 @@ The fake and PostgreSQL suites cover:
   - Enqueue is idempotent, and a `cancelled` job does not block a new one with the same key;
   - the lease is exclusive under concurrency (PostgreSQL), takes the oldest first, honors `not_before`, and an expired lease is leased again;
   - a failed attempt with a retried reason goes back to `pending` with the backoff and keeps its reason, the third one is `unavailable`, and a reason that is not retried is `unavailable` at once;
-  - a `pending` job past its deadline counts as a failed attempt (`timeout`), is queued again, and is `unavailable` on the third;
+  - a `pending` job past its deadline is `unavailable` (`no-executor`) at once and is not queued again, and a re-queued job that no executor leases in the lease wait is too;
   - a receipt job for `no-merge-base` is created already `unavailable` with no `base_sha`, and no other job may lack one;
   - a heartbeat extends, and a heartbeat with another lease, after expiry or on a final job is `ErrLeaseLost`;
   - a final row cannot be updated or deleted, and no identity column can be updated (PostgreSQL triggers, as the owner role).

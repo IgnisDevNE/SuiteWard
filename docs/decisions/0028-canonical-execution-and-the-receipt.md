@@ -7,7 +7,7 @@
 - **Amends:** [ADR 0008](0008-progressive-integrity-and-execution.md) (the definition of M2). It also changes two statements of [ADR 0015](0015-required-contract-check.md), which carries its own note.
 - **Related:** [ADR 0002](0002-exact-revision-approval.md), [ADR 0007](0007-canonical-contract-authority.md), [ADR 0013](0013-protected-scope-and-agent-assisted-review.md), [ADR 0027](0027-agent-human-trust-separation.md), D-APPROVAL-CONTEXT, D-COMMANDS and D-CHECKS in the [decision register](../plan/decisions.md), the [M2.1 phase page](../plan/phases/M2.1.md), the [runtime contract](../contracts/runtime.md#execution-m21-normative), the [persistence contract](../contracts/persistence.md#execution-m21-normative) and the [threat model](../security/threat-model.md).
 
-Names, sizes and durations that the contracts mark with † are choices of task A0, made inside this decision. The integrator may change them under the register's rule on implementation choices. The open items at the end are not such choices.
+Names, sizes and durations that the contracts mark with † are choices of task A0, made inside this decision. The integrator may change them under the register's rule on implementation choices. The deferred work at the end is not such a choice.
 
 ## Context
 
@@ -55,6 +55,7 @@ The head can therefore add a test but not silence one, and it cannot change the 
 **The receipt** is the report of the tests that a revision adds or changes. It exists for a head that has a change proposal revision, when `receipt` is not `off`, and when it is **applicable**.
 
 - **Applicable** means that at least one file matched by the **canonical** `include` (and not excluded) is added or changed in the revision against the canonical version it expects. The service decides it at file level, from the two manifests. A revision that changes no such file (only runner files or the declaration changed, or tests were only deleted) has a receipt that is `not-applicable`: no job runs, the receipt gate does not apply (the approve needs no mode), and no Receipt check is published. Deletions are already shown as reductions.
+- **Empty.** An applicable receipt whose files hold no test function that was added or changed (only `testdata`, helpers, or test files whose test functions did not change), or whose evaluated tests are all `EXCLUDED`, is complete and empty. The receipt gate treats it like a `not-applicable` one, and the Receipt check is `success` with every count at zero. The page lists the changed files.
 - **Evaluated tests** are the top-level test functions added or changed, by declaration text, in those files. "Changed" is against the canonical version the revision expects, not against the merge base and not against the consented manifest, so the receipt does not turn empty after an approval. Per-function selection belongs to the profile.
 - **Head side:** the head tree.
 - **Base side:** the base commit's tree plus the head's version of **every** file that the canonical `include` matches and the head adds or changes: test files, `testdata/` and helpers in other `_test.go` files. Nothing else of the head crosses: source, `go.mod`, `go.sum`, `vendor/`, runner files and `.suiteward.yml` all come from the base commit.
@@ -105,7 +106,7 @@ Each side of each test yields one observation: `pass`, `fail` (a failed assertio
 
 **Run status**, for each plan and head: `pending`, `complete` or `unavailable`, and for a receipt also `not-applicable`. A run is unavailable when the executor fails, the job times out, the sandbox cannot be built, the toolchain does not match, the source check of section 3 fails, the receipt has no merge base, or the instance has no executor configured. **Unavailable is never treated as a pass.** Both gates read it as "not complete" unless the owner unblocks the head (section 7).
 
-**Retry.** An unavailable run that the infrastructure caused (a lost lease, an executor that cannot be reached, so that nobody leases the job within the job timeout, a run past its time, a runtime error) is retried automatically, up to 3 attempts with a backoff. One that the repository caused (a failed source check, a toolchain mismatch, a size cap, no merge base) is final for its head and binding, because another attempt would give the same answer. With the default job timeout of 30 minutes, an executor that is gone for good reads `unavailable` only after three timeouts and the backoffs, about an hour and a half, and the owner's unblock is not reachable sooner. A shorter `EXECUTOR_JOB_TIMEOUT` shortens that.
+**Retry.** An attempt that an executor leased and then lost or failed (a lease that expired, a run past its time, a runtime error) is retried automatically, up to 3 attempts with a backoff. A run that the repository caused (a failed source check, a toolchain mismatch, a size cap, no merge base) is final for its head and binding, because another attempt would give the same answer. A job that no executor leases within the lease wait (5 minutes by default †) is `unavailable` at once, with the reason `no-executor`, and is not retried. So a dead executor reads `unavailable` within minutes, and the owner can unblock the head.
 
 ### 6. Mode summaries of a receipt
 
@@ -115,7 +116,7 @@ The owner names a mode when approving. A mode only judges the receipt; it never 
 - `feature`: met when none is `FAILS`, `MISSING` or `FLAKY`, and at least one is `DETECTS` or `NEW_API`. All `INERT` is "not met: no test detects anything".
 - `refactor`: met when every evaluated test is `INERT`.
 - No mode: counts only, no judgment.
-- An applicable receipt with no evaluated test (only `testdata` or helpers changed, or every test is `EXCLUDED`): `fix` and `feature` are not met, `refactor` is met. Under `receipt: required` such a revision needs `refactor` (open item 3).
+- An empty receipt (no evaluated test function, or every test `EXCLUDED`): `fix` and `feature` are not met, `refactor` is met. The page shows these summaries. The receipt gate does not judge an empty receipt (section 7).
 
 ### 7. Gates, and the owner's unblock
 
@@ -124,6 +125,7 @@ The owner names a mode when approving. A mode only judges the receipt; it never 
 - `off` and `advisory` never refuse.
 - `before-approval` refuses only while the receipt is `pending`. It never refuses an unavailable receipt: the owner chose to look at the receipt, whatever it says.
 - `required` refuses unless the receipt is `complete`, the approve carries a mode, and the summary for that mode is met. An unavailable receipt refuses.
+- A complete receipt that is empty (section 2) is not refused whatever the level, and the approve needs no mode.
 
 The code is verified and consumed before the refusal. Otherwise anyone could take the code from a refused comment, which is public, and post it again with another mode. The refusal is a recorded disposition, `receipt-refused`, with an acknowledgment. It records no consent. The `SuiteWard / Contract` check does not change, because a refused command has no effect on it ([D-COMMANDS](../plan/decisions.md#d-commands-pr-commands-identifiers-and-bootstrap)). The next attempt needs the next code. The ledger records the receipt state and the mode at approval time whether the approve was refused or not.
 
@@ -135,7 +137,7 @@ The code is verified and consumed before the refusal. Otherwise anyone could tak
 
 - **Who and how.** Only the enrolled owner. It carries a TOTP code, verified and consumed like an `approve`'s, so an agent with the owner's GitHub identity cannot post it.
 - **What it applies to.** The pull request's current head, the head that the synchronization observed when the command is processed. It records which of the head's runs are `unavailable` at that moment, the canonical run and the applicable receipt. An executor that is not configured counts as unavailable. If none is, the command is refused (`unblock-refused`, reason `not-unavailable`), and its code stays consumed.
-- **What it lifts.** Only those unavailable runs, and only in the gates: the canonical gate stops withholding the Contract check, and the receipt gate stops refusing (with no receipt there is no summary to meet, so the approve needs no mode). It never lifts a failing, missing or flaky test, a pending run, or any other reason a check is not `success` (open item 2).
+- **What it lifts.** Only those unavailable runs, and only in the gates: the canonical gate stops withholding the Contract check, and the receipt gate stops refusing (with no receipt there is no summary to meet, so the approve needs no mode). It never lifts a failing, missing or flaky test, a pending run, or any other reason a check is not `success`. An approve of an unblocked head needs no mode, whatever the receipt level.
 - **What it leaves.** A new push is a new head and needs its own unblock if its run is unavailable too. The unblock changes no result: the run stays `unavailable`.
 - **What the checks say.** The Contract check and the Receipt check of that head say that the owner unblocked it and that the tests did not run.
 - **Dispositions.** `unblocked` and `unblock-refused`, in the command ledger, with the record of the plans it lifted.
@@ -212,23 +214,19 @@ Every stored result records: the head SHA; the base SHA (receipt); the governing
 
 - SuiteWard can run tests, and says what it ran. ADR 0015 says "Success never means that SuiteWard executed the tests". Under `canonical: required` that is no longer true, and the Contract check summary then states the executed counts. ADR 0015 carries a note for this, and D-CHECKS ("never claims that tests ran") is amended in [D-M2.1](../plan/decisions.md#d-m21-canonical-execution-the-receipt-and-the-go-profile).
 - Turning execution on is a governed change. An installation that never names a profile is unchanged.
-- Under `required` levels, a missing or broken executor blocks work until it is fixed or the owner unblocks each head. The unblock needs a TOTP code for every head, and it is reachable only once the run reads `unavailable`, which takes about an hour and a half by default (section 5).
+- Under `required` levels, a missing or broken executor blocks work until it is fixed or the owner unblocks each head. The unblock needs a TOTP code for every head, and it is reachable once the run reads `unavailable`, which a missing executor does after the lease wait (section 5).
 - A new component runs candidate code. The sandbox, the executor's isolation and the pins are part of the [threat model](../security/threat-model.md).
 - The service answers on `/executor/v1` a request that changes state. The runtime contract's "no endpoint changes state" is amended for it.
-- Execution cost: one canonical run per head of every open pull request, plus one receipt run per head whose revision is applicable. Both are bounded by a job timeout, and their GitHub reads share the synchronization's budget.
+- Execution cost: one canonical run per head of every open pull request, plus one receipt run per head whose revision is applicable. Both are bounded by the lease wait and the job timeout, and their GitHub reads share the synchronization's budget.
 
-## Open items
+## Open items and deferred work
 
-These are not decided. Each names the rule the contracts use meanwhile.
+No decision is open. The owner accepted the rules that the contracts state, among them: an unblock covers the runs that are `unavailable` when it is processed, so a run of the same head that becomes unavailable later needs another unblock; the "not evaluated: pattern not approved yet" list exists only for an applicable receipt, because it is stored with the job; and no stored result is deleted in M2.1.
 
-1. **What an unblock covers.** Used: the runs that are `unavailable` when the command is processed. A run of the same head that becomes unavailable later needs another unblock.
-2. **A receipt with changed files but no evaluated test.** Used: it is applicable and empty, so `receipt: required` needs `refactor`. It happens when only `testdata` or helpers changed.
-3. **"Not evaluated: pattern not approved yet"** exists only for an applicable receipt, because it is stored with the job. A revision that is `not-applicable` has no such list.
-4. **Pruning.** No stored result is deleted in M2.1. Whether and when to prune old per-test rows is open.
-
-Deferred, not open:
+Deferred:
 
 - **Sealed tests** kept outside the repository, **mutation testing** and **remote attestation** are not in M2.1.
 - **Integration tests that need a service** (PostgreSQL in a sandbox) are not run.
 - **Python and TypeScript install steps** run package code. Their safety is decided with M2.2 and M2.3.
+- **Pruning** of old per-test rows is not done in M2.1.
 - **Execution by a managed service** stays with [D-MANAGED-EXECUTION](../plan/decisions.md#open).

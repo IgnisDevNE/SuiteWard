@@ -48,7 +48,7 @@ An accepted architecture direction is not a claim that a feature is implemented,
 Details explicitly marked open remain open. In particular:
 
 - Strict GitHub gate-to-merge-to-promotion coordination is not proved by database CAS alone.
-- The first execution profile (Go) and the execution trust model are decided in ADR 0028. Hosted execution versus customer infrastructure stays open ([D-MANAGED-EXECUTION](../plan/decisions.md#open)), and so do the few readings listed in the open items of ADR 0028.
+- The first execution profile (Go) and the execution trust model are decided in ADR 0028. Hosted execution versus customer infrastructure stays open ([D-MANAGED-EXECUTION](../plan/decisions.md#open)).
 - The license grant is decided: `AGPL-3.0-only`, with the release notices and the source offer settled by D-RELEASE (2026-10-17).
 
 ## Relation to the earlier system design
@@ -78,4 +78,4 @@ The security assessment of 2026-10-20 led to the hardening phase [SH](../plan/ph
 
 ## Next product decision
 
-None is blocking. Strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone, and the few readings in the open items of ADR 0028 wait for the owner. Accepted and open product gates are in the [decision register](../plan/decisions.md).
+None is blocking. Strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone. Accepted and open product gates are in the [decision register](../plan/decisions.md).

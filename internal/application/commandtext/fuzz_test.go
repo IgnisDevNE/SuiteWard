@@ -100,21 +100,13 @@ func checkCommand(t *testing.T, body string, c commandtext.Command) {
 	}
 	switch c.Verb {
 	case commandtext.Approve, commandtext.Revoke:
-		ref := commandtext.Reference(c.Proposal, c.Revision) // panics outside 1..999999999
-		proposal, revision, ok := commandtext.ParseReference(ref)
-		if !ok || proposal != c.Proposal || revision != c.Revision || !isCode(c.Code) || !strings.Contains(body, ref) || !strings.Contains(body, c.Code) {
-			t.Fatalf("command %+v does not hold its reference and 6-digit code, or they are not in %q", c, body)
-		}
-		// The mode is the word the comment spells, in any case.
-		if c.Mode != execution.ModeNone && !strings.Contains(strings.ToLower(body), c.Mode.String()) {
-			t.Fatalf("command %+v names a mode that %q does not spell", c, body)
-		}
+		checkReferenced(t, body, c)
 	case commandtext.Skip, commandtext.Unblock:
 		if c.Proposal != 0 || c.Revision != 0 || !isCode(c.Code) || !strings.Contains(body, c.Code) {
 			t.Fatalf("verb %d %+v is not only a 6-digit code from %q", c.Verb, c, body)
 		}
 	case commandtext.SetMode:
-		if c.Proposal != 0 || c.Revision != 0 || c.Code != "" || c.Mode.String() == "" || !strings.Contains(strings.ToLower(body), c.Mode.String()) {
+		if c.Proposal != 0 || c.Revision != 0 || c.Code != "" || c.Mode == execution.ModeNone || !spells(body, c.Mode) {
 			t.Fatalf("mode %+v is not only a mode that %q spells", c, body)
 		}
 	case commandtext.Propose, commandtext.Suggest:
@@ -124,6 +116,24 @@ func checkCommand(t *testing.T, body string, c commandtext.Command) {
 	default:
 		t.Fatalf("unknown verb in %+v from %q", c, body)
 	}
+}
+
+// checkReferenced checks an approve or a revoke: the reference and the 6-digit code are in the body, and so is the mode when there is one.
+func checkReferenced(t *testing.T, body string, c commandtext.Command) {
+	t.Helper()
+	ref := commandtext.Reference(c.Proposal, c.Revision) // panics outside 1..999999999
+	proposal, revision, ok := commandtext.ParseReference(ref)
+	if !ok || proposal != c.Proposal || revision != c.Revision || !isCode(c.Code) || !strings.Contains(body, ref) || !strings.Contains(body, c.Code) {
+		t.Fatalf("command %+v does not hold its reference and 6-digit code, or they are not in %q", c, body)
+	}
+	if c.Mode != execution.ModeNone && !spells(body, c.Mode) {
+		t.Fatalf("command %+v names a mode that %q does not spell", c, body)
+	}
+}
+
+// spells reports whether body spells mode, in any case.
+func spells(body string, mode execution.Mode) bool {
+	return strings.Contains(strings.ToLower(body), mode.String())
 }
 
 // FuzzParseReference checks that a reference that is accepted is exactly what Reference writes.

@@ -670,7 +670,9 @@ func (s *Screen) enterKeys() func() error {
 }
 
 // enterInput puts the terminal in key mode, whatever the mode of the screen, and returns the call that puts it back; nil where it cannot
-// be done. A hidden line needs it in plain mode as well: a plain run at a terminal is still echoed.
+// be done. A hidden line needs it in plain mode as well: a plain run at a terminal is still echoed. On a terminal, what the user typed before
+// the question was drawn is not its answer: the terminal drops what it queued as key mode starts (Options.KeyInput), and the reader drops
+// what it had taken and not used, such as a second Enter that came in the read of the first.
 func (s *Screen) enterInput() func() error {
 	s.mu.Lock()
 	keys := s.keys
@@ -681,6 +683,10 @@ func (s *Screen) enterInput() func() error {
 	restore, err := keys()
 	if err != nil {
 		return nil
+	}
+	// A read that its call gave up on is still using the reader, and the next read waits for it: nothing is dropped under it.
+	if s.terminal && s.pendingGivenUp() == nil {
+		_, _ = s.in.Discard(s.in.Buffered()) // buffered, so it cannot fail
 	}
 	return restore
 }

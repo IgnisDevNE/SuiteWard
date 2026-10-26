@@ -150,11 +150,11 @@ func TestComposeWritesExactlyTheFilesOfThePlan(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	want := map[string]tarFile{
-		"a.go":           {tar.TypeReg, 0o644, "package a\n", ""},
-		"bin/run.sh":     {tar.TypeReg, 0o755, "#!/bin/sh\n", ""},
-		"lnk":            {tar.TypeSymlink, 0o777, "", "a.go"},
-		"b.go":           {tar.TypeReg, 0o644, "package b\n", ""},
-		".suiteward.yml": {tar.TypeReg, 0o644, declaration, ""},
+		"src/a.go":           {tar.TypeReg, 0o644, "package a\n", ""},
+		"src/bin/run.sh":     {tar.TypeReg, 0o755, "#!/bin/sh\n", ""},
+		"src/lnk":            {tar.TypeSymlink, 0o777, "", "a.go"},
+		"src/b.go":           {tar.TypeReg, 0o644, "package b\n", ""},
+		"src/.suiteward.yml": {tar.TypeReg, 0o644, declaration, ""},
 	}
 	// Close ends the tar with the footer: two blocks of zeros.
 	if !bytes.HasSuffix(out.Bytes(), make([]byte, 1024)) {
@@ -304,7 +304,7 @@ func TestComposeChecksManifestFilesByDigest(t *testing.T) {
 		if err != nil || app == nil {
 			t.Fatalf("Compose: %v", err)
 		}
-		if found := readTar(t, out.Bytes()); found["m.txt"].body != "the governing bytes\n" {
+		if found := readTar(t, out.Bytes()); found["src/m.txt"].body != "the governing bytes\n" {
 			t.Errorf("the file was not written: %+v", found)
 		}
 	})
@@ -391,8 +391,8 @@ func TestAppenderAddsModuleFilesToTheSameTarAndBudget(t *testing.T) {
 	// A budget of 512 KiB: the tree takes 300 KiB, so a module of 100 KiB fits and one of 200 KiB more does not.
 	zeros := strings.Repeat("0", 300<<10)
 	c := &composition{
-		head:   []member{file("src/a.bin", zeros), file("src/pkg.go", "package pkg\n")},
-		tree:   []execution.TreeFile{treeFile("src/a.bin", zeros, execution.FromHead), treeFile("src/pkg.go", "package pkg\n", execution.FromHead)},
+		head:   []member{file("lib/a.bin", zeros), file("lib/pkg.go", "package pkg\n")},
+		tree:   []execution.TreeFile{treeFile("lib/a.bin", zeros, execution.FromHead), treeFile("lib/pkg.go", "package pkg\n", execution.FromHead)},
 		limits: Limits{ArchiveBytes: 1 << 20, FileBytes: 1 << 20, TmpfsMiB: 1},
 	}
 	out, app, err := c.compose(t)
@@ -409,7 +409,7 @@ func TestAppenderAddsModuleFilesToTheSameTarAndBudget(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	found := readTar(t, out.Bytes())
-	if found["proxy/example.com/m/@v/v1.0.0.zip"].body != module || found["src/pkg.go"].body != "package pkg\n" {
+	if found["proxy/example.com/m/@v/v1.0.0.zip"].body != module || found["src/lib/pkg.go"].body != "package pkg\n" {
 		t.Errorf("the module file and the tree must be in one tar: %v", keys(found))
 	}
 	if _, wrote := found["proxy/example.com/n/@v/v1.0.0.zip"]; wrote {
@@ -417,30 +417,79 @@ func TestAppenderAddsModuleFilesToTheSameTarAndBudget(t *testing.T) {
 	}
 }
 
-func TestAppenderRefusesWhatWouldShadowOrBreakTheTree(t *testing.T) {
-	for name, add := range map[string]struct {
-		name string
-		size int64
-		body string
-		err  error
-	}{
-		"the path of a tree file":        {"top.go", 1, "x", ErrInvalidPlan},
-		"a path below a tree file":       {"top.go/x", 1, "x", ErrInvalidPlan},
-		"the directory of a tree file":   {"a", 1, "x", ErrInvalidPlan},
-		"a path that is not clean":       {"x/../y", 1, "x", ErrInvalidPlan},
-		"an absolute path":               {"/etc/x", 1, "x", ErrInvalidPlan},
-		"a negative size":                {"ok", -1, "x", ErrInvalidPlan},
-		"fewer bytes than the size says": {"ok", 5, "abc", io.ErrUnexpectedEOF},
-		"more bytes than the size says":  {"ok", 1, "abc", ErrInvalidPlan},
+func TestAppenderNamesStayOutsideTheTreeDirectory(t *testing.T) {
+	// The tree extracts to /work/src, and go's own state (the module proxy) lives beside it, so no appended name may land inside it.
+	for name, add := range map[string]string{
+		"the tree directory itself":    "src",
+		"a file of the tree directory": "src/a/b.go",
+		"a path of a tree file":        "src/top.go",
+		"a deep path below it":         "src/x/y/z.zip",
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := &composition{
 				head: []member{file("a/b.go", "1"), file("top.go", "2")},
 				tree: []execution.TreeFile{treeFile("a/b.go", "1", execution.FromHead), treeFile("top.go", "2", execution.FromHead)},
 			}
+			out, app, err := c.compose(t)
+			if err != nil {
+				t.Fatalf("Compose: %v", err)
+			}
+			before := out.Len()
+			onlyError(t, app.Add(add, 1, strings.NewReader("x")), ErrInvalidPlan)
+			if out.Len() != before {
+				t.Errorf("a refused name must write nothing")
+			}
+		})
+	}
+}
+
+func TestAppenderWritesItsNamesBesideTheTreeDirectory(t *testing.T) {
+	c := &composition{head: []member{file("a.go", "1")}, tree: []execution.TreeFile{treeFile("a.go", "1", execution.FromHead)}}
+	out, app, err := c.compose(t)
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	names := []string{".suiteward/proxy/m/@v/v1.zip", "src.txt", "srcx/y", "a.go"} // a.go is the tree's own name, but under src/
+	for _, name := range names {
+		if err := app.Add(name, 1, strings.NewReader("x")); err != nil {
+			t.Errorf("Add(%q): %v", name, err)
+		}
+	}
+	if err := app.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	found := readTar(t, out.Bytes())
+	for _, name := range append(names, "src/a.go") {
+		if _, ok := found[name]; !ok {
+			t.Errorf("%q must be in the tar as it was named: %v", name, keys(found))
+		}
+	}
+}
+
+func TestAppenderRefusesWhatWouldShadowOrBreakItsOwnFiles(t *testing.T) {
+	for name, add := range map[string]struct {
+		name string
+		size int64
+		body string
+		err  error
+	}{
+		"a path that is not clean":       {"x/../y", 1, "x", ErrInvalidPlan},
+		"an absolute path":               {"/etc/x", 1, "x", ErrInvalidPlan},
+		"a negative size":                {"ok", -1, "x", ErrInvalidPlan},
+		"fewer bytes than the size says": {"ok", 5, "abc", io.ErrUnexpectedEOF},
+		"more bytes than the size says":  {"ok", 1, "abc", ErrInvalidPlan},
+		"a path already added":           {"m/z.zip", 1, "x", ErrInvalidPlan},
+		"a path below a file added":      {"m/z.zip/x", 1, "x", ErrInvalidPlan},
+		"the directory of a file added":  {"m", 1, "x", ErrInvalidPlan},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := &composition{head: []member{file("a.go", "1")}, tree: []execution.TreeFile{treeFile("a.go", "1", execution.FromHead)}}
 			_, app, err := c.compose(t)
 			if err != nil {
 				t.Fatalf("Compose: %v", err)
+			}
+			if err := app.Add("m/z.zip", 1, strings.NewReader("x")); err != nil {
+				t.Fatalf("the first Add: %v", err)
 			}
 			if err := app.Add(add.name, add.size, strings.NewReader(add.body)); !errors.Is(err, add.err) {
 				t.Errorf("Add(%q) = %v, want %v", add.name, err, add.err)
@@ -449,17 +498,14 @@ func TestAppenderRefusesWhatWouldShadowOrBreakTheTree(t *testing.T) {
 	}
 }
 
-func TestAppenderRefusesAPathItAlreadyAdded(t *testing.T) {
-	c := &composition{head: []member{file("a.go", "1")}, tree: []execution.TreeFile{treeFile("a.go", "1", execution.FromHead)}}
-	_, app, err := c.compose(t)
-	if err != nil {
-		t.Fatalf("Compose: %v", err)
-	}
-	if err := app.Add("m.zip", 1, strings.NewReader("x")); err != nil {
-		t.Fatalf("the first Add: %v", err)
-	}
-	if err := app.Add("m.zip", 1, strings.NewReader("y")); !errors.Is(err, ErrInvalidPlan) {
-		t.Errorf("the second Add of one path = %v, want ErrInvalidPlan", err)
+func TestComposeRefusesALinkToTheNeighborsOfTheTreeDirectory(t *testing.T) {
+	// Go's own state is beside the tree, and a link of the tree must not reach it: the root of the tree is the boundary of its links.
+	m := symlink("l", "../.suiteward/proxy")
+	c := &composition{head: []member{m}, tree: []execution.TreeFile{treeFile("l", "../.suiteward/proxy", execution.FromHead)}}
+	_, _, err := c.compose(t)
+	onlyError(t, err, ErrSourceMismatch)
+	if !errors.Is(err, execution.ErrUnsafeSymlink) {
+		t.Errorf("want the domain's ErrUnsafeSymlink inside the error, got %v", err)
 	}
 }
 
@@ -505,8 +551,8 @@ func TestComposeGivesAManifestFileTheModeOfTheHeadsFileAtItsPath(t *testing.T) {
 			if err != nil || app == nil {
 				t.Fatalf("Compose: %v", err)
 			}
-			if found := readTar(t, out.Bytes()); found["scripts/run.sh"].mode != tc.want {
-				t.Errorf("mode %o, want %o", found["scripts/run.sh"].mode, tc.want)
+			if found := readTar(t, out.Bytes()); found["src/scripts/run.sh"].mode != tc.want {
+				t.Errorf("mode %o, want %o", found["src/scripts/run.sh"].mode, tc.want)
 			}
 		})
 	}

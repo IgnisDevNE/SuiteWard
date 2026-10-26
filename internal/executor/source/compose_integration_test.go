@@ -42,7 +42,7 @@ func sandboxSpec(t *testing.T, stdin io.Reader, argv ...string) sandbox.Spec {
 		Image:       pinnedImage(t),
 		Env:         []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
 		Argv:        argv,
-		Workdir:     ".",
+		Workdir:     "src", // where Compose puts the tree
 		Limits:      sandbox.Limits{MemoryMiB: 256, CPUs: 1, Pids: 128, TmpfsMiB: 64, KillAfter: time.Minute},
 		Stdin:       stdin,
 		StdoutLimit: 1 << 20,

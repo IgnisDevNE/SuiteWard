@@ -318,3 +318,49 @@ func TestBaseSideTreeOfAHeadThatChangesNoIncludedFileIsTheBase(t *testing.T) {
 		t.Errorf("tree = %v, %v; want %v", got, err, want)
 	}
 }
+
+// A composed tree is a directory tree: no path may sit below another path of it, as the head's file x and the manifest's
+// x/y would make one. The check is by set, because the sort order does not put a file next to its descendants ("a",
+// "a.txt", "a/b").
+func TestCanonicalTreeRefusesAPathBelowAnotherPathOfTheTree(t *testing.T) {
+	tests := []struct {
+		name      string
+		head      map[string]string
+		governing map[string]string
+	}{
+		{"a head file and a manifest path below it", map[string]string{"tests": "a symlink"}, map[string]string{"tests/a_test.go": "t"}},
+		{"far below", map[string]string{"a/b": "a file"}, map[string]string{"a/b/c/d_test.go": "t"}},
+		{"not next to it in path order", map[string]string{"a": "a file", "a.txt": "x"}, map[string]string{"a/b_test.go": "t"}},
+		{"a manifest file and a head path below it", map[string]string{"docs/x.txt": "x"}, map[string]string{"docs": "a file"}},
+		{"two manifest paths", map[string]string{"go.mod": "m"}, map[string]string{"a_test.go": "t", "a_test.go/b": "x"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := execution.CanonicalTree(manifestOf(t, tt.head), manifestOf(t, tt.governing), governingScope(t))
+			if !errors.Is(err, execution.ErrInvalidTree) {
+				t.Errorf("CanonicalTree = %v, %v; want ErrInvalidTree", got, err)
+			}
+		})
+	}
+}
+
+func TestBaseSideTreeRefusesAPathBelowAnotherPathOfTheTree(t *testing.T) {
+	tests := []struct {
+		name string
+		base map[string]string
+		head map[string]string
+	}{
+		{"a base file and a carried path below it", map[string]string{"x": "a file"}, map[string]string{"x/y_test.go": "t"}},
+		{"a carried file and a base path below it", map[string]string{"x_test.go/inner.go": "i"}, map[string]string{"x_test.go": "a file"}},
+		{"not next to it in path order", map[string]string{"a": "a file", "a.txt": "x"}, map[string]string{"a/b_test.go": "t"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expected := manifestOf(t, map[string]string{"keep_test.go": "k"})
+			got, err := execution.BaseSideTree(manifestOf(t, tt.base), manifestOf(t, tt.head), expected, canonicalSelection(t))
+			if !errors.Is(err, execution.ErrInvalidTree) {
+				t.Errorf("BaseSideTree = %v, %v; want ErrInvalidTree", got, err)
+			}
+		})
+	}
+}

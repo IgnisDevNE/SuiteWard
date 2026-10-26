@@ -1,0 +1,9 @@
+{"Time":"2026-10-26T22:11:03.947652864Z","Action":"start","Package":"example.com/fx/good"}
+{"Time":"2026-10-26T22:11:03.94797712Z","Action":"start","Package":"example.com/fx/notests"}
+{"Time":"2026-10-26T22:11:03.948026139Z","Action":"output","Package":"example.com/fx/notests","Output":"?   \texample.com/fx/notests\t[no test files]\n"}
+{"Time":"2026-10-26T22:11:03.94806688Z","Action":"skip","Package":"example.com/fx/notests","Elapsed":0}
+{"Time":"2026-10-26T22:11:03.949281327Z","Action":"output","Package":"example.com/fx/good","Output":"-test.shuffle 1793052663949239534\n"}
+{"Time":"2026-10-26T22:11:03.949426624Z","Action":"output","Package":"example.com/fx/good","Output":"testing: warning: no tests to run\n"}
+{"Time":"2026-10-26T22:11:03.949448159Z","Action":"output","Package":"example.com/fx/good","Output":"PASS\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:11:03.949651948Z","Action":"output","Package":"example.com/fx/good","Output":"ok  \texample.com/fx/good\t0.002s [no tests to run]\n"}
+{"Time":"2026-10-26T22:11:03.949692761Z","Action":"pass","Package":"example.com/fx/good","Elapsed":0.002}

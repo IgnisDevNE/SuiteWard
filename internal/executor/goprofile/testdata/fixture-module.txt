@@ -1,0 +1,169 @@
+The module the *.json files in this directory were recorded from. They are the unmodified standard output of
+`go test -json` (Go 1.27.3, the image of goprofile.Image, linux/amd64). Nothing here is compiled: the module is one text
+file so that the failing tests in it are not live test files of this repository.
+
+To record one again, extract the sections below into a directory (with an empty .suiteward/home/.keep and
+.suiteward/tmp/.keep, which create the HOME and TMPDIR that go needs), pack the directory as a tar and run, in the pinned
+image with no network, a read-only root and a tmpfs /work, the argv and the environment that goprofile.Command returns:
+
+  tar -x -C /work && cd /work && exec go test -json -count=1 -shuffle=on -timeout=<t> -run '^(A|B)$' <packages>
+
+with GOTOOLCHAIN=local GOWORK=off GOFLAGS= GOPROXY=file:///work/.suiteward/proxy GOSUMDB=off and HOME, TMPDIR, GOCACHE and
+GOMODCACHE under /work/.suiteward. The invocation of each fixture is in parse_test.go.
+
+-- baddep/baddep.go --
+package baddep
+
+func Broken() int { return "text" }
+-- broken/broken.go --
+package broken
+-- broken/broken_test.go --
+package broken
+
+import "testing"
+
+func TestBroken(t *testing.T) { undefinedSymbol() }
+-- brokensrc/x.go --
+package brokensrc
+
+func Bad() int { return "text" }
+-- brokensrc/x_test.go --
+package brokensrc
+
+import "testing"
+
+func TestOnSource(t *testing.T) { _ = Bad() }
+-- dup/dup.go --
+package dup
+-- dup/dup_test.go --
+package dup
+
+import "testing"
+
+func TestDup(t *testing.T) {}
+
+func TestOnlyInternal(t *testing.T) {}
+-- dup/dup_x_test.go --
+package dup_test
+
+import "testing"
+
+func TestDup(t *testing.T) { t.Fatal("the external one fails") }
+-- exits/exits.go --
+package exits
+-- exits/exits_test.go --
+package exits
+
+import (
+	"os"
+	"testing"
+)
+
+func TestExitZero(t *testing.T) { os.Exit(0) }
+
+func TestOther(t *testing.T) {}
+-- go.mod --
+module example.com/fx
+
+go 1.27
+-- good/good.go --
+package good
+-- good/good_test.go --
+package good
+
+import "testing"
+
+func TestGood(t *testing.T) {}
+-- hang/hang.go --
+package hang
+-- hang/hang_test.go --
+package hang
+
+import (
+	"testing"
+	"time"
+)
+
+func TestHang(t *testing.T) { time.Sleep(time.Hour) }
+
+func TestAfterHang(t *testing.T) {}
+-- mixed/mixed.go --
+package mixed
+-- mixed/mixed_test.go --
+package mixed
+
+import "testing"
+
+func TestPass(t *testing.T) {}
+
+func TestFail(t *testing.T) { t.Fatal("broken") }
+
+func TestSkip(t *testing.T) { t.Skip("not today") }
+
+func TestSub(t *testing.T) {
+	t.Run("a", func(t *testing.T) {})
+	t.Run("b", func(t *testing.T) {})
+}
+
+func TestSubFail(t *testing.T) {
+	t.Run("ok", func(t *testing.T) {})
+	t.Run("bad", func(t *testing.T) { t.Error("bad") })
+}
+-- notests/notests.go --
+package notests
+-- panics/panics.go --
+package panics
+-- panics/panics_test.go --
+package panics
+
+import "testing"
+
+func TestPanic(t *testing.T) { panic("boom") }
+
+func TestAfter(t *testing.T) {}
+-- root.go --
+package fx
+
+func Add(a, b int) int { return a + b }
+-- root_test.go --
+package fx
+
+import "testing"
+
+func TestRootOK(t *testing.T) {
+	if Add(1, 2) != 3 {
+		t.Fatal("add")
+	}
+}
+-- setup/setup.go --
+package setup
+-- setup/setup_test.go --
+package setup
+
+import (
+	"testing"
+
+	_ "example.com/fx/nope"
+)
+
+func TestSetup(t *testing.T) {}
+-- usesdep/usesdep.go --
+package usesdep
+
+import "example.com/fx/baddep"
+
+func Use() int { return baddep.Broken() }
+-- usesdep/usesdep_test.go --
+package usesdep
+
+import "testing"
+
+func TestUse(t *testing.T) { _ = Use() }
+-- vet/vet.go --
+package vet
+-- vet/vet_test.go --
+package vet
+
+import "testing"
+
+func TestVet(t *testing.T) { t.Logf("%d", "text") }

@@ -1,0 +1,43 @@
+{"Time":"2026-10-26T22:10:43.757247253Z","Action":"start","Package":"example.com/fx/hang"}
+{"Time":"2026-10-26T22:10:43.758828343Z","Action":"output","Package":"example.com/fx/hang","Output":"-test.shuffle 1793052643758747100\n"}
+{"Time":"2026-10-26T22:10:43.758925632Z","Action":"run","Package":"example.com/fx/hang","Test":"TestAfterHang"}
+{"Time":"2026-10-26T22:10:43.758934543Z","Action":"output","Package":"example.com/fx/hang","Test":"TestAfterHang","Output":"=== RUN   TestAfterHang\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:10:43.758943708Z","Action":"output","Package":"example.com/fx/hang","Test":"TestAfterHang","Output":"--- PASS: TestAfterHang (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:10:43.758947595Z","Action":"pass","Package":"example.com/fx/hang","Test":"TestAfterHang","Elapsed":0}
+{"Time":"2026-10-26T22:10:43.758954307Z","Action":"run","Package":"example.com/fx/hang","Test":"TestHang"}
+{"Time":"2026-10-26T22:10:43.758956488Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"=== RUN   TestHang\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:10:45.762441559Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"panic: test timed out after 2s\n"}
+{"Time":"2026-10-26T22:10:45.762494038Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\trunning tests:\n"}
+{"Time":"2026-10-26T22:10:45.762500729Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t\tTestHang (2s)\n"}
+{"Time":"2026-10-26T22:10:45.762502729Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\n"}
+{"Time":"2026-10-26T22:10:45.762504798Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"goroutine 17 [running]:\n"}
+{"Time":"2026-10-26T22:10:45.762506614Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"testing.(*M).startAlarm.func1()\n"}
+{"Time":"2026-10-26T22:10:45.76250841Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t/usr/local/go/src/testing/testing.go:2961 +0x34a\n"}
+{"Time":"2026-10-26T22:10:45.762511562Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"created by time.goFunc\n"}
+{"Time":"2026-10-26T22:10:45.762513385Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t/usr/local/go/src/time/sleep.go:182 +0x2d\n"}
+{"Time":"2026-10-26T22:10:45.762514747Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\n"}
+{"Time":"2026-10-26T22:10:45.762516159Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"goroutine 1 [chan receive]:\n"}
+{"Time":"2026-10-26T22:10:45.762517895Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"testing.(*T).Run(0x3da5305b2008, {0x554bc2?, 0x3da5305a3aa0?}, 0x6d4cc0)\n"}
+{"Time":"2026-10-26T22:10:45.762520116Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t/usr/local/go/src/testing/testing.go:2268 +0x4f2\n"}
+{"Time":"2026-10-26T22:10:45.762521699Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"testing.runTests.func1(0x3da5305b2008)\n"}
+{"Time":"2026-10-26T22:10:45.76252327Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t/usr/local/go/src/testing/testing.go:2744 +0x37\n"}
+{"Time":"2026-10-26T22:10:45.762526052Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"testing.tRunner(0x3da5305b2008, 0x3da5305a3bc8)\n"}
+{"Time":"2026-10-26T22:10:45.762528484Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t/usr/local/go/src/testing/testing.go:2195 +0xea\n"}
+{"Time":"2026-10-26T22:10:45.762530777Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"testing.runTests({0x55678a, 0xe}, {0x55801e, 0x13}, 0x3da5304780c0, {0x6f0910, 0x2, 0x2}, {0xc2b011d96d3a1528, 0x773778b4, ...})\n"}
+{"Time":"2026-10-26T22:10:45.762536783Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t/usr/local/go/src/testing/testing.go:2742 +0x510\n"}
+{"Time":"2026-10-26T22:10:45.76253904Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"testing.(*M).Run(0x3da5304ec140)\n"}
+{"Time":"2026-10-26T22:10:45.762540714Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t/usr/local/go/src/testing/testing.go:2602 +0x6af\n"}
+{"Time":"2026-10-26T22:10:45.762542281Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"main.main()\n"}
+{"Time":"2026-10-26T22:10:45.762544497Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t_testmain.go:48 +0x9b\n"}
+{"Time":"2026-10-26T22:10:45.762545979Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\n"}
+{"Time":"2026-10-26T22:10:45.762547519Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"goroutine 8 [sleep]:\n"}
+{"Time":"2026-10-26T22:10:45.762549082Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"time.Sleep(0x34630b8a000)\n"}
+{"Time":"2026-10-26T22:10:45.762559312Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t/usr/local/go/src/runtime/time.go:368 +0x165\n"}
+{"Time":"2026-10-26T22:10:45.762561349Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"example.com/fx/hang.TestHang(0x3da5305b2488?)\n"}
+{"Time":"2026-10-26T22:10:45.762563191Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t/work/hang/hang_test.go:8 +0x1d\n"}
+{"Time":"2026-10-26T22:10:45.762570865Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"testing.tRunner(0x3da5305b2488, 0x6d4cc0)\n"}
+{"Time":"2026-10-26T22:10:45.762572667Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t/usr/local/go/src/testing/testing.go:2195 +0xea\n"}
+{"Time":"2026-10-26T22:10:45.762574273Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"created by testing.(*T).Run in goroutine 1\n"}
+{"Time":"2026-10-26T22:10:45.762576781Z","Action":"output","Package":"example.com/fx/hang","Test":"TestHang","Output":"\t/usr/local/go/src/testing/testing.go:2260 +0x4d4\n"}
+{"Time":"2026-10-26T22:10:45.762955587Z","Action":"output","Package":"example.com/fx/hang","Output":"FAIL\texample.com/fx/hang\t2.005s\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:10:45.762977986Z","Action":"fail","Package":"example.com/fx/hang","Elapsed":2.006}

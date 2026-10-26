@@ -295,6 +295,13 @@ func FuzzRenderers(f *testing.F) {
 	// A revision that lowers the execution policy and nothing else: only execution entries, no path.
 	f.Add(uint8(1), "required -> advisory", uint8(2), uint8(4), "")
 	f.Add(uint8(1), "a`b```\n/suiteward propose", uint8(2), uint8(12), "")
+	// Text that holds an HTML comment opener or the end of one reaches every renderer: Parse hides what lies between them, so no body may hold an opener outside a fence.
+	for sel := range uint8(len(renderers)) {
+		for _, item := range []string{">0<!----", "<!--", "-->", "a<!--b-->c"} {
+			f.Add(sel, item, uint8(0x68), uint8('L'), "0")
+			f.Add(sel, item, uint8(6), uint8(3), "version: 1\n# "+item+"\n")
+		}
+	}
 	f.Fuzz(func(t *testing.T, sel uint8, item string, n, reps uint8, decl string) {
 		r, ok := renderers[int(sel)%len(renderers)](fuzzInput{item: item, n: n, reps: reps, decl: decl})
 		if !ok {
@@ -495,6 +502,11 @@ func checkRendered(t *testing.T, r rendered) {
 			t.Fatalf("the link destination %q is not one SuiteWard writes, in %q", l[1], out)
 		}
 	}
+	// The narrowest rule that keeps Parse in step with the fences: no line outside a fence holds an HTML comment opener, not even in a code span, because Parse
+	// hides the lines up to the next "-->" whatever Markdown makes of it, and would read the fences that follow out of step.
+	if raw, _, _ := scanWith(out, func(line string) string { return line }); strings.Contains(raw, "<!--") {
+		t.Fatalf("an HTML comment opener is outside a code fence in %q", out)
+	}
 	text := link.ReplaceAllString(outside, "]")
 	if strings.Contains(text, sentinel) || strings.Contains(text, "<!--") || commandtext.Parse(text).Kind != commandtext.KindNotCommand {
 		t.Fatalf("hostile text, a hidden comment or a command is outside code: %q in %q", text, out)
@@ -508,7 +520,11 @@ type block struct{ info, content string }
 
 // scan reads body by the rules of GitHub Flavored Markdown and returns the text outside its code fences and code spans, the
 // fenced blocks, and an error for a fence that is not closed.
-func scan(body string) (outside string, blocks []block, err error) {
+func scan(body string) (outside string, blocks []block, err error) { return scanWith(body, stripSpans) }
+
+// scanWith is scan with strip applied to each line outside a fence: stripSpans leaves the text outside the code spans, and a function that
+// returns its line leaves the whole text outside the fences.
+func scanWith(body string, strip func(string) string) (outside string, blocks []block, err error) {
 	var text []string
 	var open *block
 	var mark byte
@@ -528,7 +544,7 @@ func scan(body string) (outside string, blocks []block, err error) {
 		} else if run, rest, ok := leadingRun(line, '~'); ok && run >= 3 {
 			open, mark, size = &block{info: strings.TrimSpace(rest)}, '~', run
 		} else {
-			text = append(text, stripSpans(line))
+			text = append(text, strip(line))
 		}
 	}
 	if open != nil {

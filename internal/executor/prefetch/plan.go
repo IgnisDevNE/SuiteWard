@@ -24,7 +24,7 @@ const (
 //
 // A side whose go.mod names go 1.14 or later and that has vendor/modules.txt vendors, as the go command does, and needs nothing. Otherwise
 // the plan is the .mod file of every go.sum line for a go.mod and the .zip file of every other line, minus the modules that go.mod replaces
-// (the go command never asks the proxy for those). A replace to a directory outside the tree, a go.mod or go.sum that does not validate and
+// (the go command never asks the proxy for those, but it does for a module that a replace names as its target). A replace to a directory outside the tree, a go.mod or go.sum that does not validate and
 // more than l.Modules distinct module versions are refused with ErrInstallFailed. l.Bytes is Fetch's.
 func PlanSide(goMod, goSum []byte, hasVendorModulesTxt bool, l Limits) (Plan, error) {
 	mod, err := modfile.Parse("go.mod", goMod, nil)
@@ -53,7 +53,7 @@ func PlanSide(goMod, goSum []byte, hasVendorModulesTxt bool, l Limits) (Plan, er
 		if m.Version != fields[1] {
 			ext = "mod"
 		}
-		if isReplaced(replaced, m) {
+		if replaced.away(m) {
 			continue
 		}
 		name, err := proxyName(m, ext)
@@ -73,23 +73,30 @@ func PlanSide(goMod, goSum []byte, hasVendorModulesTxt bool, l Limits) (Plan, er
 	return Plan{Files: files}, nil
 }
 
-// replacedModules is the set of modules that go.mod replaces (an empty version is every version of the path). It refuses a replace to a
-// directory outside the tree: the directory of a replace has no version.
-func replacedModules(replaces []*modfile.Replace) (map[module.Version]struct{}, error) {
-	replaced := map[module.Version]struct{}{}
-	for _, r := range replaces {
-		if r.New.Version == "" && !insideTree(r.New.Path) {
-			return nil, refuse("go.mod replaces %s with the directory %s, which is outside the tree", r.Old.Path, r.New.Path)
+// replacements are the modules that go.mod replaces (an empty version is every version of the path) and the modules it replaces them with.
+type replacements struct{ old, targets map[module.Version]struct{} }
+
+// replacedModules reads the replace directives. It refuses a replace to a directory outside the tree: the directory of a replace has no
+// version.
+func replacedModules(replaces []*modfile.Replace) (replacements, error) {
+	r := replacements{old: map[module.Version]struct{}{}, targets: map[module.Version]struct{}{}}
+	for _, rep := range replaces {
+		if rep.New.Version == "" && !insideTree(rep.New.Path) {
+			return replacements{}, refuse("go.mod replaces %s with the directory %s, which is outside the tree", rep.Old.Path, rep.New.Path)
 		}
-		replaced[r.Old] = struct{}{}
+		r.old[rep.Old] = struct{}{}
+		r.targets[rep.New] = struct{}{}
 	}
-	return replaced, nil
+	return r, nil
 }
 
-func isReplaced(replaced map[module.Version]struct{}, m module.Version) bool {
-	_, allVersions := replaced[module.Version{Path: m.Path}]
-	_, thisVersion := replaced[m]
-	return allVersions || thisVersion
+// away reports whether the go command never asks the proxy for m: a replace covers it and no replace has it as its target (go uses the target
+// of a replace as it is, and does not replace it again).
+func (r replacements) away(m module.Version) bool {
+	_, allVersions := r.old[module.Version{Path: m.Path}]
+	_, thisVersion := r.old[m]
+	_, target := r.targets[m]
+	return (allVersions || thisVersion) && !target
 }
 
 // insideTree reports whether a replace directory stays inside the tree. The path is read the same way on every host: a backslash or a drive

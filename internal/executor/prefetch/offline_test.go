@@ -132,16 +132,37 @@ func fileURL(dir string) string {
 	return "file://" + p
 }
 
-func writeApp(t *testing.T, dir, goSum string) {
+func writeFiles(t *testing.T, dir string, files map[string]string) {
 	t.Helper()
-	for name, content := range map[string]string{"go.mod": appGoMod, "go.sum": goSum, "main.go": appMain, "main_test.go": appTest} {
-		if err := os.MkdirAll(dir, 0o750); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
+}
+
+func writeApp(t *testing.T, dir, goSum string) {
+	t.Helper()
+	writeFiles(t, dir, map[string]string{"go.mod": appGoMod, "go.sum": goSum, "main.go": appMain, "main_test.go": appTest})
+}
+
+// fetchProxy fetches the planned files from upstream into a tar and extracts it: the directory that the sandbox reads as its proxy.
+func fetchProxy(t *testing.T, upstream *fakeProxy, plan Plan) string {
+	t.Helper()
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	if _, err := Fetch(context.Background(), clientFor(t, upstream.Server, ""), upstream.URL, plan, tarSink{tw}, Limits{Modules: 10, Bytes: 1 << 20}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "proxy")
+	untar(t, archive.Bytes(), dir)
+	return dir
 }
 
 // goRunner runs the go tool as the sandbox does: no GOFLAGS, no checksum database, the local toolchain, no private-module settings.
@@ -259,6 +280,28 @@ func TestPrefetchedProxyLetsGoBuildAndTestOffline(t *testing.T) {
 		offline.mustRun(t, vendored, "build", "./...")
 		if out := offline.mustRun(t, vendored, "test", "-count=1", "./..."); !strings.Contains(out, "ok") {
 			t.Errorf("go test of the vendored side printed no ok:\n%s", out)
+		}
+	})
+
+	t.Run("a replace to another module needs the files of its target and none of the module it replaces", func(t *testing.T) {
+		goMod := "module example.com/app\n\ngo 1.21\n\nrequire example.com/x v1.0.0\n\nreplace example.com/x v1.0.0 => example.com/Bee " + beeVersion + "\n"
+		sum := "example.com/Bee " + beeVersion + " " + beeZipHash + "\nexample.com/Bee " + beeVersion + "/go.mod " + beeModHash + "\n"
+		plan, err := PlanSide([]byte(goMod), []byte(sum), false, Limits{Modules: 10, Bytes: 1 << 20})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantNames(t, plan, "example.com/!bee/@v/"+beeVersion+".mod", "example.com/!bee/@v/"+beeVersion+".zip")
+		app := filepath.Join(t.TempDir(), "app")
+		writeFiles(t, app, map[string]string{
+			"go.mod":       goMod,
+			"go.sum":       sum,
+			"main.go":      "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/x\"\n)\n\nfunc main() { fmt.Println(bee.Name()) }\n",
+			"main_test.go": "package main\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {}\n",
+		})
+		offline := newGoRunner(t, fileURL(fetchProxy(t, upstream, plan)))
+		offline.mustRun(t, app, "build", "./...")
+		if out := offline.mustRun(t, app, "test", "-count=1", "./..."); !strings.Contains(out, "ok") {
+			t.Errorf("go test printed no ok:\n%s", out)
 		}
 	})
 }

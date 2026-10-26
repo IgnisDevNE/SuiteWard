@@ -162,6 +162,16 @@ func (d Declaration) Runner() []Pattern {
 	return slices.Clone(d.runner)
 }
 
+// Execution is the execution policy of a declaration that names a profile.
+type Execution struct {
+	Profile, Canonical, Receipt string
+}
+
+// Execution returns the execution policy, and false when the declaration names no profile: then nothing runs.
+func (d Declaration) Execution() (Execution, bool) {
+	return Execution{}, false
+}
+
 // AddPatterns returns raw with include and runner appended to their lists. It creates a list that is missing (in block
 // style), skips a pattern already in its list, quotes a new item as the items of its list are all quoted, keeps the
 // comments yaml.v3 keeps, and never removes or reorders a pattern. The result is a valid declaration, so it errors

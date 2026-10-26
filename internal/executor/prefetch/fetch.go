@@ -58,8 +58,9 @@ func allowRedirectTo(host string) func(*http.Request, []*http.Request) error {
 // bounds the files together. Nothing is written to disk.
 //
 // A failure of the proxy, of the network, a status other than 200, a redirect that is refused and an answer that is not what the proxy
-// should send are ErrFetchFailed. A file past l.Bytes, or a zip whose directory does not fit the bounded tail that is kept to read it, is
-// ErrTooLarge. When ctx ends, its error comes back unwrapped from any fetch failure, and a failure of the sink is the sink's own.
+// should send are ErrFetchFailed. A file past l.Bytes is ErrInstallFailed, as is a plan that passes its bound. A zip whose directory does not
+// fit the bounded tail that is kept to read it, or whose unpacked size is larger than any size, is ErrTooLarge: its unpacked size, which the
+// caller sums into its size check, cannot be had. When ctx ends, its error comes back unwrapped from any fetch failure, and a failure of the sink is the sink's own.
 func Fetch(ctx context.Context, c *http.Client, base string, p Plan, sink Sink, l Limits) (Stats, error) {
 	return fetch(ctx, c, base, p, sink, l, maxTail)
 }
@@ -117,17 +118,18 @@ func (f *fetcher) file(ctx context.Context, name string, budget int64) (fetched,
 			return fetched{}, fetchFailed(ctx, name, err)
 		}
 		if !fits {
-			return fetched{}, tooLarge(name, budget)
+			return fetched{}, boundPassed(name, budget)
 		}
 		body, size = bytes.NewReader(data), int64(len(data))
 	} else if size > budget {
-		return fetched{}, tooLarge(name, budget)
+		return fetched{}, boundPassed(name, budget)
 	}
 	return f.add(ctx, name, size, body)
 }
 
-func tooLarge(name string, budget int64) error {
-	return fmt.Errorf("%w: %s passes the %d bytes that are left of the bound", ErrTooLarge, name, budget)
+// boundPassed is the refusal of a file that passes the byte bound: install-failed, as the runtime contract says of a bound on the bytes of modules.
+func boundPassed(name string, budget int64) error {
+	return fmt.Errorf("%w: %s passes the %d bytes that are left of the bound", ErrInstallFailed, name, budget)
 }
 
 // readWithin reads a body whole when it has at most budget bytes, and reports fits false when it has more.

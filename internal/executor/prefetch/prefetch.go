@@ -10,14 +10,14 @@ import (
 )
 
 var (
-	// ErrInstallFailed marks a refusal made before any fetch: the go.mod or the go.sum does not validate, a replace points outside the tree, or
-	// the plan passes its bound. It is deterministic: the same input is refused again.
+	// ErrInstallFailed marks a deterministic refusal, so the same input is refused again: the go.mod or the go.sum does not validate, a replace
+	// points outside the tree, or the number of modules or the bytes fetched pass their bound. Fetch returns it only for the bytes.
 	ErrInstallFailed = errors.New("prefetch: install failed")
 	// ErrFetchFailed marks an infrastructure failure: the proxy, the network, a module the proxy does not serve (a private one among them), a
 	// file that is not what the proxy should send. It is counted and retried.
 	ErrFetchFailed = errors.New("prefetch: fetch failed")
-	// ErrTooLarge marks a fetch that passes its byte bound, or a module zip whose directory cannot be read within the bounded tail. It is
-	// deterministic.
+	// ErrTooLarge marks a module zip whose unpacked size cannot be had: its directory does not fit the bounded tail, or its sizes are larger than
+	// any size. It is deterministic, and it is the too-large of the caller's size check, not a passed byte bound.
 	ErrTooLarge = errors.New("prefetch: too large")
 )
 

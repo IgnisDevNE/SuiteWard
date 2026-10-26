@@ -45,7 +45,9 @@ func TestEnableKeysRejectsANonConsole(t *testing.T) {
 
 // openConsoleInput opens the input of the console of the test, as the program reads its keys. A process with no console (a runner with
 // none attached) gets one for the length of the test; where none can be had, the test is skipped.
-func openConsoleInput(t *testing.T) *os.File { return openConsoleInputFor(t, windows.GENERIC_READ|windows.GENERIC_WRITE) }
+func openConsoleInput(t *testing.T) *os.File {
+	return openConsoleInputFor(t, windows.GENERIC_READ|windows.GENERIC_WRITE)
+}
 
 // openConsoleInputFor is openConsoleInput with the access the handle is opened for: a handle for reading only has a mode that can be read
 // and not set, and its input buffer cannot be flushed.

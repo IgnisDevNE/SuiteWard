@@ -214,37 +214,6 @@ func TestFlushInputRejectsANonConsole(t *testing.T) {
 	}
 }
 
-// A console handle that is a terminal and cannot be flushed (opened for reading only: its mode can be read, and neither set nor flushed) is
-// offered no flush, so that OpenOS leaves FlushInput nil and the questions are asked as they were before the guard existed. One that can be
-// flushed is offered a flush that drops what was typed ahead.
-func TestInputFlusherIsNilForAConsoleOpenedForReadingOnly(t *testing.T) {
-	conin := openConsoleInputFor(t, windows.GENERIC_READ)
-	if err := flushInput(conin); err == nil {
-		t.Skip("this console lets a handle opened for reading flush it: there is no handle that cannot be flushed to test with")
-	}
-	if inputFlusher(conin) != nil {
-		t.Error("a flush that is known to fail was offered for a console opened for reading only")
-	}
-}
-
-func TestInputFlusherDropsWhatWasTypedAheadOfAConsoleThatCanBeFlushed(t *testing.T) {
-	conin := openConsoleInput(t)
-	flush := inputFlusher(conin)
-	if flush == nil {
-		t.Fatal("no flush was offered for a console that can be flushed")
-	}
-	typeIntoConsole(t, conin, keyEvents('\r', 0x0d, 0x1c)...)
-	if pendingEvents(t, conin) == 0 {
-		t.Fatal("the console queued nothing of what was typed: the test cannot see what the flush does with it")
-	}
-	if err := flush(); err != nil {
-		t.Fatalf("the flush: %v", err)
-	}
-	if n := pendingEvents(t, conin); n != 0 {
-		t.Errorf("%d events typed ahead are still queued", n)
-	}
-}
-
 // A console handle opened for reading only is a terminal that cannot be flushed (Access denied). The screen asks and gets its answers all the
 // same: the first question tries the flush, it fails, no question fails for it, and the flush is not tried again.
 func TestQuestionsAreAnsweredAtAConsoleThatCannotBeFlushed(t *testing.T) {

@@ -29,6 +29,10 @@ try {
     Assert-Pins 'a copy with another digest' $false
     Write-Fixture -Copy "postgres:18.7-trixie@sha256:$a"
     Assert-Pins 'a copy with another tag' $false
+    Write-Fixture -Copy "docker.io/library/golang:1.2.3-alpine@sha256:$a"
+    Assert-Pins 'a copy of the Go image that writes the version the ARG default gives' $true
+    Write-Fixture -Copy "docker.io/library/golang:1.2.4-alpine@sha256:$a"
+    Assert-Pins 'a copy of the Go image with another version' $false
     Write-Fixture -From 'golang:${GO_VERSION}-alpine'
     Assert-Pins 'an unpinned base image' $false
     Write-Fixture -GoArg '9.9.9'

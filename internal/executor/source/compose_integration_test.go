@@ -6,7 +6,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +19,7 @@ import (
 )
 
 // These tests join the two packages the way the executor does: the composed tar is the standard input of a real container on
-// Docker. They skip when the engine is not there and use the image the sandbox tests pull.
-const goImage = "docker.io/library/golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd"
+// Docker. They skip when the engine is not there, and pull the pinned image when it is missing.
 
 func dockerForTar(t *testing.T) sandbox.Runtime {
 	t.Helper()
@@ -27,17 +29,18 @@ func dockerForTar(t *testing.T) sandbox.Runtime {
 	if name, _, err := rt.Info(ctx); err != nil || name != "docker" {
 		t.Skipf("no Docker engine: %q, %v", name, err)
 	}
-	if exec.Command("docker", "image", "inspect", goImage).Run() != nil {
-		if out, err := exec.Command("docker", "pull", goImage).CombinedOutput(); err != nil {
+	if exec.Command("docker", "image", "inspect", pinnedImage(t)).Run() != nil {
+		if out, err := exec.Command("docker", "pull", pinnedImage(t)).CombinedOutput(); err != nil {
 			t.Skipf("cannot pull the pinned image: %v: %s", err, out)
 		}
 	}
 	return rt
 }
 
-func sandboxSpec(stdin io.Reader, argv ...string) sandbox.Spec {
+func sandboxSpec(t *testing.T, stdin io.Reader, argv ...string) sandbox.Spec {
+	t.Helper()
 	return sandbox.Spec{
-		Image:       goImage,
+		Image:       pinnedImage(t),
 		Env:         []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
 		Argv:        argv,
 		Workdir:     ".",
@@ -87,7 +90,7 @@ func TestTheComposedTarIsExtractedByTheSandbox(t *testing.T) {
 	stdin := pipeCompose(c, t, map[string]string{"proxy/m/@v/v1.zip": "zipbytes"})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	out, err := rt.Run(ctx, sandboxSpec(stdin, "sh", "-c", script, "sh", long))
+	out, err := rt.Run(ctx, sandboxSpec(t, stdin, "sh", "-c", script, "sh", long))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -112,11 +115,31 @@ func TestAMismatchStopsTheContainerBeforeArgvStarts(t *testing.T) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	_, err := rt.Run(ctx, sandboxSpec(stdin, "sleep", "300"))
+	_, err := rt.Run(ctx, sandboxSpec(t, stdin, "sleep", "300"))
 	if !errors.Is(err, ErrSourceMismatch) {
 		t.Fatalf("want ErrSourceMismatch from the composition, got %v", err)
 	}
 	if took := time.Since(start); took > 30*time.Second {
 		t.Errorf("Argv ran on an unverified tree: the run took %s", took)
 	}
+}
+
+// pinnedImage is the Go builder image of deploy/Containerfile, so that the one pin of the repository is the only copy of it: the
+// Containerfile spells the tag with ${GO_VERSION}, which .go-version fills in.
+func pinnedImage(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join("..", "..", "..")
+	containerfile, err := os.ReadFile(filepath.Join(root, "deploy", "Containerfile"))
+	if err != nil {
+		t.Fatalf("read the Containerfile: %v", err)
+	}
+	version, err := os.ReadFile(filepath.Join(root, ".go-version"))
+	if err != nil {
+		t.Fatalf("read .go-version: %v", err)
+	}
+	pin := regexp.MustCompile(`docker\.io/library/golang:\$\{GO_VERSION\}-alpine@sha256:[0-9a-f]{64}`).Find(containerfile)
+	if pin == nil {
+		t.Fatal("the Containerfile no longer pins the golang builder image by digest")
+	}
+	return strings.ReplaceAll(string(pin), "${GO_VERSION}", strings.TrimSpace(string(version)))
 }

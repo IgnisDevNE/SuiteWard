@@ -8,7 +8,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -18,7 +21,6 @@ import (
 )
 
 // These tests run real containers on Docker. They skip when the engine is not there, and pull the pinned image when it is missing.
-const image = "docker.io/library/golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd"
 
 func docker(t *testing.T) sandbox.Runtime {
 	t.Helper()
@@ -35,8 +37,8 @@ func docker(t *testing.T) sandbox.Runtime {
 	if name != "docker" {
 		t.Skipf("the docker command is %s, not Docker", name)
 	}
-	if exec.Command("docker", "image", "inspect", image).Run() != nil {
-		if out, err := exec.Command("docker", "pull", image).CombinedOutput(); err != nil {
+	if exec.Command("docker", "image", "inspect", pinnedImage(t)).Run() != nil {
+		if out, err := exec.Command("docker", "pull", pinnedImage(t)).CombinedOutput(); err != nil {
 			t.Skipf("cannot pull the pinned image: %v: %s", err, out)
 		}
 	}
@@ -49,9 +51,10 @@ func docker(t *testing.T) sandbox.Runtime {
 	return rt
 }
 
-func spec(stdin []byte, argv ...string) sandbox.Spec {
+func spec(t *testing.T, stdin []byte, argv ...string) sandbox.Spec {
+	t.Helper()
 	return sandbox.Spec{
-		Image:       image,
+		Image:       pinnedImage(t),
 		Env:         []string{"PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
 		Argv:        argv,
 		Workdir:     ".",
@@ -103,7 +106,7 @@ func run(t *testing.T, rt sandbox.Runtime, s sandbox.Spec) sandbox.Outcome {
 func TestTheSandboxHasNoNetworkAndAReadOnlyRoot(t *testing.T) {
 	rt := docker(t)
 	probe := `ls /sys/class/net; touch /etc/x 2>/dev/null && echo root-writable; echo ok > /work/w && echo work-writable; id -u`
-	out := run(t, rt, spec(tarOf(t, nil), "sh", "-c", probe))
+	out := run(t, rt, spec(t, tarOf(t, nil), "sh", "-c", probe))
 	if got, want := string(out.Stdout), "lo\nwork-writable\n65534\n"; got != want || out.ExitCode != 0 {
 		t.Errorf("the container saw %q (exit %d), want %q: only the loopback, a writable /work, a read-only root, uid 65534", got, out.ExitCode, want)
 	}
@@ -112,7 +115,7 @@ func TestTheSandboxHasNoNetworkAndAReadOnlyRoot(t *testing.T) {
 func TestTheStdinTarIsExtractedUnderWorkAndTheExitStatusIsThatOfArgv(t *testing.T) {
 	rt := docker(t)
 	files := map[string]string{"pkg/x/f.txt": "hello", "top.txt": "top", "link": "top.txt"}
-	s := spec(tarOf(t, files), "sh", "-c", "pwd; cat f.txt; echo; cat /work/link; echo; exit 7")
+	s := spec(t, tarOf(t, files), "sh", "-c", "pwd; cat f.txt; echo; cat /work/link; echo; exit 7")
 	s.Workdir = "pkg/x"
 	out := run(t, rt, s)
 	if got, want := string(out.Stdout), "/work/pkg/x\nhello\ntop\n"; got != want {
@@ -126,7 +129,7 @@ func TestTheStdinTarIsExtractedUnderWorkAndTheExitStatusIsThatOfArgv(t *testing.
 func TestOnlyTheGivenEnvironmentReachesTheContainer(t *testing.T) {
 	rt := docker(t)
 	t.Setenv("SUITEWARD_SANDBOX_LEAK", "leaked")
-	s := spec(tarOf(t, nil), "env")
+	s := spec(t, tarOf(t, nil), "env")
 	s.Env = append(s.Env, "ONLY=this")
 	out := run(t, rt, s)
 	lines := strings.Split(string(out.Stdout), "\n")
@@ -146,7 +149,7 @@ func contains(lines []string, want string) bool {
 
 func TestAMemoryHogIsSeenAsOOMKilled(t *testing.T) {
 	rt := docker(t)
-	s := spec(tarOf(t, nil), "tail", "/dev/zero")
+	s := spec(t, tarOf(t, nil), "tail", "/dev/zero")
 	s.Limits.MemoryMiB = 64
 	s.Limits.TmpfsMiB = 16
 	out := run(t, rt, s)
@@ -157,7 +160,7 @@ func TestAMemoryHogIsSeenAsOOMKilled(t *testing.T) {
 
 func TestKillAfterKillsARunawayContainer(t *testing.T) {
 	rt := docker(t)
-	s := spec(tarOf(t, nil), "sleep", "300")
+	s := spec(t, tarOf(t, nil), "sleep", "300")
 	s.Limits.KillAfter = 2 * time.Second
 	start := time.Now()
 	out := run(t, rt, s)
@@ -171,7 +174,7 @@ func TestKillAfterKillsARunawayContainer(t *testing.T) {
 
 func TestTheStdoutIsCapped(t *testing.T) {
 	rt := docker(t)
-	s := spec(tarOf(t, nil), "sh", "-c", "yes | head -c 100000")
+	s := spec(t, tarOf(t, nil), "sh", "-c", "yes | head -c 100000")
 	s.StdoutLimit = 1000
 	out := run(t, rt, s)
 	if len(out.Stdout) != 1000 || !out.Truncated || out.ExitCode != 0 {
@@ -181,7 +184,7 @@ func TestTheStdoutIsCapped(t *testing.T) {
 
 func TestAnImageTheRuntimeLacksIsUnavailableAndNothingIsPulled(t *testing.T) {
 	rt := docker(t)
-	s := spec(tarOf(t, nil), "true")
+	s := spec(t, tarOf(t, nil), "true")
 	s.Image = "docker.io/library/suiteward-no-such-image@sha256:" + strings.Repeat("0", 64)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -204,7 +207,7 @@ func TestABrokenStdinStopsTheContainerBeforeArgvStarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	boom := errors.New("the archive stream broke")
-	s := spec(nil, "sleep", "300")
+	s := spec(t, nil, "sleep", "300")
 	s.Stdin = io.MultiReader(&buf, iotest.ErrReader(boom))
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -216,4 +219,24 @@ func TestABrokenStdinStopsTheContainerBeforeArgvStarts(t *testing.T) {
 	if took := time.Since(start); took > 30*time.Second {
 		t.Errorf("Argv ran on a part of the tree: the run took %s", took)
 	}
+}
+
+// pinnedImage is the Go builder image of deploy/Containerfile, so that the one pin of the repository is the only copy of it: the
+// Containerfile spells the tag with ${GO_VERSION}, which .go-version fills in.
+func pinnedImage(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join("..", "..", "..")
+	containerfile, err := os.ReadFile(filepath.Join(root, "deploy", "Containerfile"))
+	if err != nil {
+		t.Fatalf("read the Containerfile: %v", err)
+	}
+	version, err := os.ReadFile(filepath.Join(root, ".go-version"))
+	if err != nil {
+		t.Fatalf("read .go-version: %v", err)
+	}
+	pin := regexp.MustCompile(`docker\.io/library/golang:\$\{GO_VERSION\}-alpine@sha256:[0-9a-f]{64}`).Find(containerfile)
+	if pin == nil {
+		t.Fatal("the Containerfile no longer pins the golang builder image by digest")
+	}
+	return strings.ReplaceAll(string(pin), "${GO_VERSION}", strings.TrimSpace(string(version)))
 }

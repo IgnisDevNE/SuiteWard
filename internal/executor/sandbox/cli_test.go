@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const pinned = "docker.io/library/golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd"
+const pinned = "registry.example/sandbox/runtime:1@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 const (
 	exitedState = `{"Status":"exited","Running":false,"OOMKilled":false,"ExitCode":0,"Error":"","StartedAt":"2026-10-26T21:58:19.830463123Z"}`

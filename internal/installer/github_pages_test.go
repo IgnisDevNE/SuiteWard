@@ -392,7 +392,7 @@ func TestTheRulesetStepIsAPageAndAPause(t *testing.T) {
 	run := startRulesetRun(t, g)
 	waitForText(t, run.out, "I imported it, check now")
 	text := run.out.String()
-	for _, want := range []string{"Import the rulesets", "suiteward-ruleset-acme-app.json", "https://github.example/acme/<name>/settings/rules", "Skip, import later", "older SuiteWard ruleset"} {
+	for _, want := range []string{"Import the rulesets", "suiteward-ruleset-acme-app.json", "https://github.example/acme/app/settings/rules", "Skip, import later", "older SuiteWard ruleset"} {
 		if !shows(text, want) {
 			t.Errorf("the screen lacks %q:\n%s", want, text)
 		}

@@ -262,7 +262,8 @@ func commandAck(a Ack) string {
 			"Wait for SuiteWard to finish setting up this repository, then comment `/suiteward propose` on the pull request that should carry the first contract.")
 	case MalformedCommand:
 		return paragraphs("Your `/suiteward` command was not understood: " + malformedText(a.Malformed) + ". Nothing changed.\n" +
-			"Comment again in the form `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>` or `/suiteward suggest`, " +
+			"Comment again in the form `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>`, `/suiteward suggest`, " +
+			"`/suiteward mode <fix|feature|refactor>` or `/suiteward unblock <code>`, " +
 			"with a current code from your authenticator app where the command takes one.")
 	case OtherPullRequest:
 		return paragraphs(ref + " belongs to another pull request; comment the command on that pull request. Nothing changed.")
@@ -331,7 +332,7 @@ func rejectionText(r Rejection, ref, who string) (reason, next string) {
 func malformedText(r Reason) string {
 	switch r {
 	case UnknownVerb:
-		return "the action must be `approve`, `revoke`, `propose`, `skip` or `suggest`"
+		return "the action must be `approve`, `revoke`, `propose`, `skip`, `suggest`, `mode` or `unblock`"
 	case MissingReference:
 		return "the proposal reference is missing"
 	case BadReference:
@@ -342,6 +343,10 @@ func malformedText(r Reason) string {
 		return "the confirmation code must be exactly 6 digits"
 	case ExtraText:
 		return "nothing may follow the end of the command"
+	case MissingMode:
+		return "the mode is missing, it must be `fix`, `feature` or `refactor`"
+	case BadMode:
+		return "the mode must be `fix`, `feature` or `refactor`"
 	}
 	panic(fmt.Sprintf("commandtext: unknown malformed reason %d", r))
 }

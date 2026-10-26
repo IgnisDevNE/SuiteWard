@@ -74,33 +74,80 @@ func sortTree(tree []TreeFile) {
 	slices.SortFunc(tree, func(a, b TreeFile) int { return strings.Compare(a.Path, b.Path) })
 }
 
-// EvaluatedFiles lists the head files the receipt evaluates: those matched by the canonical selection whose bytes differ
-// from the governing manifest, or that the manifest lacks. They are added or changed relative to the canonical, not to the
-// merge base. The Go profile picks the tests within them. The paths are in path order.
-func EvaluatedFiles(head, governing artifact.Manifest, sel Selection) ([]string, error) {
+// CanonicalTree is the tree of the canonical plan: the head with the whole governing manifest overlaid. Every manifest file
+// is in the tree with the manifest's bytes, whether it is a test, a runner file, the declaration or a workflow. A head file
+// that the manifest lacks is removed when the governing scope covers it, and kept otherwise, so the head loses no file
+// outside the scope. The files are in path order.
+func CanonicalTree(head, governing artifact.Manifest, governingScope scope.Scope) ([]TreeFile, error) {
 	if err := refuseAbsent(head, governing); err != nil {
 		return nil, err
 	}
 	manifest := digestsOf(governing)
+	var tree []TreeFile
+	for _, entry := range governing.Entries() {
+		tree = append(tree, TreeFile{Path: entry.Path, Content: entry.Content, Source: FromManifest})
+	}
+	for _, entry := range head.Entries() {
+		if _, inManifest := manifest[entry.Path]; inManifest {
+			continue
+		}
+		covered, err := governingScope.Covers(entry.Path)
+		if err != nil {
+			return nil, err
+		}
+		if !covered {
+			tree = append(tree, TreeFile{Path: entry.Path, Content: entry.Content, Source: FromHead})
+		}
+	}
+	sortTree(tree)
+	return tree, nil
+}
+
+// EvaluatedFiles lists the head files the receipt evaluates: those matched by the canonical selection whose bytes differ
+// from expected, the canonical version the revision expects, or that expected lacks. They are added or changed relative to
+// that canonical, not to the merge base. The Go profile picks the tests within them. The paths are in path order.
+func EvaluatedFiles(head, expected artifact.Manifest, sel Selection) ([]string, error) {
+	if err := refuseAbsent(head, expected); err != nil {
+		return nil, err
+	}
+	canonical := digestsOf(expected)
 	var files []string
 	for _, entry := range head.Entries() {
 		matched, err := sel.Matches(entry.Path)
 		if err != nil {
 			return nil, err
 		}
-		if digest, ok := manifest[entry.Path]; matched && (!ok || digest != entry.Content) {
+		if digest, ok := canonical[entry.Path]; matched && (!ok || digest != entry.Content) {
 			files = append(files, entry.Path)
 		}
 	}
 	return files, nil
 }
 
-// CanonicalTree is the tree of the canonical plan.
-func CanonicalTree(head, governing artifact.Manifest, governingScope scope.Scope) ([]TreeFile, error) {
-	return nil, errNotImplemented
-}
-
-// BaseSideTree is the tree of the receipt's base side.
+// BaseSideTree is the tree of the receipt's base side: the base commit, with the head version of every file that
+// EvaluatedFiles lists (test files, testdata and helpers alike) and nothing else from the head, so source, go.mod, go.sum,
+// runner files and .suiteward.yml stay the base's. Only the canonical selection decides what crosses, so a pattern that only
+// the head declares moves no code. The files are in path order.
 func BaseSideTree(base, head, expected artifact.Manifest, sel Selection) ([]TreeFile, error) {
-	return nil, errNotImplemented
+	if err := refuseAbsent(base, head, expected); err != nil {
+		return nil, err
+	}
+	carried, err := EvaluatedFiles(head, expected, sel)
+	if err != nil {
+		return nil, err
+	}
+	headDigests := digestsOf(head)
+	fromHead := map[string]bool{}
+	var tree []TreeFile
+	for _, path := range carried {
+		fromHead[path] = true
+		tree = append(tree, TreeFile{Path: path, Content: headDigests[path], Source: FromHead})
+	}
+	for _, entry := range base.Entries() {
+		if !fromHead[entry.Path] {
+			tree = append(tree, TreeFile{Path: entry.Path, Content: entry.Content, Source: FromBase})
+		}
+	}
+	sortTree(tree)
+	return tree, nil
 }

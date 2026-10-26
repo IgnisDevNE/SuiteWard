@@ -85,10 +85,16 @@ func arrow(final byte) key {
 // readHiddenLine reads the text of a line from r in key mode, where the terminal does no line editing: characters are taken as they
 // come, backspace (DEL or BS) drops the last character, Ctrl-U the whole line, an escape sequence (an arrow, Delete) and the other
 // control characters are not text, and CR, LF or CR LF ends the line. The last line may lack its newline; the end of the input before
-// any character is io.EOF. A Ctrl-C that arrives as a character is errCtrlC.
-func readHiddenLine(r *bufio.Reader) ([]byte, error) {
+// any character is io.EOF. A Ctrl-C that arrives as a character is errCtrlC. wait, when it is not nil, is called before each read that could
+// block on the terminal (the reader holds nothing) and ends the read with its error: the read is never started, so none is left pending.
+func readHiddenLine(r *bufio.Reader, wait func() error) ([]byte, error) {
 	var line []byte
 	for {
+		if wait != nil && r.Buffered() == 0 {
+			if err := wait(); err != nil {
+				return nil, err
+			}
+		}
 		b, err := r.ReadByte()
 		switch {
 		case errors.Is(err, io.EOF) && len(line) > 0:

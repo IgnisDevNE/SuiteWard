@@ -183,8 +183,9 @@ var errNoMoreInput = errors.New("no more input")
 // waitForCode waits for the code of GitHub's callback. It reads nothing from the terminal while it waits: a read that was still pending
 // when the callback came would take the answer to the next question (the Resolver's reader is shared, and a read cannot be given up),
 // or need an Enter to end it. After PasteAfter without an answer, a terminal is offered the paste of the code, or of the address the
-// browser ended on (askPaste); the offer comes again after each Enter that keeps waiting. A callback that comes while it is open is
-// taken when it ends. redraw draws the page again, so that the questions do not pile up on it.
+// browser ended on (askPaste); the offer comes again after each Enter that keeps waiting. A callback that comes while it is open ends it
+// (where the screen can end it without a read left on the input), or is taken when it ends. redraw draws the page again, so that the
+// questions do not pile up on it.
 func waitForCode(ctx context.Context, env githubEnv, codes <-chan string, state string, redraw func()) (string, error) {
 	canPaste := env.R.term.IsTerminal
 	for {
@@ -223,14 +224,36 @@ func waitForCode(ctx context.Context, env githubEnv, codes <-chan string, state 
 // The code is a credential until it is converted: it is read with no echo, and neither the terminal nor the frame shows it. The read is
 // the screen's HiddenLine, which Ctrl-C and the end of the wait (ctx) stop; the question is short, because the page it is under must
 // keep the address and the command in sight on a small screen.
+// GitHub's answer ends the question where the screen can end a read without leaving one on the input (HiddenLineStopsCleanly): the installer
+// continues by itself, as its page says, with the code of the callback and nothing drawn from the paste. Elsewhere the read ends with an
+// Enter, and the question says so.
 func askPaste(ctx context.Context, env githubEnv, codes <-chan string, state string, redraw func()) (string, error) {
+	scr := env.R.screen
+	endsOnCallback := scr.HiddenLineStopsCleanly()
 	label := "No answer from GitHub yet. Paste the address, or press Enter if the browser says SuiteWard received the answer"
+	if endsOnCallback {
+		label = "No answer from GitHub yet. If the browser shows an error, paste its address, or press Enter to keep waiting"
+	}
 	for {
 		redraw()
-		secret, err := env.R.screen.HiddenLine(ctx, label, env.R.term.ReadPassword)
+		read, called, stop := ctx, (<-chan string)(nil), func() {}
+		if endsOnCallback {
+			read, called, stop = untilCallback(ctx, codes)
+		}
+		secret, err := scr.HiddenLine(read, label, env.R.term.ReadPassword)
+		stop()
+		callback, answered := "", false
+		if called != nil {
+			select {
+			case callback, answered = <-called:
+			default:
+			}
+		}
 		switch {
 		case ctx.Err() != nil: // Ctrl-C, or the time is over, as the read saw it or after it
 			return "", waitError(ctx, env.ManifestWait)
+		case answered:
+			return callback, nil
 		case errors.Is(err, io.EOF):
 			ghSay(env.Out, "No more input: waiting for GitHub's callback only.\n")
 			return "", errNoMoreInput
@@ -253,6 +276,24 @@ func askPaste(ctx context.Context, env githubEnv, codes <-chan string, state str
 		}
 		label = fmt.Sprintf("That was refused: %v. Paste the address again, or press Enter", perr)
 	}
+}
+
+// untilCallback is ctx that also ends when the callback brings its code, and the channel that holds that code. stop ends the watch, and
+// must be called when the question is over: a code that came before it is in the channel, and one that came after is left in codes.
+func untilCallback(ctx context.Context, codes <-chan string) (context.Context, <-chan string, func()) {
+	paste, cancel := context.WithCancel(ctx)
+	called := make(chan string, 1)
+	watching := make(chan struct{})
+	go func() {
+		defer close(watching)
+		select {
+		case code := <-codes:
+			called <- code
+			cancel()
+		case <-paste.Done():
+		}
+	}()
+	return paste, called, func() { cancel(); <-watching }
 }
 
 // spoken is a duration as the pages say it: whole minutes in words, anything else as Go writes it.

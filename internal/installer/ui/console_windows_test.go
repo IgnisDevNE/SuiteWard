@@ -116,7 +116,8 @@ func TestEnableKeysDropsWhatWasTypedBeforeKeyMode(t *testing.T) {
 }
 
 // The wait for a key sees a key that makes a character, and nothing else: a key let go, a modifier or a window event that the console queues
-// would only end it for a read that then waits for the key. It takes nothing a read needs, and it ends with its context.
+// would only end it for a read that then waits for a key. It takes nothing a read needs, and it ends with its context. (An arrow is a
+// character here: a console in virtual-terminal input mode queues it as the characters of its escape sequence.)
 func TestInputReadinessWaitsForACharacterWithoutReadingItAndEndsWithItsContext(t *testing.T) {
 	conin := openConsoleInput(t)
 	restore, err := enableKeys(conin)
@@ -131,8 +132,9 @@ func TestInputReadinessWaitsForACharacterWithoutReadingItAndEndsWithItsContext(t
 	ctx, cancel := context.WithCancel(context.Background())
 	waited := make(chan error, 1)
 	go func() { waited <- ready(ctx) }()
-	typeIntoConsole(t, conin, inputRecord{eventType: 0x10}, inputRecord{eventType: 1, keyDown: 1, repeat: 1, virtual: 0x10, scan: 0x2a}) // a focus event, and Shift
-	typeIntoConsole(t, conin, keyEvents(0, 0x26, 0x48)...)                                                                               // an arrow
+	// A focus event, Shift pressed and let go, and the key up of a letter: none of them is a character.
+	typeIntoConsole(t, conin, inputRecord{eventType: 0x10}, inputRecord{eventType: keyEvent, keyDown: 1, repeat: 1, virtual: 0x10, scan: 0x2a},
+		inputRecord{eventType: keyEvent, repeat: 1, virtual: 0x10, scan: 0x2a}, inputRecord{eventType: keyEvent, repeat: 1, virtual: 0x41, scan: 0x1e, char: 'x'})
 	select {
 	case err := <-waited:
 		t.Fatalf("the wait ended with no character typed: %v", err)

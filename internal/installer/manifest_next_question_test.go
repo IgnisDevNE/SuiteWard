@@ -11,10 +11,11 @@ import (
 
 // WIN-7: the run of the live test on Windows went from the wait for the installation straight to the owner page, as if the multiple choice of
 // the repositories had been answered with an Enter that nobody pressed. The hidden paste of the manifest code, which was open when the App
-// callback came, was suspected of leaving a read or a key behind for the next question. It does not: an Enter ends the paste (a callback does
-// not end it, which the question says: "or press Enter if the browser says SuiteWard received the answer"), and the question that follows
-// waits for a key of its own. What can answer it with no key at the time is an Enter that is already queued: a line feed that follows the
-// carriage return of the paste in a read of its own, or a key pressed while no question was reading (the wait for the installation).
+// callback came, was suspected of leaving a read or a key behind for the next question. It does not: on a terminal that cannot be waited on
+// for a key (this test: a pipe) an Enter ends the paste, a callback does not, and the question that follows waits for a key of its own.
+// What could answer it with no key at the time was an Enter that was already queued: a line feed that follows the carriage return of the
+// paste in a read of its own, or a key pressed while no question was reading (the wait for the installation). Key mode now drops what was
+// typed before it started (typeahead_test.go), and where the terminal can be waited on the callback ends the paste (manifest_callback_test.go).
 
 func TestTheQuestionAfterTheManifestPasteWaitsForAKeyOfItsOwn(t *testing.T) {
 	for name, enter := range map[string]string{"a carriage return": "\r", "a carriage return and a line feed together": "\r\n"} {

@@ -66,6 +66,7 @@ package ui
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -134,6 +135,7 @@ type Screen struct {
 	w, h    int
 	restore func() error
 	keys    func() (func() error, error) // Options.KeyInput
+	ready   func(context.Context) error  // Options.InputReady
 	err     error                        // the first write or restore failure
 
 	full, suspended, closed bool
@@ -185,7 +187,7 @@ func Open(o Options) (*Screen, error) {
 	}
 	s := &Screen{
 		out: o.Out, in: bufio.NewReader(o.In), ctx: ctx, version: oneLine(o.Version), color: o.Color, w: o.Width, h: o.Height,
-		restore: o.RestoreConsole, keys: o.KeyInput, full: o.Mode == ModeFull, terminal: o.InputIsTerminal, plainBars: map[string]string{},
+		restore: o.RestoreConsole, keys: o.KeyInput, ready: o.InputReady, full: o.Mode == ModeFull, terminal: o.InputIsTerminal, plainBars: map[string]string{},
 	}
 	if s.full {
 		s.write(enterAltScreen)
@@ -836,7 +838,9 @@ func (s *Screen) Secret(label string, read func() ([]byte, error)) ([]byte, erro
 // signals kept, so that Ctrl-C cancels the screen's context. The read ends with that context and with ctx, the context of the call (a
 // deadline), as a Select does, and the typed text is dropped: the read that was pending is abandoned in its goroutine (see
 // Options.Context). One that ends for ctx stays on the input until the user presses Enter, so the next question waits for it to end and
-// a wait for Enter takes that Enter as its own: no two reads share the input, and what the read took is never drawn. Backspace deletes a
+// a wait for Enter takes that Enter as its own: no two reads share the input, and what the read took is never drawn. With Options.InputReady
+// there is no such read: the call waits for a key before each read that could block, so the end of ctx or of the screen's context ends it
+// with nothing left on the input (HiddenLineStopsCleanly). Backspace deletes a
 // character, Ctrl-U the line, and an arrow or another escape sequence is not text. The returned
 // bytes are the line as typed, without its newline; the end of the input before any character is an error that wraps io.EOF. A terminal
 // that cannot be put in key mode, and a screen that was opened without a way to, read through fallback, the caller's own no-echo reader
@@ -861,7 +865,11 @@ func (s *Screen) HiddenLine(ctx context.Context, label string, fallback func() (
 	s.setApart()
 	s.emit(label + " (input is hidden): ")
 	s.mu.Unlock()
-	line, err = awaitingUntil(s, ctx, func() ([]byte, error) { return readHiddenLine(s.in) })
+	if s.ready != nil && s.pendingGivenUp() == nil {
+		line, err = s.readHiddenWaiting(ctx)
+	} else {
+		line, err = awaitingUntil(s, ctx, func() ([]byte, error) { return readHiddenLine(s.in, nil) })
+	}
 	if errors.Is(err, errCtrlC) {
 		err = s.afterTerminalError(errCtrlC)
 	}
@@ -873,6 +881,29 @@ func (s *Screen) HiddenLine(ctx context.Context, label string, fallback func() (
 	}
 	return line, nil
 }
+
+// readHiddenWaiting reads the hidden line in the goroutine of the call, waiting for a key (Options.InputReady) before each read that could
+// block. The end of ctx or of the screen's context ends the wait, and with it the question: no read was started, so none stays on the input
+// and the next question has it to itself. The error is the one of the context that ended it.
+func (s *Screen) readHiddenWaiting(ctx context.Context) ([]byte, error) {
+	both, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(s.ctx, cancel)()
+	line, err := readHiddenLine(s.in, func() error {
+		if err := s.ready(both); err != nil {
+			return cmp.Or(ctx.Err(), s.ctx.Err(), err)
+		}
+		return nil
+	})
+	if err != nil && ctx.Err() == nil && s.ctx.Err() == nil && s.terminal {
+		err = s.afterTerminalError(err) // a console that ends a read with the end of the input before the signal that cancels the context
+	}
+	return line, err
+}
+
+// HiddenLineStopsCleanly says that the context of a HiddenLine ends its read with nothing left pending on the input: the screen can wait for a
+// key (Options.InputReady). Without it a read that its context ended stays on the input until the user presses Enter.
+func (s *Screen) HiddenLineStopsCleanly() bool { return s.keys != nil && s.ready != nil }
 
 // Summary shows key/value rows and warnings on a screen with no step column. Full screen waits for Enter, so the screen can be read
 // before Close leaves it, and keeps the rows and warnings for Close to print on the normal screen (a second Summary replaces them):
@@ -1118,7 +1149,3 @@ func answered(label, answer string) string {
 	}
 	return label + ": " + answer
 }
-
-// HiddenLineStopsCleanly says that the context of a HiddenLine ends its read with nothing left pending on the input: the screen can wait for a
-// key (Options.InputReady). Without it a read that its context ended stays on the input until the user presses Enter.
-func (s *Screen) HiddenLineStopsCleanly() bool { return false }

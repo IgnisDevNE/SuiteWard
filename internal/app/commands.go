@@ -216,6 +216,10 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 		return j.propose(ctx, enrollment, c)
 	case commandtext.Suggest: // no code, no reference: it reads no step and grants nothing
 		return j.suggest(ctx, enrollment, c)
+	case commandtext.SetMode, commandtext.Unblock:
+		// shortcut: the parser reads these verbs before the commands job runs them, so they are acknowledged as an unknown verb, as before the parser knew them, and
+		// never reach consent, which would ask for a reference they do not carry; M2.1-T8 replaces this with the mode and unblock flows.
+		return reject(commands.Malformed, commandtext.UnknownVerb, "")
 	default:
 		return j.consent(ctx, enrollment, c, command, reject)
 	}

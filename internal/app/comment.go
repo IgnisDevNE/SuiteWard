@@ -90,6 +90,7 @@ var malformedCodes = []struct {
 }{
 	{commandtext.UnknownVerb, "unknown-verb"}, {commandtext.MissingReference, "missing-reference"}, {commandtext.BadReference, "bad-reference"},
 	{commandtext.MissingCode, "missing-code"}, {commandtext.BadCode, "bad-code"}, {commandtext.ExtraText, "extra-text"},
+	{commandtext.MissingMode, "missing-mode"}, {commandtext.BadMode, "bad-mode"},
 }
 
 func reasonCode(r commandtext.Reason) string {

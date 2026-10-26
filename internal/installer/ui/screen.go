@@ -543,7 +543,7 @@ func (s *Screen) prompt(text string, hasDef bool) (string, error) {
 
 // Ask prints "label [def]: " ("label: " without a default) and returns the trimmed answer, def when it is empty.
 func (s *Screen) Ask(label, def string) (string, error) {
-	prompt := label + ": "
+	prompt := answered(label, "")
 	if def != "" {
 		prompt = fmt.Sprintf("%s [%s]: ", label, def)
 	}
@@ -553,7 +553,7 @@ func (s *Screen) Ask(label, def string) (string, error) {
 // AskDefault is Ask for a default that the page above the question already shows, as a long reference does: the question is "label: ",
 // and an empty answer is def all the same, which the hint line of the frame says. The caller draws the default, so it is for a full screen.
 func (s *Screen) AskDefault(label, def string) (string, error) {
-	return s.answer(label+": ", label, def)
+	return s.answer(answered(label, ""), label, def)
 }
 
 // answer asks prompt, and returns the trimmed answer, def when it is empty.
@@ -651,7 +651,7 @@ func (s *Screen) Select(label string, choices []Choice, def int) (idx int, err e
 		s.closeSelect(0, "")
 		return 0, err
 	}
-	s.closeSelect(n, oneLine(label)+": "+oneLine(choices[cur].Name))
+	s.closeSelect(n, answered(oneLine(label), oneLine(choices[cur].Name)))
 	return cur, nil
 }
 
@@ -1100,3 +1100,12 @@ func clean(text string) string {
 
 // oneLine is clean for a text that must stay on one row: a newline becomes a space.
 func oneLine(text string) string { return strings.ReplaceAll(clean(text), "\n", " ") }
+
+// answered is the line of a label and its answer, "label: answer". A label that is a question carries its own punctuation, so no colon
+// follows it: "label? answer".
+func answered(label, answer string) string {
+	if strings.HasSuffix(label, "?") {
+		return label + " " + answer
+	}
+	return label + ": " + answer
+}

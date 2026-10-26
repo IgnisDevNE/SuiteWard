@@ -143,6 +143,11 @@ func checkPath(p string, seen map[string]bool) error {
 // spellings of one name, or a path below a file. paths holds every path, directories included; files holds the paths that
 // are not directories, with a true value.
 func refuseNameConflicts(paths, files map[string]bool, invalid error) error {
+	for p := range paths {
+		if shortNameAlias(p) {
+			return fmt.Errorf("%w: %q has a name spelled like an 8.3 short name, which NTFS may resolve to another name", invalid, p)
+		}
+	}
 	if err := refuseFoldedTwins(paths, invalid); err != nil {
 		return err
 	}
@@ -255,12 +260,25 @@ func indexExtraction(files []ExtractedFile) (map[string]blob, map[string]string,
 // never has. A backslash or a colon (a drive letter, a stream name) steps out of the tree on Windows, where the executor can
 // run, and NUL ends a path in C.
 func unsafeTarget(target string) bool {
-	return target == "" || strings.HasPrefix(target, "/") || strings.ContainsAny(target, "\\:\x00")
+	return target == "" || strings.HasPrefix(target, "/") || strings.ContainsAny(target, "\\:\x00") || shortNameAlias(target)
 }
 
-// foldRune maps a rune to the smallest of its simple-folding orbit, so two runes have one image exactly when they are equal
-// but for case.
+// shortNameAlias reports a path with a name that holds a tilde followed by a digit, the shape of an NTFS 8.3 short name
+// (INTEGR~1 for integration). No lexical rule can tell which long name it stands for, so such a name is refused outright.
+func shortNameAlias(p string) bool {
+	for i := 0; i+1 < len(p); i++ {
+		if p[i] == '~' && p[i+1] >= '0' && p[i+1] <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+// foldRune maps a rune to the smallest of the simple-folding orbit of its upper case, so two runes have one image when they
+// are equal but for case; the upper case first also joins runes such as the dotless i, which upper-cases to I but folds to
+// nothing, as an upper-casing filesystem table would.
 func foldRune(r rune) rune {
+	r = unicode.ToUpper(r)
 	smallest := r
 	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
 		smallest = min(smallest, f)

@@ -296,7 +296,7 @@ func FuzzRenderers(f *testing.F) {
 	f.Add(uint8(1), "required -> advisory", uint8(2), uint8(4), "")
 	f.Add(uint8(1), "a`b```\n/suiteward propose", uint8(2), uint8(12), "")
 	// Text that holds an HTML comment opener or the end of one reaches every renderer: Parse hides what lies between them, so no body may hold an opener outside a fence.
-	for sel := range uint8(len(renderers)) {
+	for _, sel := range []uint8{0, 1, 2, 3, 4, 5, 6, 7} { // one for each renderer
 		for _, item := range []string{">0<!----", "<!--", "-->", "a<!--b-->c"} {
 			f.Add(sel, item, uint8(0x68), uint8('L'), "0")
 			f.Add(sel, item, uint8(6), uint8(3), "version: 1\n# "+item+"\n")

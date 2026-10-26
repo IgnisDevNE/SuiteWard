@@ -135,11 +135,24 @@ func checkPath(p string, seen map[string]bool) error {
 	return nil
 }
 
+// refuseBelowFile fails when a path of paths sits below another path that is in files. A tree holds no such path, and an
+// extraction that does would write below a link or through a file.
+func refuseBelowFile(paths, files map[string]bool) error {
+	for _, p := range slices.Sorted(maps.Keys(paths)) {
+		for dir := path.Dir(p); dir != "."; dir = path.Dir(dir) {
+			if files[dir] {
+				return fmt.Errorf("%w: %q is below the file %q", ErrInvalidSource, p, dir)
+			}
+		}
+	}
+	return nil
+}
+
 // indexTree validates the entries of a commit's tree. It returns its files by path, and the sorted paths of its submodules.
 func indexTree(entries []TreeEntry) (map[string]blob, []string, error) {
 	files := map[string]blob{}
 	var submodules []string
-	seen := map[string]bool{}
+	seen, notDirs := map[string]bool{}, map[string]bool{}
 	for _, e := range entries {
 		if err := checkPath(e.Path, seen); err != nil {
 			return nil, nil, err
@@ -147,6 +160,7 @@ func indexTree(entries []TreeEntry) (map[string]blob, []string, error) {
 		if !validSHA1(e.BlobSHA1) {
 			return nil, nil, fmt.Errorf("%w: %q has no valid SHA-1", ErrInvalidSource, e.Path)
 		}
+		notDirs[e.Path] = e.Mode != GitTree
 		switch e.Mode {
 		case GitTree:
 			// A directory names no file.
@@ -159,6 +173,9 @@ func indexTree(entries []TreeEntry) (map[string]blob, []string, error) {
 		default:
 			return nil, nil, fmt.Errorf("%w: %q has the unknown mode %q", ErrInvalidSource, e.Path, e.Mode)
 		}
+	}
+	if err := refuseBelowFile(seen, notDirs); err != nil {
+		return nil, nil, err
 	}
 	slices.Sort(submodules)
 	return files, submodules, nil
@@ -188,6 +205,9 @@ func indexExtraction(files []ExtractedFile) (map[string]blob, map[string]string,
 		default:
 			return nil, nil, fmt.Errorf("%w: %q has the mode %q, which no extracted file has", ErrInvalidSource, f.Path, f.Mode)
 		}
+	}
+	if err := refuseBelowFile(seen, seen); err != nil {
+		return nil, nil, err
 	}
 	return extracted, links, nil
 }

@@ -109,6 +109,7 @@ func jbEnqueue(e *env) {
 	e.requireJob(execution.Job{Spec: canonical, ID: precise.ID, Key: keyOf(canonical), State: execution.StatePending, NotBefore: at(5 * time.Minute), CreatedAt: at(5 * time.Minute)})
 	// The longest lists are kept.
 	long := receiptSpec(3)
+	long.UnapprovedPaths, long.ChangedPaths = nil, nil
 	for range 100 {
 		long.UnapprovedPaths = append(long.UnapprovedPaths, strings.Repeat("u", 1024))
 		long.ChangedPaths = append(long.ChangedPaths, strings.Repeat("c", 1024))
@@ -186,7 +187,7 @@ func jbKeyFreedBy(e *env) {
 	for i, reason := range []execution.Reason{execution.ReasonNoMergeBase, execution.ReasonGitHubUnavailable} {
 		s := withBase(receiptSpec(10+i), "")
 		job := e.enqueueFinal(s, reason, 0)
-		same, created, err := e.s.Enqueue(e.ctx, execution.NewJob{Spec: s, At: at(time.Minute)})
+		same, created, err := e.s.Enqueue(e.ctx, execution.NewJob{Spec: s, Unavailable: reason, At: at(time.Minute)})
 		e.must(err)
 		if created || same.ID != job.ID {
 			e.t.Fatalf("Enqueue over a job unavailable for %s = job %d, created %v; want job %d", reason, same.ID, created, job.ID)

@@ -126,9 +126,9 @@ func rsComplete(e *env) {
 	el := e.mustLease(empty.ID, 4*time.Minute)
 	none := completeCanonical(el.LeaseID, "empty")
 	none.Tests = nil
-	_, err = e.s.Complete(e.ctx, empty.ID, none, at(5*time.Minute), githubWait)
+	_, err = e.s.Complete(e.ctx, empty.ID, none, at(4*time.Minute+30*time.Second), githubWait)
 	e.must(err)
-	e.requireResult(empty.ID, execution.OriginExecutor, 5*time.Minute, none.Report)
+	e.requireResult(empty.ID, execution.OriginExecutor, 4*time.Minute+30*time.Second, none.Report)
 	e.requireTests(empty.ID, nil)
 }
 
@@ -247,7 +247,7 @@ func rsPlanRules(e *env) {
 		"a receipt row with four base runs":         func(r *execution.Result) { r.Tests[0].BaseRuns = []string{"pass", "pass", "pass", "pass"} },
 		"a receipt row with an empty base run list": func(r *execution.Result) { r.Tests[0].BaseRuns = []string{} },
 	}, func(r execution.Result) error {
-		_, err := e.s.Complete(e.ctx, receipt.ID, r, at(2*time.Minute), githubWait)
+		_, err := e.s.Complete(e.ctx, receipt.ID, r, at(time.Minute+30*time.Second), githubWait)
 		return err
 	})
 	e.requireUntouched(rl)

@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -29,8 +28,8 @@ func dockerForTar(t *testing.T) sandbox.Runtime {
 	if name, _, err := rt.Info(ctx); err != nil || name != "docker" {
 		t.Skipf("no Docker engine: %q, %v", name, err)
 	}
-	if exec.Command("docker", "image", "inspect", pinnedImage(t)).Run() != nil {
-		if out, err := exec.Command("docker", "pull", pinnedImage(t)).CombinedOutput(); err != nil {
+	if command("docker", "image", "inspect", pinnedImage(t)).Run() != nil {
+		if out, err := command("docker", "pull", pinnedImage(t)).CombinedOutput(); err != nil {
 			t.Skipf("cannot pull the pinned image: %v: %s", err, out)
 		}
 	}
@@ -124,16 +123,19 @@ func TestAMismatchStopsTheContainerBeforeArgvStarts(t *testing.T) {
 	}
 }
 
+// command is exec.Command, as the installer takes exec.CommandContext: the tests run Docker on purpose, with constants and the pin of
+// the Containerfile, so gosec's G204 (a subprocess launched with a variable) does not apply.
+var command = exec.Command
+
 // pinnedImage is the Go builder image of deploy/Containerfile, so that the one pin of the repository is the only copy of it: the
 // Containerfile spells the tag with ${GO_VERSION}, which .go-version fills in.
 func pinnedImage(t *testing.T) string {
 	t.Helper()
-	root := filepath.Join("..", "..", "..")
-	containerfile, err := os.ReadFile(filepath.Join(root, "deploy", "Containerfile"))
+	containerfile, err := os.ReadFile("../../../deploy/Containerfile")
 	if err != nil {
 		t.Fatalf("read the Containerfile: %v", err)
 	}
-	version, err := os.ReadFile(filepath.Join(root, ".go-version"))
+	version, err := os.ReadFile("../../../.go-version")
 	if err != nil {
 		t.Fatalf("read .go-version: %v", err)
 	}

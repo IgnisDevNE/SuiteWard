@@ -224,7 +224,7 @@ func waitForCode(ctx context.Context, env githubEnv, codes <-chan string, state 
 // the screen's HiddenLine, which Ctrl-C and the end of the wait (ctx) stop; the question is short, because the page it is under must
 // keep the address and the command in sight on a small screen.
 func askPaste(ctx context.Context, env githubEnv, codes <-chan string, state string, redraw func()) (string, error) {
-	label := "No answer from GitHub yet. Paste the address, or press Enter (also if the browser says SuiteWard received the answer)"
+	label := "No answer from GitHub yet. Paste the address, or press Enter if the browser says SuiteWard received the answer"
 	for {
 		redraw()
 		secret, err := env.R.screen.HiddenLine(ctx, label, env.R.term.ReadPassword)

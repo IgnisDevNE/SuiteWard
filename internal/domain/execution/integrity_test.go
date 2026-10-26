@@ -125,6 +125,21 @@ func TestCheckSourceOfAnEmptyTreeAndExtraction(t *testing.T) {
 	}
 }
 
+// Git's legacy mode 100664 is a regular file with group write, and an archive cannot tell it from 100644.
+func TestCheckSourceReadsTheLegacyRegularModeAsRegular(t *testing.T) {
+	entries := []execution.TreeEntry{entry("a.go", "100664", "a"), entry("run.sh", "100664", "#!/bin/sh\n")}
+	got, err := execution.CheckSource(entries, []execution.ExtractedFile{regular("a.go", "a"), regular("run.sh", "#!/bin/sh\n")})
+	if err != nil || !got.Intact() {
+		t.Errorf("CheckSource = %+v, %v; want intact: 100664 is a regular file", got, err)
+	}
+	// It is not an executable one: an extraction with the executable bit is another mode.
+	exec := execution.ExtractedFile{Path: "run.sh", Mode: execution.GitExecutable, BlobSHA1: gitBlob("#!/bin/sh\n")}
+	got, err = execution.CheckSource(entries, []execution.ExtractedFile{regular("a.go", "a"), exec})
+	if err != nil || !slices.Equal(got.Mismatched, []string{"run.sh"}) {
+		t.Errorf("CheckSource = %+v, %v; want run.sh mismatched", got, err)
+	}
+}
+
 func TestCheckSourceAcceptsSymlinksThatResolveInsideTheTree(t *testing.T) {
 	for name, links := range map[string][]execution.ExtractedFile{
 		"to a sibling":                      {link("a", "b.go")},
@@ -193,7 +208,7 @@ func TestCheckSourceRefusesInputItCannotRead(t *testing.T) {
 		{"an invalid entry path", []execution.TreeEntry{entry("../a.go", execution.GitRegular, "a")}, nil},
 		{"an empty entry path", []execution.TreeEntry{entry("", execution.GitRegular, "a")}, nil},
 		{"an entry path listed twice", []execution.TreeEntry{good, good}, nil},
-		{"an unknown entry mode", []execution.TreeEntry{entry("a.go", "100664", "a")}, nil},
+		{"an unknown entry mode", []execution.TreeEntry{entry("a.go", "100600", "a")}, nil},
 		{"an entry with no blob SHA-1", []execution.TreeEntry{{Path: "a.go", Mode: execution.GitRegular}}, nil},
 		{"an entry with an upper-case SHA-1", []execution.TreeEntry{{Path: "a.go", Mode: execution.GitRegular, BlobSHA1: strings.ToUpper(gitBlob("a"))}}, nil},
 		{"an entry with a short SHA-1", []execution.TreeEntry{{Path: "a.go", Mode: execution.GitRegular, BlobSHA1: gitBlob("a")[:39]}}, nil},

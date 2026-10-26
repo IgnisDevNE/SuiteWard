@@ -508,6 +508,77 @@ func TestDownloadIsNotCutByTheTimeoutOfTheHTTPClient(t *testing.T) {
 	}
 }
 
+// The Timeout of the client still bounds the API's answer: a hung API request would otherwise hold its reservation in the budget until the download's context ends.
+func TestDownloadBoundsTheAPIAnswerByTheTimeoutOfTheHTTPClientAndReleasesItsReservation(t *testing.T) {
+	target, _ := startLogged(t, serveBody(payload(100), true))
+	var mu sync.Mutex
+	hits := 0
+	api, apiLog := startLogged(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits++
+		n := hits
+		mu.Unlock()
+		if n == 2 { // the second request hangs until the client gives up on it
+			select {
+			case <-r.Context().Done():
+			case <-time.After(10 * time.Second):
+			}
+			return
+		}
+		setRateLimit(w, 10, 10-n, t0.Add(time.Hour))
+		w.Header().Set("Location", target.URL+"/a.tar.gz")
+		w.WriteHeader(http.StatusFound)
+	}))
+	// 20% of 10 is two requests. The first answered download makes the window known; the hung one must give its reservation back or the last is refused.
+	client, err := rest.NewClient(newTokens().Token, &http.Client{Timeout: 100 * time.Millisecond}, api.URL, newBudget(t, 0.2, &clock{now: t0}))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := client.Download(t.Context(), archivePath, newRecordingWriter(), 1<<20); err != nil {
+		t.Fatalf("first download: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second) // a guard: the call must end long before it
+	defer cancel()
+	start := time.Now()
+	_, err = client.Download(ctx, archivePath, newRecordingWriter(), 1<<20)
+	if err == nil || time.Since(start) > 1500*time.Millisecond {
+		t.Fatalf("the hung download ended after %v with %v, want an error within the client's Timeout of 100ms", time.Since(start), err)
+	}
+	if _, err := client.Download(t.Context(), archivePath, newRecordingWriter(), 1<<20); err != nil {
+		t.Errorf("download after the hung one: %v", err)
+	}
+	if n := len(apiLog.all()); n != 3 {
+		t.Errorf("the API saw %d requests, want 3", n)
+	}
+}
+
+// countingTransport counts the requests that go through it, to the default transport.
+type countingTransport struct{ requests atomic.Int32 }
+
+func (c *countingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	c.requests.Add(1)
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// The client's transport is the one that carries its TLS settings and its proxy: both requests must go through it.
+func TestDownloadSendsBothRequestsThroughTheTransportOfTheHTTPClient(t *testing.T) {
+	target, _ := startLogged(t, serveBody(payload(100), true))
+	api, _ := startLogged(t, found(target.URL+"/a.tar.gz"))
+	transport := &countingTransport{}
+	client, err := rest.NewClient(newTokens().Token, &http.Client{Transport: transport}, api.URL, newBudget(t, 0.5, &clock{now: t0}))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if _, err := client.Download(t.Context(), archivePath, newRecordingWriter(), 1<<20); err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if n := transport.requests.Load(); n != 2 {
+		t.Errorf("the transport carried %d requests, want 2", n)
+	}
+}
+
 // The bytes are the archive as GitHub sends it: a Content-Encoding on the answer must not make the transport unpack them.
 func TestDownloadCopiesTheBytesOnTheWire(t *testing.T) {
 	var packed bytes.Buffer

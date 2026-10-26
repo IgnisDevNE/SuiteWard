@@ -147,8 +147,9 @@ func (c ReceiptCounts) judgeRefactor() ModeSummary {
 //   - before-approval refuses only while the receipt is pending: an unavailable one does not refuse, whatever the tests say.
 //   - required refuses unless the receipt is complete, the approve carries a mode, and the summary of that mode is met.
 //   - A receipt that is not applicable never refuses, and the approve needs no mode.
-//   - unblocked is the owner's /suiteward unblock for the head. It lifts an unavailable receipt under required, which has
-//     nothing to judge, so only the mode is still required; it never lifts a pending receipt or a summary that is not met.
+//   - unblocked is the owner's /suiteward unblock for the head. It lifts an unavailable receipt under required: there is
+//     nothing to judge, so the approve goes through with or without a mode. It never lifts a pending receipt, or a summary
+//     that is not met.
 //
 // On an error the reason is none, so check the error first.
 func (l ReceiptLevel) ApproveGate(status RunStatus, counts ReceiptCounts, mode Mode, unblocked bool) (Reason, error) {
@@ -183,7 +184,10 @@ func (c ReceiptCounts) approveRequired(status RunStatus, mode Mode, unblocked bo
 		if !unblocked {
 			return ReasonReceiptUnavailable, nil
 		}
-		return modeGiven(mode)
+		if mode == ModeNone {
+			return ReasonNone, nil // there is nothing to judge, so the approve needs no mode
+		}
+		return modeGiven(mode) // a mode that is given must still be one
 	case RunComplete:
 		if reason, err := modeGiven(mode); err != nil || reason != ReasonNone {
 			return reason, err

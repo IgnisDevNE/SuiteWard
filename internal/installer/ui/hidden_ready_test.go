@@ -169,3 +169,31 @@ func TestAScreenSaysWhetherAHiddenLineStopsCleanly(t *testing.T) {
 		t.Error("a screen on a terminal that cannot be waited on says its hidden line stops cleanly")
 	}
 }
+
+// The screen's own context (the one Ctrl-C cancels) ends such a hidden line too, and the console is put back.
+func TestAHiddenLineThatCanWaitEndsWithTheScreensContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	in := newTypedInput(t)
+	keys := &fakeKeys{}
+	o := fullOptions(ColorNone)
+	o.Out, o.In, o.Version, o.Context, o.KeyInput, o.InputReady, o.InputIsTerminal = io.Discard, in, testVersion, ctx, keys.toggle, in.Ready, true
+	s, err := Open(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	hidden := make(chan error, 1)
+	go func() { _, err := s.HiddenLine(context.Background(), hiddenLabel, nil); hidden <- err }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-hidden:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("HiddenLine = %v, want the end of the screen's context", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the context of the screen did not end the question")
+	}
+	keys.balanced(t, 1)
+}

@@ -90,11 +90,17 @@ func (k *typedKeys) Ready(ctx context.Context) error {
 // whose hidden reader of the caller must not be used.
 func readyManifestEnv(t *testing.T) (githubEnv, *syncBuffer, *typedKeys) {
 	t.Helper()
+	return readyManifestEnvWith(t, liveContext(t), 100, 30)
+}
+
+// readyManifestEnvWith is readyManifestEnv on a terminal of width by height, whose screen ends with ctx: the context that Ctrl-C cancels.
+func readyManifestEnvWith(t *testing.T, ctx context.Context, width, height int) (githubEnv, *syncBuffer, *typedKeys) {
+	t.Helper()
 	keys := newTypedKeys(t)
 	out := &syncBuffer{}
 	br := bufio.NewReader(keys)
 	toggle := &keyToggle{}
-	scr, err := ui.Open(ui.Options{Out: out, In: br, Context: liveContext(t), Version: "v0", Mode: ui.ModeFull, Color: ui.ColorNone, Width: 100, Height: 30,
+	scr, err := ui.Open(ui.Options{Out: out, In: br, Context: ctx, Version: "v0", Mode: ui.ModeFull, Color: ui.ColorNone, Width: width, Height: height,
 		KeyInput: toggle.toggle, InputReady: keys.Ready, InputIsTerminal: true})
 	if err != nil {
 		t.Fatal(err)
@@ -187,4 +193,66 @@ func TestTheQuestionOfAPasteThatTheCallbackEndsDoesNotAskForAnEnterToContinue(t 
 		t.Errorf("the question still asks for an Enter when the browser says it received the answer, or has two parentheses in a row:\n%s", frame)
 	}
 	_ = done
+}
+
+// The paste is still a read that the run can end, on a terminal that can be waited on: the wait for GitHub, Ctrl-C and a pasted address
+// end it, and the console is put back each time.
+func TestTheOpenPasteIsAReadThatTheRunCanEndOnATerminalThatCanBeWaitedOn(t *testing.T) {
+	t.Run("a pasted address", func(t *testing.T) {
+		env, out, keys := readyManifestEnv(t)
+		done := startManifestWith(liveContext(t), env, "acme")
+		waitForListener(t, out)
+		waitForText(t, out, "No answer from GitHub yet")
+		keys.Type("pastedcode1\r")
+		if res := awaitFor(t, done, 3*time.Second); res.err != nil || res.code != "pastedcode1" {
+			t.Fatalf("result = %+v\n%s", res, out.String())
+		}
+		if strings.Contains(out.String(), "pastedcode1") {
+			t.Errorf("what was pasted reached the output:\n%s", out.String())
+		}
+	})
+	t.Run("the wait for GitHub is over", func(t *testing.T) {
+		env, out, _ := readyManifestEnv(t)
+		env.ManifestWait = 300 * time.Millisecond
+		res := awaitFor(t, startManifestWith(liveContext(t), env, "acme"), 3*time.Second)
+		if res.err == nil || !strings.Contains(res.err.Error(), "timed out") {
+			t.Fatalf("result = %+v, want the wait to time out although the paste was open\n%s", res, out.String())
+		}
+	})
+	t.Run("Ctrl-C", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		env, out, _ := readyManifestEnvWith(t, ctx, 100, 30)
+		done := startManifestWith(ctx, env, "acme")
+		waitForListener(t, out)
+		waitForText(t, out, "No answer from GitHub yet")
+		time.Sleep(50 * time.Millisecond) // the question is open
+		cancel()
+		if res := awaitFor(t, done, 3*time.Second); !errors.Is(res.err, context.Canceled) {
+			t.Fatalf("result = %+v, want the interrupt", res)
+		}
+	})
+}
+
+// On a small terminal the question does not push the address, the name of the App and the command of the port forward off the screen.
+func TestTheQuestionOfAPasteThatTheCallbackEndsFitsASmallScreen(t *testing.T) {
+	env, out, keys := readyManifestEnvWith(t, liveContext(t), 80, 24)
+	env.Tier = config.TierIsolated
+	done := startManifestWith(liveContext(t), env, "acme")
+	base := waitForListener(t, out)
+	address := strings.TrimSuffix(strings.TrimPrefix(base, "http://"), "/")
+	waitForText(t, out, "No answer from GitHub yet")
+	frame := lastFrame(out.String())
+	for _, want := range []string{address, "AWS-StartPortForwardingSession", "portNumber", "paste its address"} {
+		if !shows(frame, want) {
+			t.Errorf("the screen no longer shows %q:\n%s", want, frame)
+		}
+	}
+	if !appNamePattern.MatchString(frame) {
+		t.Errorf("the screen no longer shows the name of the App:\n%s", frame)
+	}
+	keys.Type("pastedcode\r")
+	if res := awaitFor(t, done, 3*time.Second); res.err != nil || res.code != "pastedcode" {
+		t.Fatalf("result = %+v", res)
+	}
 }

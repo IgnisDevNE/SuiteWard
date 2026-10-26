@@ -423,7 +423,7 @@ func TestThePurgeThatNamesTheDefaultSettingsFileOfAnotherInstanceRefusesAndRemov
 			h := newHarness(t, tc.goos)
 			if tc.docker {
 				h = dockerHarness(t, tc.goos)
-				h.have(KindContainer, ContainerDB, ContainerServe)
+				h.have(KindContainer, ContainerDB) // no serve container: without the guard the purge would go on, not stop at a foreign container
 				h.have(KindNetwork, NetworkName)
 				h.have(KindVolume, VolumeData, VolumeDBData)
 				h.status = statusIs(statusBody)

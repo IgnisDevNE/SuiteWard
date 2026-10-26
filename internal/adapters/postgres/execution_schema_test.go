@@ -434,6 +434,7 @@ func TestExecutionTestConstraints(t *testing.T) {
 		mustInsert(t, database.conn, "execution_tests", map[string]any{"name": fmt.Sprintf("Test%d", i), "state": state})
 	}
 	mustInsert(t, database.conn, "execution_tests", map[string]any{"name": "TestExcluded", "state": "excluded", "excluded_reason": "build-constraint", "head_runs": []string{}})
+	mustInsert(t, database.conn, "execution_tests", map[string]any{"name": "TestNested", "state": "excluded", "excluded_reason": "nested-module", "head_runs": []string{}}) // a test under a nested go.mod
 	mustInsert(t, database.conn, "execution_tests", with(receipt, map[string]any{"name": "TestReceipt", "head_runs": []string{"pass", "fail", "build-error"}, "base_runs": []string{"skip", "absent"}}))
 	schemaRequireError(t, insertRow(t.Context(), database.conn, "execution_tests", map[string]any{"name": "Test0"}), "23505", "execution_tests_pkey")
 }

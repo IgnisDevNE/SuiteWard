@@ -24,6 +24,7 @@ func completeCanonical(leaseID, body string) execution.Result {
 		{Package: "pkg/b", Name: "TestC", File: "pkg/b/c_test.go", Kind: execution.KindDeclared, ExcludedReason: execution.ExcludedBuildConstraint, State: "excluded"},
 		{Package: ".", Name: "TestA", File: "a_test.go", Kind: execution.KindDeclared, HeadRuns: []string{"pass"}, State: "pass"},
 		{Package: "pkg/b", Name: "TestB", File: "pkg/b/b_test.go", Kind: execution.KindDeclared, HeadRuns: []string{"pass", "fail", "pass"}, State: "flaky"},
+		{Package: "tools", Name: "TestTool", File: "tools/tool_test.go", Kind: execution.KindDeclared, ExcludedReason: execution.ExcludedNestedModule, State: "excluded"},
 	}
 	return r
 }
@@ -36,6 +37,7 @@ func completeReceipt(leaseID, body string) execution.Result {
 		{Package: "pkg", Name: "TestChanged", File: "pkg/p_test.go", Kind: execution.KindChanged, HeadRuns: []string{"pass", "pass"}, BaseRuns: []string{"pass", "skip"}, State: "inert"},
 		{Package: ".", Name: "TestNew", File: "a_test.go", Kind: execution.KindAdded, HeadRuns: []string{"pass"}, BaseRuns: []string{"build-error"}, State: "new_api"},
 		{Package: "pkg", Name: "TestGuarded", File: "pkg/g_test.go", Kind: execution.KindAdded, ExcludedReason: execution.ExcludedBuildConstraint, State: "excluded"},
+		{Package: "tools", Name: "TestToolNew", File: "tools/tool_test.go", Kind: execution.KindAdded, ExcludedReason: execution.ExcludedNestedModule, State: "excluded"},
 	}
 	return r
 }

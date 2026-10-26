@@ -173,8 +173,12 @@ const (
 	KindChanged  = "changed"
 )
 
-// ExcludedBuildConstraint is the reason that a test is excluded: the profile cannot run it under its build constraints.
-const ExcludedBuildConstraint = "build-constraint"
+// The reasons that a test is excluded: a build constraint leaves its file out of the sandbox build, or its file is under a nested go.mod,
+// which the root invocation cannot run.
+const (
+	ExcludedBuildConstraint = "build-constraint"
+	ExcludedNestedModule    = "nested-module"
+)
 
 // Test is one row of a complete result. HeadRuns and BaseRuns are the observations in run order (pass, fail, build-error,
 // skip or absent); State is the lower-case state that was shown (pass, fail, skipped, missing, flaky, excluded for a canonical

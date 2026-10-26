@@ -25,16 +25,20 @@ type declaration struct {
 	id       TestID
 	text     string
 	runnable bool
+	reason   string // why it is not runnable: ReasonBuildConstraint or ReasonNestedModule
 }
 
 // key is what go test -run selects by: the package and the name, whatever the file.
 type key struct{ pkg, name string }
 
-// DeclaredTests lists the test functions of the _test.go files in files (paths relative to the root, with slashes). A
+// DeclaredTests lists the test functions of the _test.go files in files (paths relative to the root, with slashes), which
+// also holds the go.mod files of the tree: a directory below the root with a go.mod of its own is another module. A
 // function is a test when it is a top-level func TestXxx(t *testing.T): not TestMain, no benchmark, fuzz target or
 // example, no method, no other signature. The sandbox's build context (linux, goarch, cgo off, no tags) decides which
-// tests it can run: those of the files it leaves out are Excluded. A name is listed once per package, and as excluded
-// only when no runnable file declares it; of several files that declare it, the first by path stands for it.
+// tests it can run: those of the files it leaves out are Excluded with the reason build-constraint, and those under
+// another module are Excluded with the reason nested-module (the root invocation cannot name their packages; this
+// reason comes first). A name is listed once per package, and as excluded only when no runnable file declares it; of
+// several files that declare it, the first by path stands for it.
 // Directories that go does not build (testdata, vendor, and names that start with "." or "_") hold no test. A file
 // that does not parse is an error, whether the context selects it or not.
 func DeclaredTests(files map[string][]byte, goarch string) (Declared, error) {
@@ -47,7 +51,7 @@ func DeclaredTests(files map[string][]byte, goarch string) (Declared, error) {
 		if d.runnable {
 			declared.Tests = append(declared.Tests, d.id)
 		} else {
-			declared.Excluded = append(declared.Excluded, ExcludedTest{TestID: d.id})
+			declared.Excluded = append(declared.Excluded, ExcludedTest{TestID: d.id, Reason: d.reason})
 		}
 	}
 	return declared, nil
@@ -58,7 +62,7 @@ func DeclaredTests(files map[string][]byte, goarch string) (Declared, error) {
 // neither. Both lists hold the tests of files that the build context leaves out too: they are not run, and the caller
 // lists them as excluded by looking them up in DeclaredTests. A name that two files of a package declare (an internal
 // and an external test package) is changed when either text differs, and its File is the first of them in the head.
-// Files are read as DeclaredTests reads them.
+// Files are read as DeclaredTests reads them, go.mod files included.
 func ChangedTests(head, canonical map[string][]byte, goarch string) (added, changed []TestID, err error) {
 	headDecls, err := scan(head, goarch)
 	if err != nil {
@@ -100,12 +104,13 @@ func scan(files map[string][]byte, goarch string) ([]declaration, error) {
 			return io.NopCloser(bytes.NewReader(src)), nil
 		},
 	}
+	modules := moduleDirs(files)
 	var decls []declaration
 	for _, file := range slices.Sorted(maps.Keys(files)) {
 		if !isBuiltTestFile(file) {
 			continue
 		}
-		runnable, err := ctx.MatchFile(path.Dir(file), path.Base(file))
+		selected, err := ctx.MatchFile(path.Dir(file), path.Base(file))
 		if err != nil {
 			return nil, fmt.Errorf("build constraints of %s: %w", file, err)
 		}
@@ -113,12 +118,40 @@ func scan(files map[string][]byte, goarch string) ([]declaration, error) {
 		if err != nil {
 			return nil, err
 		}
+		reason := ""
+		switch {
+		case inNestedModule(path.Dir(file), modules):
+			reason = ReasonNestedModule
+		case !selected:
+			reason = ReasonBuildConstraint
+		}
 		for _, d := range found {
-			d.runnable = runnable
+			d.runnable, d.reason = reason == "", reason
 			decls = append(decls, d)
 		}
 	}
 	return decls, nil
+}
+
+// moduleDirs are the directories below the root that hold a go.mod of their own.
+func moduleDirs(files map[string][]byte) map[string]bool {
+	dirs := map[string]bool{}
+	for file := range files {
+		if dir := path.Dir(file); dir != "." && path.Base(file) == "go.mod" {
+			dirs[dir] = true
+		}
+	}
+	return dirs
+}
+
+// inNestedModule is whether dir, or a directory above it but below the root, is the root of another module.
+func inNestedModule(dir string, modules map[string]bool) bool {
+	for ; dir != "."; dir = path.Dir(dir) {
+		if modules[dir] {
+			return true
+		}
+	}
+	return false
 }
 
 // isBuiltTestFile is whether file is a _test.go file of a directory that go builds: not under testdata or vendor, and

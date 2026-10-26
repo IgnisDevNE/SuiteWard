@@ -701,7 +701,7 @@ A tree entry is `{path, mode, sha}`: `path` is at most 4096 bytes, `mode` is one
 | `sandbox` | object | `imageDigest` (`sha256:<64 hex>`), `toolchain` (at most 64 printable ASCII bytes, for example `go1.25.1`) and `runtime` (the name and version of the container runtime, at most 64 printable ASCII bytes, for example `podman 5.5.0`); required for `complete` |
 | `startedAt`, `endedAt` | string | RFC 3339; `endedAt` is not before `startedAt`; neither is more than 5 minutes ahead of the service's clock |
 | `tests` | array | `complete` only; at most 10,000 † (below) |
-| `markers` | array | `receipt` only: at most 200 objects `{kind, path, line}`. `kind` is `testing-import`, `testing-testing`, `flag-lookup-test`, `exit-in-init`, `test-file-read` or `env-read` †; `line` is 1 to 10,000,000 |
+| `markers` | array | `receipt` only: at most 200 objects `{kind, path, line}`. `kind` is `testing-import`, `testing-testing`, `flag-lookup-test`, `exit-in-init`, `test-file-read`, `env-read` or `forged-event` (a `\x16` byte in a string literal, the framing go test uses for test events) †; `exit-in-init` also covers `syscall.Exit` and exits in package-level initializers; `line` is 1 to 10,000,000 |
 | `submodules` | array | at most 100 paths that were skipped |
 
 A test is `{package, name, file, kind, head, base, excluded}`:

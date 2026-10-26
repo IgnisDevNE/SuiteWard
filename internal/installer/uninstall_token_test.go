@@ -392,3 +392,65 @@ func TestSettingsNamedByPathAreTheDefaultFileByTheRulesOfTheSystem(t *testing.T)
 		})
 	}
 }
+
+// ---- --settings that names the default settings file is guarded as the default one ----
+
+// The default settings file belongs to the main instance of the user. A purge that names it with --settings, in whatever spelling, takes the
+// same guard as one that leaves --settings out: another runtime or another connection than the one the file records is another instance's
+// command, and it refuses before anything is removed.
+func TestThePurgeThatNamesTheDefaultSettingsFileOfAnotherInstanceRefusesAndRemovesNothing(t *testing.T) {
+	sep := string(filepath.Separator)
+	exact := func(p string) string { return p }
+	podmanMain := func(s *Settings) { s.Connection = "pm" } // the main instance is Podman, on the connection pm
+	dockerMain := func(s *Settings) { s.Runtime, s.Connection = RuntimeDocker, "" }
+	for _, tc := range []struct {
+		name   string
+		goos   string
+		docker bool // the command runs against Docker: the harness is Docker's, with the stack in it
+		main   func(*Settings)
+		flags  []string
+		id     string              // the instance id that confirms the purge: a Windows host reads /status inside the Podman machine, which the fake does not answer
+		spell  func(string) string // how --settings spells the default path
+	}{
+		{"the main instance is Docker, the command Podman", "linux", false, dockerMain, []string{"--runtime", "podman", "--connection", "pm"}, testInstance, exact},
+		{"the main instance is Podman, the command Docker", "linux", true, podmanMain, []string{"--runtime", "docker"}, testInstance, exact},
+		{"another connection", "linux", false, podmanMain, []string{"--runtime", "podman", "--connection", "elsewhere"}, testInstance, exact},
+		{"not cleaned", "linux", false, dockerMain, []string{"--runtime", "podman", "--connection", "pm"}, testInstance,
+			func(p string) string { return filepath.Dir(p) + sep + "." + sep + filepath.Base(p) }},
+		{"on Windows", "windows", false, dockerMain, []string{"--runtime", "podman", "--connection", "pm"}, unknownValue, exact},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, tc.goos)
+			if tc.docker {
+				h = dockerHarness(t, tc.goos)
+				h.have(KindContainer, ContainerDB, ContainerServe)
+				h.have(KindNetwork, NetworkName)
+				h.have(KindVolume, VolumeData, VolumeDBData)
+				h.status = statusIs(statusBody)
+			} else {
+				podmanStackExists(h)
+			}
+			mainToken := mainInstanceToken(t, h)
+			settings, err := DefaultSettingsPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := colocatedSettings()
+			tc.main(&s)
+			if err := SaveSettings(settings, s); err != nil {
+				t.Fatal(err)
+			}
+			args := append([]string{"--settings", tc.spell(settings), "--purge", "--yes", "--instance", tc.id}, tc.flags...)
+			err = Uninstall(context.Background(), args, h.newEnv())
+			if err == nil || !strings.Contains(err.Error(), "the default settings file") {
+				t.Fatalf("got %v, want the refusal of a command that would take over the default settings file", err)
+			}
+			if got := h.removals(); len(got) != 0 {
+				t.Errorf("something was removed: %v", got)
+			}
+			if !exists(settings) || !exists(mainToken) {
+				t.Errorf("the settings file (%v) or the default token file (%v) of the main instance were removed", exists(settings), exists(mainToken))
+			}
+		})
+	}
+}

@@ -182,8 +182,9 @@ func tokenFileOf(r *Resolver, d Deps, defaultSettings bool) (tokenCopy, error) {
 }
 
 // isDefaultSettings says that the settings file is the per-user default one: it is when --settings is left out (defaultPath), and when --settings
-// names it however it spells it: the same path once cleaned, and on Windows whatever the case. A relative path is not resolved, so one that names
-// it is not recognised: the guards and the token file then treat it as another instance's, which is the safe side for the token file.
+// names it however it spells it: the same absolute path once cleaned, a relative one resolved against the folder the command runs in, and on
+// Windows whatever the case. A path that is not recognised is treated as another instance's by the guards and the token file, which is the
+// safe side for the token file.
 func isDefaultSettings(goos, path string, defaultPath bool) (bool, error) {
 	if defaultPath {
 		return true, nil
@@ -192,10 +193,16 @@ func isDefaultSettings(goos, path string, defaultPath bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if goos == "windows" {
-		return strings.EqualFold(filepath.Clean(path), filepath.Clean(def)), nil
+	var abs [2]string
+	for i, p := range []string{path, def} {
+		if abs[i], err = filepath.Abs(p); err != nil {
+			return false, fmt.Errorf("resolve the settings path %s: %w", p, err)
+		}
 	}
-	return filepath.Clean(path) == filepath.Clean(def), nil
+	if goos == "windows" {
+		return strings.EqualFold(abs[0], abs[1]), nil
+	}
+	return abs[0] == abs[1], nil
 }
 
 // purgeLines say what a purge deletes before it does, and which token file it keeps and how to name the one it should remove. The token file

@@ -339,6 +339,9 @@ func renderRevision(in fuzzInput) (rendered, bool) {
 			r.ReducedRules[i] = kinds[(i+int(in.reps))%len(kinds)] + rule
 		}
 		r.ReducedPathsTotal = len(r.ReducedPaths) + int(in.reps)
+		if in.reps&4 != 0 {
+			r.ReducedPathsTotal = 0 // no path at all, so the lead is the policy-only one
+		}
 	}
 	return rendered{out: commandtext.RevisionComment(r)}, true
 }

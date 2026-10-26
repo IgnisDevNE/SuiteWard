@@ -62,7 +62,7 @@ func gateText(a Ack) (reason string, next []string) {
 		return "the receipt of this head is unavailable",
 			[]string{
 				"Push a new head to run the tests again, or, to approve this head without a receipt, comment:", copyable("/suiteward unblock <code>"),
-				"An unblock lifts only a run that is unavailable on the current head.",
+				"Then comment the approve again, with the next code. An unblock lifts only a run that is unavailable on the current head.",
 			}
 	case execution.ReasonModeRequired:
 		return "this repository requires a mode with the approve, and the comment named none",

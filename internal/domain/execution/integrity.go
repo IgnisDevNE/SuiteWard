@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
@@ -88,6 +89,10 @@ type blob struct {
 // files (export-ignore), rewrite them (export-subst) and replace LFS content with pointers, so an archive is not the
 // tree; any difference makes the run unavailable. A symlink must resolve inside the tree, following the links of the
 // extraction and at most eight hops, or the check fails with ErrUnsafeSymlink.
+//
+// The check is lexical. It folds case and trailing dots and spaces, as NTFS and APFS do, but it cannot model 8.3 short
+// names or Unicode normalization, so the executor must also materialize the tree with OS-level containment (os.Root, or
+// EvalSymlinks against the root) and never trust this check alone.
 func CheckSource(entries []TreeEntry, files []ExtractedFile) (SourceIntegrity, error) {
 	tree, submodules, err := indexTree(entries)
 	if err != nil {
@@ -97,10 +102,8 @@ func CheckSource(entries []TreeEntry, files []ExtractedFile) (SourceIntegrity, e
 	if err != nil {
 		return SourceIntegrity{}, err
 	}
-	for _, link := range slices.Sorted(maps.Keys(links)) {
-		if err := resolveInside(link, links[link], links); err != nil {
-			return SourceIntegrity{}, err
-		}
+	if err := checkLinks(links); err != nil {
+		return SourceIntegrity{}, err
 	}
 	report := SourceIntegrity{Submodules: submodules}
 	for _, p := range slices.Sorted(maps.Keys(tree)) {
@@ -219,11 +222,51 @@ func unsafeTarget(target string) bool {
 	return target == "" || strings.HasPrefix(target, "/") || strings.ContainsAny(target, "\\:\x00")
 }
 
-// resolveInside walks target from the directory of link one name at a time, following the links of the extraction, as a
-// filesystem does, and fails when the walk steps above the root of the tree, meets an unsafe target, or follows more than
-// maxLinkHops links. A lexical clean of the target would miss a ".." that comes after a link, which steps above the
-// directory the link points to and not above the one that holds its name.
-func resolveInside(link, target string, links map[string]string) error {
+// foldRune maps a rune to the smallest of its simple-folding orbit, so two runes have one image exactly when they are equal
+// but for case.
+func foldRune(r rune) rune {
+	smallest := r
+	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+		smallest = min(smallest, f)
+	}
+	return smallest
+}
+
+// foldPath is the key under which a filesystem that ignores case, and drops trailing dots and spaces from a name, sees a path.
+func foldPath(p string) string {
+	names := strings.Split(p, "/")
+	for i, name := range names {
+		names[i] = strings.Map(foldRune, strings.TrimRight(name, ". "))
+	}
+	return strings.Join(names, "/")
+}
+
+// checkLinks resolves every link of the extraction inside the tree. Links are indexed by the folded path of their names: a
+// walk that meets a name follows the link that the name spells in any case, with trailing dots or spaces. Two links that
+// fold to one name are refused, as no filesystem that ignores case can hold both.
+func checkLinks(links map[string]string) error {
+	byFold := map[string]string{}
+	named := map[string]string{}
+	for _, link := range slices.Sorted(maps.Keys(links)) {
+		key := foldPath(link)
+		if other, taken := named[key]; taken {
+			return fmt.Errorf("%w: %q and %q are one name once case and trailing dots are ignored", ErrUnsafeSymlink, other, link)
+		}
+		named[key], byFold[key] = link, links[link]
+	}
+	for _, link := range slices.Sorted(maps.Keys(links)) {
+		if err := resolveInside(link, links[link], byFold); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resolveInside walks target from the directory of link one name at a time, following the links of the extraction (byFold,
+// by folded path), as a filesystem does, and fails when the walk steps above the root of the tree, meets an unsafe target
+// or a name that ends in a dot or a space, or follows more than maxLinkHops links. A lexical clean of the target would miss
+// a ".." that comes after a link, which steps above the directory the link points to and not above the one that holds its name.
+func resolveInside(link, target string, byFold map[string]string) error {
 	unsafe := fmt.Errorf("%w: %q -> %q", ErrUnsafeSymlink, link, target)
 	var here []string
 	if dir := path.Dir(link); dir != "." {
@@ -244,8 +287,11 @@ func resolveInside(link, target string, links map[string]string) error {
 			}
 			here = here[:len(here)-1]
 		default:
+			if strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
+				return unsafe // no target spells a name that way, and Windows reads it as another name
+			}
 			next := slices.Concat(here, []string{name})
-			linked, isLink := links[strings.Join(next, "/")]
+			linked, isLink := byFold[foldPath(strings.Join(next, "/"))]
 			if !isLink {
 				here = next
 				continue

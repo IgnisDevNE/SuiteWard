@@ -370,3 +370,67 @@ func TestBaseSideTreeRefusesAPathBelowAnotherPathOfTheTree(t *testing.T) {
 		})
 	}
 }
+
+// Scope.Covers is case-sensitive, so the head's Tests/evil.go is outside a scope that covers tests/a_test.go; but on NTFS
+// and APFS they are one directory, and the head could put files into a protected directory or overwrite a canonical file.
+// Two spellings of one name, once case and trailing dots and spaces are ignored, are refused whatever they are.
+func TestCanonicalTreeRefusesTwoSpellingsOfOneName(t *testing.T) {
+	tests := []struct {
+		name      string
+		head      map[string]string
+		governing map[string]string
+	}{
+		{"a head directory in another case", map[string]string{"Tests/evil.go": "e"}, map[string]string{"tests/a_test.go": "t"}},
+		{"a head directory with a trailing dot", map[string]string{"tests./evil.go": "e"}, map[string]string{"tests/a_test.go": "t"}},
+		{"a head directory with a trailing space", map[string]string{"tests /b.go": "e"}, map[string]string{"tests/a_test.go": "t"}},
+		{"a head file in another case", map[string]string{"A.go": "e"}, map[string]string{"a.go": "t"}},
+		{"a head file over a manifest file in another case", map[string]string{"Docs/A.txt": "e"}, map[string]string{"docs/a.txt": "t"}},
+		{"two head directories", map[string]string{"Docs/x.txt": "x", "docs/y.txt": "y"}, map[string]string{"a_test.go": "t"}},
+		{"two head files, one with a trailing dot", map[string]string{"x": "x", "x.": "y"}, map[string]string{"a_test.go": "t"}},
+		{"two manifest directories", map[string]string{"go.mod": "m"}, map[string]string{"Docs/a_test.go": "a", "docs/b_test.go": "b"}},
+		{"a directory and a file in another case", map[string]string{"Docs": "a file"}, map[string]string{"docs/a_test.go": "t"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := execution.CanonicalTree(manifestOf(t, tt.head), manifestOf(t, tt.governing), governingScope(t))
+			if !errors.Is(err, execution.ErrInvalidTree) {
+				t.Errorf("CanonicalTree = %v, %v; want ErrInvalidTree", got, err)
+			}
+		})
+	}
+}
+
+func TestBaseSideTreeRefusesTwoSpellingsOfOneName(t *testing.T) {
+	tests := []struct {
+		name string
+		base map[string]string
+		head map[string]string
+	}{
+		{"a carried directory in another case", map[string]string{"Tests/a.go": "a"}, map[string]string{"tests/b_test.go": "t"}},
+		{"a carried file in another case", map[string]string{"A_TEST.go": "a"}, map[string]string{"a_test.go": "t"}},
+		{"two base directories", map[string]string{"Docs/a.go": "a", "docs/b.go": "b"}, map[string]string{"c_test.go": "t"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expected := manifestOf(t, map[string]string{"keep_test.go": "k"})
+			got, err := execution.BaseSideTree(manifestOf(t, tt.base), manifestOf(t, tt.head), expected, canonicalSelection(t))
+			if !errors.Is(err, execution.ErrInvalidTree) {
+				t.Errorf("BaseSideTree = %v, %v; want ErrInvalidTree", got, err)
+			}
+		})
+	}
+}
+
+func TestCanonicalTreeAllowsTheSameDirectoryNameUnderTwoParents(t *testing.T) {
+	head := manifestOf(t, map[string]string{"a/Docs/x.txt": "x", "b/docs/y.txt": "y"})
+	governing := manifestOf(t, map[string]string{"a/Docs/z_test.go": "z"})
+	got, err := execution.CanonicalTree(head, governing, governingScope(t))
+	want := []execution.TreeFile{
+		file("a/Docs/x.txt", "x", execution.FromHead),
+		file("a/Docs/z_test.go", "z", execution.FromManifest),
+		file("b/docs/y.txt", "y", execution.FromHead),
+	}
+	if err != nil || !slices.Equal(got, want) {
+		t.Errorf("tree = %v, %v; want %v", got, err, want)
+	}
+}

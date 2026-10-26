@@ -125,11 +125,39 @@ func TestCheckSourceOfAnEmptyTreeAndExtraction(t *testing.T) {
 	}
 }
 
-func TestCheckSourceAllowsDirectoriesThatDifferInCase(t *testing.T) {
-	entries := []execution.TreeEntry{entry("Dir/a.go", execution.GitRegular, "a"), entry("dir/b.go", execution.GitRegular, "b")}
-	files := []execution.ExtractedFile{regular("Dir/a.go", "a"), regular("dir/b.go", "b")}
+// Two spellings of one name fold to one key on NTFS and APFS, whether they are files, directories or one of each. A
+// repository that has both Docs/ and docs/ reads unavailable, and that is accepted.
+func TestCheckSourceRefusesTwoSpellingsOfOneName(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries []execution.TreeEntry
+		files   []execution.ExtractedFile
+	}{
+		{"two entries in two cases", []execution.TreeEntry{entry("a.go", execution.GitRegular, "a"), entry("A.go", execution.GitRegular, "b")}, nil},
+		{"two directories in two cases", []execution.TreeEntry{entry("Dir/a.go", execution.GitRegular, "a"), entry("dir/b.go", execution.GitRegular, "b")}, nil},
+		{"a directory entry and a path below it in another case", []execution.TreeEntry{{Path: "Docs", Mode: execution.GitTree, BlobSHA1: gitBlob("tree")}, entry("docs/x", execution.GitRegular, "x")}, nil},
+		{"two entries, one with a trailing dot", []execution.TreeEntry{entry("x", execution.GitRegular, "a"), entry("x.", execution.GitRegular, "b")}, nil},
+		{"two entries, one with a trailing space", []execution.TreeEntry{entry("x", execution.GitRegular, "a"), entry("x ", execution.GitRegular, "b")}, nil},
+		{"two entries in two Unicode cases", []execution.TreeEntry{entry("É.go", execution.GitRegular, "a"), entry("é.go", execution.GitRegular, "b")}, nil},
+		{"two files in two cases", nil, []execution.ExtractedFile{regular("a.go", "a"), regular("A.go", "b")}},
+		{"two directories in two cases, extracted", nil, []execution.ExtractedFile{regular("Dir/a.go", "a"), regular("dir/b.go", "b")}},
+		{"two links in two cases", nil, []execution.ExtractedFile{link("a", "x"), link("A", "y")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, err := execution.CheckSource(tt.entries, tt.files); !errors.Is(err, execution.ErrInvalidSource) {
+				t.Errorf("CheckSource = %+v, %v; want ErrInvalidSource", got, err)
+			}
+		})
+	}
+}
+
+// The same spelling in two places is one name, and different names stay different.
+func TestCheckSourceAllowsTheSameDirectoryNameUnderTwoParents(t *testing.T) {
+	entries := []execution.TreeEntry{entry("a/Docs/x", execution.GitRegular, "x"), entry("b/docs/x", execution.GitRegular, "y"), entry("a/Docs/y", execution.GitRegular, "z")}
+	files := []execution.ExtractedFile{regular("a/Docs/x", "x"), regular("b/docs/x", "y"), regular("a/Docs/y", "z")}
 	if got, err := execution.CheckSource(entries, files); err != nil || !got.Intact() {
-		t.Errorf("CheckSource = %+v, %v; want intact: only a file where a directory is makes a conflict", got, err)
+		t.Errorf("CheckSource = %+v, %v; want intact", got, err)
 	}
 }
 
@@ -213,7 +241,6 @@ func TestCheckSourceRefusesASymlinkThatLeavesTheTree(t *testing.T) {
 		"a name that ends in a dot":                      {link("a", "dir./b.go")},
 		"a name that ends in a space":                    {link("a", "dir /b.go")},
 		"a name of dots":                                 {link("a", ".../b.go")},
-		"two links with one folded name":                 {link("a", "x"), link("A", "y")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var entries []execution.TreeEntry

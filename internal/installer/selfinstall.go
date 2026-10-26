@@ -230,8 +230,8 @@ func (e Env) devBuild() bool { return cmp.Or(e.Version, "dev") == "dev" }
 // whatever the command line says: the copy exists because its owner said yes to it, so this asks nothing and leaves the PATH alone. An install
 // never calls it, since it may be any build and a copy is not replaced in silence, and a development build leaves the copy as it is and says so.
 // It also removes the copy that a run before put aside. A failure is a warning, because the upgrade it follows has worked.
-// It returns the Deps that the hints of the rest of the run are built with: once the copy is updated and the shell finds it by the name suiteward,
-// they name the program suiteward, and not the path of the build that is running.
+// It returns the Deps that the hints of the rest of the run are built with: once the copy is updated and the name suiteward reaches it, they
+// name the program suiteward, and not the path of the build that is running.
 func refreshCopy(ctx context.Context, env Env) Deps {
 	d, s, scr := env.Deps, env.Self, screenOn(env.Term.Out)
 	if s == nil || ctx.Err() != nil {
@@ -259,7 +259,11 @@ func refreshCopy(ctx context.Context, env Env) Deps {
 		return d
 	}
 	scr.Keep("Updated the copy of suiteward.exe: %s\n", target)
-	if found, err := s.LookPath(selfName); err == nil && sameFile(found, target) { // not another suiteward, which the shell may find first
+	// The name reaches the copy in a new terminal when the PATH of the user holds its folder. This terminal may have started before that, and
+	// finds nothing yet, which is no reason to name the path; another suiteward that the shell finds first is.
+	onPath, err := s.onUserPath(dir, d.Getenv)
+	found, lookErr := s.LookPath(selfName)
+	if err == nil && onPath && (lookErr != nil || sameFile(found, target)) {
 		d.Command = selfName
 	}
 	return d

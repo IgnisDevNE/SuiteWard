@@ -1,10 +1,12 @@
 package source
 
 import (
+	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -202,5 +204,48 @@ func TestInspectHoldsNoWholeEntryInMemory(t *testing.T) {
 	var err error
 	if got := allocated(func() { _, err = Inspect(context.Background(), bytes.NewReader(data), tree, l) }); err != nil || got > 8<<20 {
 		t.Errorf("a file of 32 MiB must stream: %d bytes allocated, %v", got, err)
+	}
+}
+
+func TestInspectReadsAFileWithTheOldRegularFlag(t *testing.T) {
+	// Old tar writers mark a regular file with a NUL; the reader reads it as a regular file, and so must the check.
+	var raw bytes.Buffer
+	tw := tar.NewWriter(&raw)
+	for _, h := range []tar.Header{
+		{Name: topDir + "/", Typeflag: tar.TypeDir, Mode: 0o775},
+		{Name: topDir + "/a.go", Typeflag: tar.TypeReg, Mode: 0o664, Size: 3},
+	} {
+		if err := tw.WriteHeader(&h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tw.Write([]byte("abc")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b := raw.Bytes()
+	header := b[512 : 2*512] // the second header: the file
+	header[156] = 0
+	sum := 0
+	for i, c := range header {
+		if i >= 148 && i < 156 {
+			c = ' '
+		}
+		sum += int(c)
+	}
+	copy(header[148:], fmt.Sprintf("%06o\x00 ", sum))
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	if _, err := zw.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	tree := []execution.TreeEntry{{Path: "a.go", Mode: execution.GitRegular, BlobSHA1: execution.BlobSHA1([]byte("abc"))}}
+	if _, err := Inspect(context.Background(), &gz, tree, generous); err != nil {
+		t.Errorf("a file with the old flag is a file: %v", err)
 	}
 }

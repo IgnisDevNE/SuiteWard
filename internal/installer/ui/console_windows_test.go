@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,13 +48,19 @@ func TestEnableKeysRejectsANonConsole(t *testing.T) {
 // openConsoleInput opens the input of the console of the test, as the program reads its keys. A process with no console (a runner with
 // none attached) gets one for the length of the test; where none can be had, the test is skipped.
 func openConsoleInput(t *testing.T) *os.File {
+	return openConsoleInputFor(t, windows.GENERIC_READ|windows.GENERIC_WRITE)
+}
+
+// openConsoleInputFor is openConsoleInput with the access the handle is opened for: a handle for reading only has a mode that can be read
+// and not set, and its input buffer cannot be flushed.
+func openConsoleInputFor(t *testing.T, access uint32) *os.File {
 	t.Helper()
 	open := func() (windows.Handle, error) {
 		name, err := windows.UTF16PtrFromString("CONIN$")
 		if err != nil {
 			t.Fatal(err)
 		}
-		return windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
+		return windows.CreateFile(name, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
 	}
 	h, err := open()
 	if err != nil {
@@ -79,6 +87,7 @@ func typeIntoConsole(t *testing.T, f *os.File, events ...inputRecord) {
 	if r, _, err := write.Call(f.Fd(), addressOf(&events[0]), uintptr(len(events)), addressOf(&written)); r == 0 {
 		t.Fatalf("type into the console: %v", err)
 	}
+	runtime.KeepAlive(events)
 	runtime.KeepAlive(&written)
 }
 
@@ -202,5 +211,49 @@ func TestFlushInputDropsWhatWasTypedAheadAndLeavesTheModeAlone(t *testing.T) {
 func TestFlushInputRejectsANonConsole(t *testing.T) {
 	if err := flushInput(notAConsole(t)); err == nil {
 		t.Fatal("flushInput accepted a file")
+	}
+}
+
+// A console handle opened for reading only is a terminal that cannot be flushed (Access denied). The screen asks and gets its answers all the
+// same: the first question tries the flush, it fails, no question fails for it, and the flush is not tried again.
+func TestQuestionsAreAnsweredAtAConsoleThatCannotBeFlushed(t *testing.T) {
+	conin := openConsoleInputFor(t, windows.GENERIC_READ)
+	if err := flushInput(conin); err == nil {
+		t.Skip("this console lets a handle opened for reading flush it: there is no handle that cannot be flushed to test with")
+	}
+	var flushes atomic.Int32
+	s, in := flushingScreen(t, func() error { flushes.Add(1); return flushInput(conin) })
+	for i := 1; i <= 2; i++ {
+		asked := make(chan error, 1)
+		go func() { _, err := s.Ask("Owner", "alice"); asked <- err }()
+		in.Type("bob\n")
+		if err := within(t, asked); err != nil {
+			t.Fatalf("question %d failed at a console that cannot be flushed: %v", i, err)
+		}
+	}
+	if n := flushes.Load(); n != 1 {
+		t.Errorf("the flush of a console that cannot be flushed was tried %d times, want once", n)
+	}
+}
+
+// Opening the screen leaves the console input as it was found: a command that asks nothing (doctor, backup with its flags) must not drop the
+// keys that the user typed ahead for the shell, and a flush from a background process group stops the process on a unix terminal. Only a
+// question drops what was typed before it is drawn.
+func TestOpenOSDoesNotDropWhatWasTypedAheadWhenItOpens(t *testing.T) {
+	conin := openConsoleInput(t)
+	stdin := os.Stdin
+	os.Stdin = conin
+	t.Cleanup(func() { os.Stdin = stdin })
+	typeIntoConsole(t, conin, keyEvents('\r', 0x0d, 0x1c)...)
+	if pendingEvents(t, conin) == 0 {
+		t.Fatal("the console queued nothing of what was typed: the test cannot see what opening the screen does with it")
+	}
+	s, err := OpenOS(context.Background(), strings.NewReader(""), testVersion, true)
+	if err != nil {
+		t.Fatalf("OpenOS: %v", err)
+	}
+	mustClose(t, s)
+	if pendingEvents(t, conin) == 0 {
+		t.Error("opening the screen dropped the keys that were typed ahead")
 	}
 }

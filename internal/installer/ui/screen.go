@@ -116,7 +116,8 @@ type Options struct {
 	// With it, a HiddenLine ends with its context and leaves no read pending, so the next question has the input to itself.
 	InputReady func(ctx context.Context) error
 	// FlushInput drops what was typed at the terminal and nothing has read, without a change of its mode. Optional. On a terminal (InputIsTerminal)
-	// every question calls it before it is drawn, so that a key typed before it never answers it.
+	// every question calls it before it is drawn, so that a key typed before it never answers it. It is a guard against stray keys and no more:
+	// when it fails, the screen stops calling it for the rest of its life and no question fails (see dropTypedAhead).
 	FlushInput func() error
 }
 
@@ -139,7 +140,7 @@ type Screen struct {
 	restore func() error
 	keys    func() (func() error, error) // Options.KeyInput
 	ready   func(context.Context) error  // Options.InputReady, until a wait of it fails (stopWaiting)
-	flush   func() error                 // Options.FlushInput
+	flush   func() error                 // Options.FlushInput, until a flush of it fails (stopFlushing)
 	err     error                        // the first write or restore failure
 
 	full, suspended, closed bool
@@ -532,9 +533,7 @@ func (s *Screen) Prompt(text string) (string, error) { return s.prompt(text, fal
 
 // prompt is Prompt; hasDef says that the question has a default, which the hint line of the frame tells Enter takes.
 func (s *Screen) prompt(text string, hasDef bool) (string, error) {
-	if err := s.dropTypedAhead(); err != nil {
-		return "", err
-	}
+	s.dropTypedAhead()
 	s.mu.Lock()
 	s.setApart()
 	s.hasDef = hasDef
@@ -826,9 +825,7 @@ func (s *Screen) Secret(label string, read func() ([]byte, error)) ([]byte, erro
 	if read == nil {
 		return nil, fmt.Errorf("the secret %s needs a reader that does not echo", label)
 	}
-	if err := s.dropTypedAhead(); err != nil {
-		return nil, err
-	}
+	s.dropTypedAhead()
 	s.mu.Lock()
 	s.setApart()
 	s.secret = true
@@ -1038,9 +1035,7 @@ func (s *Screen) waitForEnter() error {
 			return fmt.Errorf("wait for Enter: %w", s.ctx.Err())
 		}
 	}
-	if err := s.dropTypedAhead(); err != nil {
-		return fmt.Errorf("wait for Enter: %w", err)
-	}
+	s.dropTypedAhead()
 	if _, err := s.readLine(); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("wait for Enter: %w", err)
 	}
@@ -1050,19 +1045,32 @@ func (s *Screen) waitForEnter() error {
 // dropTypedAhead makes sure that no key typed before a question was drawn answers it, a typed question and the Enter that ends a page
 // included. On a terminal it drops what the reader holds and nothing has used (a second Enter that came in the read of the first) and what
 // the terminal queued while nothing read (Options.FlushInput). Scripted input is not a terminal, and keeps its keys. A read that was given up
-// is still using the reader: nothing is dropped under it.
-func (s *Screen) dropTypedAhead() error {
+// is still using the reader: nothing is dropped under it. It never fails the question: the drop is a convenience guard against stray keys, not
+// the safety of any data, and a console handle that cannot be flushed (one opened for reading only) can still be read, so after a first failure
+// the screen stops flushing (as stopWaiting does for the waits) and the reader's own buffer is still dropped.
+func (s *Screen) dropTypedAhead() {
 	if !s.terminal || s.pendingGivenUp() != nil {
-		return nil
+		return
 	}
 	_, _ = s.in.Discard(s.in.Buffered()) // buffered, so it cannot fail
-	if s.flush == nil {
-		return nil
+	if flush := s.flusher(); flush != nil && flush() != nil {
+		s.stopFlushing()
 	}
-	if err := s.flush(); err != nil {
-		return fmt.Errorf("drop the keys typed before: %w", err)
-	}
-	return nil
+}
+
+// flusher is Options.FlushInput while it works, and nil once a flush of it failed.
+func (s *Screen) flusher() func() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.flush
+}
+
+// stopFlushing turns the flushes off for the rest of the life of the screen: one of them failed, and the questions that follow are asked
+// without the guard.
+func (s *Screen) stopFlushing() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.flush = nil
 }
 
 // Suspend leaves the alternate screen and restores the normal terminal, for a child that needs the real TTY (setup prints a TOTP secret

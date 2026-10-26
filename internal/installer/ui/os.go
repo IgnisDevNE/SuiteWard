@@ -37,6 +37,7 @@ func OpenOS(ctx context.Context, in io.Reader, version string, plain bool) (*Scr
 	if env.StdinTTY { // a plain run at a terminal needs it too: a hidden line is read in key mode (no echo, Ctrl-C kept as a signal)
 		o.KeyInput = func() (func() error, error) { return enableKeys(os.Stdin) }
 		o.InputReady = inputReadiness(os.Stdin) // nil where the terminal cannot be waited on without reading it
+		// Only a question flushes, and a flush that fails turns itself off (see Screen.dropTypedAhead): opening the screen touches nothing.
 		o.FlushInput = func() error { return flushInput(os.Stdin) }
 	}
 	if o.Mode == ModeFull {

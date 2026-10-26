@@ -13,10 +13,11 @@ import (
 )
 
 // Uninstall is `suiteward uninstall [--purge] [--yes] [--instance ID]` for the co-located tier: it removes the three containers and keeps
-// the state, or with --purge also the volumes, the secrets, the network, the MCP token copy and the settings file. It says which instance
-// it is about to remove and asks first (a purge, which deletes the database, asks for the instance id, as a restore does), and it never
-// touches an instance that is not this one: the guards of the install apply, and so does the settings file: one that is named must exist,
-// and with none the engine must be named, so that a purge never runs on defaults that were not read from a settings file.
+// the state, or with --purge also the volumes, the secrets, the network, the settings file and the MCP token copy when it is this instance's
+// (see tokenFileOf). It says which instance it is about to remove and asks first (a purge, which deletes the database, asks for the instance
+// id, as a restore does), and it never touches an instance that is not this one: the guards of the install apply, and so does the settings
+// file: one that is named must exist, and with none the engine must be named, so that a purge never runs on defaults that were not read from
+// a settings file.
 func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if err := env.validate(); err != nil {
 		return err
@@ -28,7 +29,7 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 			fs.String(f.name, "", f.usage)
 		}
 	}
-	fs.Bool("purge", false, "also remove the volumes (the database!), the secrets, the network, the MCP token copy and the settings file; it needs --instance, or asks you to type the instance id")
+	fs.Bool("purge", false, "also remove the volumes (the database!), the secrets, the network and the settings file, and the MCP token copy only when it is this instance's (the file --token-file names, or the default token file with the default settings file); it needs --instance, or asks you to type the instance id")
 	fs.Bool("yes", false, "do not ask before removing (with --purge, give --instance too)")
 	fs.String("instance", "", "with --purge --yes: the instance id that /status shows (the first 8 characters of the instance id; unknown when nothing names it)")
 	fs.Bool("plain", false, plainUsage)
@@ -181,8 +182,9 @@ func tokenFileOf(r *Resolver, d Deps, defaultSettings bool) (tokenCopy, error) {
 }
 
 // isDefaultSettings says that the settings file is the per-user default one: it is when --settings is left out (defaultPath), and when --settings
-// names it however it spells it: the same path once cleaned, and on Windows whatever the case. A relative path is not resolved, so one that names
-// it is not recognised: the guards and the token file then treat it as another instance's, which is the safe side for the token file.
+// names it however it spells it: the same absolute path once cleaned, a relative one resolved against the folder the command runs in, and on
+// Windows whatever the case. A path that is not recognised is treated as another instance's by the guards and the token file, which is the
+// safe side for the token file.
 func isDefaultSettings(goos, path string, defaultPath bool) (bool, error) {
 	if defaultPath {
 		return true, nil
@@ -191,10 +193,16 @@ func isDefaultSettings(goos, path string, defaultPath bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if goos == "windows" {
-		return strings.EqualFold(filepath.Clean(path), filepath.Clean(def)), nil
+	var abs [2]string
+	for i, p := range []string{path, def} {
+		if abs[i], err = filepath.Abs(p); err != nil {
+			return false, fmt.Errorf("resolve the settings path %s: %w", p, err)
+		}
 	}
-	return filepath.Clean(path) == filepath.Clean(def), nil
+	if goos == "windows" {
+		return strings.EqualFold(abs[0], abs[1]), nil
+	}
+	return abs[0] == abs[1], nil
 }
 
 // purgeLines say what a purge deletes before it does, and which token file it keeps and how to name the one it should remove. The token file

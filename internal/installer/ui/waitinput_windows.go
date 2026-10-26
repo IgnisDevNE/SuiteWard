@@ -39,7 +39,9 @@ var (
 
 // addressOf is the address of what p points to, for a call into the console API. shortcut: it goes through reflect.ValueOf(p).Pointer()
 // because an inline unsafe.Pointer is flagged by gosec G103, which has no exception here; what p points to has escaped to the heap by then
-// (it is an interface value), where it stays put, and the caller keeps it alive with runtime.KeepAlive until the call returns.
+// (it is an interface value), where it stays put, and the caller keeps it alive until the call returns: with runtime.KeepAlive after the call,
+// or by using it after the call. Upgrade it to typed wrappers once golang.org/x/sys/windows has them for the console input records (v0.47.0
+// has none), or once gosec allows the inline pointer; then delete it.
 func addressOf(p any) uintptr { return reflect.ValueOf(p).Pointer() }
 
 // inputReadiness is the wait for a key of the console behind f that Options.InputReady is: it waits on the console and looks at its events,
@@ -86,6 +88,7 @@ func skipToCharacter(h windows.Handle) (bool, error) {
 		if r, _, err := procReadConsoleI.Call(uintptr(h), addressOf(&records[0]), uintptr(drop), addressOf(&read)); r == 0 {
 			return false, fmt.Errorf("drop the events that make no character: %w", err)
 		}
+		runtime.KeepAlive(&records)
 		runtime.KeepAlive(&read)
 	}
 	return seen >= 0, nil

@@ -14,7 +14,9 @@ import (
 // settings file in use is the default one, or when --token-file names it; with any other settings file a purge keeps it and says so. What a
 // purge deletes is said before it acts, on the page, at the prompt and with --yes.
 
-// shortDir is a directory of the test with a short path: a page wraps the paths that it names, and long ones trim it.
+// shortDir is a directory of the test with the shortest absolute path the temp folder allows: a page wraps the paths that it names, and long
+// ones trim it. It stands for a configuration directory, which has to be absolute (a relative XDG_CONFIG_HOME is refused); the files that a
+// test names on a page are relative instead (pageHarness), so that the page depends on the length of the temp folder through this path only.
 func shortDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "sw")
@@ -25,11 +27,13 @@ func shortDir(t *testing.T) string {
 	return dir
 }
 
-// pageHarness is purgeHarness with files at a short path.
+// pageHarness is purgeHarness with files at relative paths, in the folder the test runs in: the page names them as they are, and the length of
+// the temp folder does not change what it shows.
 func pageHarness(t *testing.T) *harness {
 	t.Helper()
 	h := newHarness(t, "linux")
-	h.dir = shortDir(t)
+	t.Chdir(h.dir)
+	h.dir = "."
 	podmanStackExists(h)
 	h.writeFiles()
 	return h
@@ -233,12 +237,12 @@ func TestThePurgeByYesListsWhatItDeletesBeforeItActs(t *testing.T) {
 		}
 		out := run.output()
 		drawn := out[:strings.LastIndex(out, leaveAlt)] // the frames, before the screen was left
-		scrollback := strings.Join(strings.Fields(run.console.tail()), " ")
+		scrollback := squash(run.console.tail())
 		for _, want := range with(purgeLists, "the MCP token file "+h.tokenPath()) {
 			if !strings.Contains(drawn, want) {
 				t.Errorf("no frame drew %q:\n%s", want, drawn)
 			}
-			if !strings.Contains(scrollback, want) { // the page is gone when the command ends: what stays on the screen is the scrollback
+			if !strings.Contains(scrollback, squash(want)) { // the page is gone when the command ends: what stays on the screen is the scrollback
 				t.Errorf("the scrollback lacks %q:\n%s", want, run.console.tail())
 			}
 		}
@@ -250,9 +254,9 @@ func TestThePurgeByYesListsWhatItDeletesBeforeItActs(t *testing.T) {
 		if err := Uninstall(liveContext(t), h.secondInstanceArgs("--yes", "--instance", testInstance), run.on(h.newEnv())); err != nil {
 			t.Fatalf("Uninstall: %v\n%s", err, run.output())
 		}
-		scrollback := strings.Join(strings.Fields(run.console.tail()), " ")
+		scrollback := squash(run.console.tail()) // the path of the kept file is absolute, and the terminal cuts it wherever its row ends
 		for _, want := range with(purgeLists, "The MCP token file "+mainToken+" is kept", "--token-file <path>") {
-			if !strings.Contains(scrollback, want) {
+			if !strings.Contains(scrollback, squash(want)) {
 				t.Errorf("the scrollback lacks %q:\n%s", want, run.console.tail())
 			}
 		}
@@ -336,6 +340,9 @@ func TestThePurgeThatNamesTheDefaultSettingsFileRemovesTheDefaultTokenFile(t *te
 			return filepath.Dir(p) + string(filepath.Separator) + "." + string(filepath.Separator) + filepath.Base(p)
 		}, false},
 		{"in another case, windows", "windows", unknownValue, strings.ToUpper, true},
+		// A relative path is resolved against the folder the command runs in: from the folder of the default file, it names it.
+		{"relative, from its folder, unix", "linux", testInstance, func(p string) string { return "." + string(filepath.Separator) + filepath.Base(p) }, false},
+		{"relative, from its folder, windows", "windows", unknownValue, func(p string) string { return strings.ToUpper(filepath.Base(p)) }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, tc.goos)
@@ -351,6 +358,9 @@ func TestThePurgeThatNamesTheDefaultSettingsFileRemovesTheDefaultTokenFile(t *te
 				t.Fatal(err)
 			}
 			spelled := tc.spell(settings)
+			if !filepath.IsAbs(spelled) {
+				t.Chdir(filepath.Dir(settings))
+			}
 			if tc.caseOK && !settingsExist(spelled) {
 				t.Skip("this file system tells the file apart by case: the spelling does not name it")
 			}
@@ -383,7 +393,39 @@ func TestSettingsNamedByPathAreTheDefaultFileByTheRulesOfTheSystem(t *testing.T)
 		{"in another case, unix", "linux", strings.ToUpper(def), false},
 		{"in another case, windows", "windows", strings.ToUpper(def), true},
 		{"another file of the same directory", "windows", filepath.Join(filepath.Dir(def), "other.yaml"), false},
-		{"a relative path", "linux", filepath.Base(def), false},
+		{"a relative path, from another folder", "linux", filepath.Base(def), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, err := isDefaultSettings(tc.goos, tc.path, false); err != nil || got != tc.want {
+				t.Errorf("isDefaultSettings(%q, %q) = %v, %v, want %v", tc.goos, tc.path, got, err, tc.want)
+			}
+		})
+	}
+}
+
+// A relative --settings is resolved against the folder the command runs in: it names the default file when that is the folder of the default
+// file, and another file when it is not, whatever the spelling.
+func TestARelativeSettingsPathIsTheDefaultFileFromTheFolderOfTheDefaultFile(t *testing.T) {
+	useDefaultConfigDir(t)
+	def, err := DefaultSettingsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, name, sep := filepath.Dir(def), filepath.Base(def), string(filepath.Separator)
+	if err := os.MkdirAll(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(folder)
+	for _, tc := range []struct {
+		name, goos, path string
+		want             bool
+	}{
+		{"its name", "linux", name, true},
+		{"with the folder named", "linux", "." + sep + name, true},
+		{"in another case, windows", "windows", strings.ToUpper(name), true},
+		{"in another case, unix", "linux", strings.ToUpper(name), false},
+		{"another file of the folder", "windows", "other.yaml", false},
+		{"the file of the folder above", "linux", ".." + sep + name, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got, err := isDefaultSettings(tc.goos, tc.path, false); err != nil || got != tc.want {
@@ -418,6 +460,10 @@ func TestThePurgeThatNamesTheDefaultSettingsFileOfAnotherInstanceRefusesAndRemov
 		{"not cleaned", "linux", false, dockerMain, []string{"--runtime", "podman", "--connection", "pm"}, testInstance,
 			func(p string) string { return filepath.Dir(p) + sep + "." + sep + filepath.Base(p) }},
 		{"on Windows", "windows", false, dockerMain, []string{"--runtime", "podman", "--connection", "pm"}, unknownValue, exact},
+		{"relative, from its folder", "linux", false, dockerMain, []string{"--runtime", "podman", "--connection", "pm"}, testInstance,
+			func(p string) string { return "." + sep + filepath.Base(p) }},
+		{"relative, from its folder, on Windows", "windows", false, dockerMain, []string{"--runtime", "podman", "--connection", "pm"}, unknownValue,
+			func(p string) string { return filepath.Base(p) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, tc.goos)
@@ -440,7 +486,11 @@ func TestThePurgeThatNamesTheDefaultSettingsFileOfAnotherInstanceRefusesAndRemov
 			if err := SaveSettings(settings, s); err != nil {
 				t.Fatal(err)
 			}
-			args := append([]string{"--settings", tc.spell(settings), "--purge", "--yes", "--instance", tc.id}, tc.flags...)
+			spelled := tc.spell(settings)
+			if !filepath.IsAbs(spelled) {
+				t.Chdir(filepath.Dir(settings))
+			}
+			args := append([]string{"--settings", spelled, "--purge", "--yes", "--instance", tc.id}, tc.flags...)
 			err = Uninstall(context.Background(), args, h.newEnv())
 			if err == nil || !strings.Contains(err.Error(), "the default settings file") {
 				t.Fatalf("got %v, want the refusal of a command that would take over the default settings file", err)

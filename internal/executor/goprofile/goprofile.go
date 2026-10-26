@@ -7,13 +7,20 @@ package goprofile
 // that builds the release is the Go that runs the protected tests.
 const Image = "docker.io/library/golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd"
 
-// The directories of the sandbox's /work that go needs beside the repository, as tar entry names. The caller writes the
-// prefetched module proxy under ProxyDir and a placeholder file in HomeDir and in TmpDir: go stops when TMPDIR does not
-// exist, and tar creates the directories of the files it extracts.
+// StateDir is the directory of the sandbox's /work, beside the repository, that holds everything go reads and writes of
+// its own: the module proxy, HOME (and so go's env file), TMPDIR, the build cache and the module cache. No path of the
+// repository may be under it. The tree is extracted into the same /work, and a file of the tree there would be go's own:
+// an env file overrides the empty GOFLAGS and sets GOPRIVATE and the like, and a build cache entry replaces the compiled
+// form of a package. The caller refuses such a tree.
+const StateDir = ".suiteward"
+
+// The directories under StateDir that the caller fills, as tar entry names: the prefetched module proxy goes under
+// ProxyDir, and a placeholder file in HomeDir and in TmpDir creates them (go stops when TMPDIR does not exist, and tar
+// creates the directories of the files it extracts).
 const (
-	ProxyDir = ".suiteward/proxy"
-	HomeDir  = ".suiteward/home"
-	TmpDir   = ".suiteward/tmp"
+	ProxyDir = StateDir + "/proxy"
+	HomeDir  = StateDir + "/home"
+	TmpDir   = StateDir + "/tmp"
 )
 
 // TestID names one top-level test function: Package is the directory of its package relative to the repository root

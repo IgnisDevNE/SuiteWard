@@ -10,8 +10,8 @@ import (
 // Where the sandbox puts go's own files, under its /work, beside the repository.
 const (
 	work        = "/work"
-	cacheDir    = ".suiteward/gocache"
-	modCacheDir = ".suiteward/gomodcache"
+	cacheDir    = StateDir + "/gocache"
+	modCacheDir = StateDir + "/gomodcache"
 )
 
 // Command is the go test invocation of one side, as the argv that the container's process execs (no shell reads it, so

@@ -22,7 +22,7 @@ type inputRecord struct {
 	virtual   uint16
 	scan      uint16
 	char      uint16
-	control   uint32
+	_         uint32 // dwControlKeyState: no wait looks at it, and the record is this big
 }
 
 const (

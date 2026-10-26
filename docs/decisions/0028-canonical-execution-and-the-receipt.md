@@ -3,11 +3,11 @@
 - **Date:** 2026-10-26
 - **Status:** Accepted for phase M2.1 (the Go profile). Not implemented yet. Python (M2.2) and TypeScript (M2.3) follow.
 - **Product:** SuiteWard
-- **Scope:** Running the protected tests in disposable sandboxes: canonical execution on every head, the receipt of the tests a pull request adds or changes, the policy that turns them on, the executor, and the evidence they leave.
-- **Amends:** [ADR 0008](0008-progressive-integrity-and-execution.md) (the definition of M2). It also changes two statements of [ADR 0015](0015-required-contract-check.md) (see "Consequences").
-- **Related:** [ADR 0002](0002-exact-revision-approval.md), [ADR 0007](0007-canonical-contract-authority.md), [ADR 0013](0013-protected-scope-and-agent-assisted-review.md), [ADR 0027](0027-agent-human-trust-separation.md), D-APPROVAL-CONTEXT, D-COMMANDS and D-CHECKS in the [decision register](../plan/decisions.md), the [M2.1 phase page](../plan/phases/M2.1.md), the [runtime contract](../contracts/runtime.md#execution-m21-normative) and the [persistence contract](../contracts/persistence.md#execution-m21-normative).
+- **Scope:** Running the protected tests in disposable sandboxes: canonical execution on every head, the receipt of the tests a pull request adds or changes, the policy that turns them on, the owner's unblock, the executor, and the evidence they leave.
+- **Amends:** [ADR 0008](0008-progressive-integrity-and-execution.md) (the definition of M2). It also changes two statements of [ADR 0015](0015-required-contract-check.md), which carries its own note.
+- **Related:** [ADR 0002](0002-exact-revision-approval.md), [ADR 0007](0007-canonical-contract-authority.md), [ADR 0013](0013-protected-scope-and-agent-assisted-review.md), [ADR 0027](0027-agent-human-trust-separation.md), D-APPROVAL-CONTEXT, D-COMMANDS and D-CHECKS in the [decision register](../plan/decisions.md), the [M2.1 phase page](../plan/phases/M2.1.md), the [runtime contract](../contracts/runtime.md#execution-m21-normative), the [persistence contract](../contracts/persistence.md#execution-m21-normative) and the [threat model](../security/threat-model.md).
 
-Names, sizes and durations that the contracts mark with † are choices of task A0, made inside this decision. The integrator may change them under the register's rule on implementation choices. The open items below are not.
+Names, sizes and durations that the contracts mark with † are choices of task A0, made inside this decision. The integrator may change them under the register's rule on implementation choices. The open items at the end are not such choices.
 
 ## Context
 
@@ -16,7 +16,7 @@ M1 protects the bytes of the tests. It does not run them: [ADR 0014](0014-merge-
 - Nothing in SuiteWard runs the approved tests on the code a pull request changes. The owner cannot tell, from SuiteWard, whether the approved contract still passes on this head.
 - The owner approves a changed or added test without seeing whether it detects anything. A test that passes on the code before and after the change protects nothing.
 
-ADR 0008 planned M2 as canonical execution with a `DockerExecutionBackend`. This record settles the first profile (Go), the trust model, the policy, and what the owner sees. The owner's decisions of 2026-10-26 are on the [phase page](../plan/phases/M2.1.md#owner-decisions-2026-10-26).
+ADR 0008 planned M2 as canonical execution with a `DockerExecutionBackend`. This record settles the first profile (Go), the trust model, the policy, the escape from a blocked run, and what the owner sees. The owner's decisions of 2026-10-26 are on the [phase page](../plan/phases/M2.1.md#owner-decisions-2026-10-26).
 
 ## Decision
 
@@ -31,47 +31,50 @@ execution:
   receipt: advisory      # off | advisory | before-approval | required
 ```
 
-- **Defaults.** With a `profile`, `canonical` and `receipt` default to `advisory`. With no `execution` block, or with no `profile`, nothing runs: both levels are `off`, whatever they say.
+- **Defaults.** With a `profile`, `canonical` and `receipt` default to `advisory`. With no `execution` block, or an empty one (`execution: {}`), nothing runs: both levels are `off`.
 - **Strict keys.** An unknown key under `execution`, or a `profile` other than `go`, makes the declaration invalid, as an unknown top-level key does.
+- **Levels need a profile.** An `execution` block that names `canonical` or `receipt` without a `profile` is an invalid declaration. A policy that looks on while nothing runs would be believed. To turn execution off, remove the block, or keep the profile and set both levels to `off`.
 - **Governed.** The policy is part of the declaration, so changing it is a protected change that needs the owner's approval with a TOTP code. Turning execution on is such a change.
 - **The canonical declaration governs every pull request, the one that changes it included.** The levels come from the declaration of the Suite's current version. A pull request that weakens them still meets the old levels. Before `V1` nothing runs.
-- **Weakening, in order.** `canonical`: `off` < `advisory` < `required`. `receipt`: `off` < `advisory` < `before-approval` < `required`. Removing `profile`, or the whole block, weakens both levels to `off`. A weakening is reported as a reduction in the revision comment, like a removed pattern. A strengthening is not.
+- **Weakening, in order.** `canonical`: `off` < `advisory` < `required`. `receipt`: `off` < `advisory` < `before-approval` < `required`. Removing the block weakens both levels to `off`. A weakening is reported as a reduction in the revision comment, like a removed pattern. A strengthening is not.
 - **The toolchain is not configurable.** The Go version is the release's pinned Go image.
 - A later task may suggest `execution: {profile: go}` when a `go.mod` exists. A suggestion grants nothing.
 
 ### 2. One engine, two plans
 
-Each plan runs on a head and is evidence about that head. Neither enters the consent binding ([D-APPROVAL-CONTEXT](../plan/decisions.md#d-approval-context-approval-binding-for-implementation-only-changes) holds).
+Each plan runs on a head and is evidence about that head. Neither enters the consent binding ([D-APPROVAL-CONTEXT](../plan/decisions.md#d-approval-context-approval-binding-for-implementation-only-changes) holds). Fork pull requests get no run: they fail closed, as in [D-INTEGRATION](../plan/decisions.md#d-integration-merge-methods-and-the-integrated-source).
 
-**The canonical plan** runs for the head of every open pull request, when `canonical` is not `off`. It runs the head tree with the **governing manifest** laid over it. The governing manifest is the manifest of the current canonical version `V<n>`. Once a consent covers this head, it is the manifest of the consented revision. The overlay works on the files that the governing declaration's `include` matches:
+**The canonical plan** runs for the head of every open pull request, when `canonical` is not `off`. It runs the head tree with the **governing manifest** laid over it. The governing manifest is the manifest of the current canonical version `V<n>`. Once a consent covers this head, it is the manifest of the consented revision. The whole manifest is laid over:
 
-- a head file that `include` matches is replaced by the manifest's bytes, checked against the manifest's digest;
-- a head file that `include` matches and the manifest lacks is removed;
-- a manifest file that the head lacks is added.
+- every manifest file is written at its path, replacing the head's file or adding one: tests, `testdata`, runner files such as `conftest.py`, `.suiteward.yml` and workflows;
+- every head file that the governing scope covers but the manifest lacks is removed. The scope covers the `include` patterns, the protected defaults and the `runner` patterns, less the `exclude` patterns (`Scope.Covers`);
+- head files outside the governing scope stay.
 
-The head can therefore add a test but not silence one. The expected tests are the top-level test functions declared in the manifest's Go test files.
+The head can therefore add a test but not silence one, and it cannot change the runner of the approved tests. The expected tests are the top-level test functions declared in the manifest's Go test files.
 
-Fork pull requests get no run: they fail closed, as in [D-INTEGRATION](../plan/decisions.md#d-integration-merge-methods-and-the-integrated-source).
+**The receipt** is the report of the tests that a revision adds or changes. It exists for a head that has a change proposal revision, when `receipt` is not `off`, and when it is **applicable**.
 
-**The receipt** runs for a head that has a change proposal revision, when `receipt` is not `off`. (This is provisional. The design note says "a pull request whose revision changes protected test files", and the service cannot tell test files from other protected files without parsing Go; see open item 2.) Its **evaluated tests** are the top-level test functions added or changed, by declaration text, in the files that the **canonical** `include` matches and whose bytes differ from the canonical manifest. "Changed" means against the canonical version the revision expects, not against the merge base. Test files under patterns that only the head adds are listed as "not evaluated: pattern not approved yet".
-
+- **Applicable** means that at least one file matched by the **canonical** `include` (and not excluded) is added or changed in the revision against the canonical version it expects. The service decides it at file level, from the two manifests. A revision that changes no such file (only runner files or the declaration changed, or tests were only deleted) has a receipt that is `not-applicable`: no job runs, the receipt gate does not apply (the approve needs no mode), and no Receipt check is published. Deletions are already shown as reductions.
+- **Evaluated tests** are the top-level test functions added or changed, by declaration text, in those files. "Changed" is against the canonical version the revision expects, not against the merge base and not against the consented manifest, so the receipt does not turn empty after an approval. Per-function selection belongs to the profile.
 - **Head side:** the head tree.
-- **Base side:** the base commit's tree plus the head's version of the files that hold evaluated tests. Nothing else of the head crosses: source, `go.mod`, `go.sum`, `vendor/`, runner files and `.suiteward.yml` all come from the base commit.
+- **Base side:** the base commit's tree plus the head's version of **every** file that the canonical `include` matches and the head adds or changes: test files, `testdata/` and helpers in other `_test.go` files. Nothing else of the head crosses: source, `go.mod`, `go.sum`, `vendor/`, runner files and `.suiteward.yml` all come from the base commit.
 - **The base commit** is the merge base of the head and the pull request's base branch.
+- **Not evaluated.** Files that the pull request adds or changes and the head's own `include` matches but the canonical `include` does not are listed as "not evaluated: pattern not approved yet". The service computes the list and stores it with the job. It is display only.
 
 Why this base side:
 
 - Only the approved `include` decides what crosses from head to base. A head cannot add a pattern to its own declaration to pull its source into the base run, which would make every test pass on both sides.
+- Every approved-pattern file crosses, so a new test does not fail on the base because its fixture or its helper is missing.
 - The base run is the code before the change, with its dependencies. A fix that is a dependency bump is still detected: the old dependency fails the test and the new one passes it.
 
 What it costs:
 
-- A test that needs a new dependency, or a symbol that exists only in the head, does not build on the base. It reads NEW API. In Go a build failure belongs to a package, so every evaluated test of that package reads NEW API. This is a documented limit.
-- Only test code crosses, not test inputs. A new test that reads an added or changed `testdata/` file fails on the base because the file is missing, and reads DETECTS. A new test that calls a helper in another `_test.go` file reads NEW API. DETECTS means "failed on the base side", not "fails for the reason this change fixes". See open item 3.
+- A test that needs a new dependency, or a symbol that exists only in the head's source (a file the approved `include` does not match), does not build on the base. It reads NEW API. In Go a build failure belongs to a package, so every evaluated test of that package reads NEW API. This is a documented limit.
+- DETECTS means "failed on the base side". It does not prove that the test fails for the reason this change fixes.
 
 ### 3. The source is the commit tree, not the archive
 
-GitHub builds archives with `git archive` semantics. A candidate's `.gitattributes` can drop files (`export-ignore`) or rewrite them (`export-subst`), and LFS files arrive as pointers. So the service reads the tree entries of each commit it uses (path, mode, git blob SHA-1; one recursive tree read, refused when GitHub truncates it) and gives them to the executor with the job. The executor recomputes the blob SHA-1 of every extracted file. A missing, extra or mismatched file makes the run `unavailable`. Submodules are skipped and listed. A symlink is created only when it resolves inside the tree; any other symlink makes the run `unavailable`.
+GitHub builds archives with `git archive` semantics. A candidate's `.gitattributes` can drop files (`export-ignore`) or rewrite them (`export-subst`), and LFS files arrive as pointers. So the service reads the tree entries of each commit it uses (path, mode, git blob SHA-1; one recursive tree read, refused when GitHub truncates it) and gives them to the executor with the job. The executor recomputes the blob SHA-1 of every extracted file. A missing, extra or mismatched file makes the run `unavailable`. Submodules are skipped and listed. A symlink is created only when it resolves inside the tree; any other symlink makes the run `unavailable`. A file mode of `100664`, git's legacy mode, is a regular file.
 
 ### 4. Which tests a profile can run
 
@@ -81,7 +84,7 @@ A declared test that the profile cannot run is `EXCLUDED`. It is decided statica
 
 ### 5. Observations, states and their precedence
 
-Each side of each test yields one observation: `pass`, `fail` (a failed assertion, a panic or a timeout), `build-error` (the package or file did not build, so the test never ran), `skip`, `absent` (expected, no result) or `excluded`. A failure is re-run on the same side (2 reruns†). A side whose runs differ makes the test flaky. The service derives the states below from the observations the executor reports.
+Each side of each test yields one observation: `pass`, `fail` (a failed assertion, a panic or a timeout), `build-error` (the package or file did not build, so the test never ran), `skip`, `absent` (expected, no result) or `excluded`. A package that does not build reports every expected test of it as `build-error`. A failure is re-run on the same side (2 reruns†). A side whose runs differ makes the test flaky. The service derives the states below from the observations the executor reports.
 
 **Receipt state of an evaluated test, first match wins:**
 
@@ -96,11 +99,13 @@ Each side of each test yields one observation: `pass`, `fail` (a failed assertio
 | 6 | `DETECTS` | head pass, base fail |
 | 7 | `INERT` | head pass, base pass or skip |
 
-**Canonical state of a declared test (head only):** `PASS`, `FAIL` (fail or build-error), `SKIPPED`, `MISSING` (absent), `FLAKY` and `EXCLUDED`.
+**Canonical state of a declared test (head only), first match wins:** `EXCLUDED`, `MISSING` (absent), `FLAKY`, `SKIPPED`, `FAIL` (fail or build-error) and `PASS`.
 
 `EXCLUDED` tests are left out of every rule below: they neither satisfy "at least one DETECTS" nor block.
 
-**Run status**, for each plan and head: `pending`, `complete` or `unavailable`. A run is unavailable when the executor fails, the whole job times out, the sandbox cannot be built, the toolchain does not match, the source check of section 3 fails, or the instance has no executor configured. **Unavailable is never treated as a pass.** Both gates read it as "not complete": the canonical gate keeps the check `in_progress`, and the receipt gate refuses.
+**Run status**, for each plan and head: `pending`, `complete` or `unavailable`, and for a receipt also `not-applicable`. A run is unavailable when the executor fails, the job times out, the sandbox cannot be built, the toolchain does not match, the source check of section 3 fails, or the instance has no executor configured. **Unavailable is never treated as a pass.** Both gates read it as "not complete" unless the owner unblocks the head (section 7).
+
+**Retry.** An unavailable run that the infrastructure caused (a lost lease, an executor that cannot be reached, a run past its time, a runtime error) is retried automatically, up to 3 attempts with a backoff. One that the repository caused (a failed source check, a toolchain mismatch, a size cap) is final for its head and binding, because another attempt would give the same answer. A job that no executor leased within the job timeout is unavailable at once (open item 1).
 
 ### 6. Mode summaries of a receipt
 
@@ -110,27 +115,36 @@ The owner names a mode when approving. A mode only judges the receipt; it never 
 - `feature`: met when none is `FAILS`, `MISSING` or `FLAKY`, and at least one is `DETECTS` or `NEW_API`. All `INERT` is "not met: no test detects anything".
 - `refactor`: met when every evaluated test is `INERT`.
 - No mode: counts only, no judgment.
-- An empty receipt (no evaluated test): `fix` and `feature` are not met, `refactor` is met. A revision that changes no test (only `.suiteward.yml` or a runner file, say) therefore needs `refactor` under `receipt: required`.
+- An applicable receipt with no evaluated test (only `testdata` or helpers changed, or every test is `EXCLUDED`): `fix` and `feature` are not met, `refactor` is met. Under `receipt: required` such a revision needs `refactor` (open item 3).
 
-### 7. Gates
+### 7. Gates, and the owner's unblock
 
-**The receipt gate, on `approve`.** It reads the receipt of the head that is current when the command is processed.
+**The receipt gate, on `approve`.** It reads the receipt of the head that is current when the command is processed. It applies only to an approve that names the proposal's current revision, and only to an applicable receipt.
 
 - `off` and `advisory` never refuse.
-- `before-approval` refuses unless that receipt is `complete`.
-- `required` refuses unless that receipt is `complete`, the approve carries a mode, and the summary for that mode is met.
+- `before-approval` refuses only while the receipt is `pending`. It never refuses an unavailable receipt: the owner chose to look at the receipt, whatever it says.
+- `required` refuses unless the receipt is `complete`, the approve carries a mode, and the summary for that mode is met. An unavailable receipt refuses.
 
 The code is verified and consumed before the refusal. Otherwise anyone could take the code from a refused comment, which is public, and post it again with another mode. The refusal is a recorded disposition, `receipt-refused`, with an acknowledgment. It records no consent. The `SuiteWard / Contract` check does not change, because a refused command has no effect on it ([D-COMMANDS](../plan/decisions.md#d-commands-pr-commands-identifiers-and-bootstrap)). The next attempt needs the next code. The ledger records the receipt state and the mode at approval time whether the approve was refused or not.
 
-**The canonical gate, on the Contract check.** Under `canonical: required` the check can be `success` only when the current head's canonical run is `complete` with no `FAIL`, `MISSING` or `FLAKY` (`SKIPPED` is allowed and counted). While the run is pending or unavailable the check stays `in_progress` with the reason, never `success` from integrity alone. A `FAIL`, `MISSING` or `FLAKY` is `failure`. `advisory` shows the results and never changes the check.
-
-The gate only withholds. It acts where the check would otherwise be `success`, and a pass never creates a `success` that approval and integrity did not already give (provisional; open item 6).
+**The canonical gate, on the Contract check.** Under `canonical: required` the check can be `success` only when the current head's canonical run is `complete` with no `FAIL`, `MISSING` or `FLAKY` (`SKIPPED` is allowed and counted). While the run is pending or unavailable the check stays `in_progress` with the reason, never `success` from integrity alone. A `FAIL`, `MISSING` or `FLAKY` is `failure`. A run with no declared test is `complete`, and the check says "0 tests ran". `advisory` shows the results and never changes the check. The gate acts only where the check would otherwise be `success`, as `runner-uncovered` does, so it only withholds: a pass never creates a `success` that approval and integrity did not already give.
 
 **After an approval,** a push that breaks the approved tests keeps the approval. Only the canonical gate reacts, by failing the check until a push fixes the head.
 
+**`/suiteward unblock <code>`: the escape.** The canonical declaration governs the pull request that changes it, so a dead executor would keep every check `in_progress` and refuse every approve under `required`, the approve of the pull request that weakens the policy included. The ruleset has an empty bypass list. The owner's unblock is the escape.
+
+- **Who and how.** Only the enrolled owner. It carries a TOTP code, verified and consumed like an `approve`'s, so an agent with the owner's GitHub identity cannot post it.
+- **What it applies to.** The pull request's current head, the head that the synchronization observed when the command is processed. It records which of the head's runs are `unavailable` at that moment, the canonical run and the applicable receipt. An executor that is not configured counts as unavailable. If none is, the command is refused (`unblock-refused`, reason `not-unavailable`), and its code stays consumed.
+- **What it lifts.** Only those unavailable runs, and only in the gates: the canonical gate stops withholding the Contract check, and the receipt gate stops refusing (with no receipt there is no summary to meet, so the approve needs no mode). It never lifts a failing, missing or flaky test, a pending run, or any other reason a check is not `success` (open item 2).
+- **What it leaves.** A new push is a new head and needs its own unblock if its run is unavailable too. The unblock changes no result: the run stays `unavailable`.
+- **What the checks say.** The Contract check and the Receipt check of that head say that the owner unblocked it and that the tests did not run.
+- **Dispositions.** `unblocked` and `unblock-refused`, in the command ledger, with the record of the plans it lifted.
+
+An agent cannot use it: it needs the TOTP code. An adversary that makes runs unavailable gains nothing from the unblock, which only the owner can post. The evidence of a failure is never lifted.
+
 ### 8. The `SuiteWard / Receipt` check
 
-A second check run, not required. One run per head and generation, posted once (no update), like the Contract check. Its conclusion:
+A second check run, not required. One run per head and generation, posted once (no update), like the Contract check. It exists only for an applicable receipt. Its conclusion:
 
 - `in_progress` while the receipt is pending;
 - `failure` when any evaluated test is `FAILS` or `MISSING`;
@@ -141,8 +155,9 @@ The conclusion never depends on the mode. `neutral` is allowed here only because
 
 ### 9. Commands
 
-- `/suiteward approve P<n>-R<m> [fix|feature|refactor] <code>`. The mode is optional, except under `receipt: required`. `revoke` takes no mode.
+- `/suiteward approve P<n>-R<m> [fix|feature|refactor] <code>`. The mode is optional, except under `receipt: required` for an applicable receipt. `revoke` takes no mode.
 - `/suiteward mode <fix|feature|refactor>`. Owner only, no code. It sets the **preview** mode of the pull request, which the receipt page shows. No gate ever reads it.
+- `/suiteward unblock <code>`. Owner only, with a code. See section 7.
 
 **The mode comes from the owner, never from candidate text.** The gating mode travels in the approve, which carries a TOTP code. The preview mode has no code, so anyone who holds the owner's GitHub identity can set it, and it therefore decides nothing.
 
@@ -150,7 +165,7 @@ The conclusion never depends on the mode. `neutral` is allowed here only because
 
 `suiteward execute` is the same binary as the service, run outside the service's container. It holds only the executor token. It has no database role, no GitHub credential and never opens the service's artifact store, and it refuses to start when it finds the service's credentials in its environment. The service keeps the App key and the database and never receives a container-runtime socket.
 
-The executor speaks to the service over `/executor/v1` on the service's HTTP listener, with a bearer token that is separate from the MCP token. The service gives it a job with a lease, streams the commit archives from GitHub (the executor never holds a GitHub token), serves the manifest files, and validates and sanitizes the result before it stores anything. The wire contract is in the [runtime contract](../contracts/runtime.md#the-executor-api).
+The executor speaks to the service over `/executor/v1` on the service's HTTP listener, with a bearer token that is separate from the MCP token. The service gives it a job with a lease, streams the commit archives from GitHub (the executor never holds a GitHub token), serves the manifest files, and validates and sanitizes the result before it stores anything. The wire contract is in the [runtime contract](../contracts/runtime.md#the-executor-api). The reads that execution makes of GitHub (trees, the merge base, archives) go through the same client and count in the D-SYNC budget and pacing.
 
 ### 11. The sandbox and the Go profile
 
@@ -165,8 +180,8 @@ Every run gets disposable containers from a container runtime CLI (`podman` or `
 SuiteWard cannot prove that code under test behaves the same outside the sandbox. It adds layers that detect and flag:
 
 - the expected tests come from static analysis (`go/parser`), so a test that does not report is `MISSING`;
-- the runner's report is cross-checked with the process exit status, and a disagreement is never read as a pass;
-- deterministic markers flag test-aware code in the non-test Go files that differ between the base and the head: `testing` imported outside `_test.go`, `testing.Testing()`, `flag.Lookup("test.`, `os.Exit` inside `init`, reads of `_test.go` paths, and reads of `TESTING` or `CI`;
+- the runner's report is cross-checked with the process exit status. When they contradict each other (a non-zero exit with every test reported passing, or the reverse), every expected test of that package reads `fail`;
+- deterministic markers flag test-aware code in the non-test Go files that differ between the base and the head: `testing` imported outside `_test.go`, `testing.Testing()`, `flag.Lookup("test.`, `os.Exit` inside `init`, reads of `_test.go` paths, and reads of `TESTING` or `CI`. Markers belong to the receipt, which has a base commit; the canonical plan has none;
 - tests run in a shuffled order with no CI variables.
 
 A marker is a line to look at, never a verdict. **The honest limit: code that behaves differently under test cannot be ruled out.** Execution is evidence about a head. It is not authority, and a result never enters the consent binding.
@@ -191,35 +206,27 @@ Every stored result records: the head SHA; the base SHA (receipt); the governing
 - **A `mode` command without a code that sets the gating mode.** Whoever holds the owner's GitHub identity could pick the mode that the gate judges. Hence the preview-only `mode` command, and a mode that travels in the code-bearing approve.
 - **Taking the mode from labels, the title or the description.** That is candidate text.
 - **Setting the gating mode in the policy.** The mode describes one change. A policy cannot know it.
+- **An unblock without a code, or one that outlasts the head.** The first could be posted by an agent. The second would let a stale decision cover code the owner never saw.
 
 ## Consequences
 
-- SuiteWard can run tests, and says what it ran. ADR 0015 says "Success never means that SuiteWard executed the tests". Under `canonical: required` that is no longer true, and the Contract check summary then states the executed counts. ADR 0015 needs its own note for this; this record states the change. D-CHECKS ("never claims that tests ran") is amended in [D-M2.1](../plan/decisions.md#d-m21-canonical-execution-the-receipt-and-the-go-profile).
+- SuiteWard can run tests, and says what it ran. ADR 0015 says "Success never means that SuiteWard executed the tests". Under `canonical: required` that is no longer true, and the Contract check summary then states the executed counts. ADR 0015 carries a note for this, and D-CHECKS ("never claims that tests ran") is amended in [D-M2.1](../plan/decisions.md#d-m21-canonical-execution-the-receipt-and-the-go-profile).
 - Turning execution on is a governed change. An installation that never names a profile is unchanged.
-- Under `required` levels, a missing or broken executor blocks work. See open item 1.
-- A new component runs candidate code. The sandbox, the executor's isolation and the pins are now part of the threat model ([threat model](../security/threat-model.md)).
+- Under `required` levels, a missing or broken executor blocks work until it is fixed or the owner unblocks each head. The unblock needs a TOTP code for every head.
+- A new component runs candidate code. The sandbox, the executor's isolation and the pins are part of the [threat model](../security/threat-model.md).
 - The service answers on `/executor/v1` a request that changes state. The runtime contract's "no endpoint changes state" is amended for it.
-- Execution cost: one canonical run per head of every open pull request, plus one receipt run per head that has a revision. Both are bounded by a job timeout.
+- Execution cost: one canonical run per head of every open pull request, plus one receipt run per head whose revision is applicable. Both are bounded by a job timeout, and their GitHub reads share the synchronization's budget.
 
 ## Open items
 
-These need the owner. Each names the provisional rule the contracts use meanwhile, where there is one.
+These are not decided. Each names the rule the contracts use meanwhile.
 
-1. **No escape under `required`.** The canonical declaration governs the pull request that changes it. If the executor is unavailable for good, or the Go profile cannot build the repository, then `canonical: required` keeps every Contract check `in_progress`, the pull request that weakens it to `advisory` included. `receipt: required` refuses every approve, the approve of that weakening included. The ruleset has an empty bypass list. Candidate answers: a pull request that only weakens `execution` is exempt from the gates, a break-glass for the owner, or `required` is not offered until a later phase. None is chosen. Until it is, `required` cannot be called safe.
-2. **Revisions that change no test.** A revision may change only runner, workflow or declaration files. Is its receipt empty and `complete`, or is there none? Provisional: a receipt exists for every head that has a revision, and an empty one is `complete`. This decides whether such a revision can be approved under `before-approval` or `required`. Also open: whether the Receipt check is posted when no receipt applies.
-3. **Test inputs on the base side.** Whether the head's `testdata/` files for evaluated tests should join the base run, to avoid a false DETECTS or NEW API.
-4. **Which receipt the revision comment links.** The comment is per revision, posted once. The receipt is per head, and an implementation-only push keeps the revision. Provisional: the link opens the pull request's page, which shows the current head. The receipts of earlier heads stay in the ledger but have no link.
-5. **Gate order for a reference the gate need not judge.** Provisional: the receipt gate applies only to an approve that names the proposal's current revision. Any other reference goes to `ProcessConsent`, which rejects it as before.
-6. **Canonical gate precedence.** Provisional: it acts only where the check would otherwise be `success`, as `runner-uncovered` does, and `FAIL`, `MISSING` and `FLAKY` give `failure`.
-7. **Lifetime of the preview mode, and retention.** Provisional: the latest `mode` of the pull request since the current enrollment, across heads and revisions. Results and per-test rows are never deleted in M2.1.
-8. **Recovery from `unavailable`.** An unavailable run is final for its head and binding. Only a push, or a changed manifest or policy, queues a new one. There is no rerun command and no automatic retry.
-9. **An empty expected set.** Provisional: a canonical run with no declared test is `complete` with zero tests and passes the gate.
-10. **Markers on the canonical plan.** The canonical job has no base commit, so markers are receipt-only. Whether the canonical plan needs them is open.
-11. **A report that contradicts the exit status.** Provisional: every test of that package that is not already `fail` or `build-error` is observed as `fail`.
-12. **Levels without a profile are inert.** `execution: {canonical: required}` with no `profile` runs nothing and is not an error. Whether it should be invalid is open.
-13. **The reference of the receipt.** The design note says the evaluated tests differ from the "governing manifest", and glosses it as "relative to the canonical". The contracts use the canonical version the revision expects. Against the governing manifest, the receipt of a head would turn empty the moment a consent covers it.
-14. **`before-approval` and an unavailable receipt.** The design refuses unless the receipt is `complete`, so unavailable refuses. The phase page says "a pending one". The contracts follow the design.
-15. **The GitHub budget.** A run reads two trees, the merge base and two archives, on top of the synchronization. The pacing of [D-SYNC](../plan/decisions.md#d-sync-polling-budget-and-mcp-boundary) counts only the synchronization's own requests. Whether execution reads count toward the same budget, and what a burst of pushes does to it, is not decided.
+1. **A job that no executor leases.** Used: it becomes `unavailable` (`timeout`) once the job timeout passes, with no retry, so that the unblock is reachable after one timeout (30 minutes by default †) and not after three. The owner's answer lists a job timeout among the infrastructure failures that are retried. It may be meant for a run that started, which is what the contracts retry.
+2. **What an unblock covers.** Used: the runs that are `unavailable` when the command is processed. A run of the same head that becomes unavailable later needs another unblock.
+3. **A receipt with changed files but no evaluated test.** Used: it is applicable and empty, so `receipt: required` needs `refactor`. It happens when only `testdata` or helpers changed.
+4. **A merge base that GitHub cannot give** (no common ancestor). Used: the receipt is `unavailable` with `archive-unavailable`.
+5. **"Not evaluated: pattern not approved yet"** exists only for an applicable receipt, because it is stored with the job. A revision that is `not-applicable` has no such list.
+6. **Pruning.** No stored result is deleted in M2.1. Whether and when to prune old per-test rows is open.
 
 Deferred, not open:
 

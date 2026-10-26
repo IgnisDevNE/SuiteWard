@@ -1,6 +1,6 @@
 # GitHub adapter contract
 
-- **Status:** frozen for phase M1.4 by M1.4-C0 (decisions D-GITHUB-ACCESS, D-SYNC).
+- **Status:** frozen for phase M1.4 by M1.4-C0 (decisions D-GITHUB-ACCESS, D-SYNC). Extended by each later phase through M1.7; phase M2.1 adds the execution reads below.
 - **Consumers:** M1.4-A1 (App authentication), M1.4-A2 (REST client), M1.4-A3 (typed reads and the source tree), M1.4-A4 (settings and composition), M1.4-B (reconciliation), M1.4-C (local MCP).
 
 SuiteWard reaches GitHub outbound only, as the operator's GitHub App installed on the monitored repositories (ADR 0001); this is not the `ignisdevne[bot]` App that publishes to this repository. This document fixes the packages, types and behavior the M1.4 tasks build against. Evidence for the numbers is in [s1-github](../spikes/s1-github.md).
@@ -16,7 +16,7 @@ SuiteWard reaches GitHub outbound only, as the operator's GitHub App installed o
 
 The App holds Metadata read, Pull requests read and write (M1.6a, acknowledgment comments), Contents read, Administration read (M1.5, protection verification) and Checks write; no Administration write, Issues or webhooks. Measured on a private repository (s1-github, permission matrix): `GET /pulls?state=open` and `GET /issues/{pr}/comments` need Pull requests read, `GET /git/trees/{sha}?recursive=1` needs Contents read, `POST /check-runs` needs Checks write. Measured 2026-10-11 by the opt-in live test (`internal/adapters/github/live_test.go`, `-tags=live`) on a private repository with a token narrowed to Metadata, Pull requests and Contents read: `GET /pulls/{n}` and `GET /commits/{sha}` answer 200, and both answer 403 to a Metadata-only token; the granted permission map equals the requested one. `PATCH /check-runs` is not measured yet; it must be asserted before the check-run write relies on it.
 
-Every token request carries an explicit, non-empty `permissions` map and the `repositories` list (an empty map grants everything the App has). Each use requests the narrowest map: synchronization is read-only and requests `metadata`, `pull_requests` and `contents` read; protection verification requests `metadata` and `administration` read (M1.5); `pull_requests: write` is requested only by the comment publisher (M1.6a); `checks: write` is requested only by check publication (M1.6b). All tokens of one installation share the one process-wide `rest.Budget`, because the rate limit belongs to the installation.
+Every token request carries an explicit, non-empty `permissions` map and the `repositories` list (an empty map grants everything the App has). Each use requests the narrowest map: synchronization is read-only and requests `metadata`, `pull_requests` and `contents` read; protection verification requests `metadata` and `administration` read (M1.5); `pull_requests: write` is requested only by the comment publisher (M1.6a); `checks: write` is requested only by check publication (M1.6b). `{metadata: read, contents: read}` is requested only by the download of a commit's archive (M2.1). All tokens of one installation share the one process-wide `rest.Budget`, because the rate limit belongs to the installation.
 
 ## A1: App authentication (`appauth`)
 
@@ -150,3 +150,27 @@ All of these use the synchronization token: `{metadata, pull_requests, contents}
 - **The integrated tree.** It is read with the existing `Reader.Tree(ctx, repo, mergeCommitSHA)`, so no commit read is needed. A truncated tree wraps `ErrTreeTruncated`, as for a head.
 - **Errors and logs.** Bodies are bounded and decoded into these types only. Errors and logs never carry GitHub text.
 - **Fixtures.** Fixtures cover an open PR, a closed unmerged PR, a merged PR with and without `merge_commit_sha`, a fork PR, and a PR whose head repository was deleted.
+
+## M2.1: execution reads (normative)
+
+[ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md) needs three reads that the service makes for the executor: the archive of a commit, the tree entries of a commit, and the merge base of a head. The archive read is written (task M2.1-T6, with its tests); the other two are specified here for M2.1-T4 and M2.1-T8. A † marks a name that task A0 chose.
+
+- **Permissions.** No new App permission, and still no Contents write ([D-GITHUB-ACCESS](../plan/decisions.md#d-github-access-github-app-permissions-and-token-lifecycle)).
+  - The archive download requests its own map, `{metadata: read, contents: read}` (`archivePermissions` in `internal/app/github.go`), and nothing else uses it. It is the contents of a commit and nothing a pull request or a check could use.
+  - The tree entries and the merge base use the synchronization token (`{metadata, pull_requests, contents}` read).
+- **The archive.** `Reader.Archive(ctx, repo, commitSHA string, dst io.Writer, maxBytes int64) (int64, error)` streams the `tar.gz` of the source of `repo` at `commitSHA` to `dst` and returns the bytes written.
+  - **The request.** `GET /repos/{r}/tarball/{sha}` through `(*rest.Client).Download`. The commit SHA must be 40 lowercase hex characters and the repository an `owner/name`, both checked before any request. GitHub answers 302 with the archive host's address in `Location`.
+  - **The redirect is followed by hand.** `Download` sends both requests through the HTTP client's transport, not through the client, which would follow the redirect with its own rules, bound the whole exchange (the body included) by its `Timeout` and quote the redirect's address in its errors. It expects exactly one 302. The second request is sent without the token and with `Accept-Encoding: identity`, so the transport never unpacks the archive. The redirect may go to `https`, or to the scheme of the API.
+  - **The address is a credential.** For a private repository the redirect's query carries a short-lived credential. No error and no log repeats the address.
+  - **The budget.** The call counts once, from the API's answer. The archive host's answer is not an API request.
+  - **The limit.** The copy stops at `maxBytes` with `rest.ErrTooLarge`: a declared length over the limit before a byte is copied, or a body that goes on past the limit (one more byte is read to tell). A body that ends before its declared length is an error, never a success. `dst` may hold part of the archive after an error. `DefaultArchiveLimit` is 512 MiB, for a caller with no limit of its own. The executor API passes `limits.archiveBytes`.
+  - **No retry, and a deadline for the body.** `Download` never retries. The client's `Timeout` bounds the API's answer only, so the caller's context must carry a deadline: it bounds the archive host and the body.
+  - **The archive is not the tree.** It is what GitHub builds with `git archive`: `.gitattributes` can drop or rewrite files in it, and an LFS file is a pointer. The caller checks the extracted files against the tree entries below.
+- **The tree entries.** `Reader.TreeEntries(ctx, repo, commitSHA string) ([]TreeEntry, error)` †, with `TreeEntry{Path, Mode, SHA string}`. It is the read of `Tree` (`GET /repos/{r}/git/trees/{sha}?recursive=1` through `GetImmutable`) without the `inventory` model: it keeps the git id and the mode.
+  - Blobs and submodules are returned. Directories (`tree`) are skipped. `Mode` is `100644`, `100664` (git's legacy mode, a regular file), `100755`, `120000` or `160000`; any other mode is an error.
+  - A `truncated: true` answer is `ErrTreeTruncated`, never a partial list. The service refuses a commit with more than 50,000 entries ([runtime contract](runtime.md#the-executor-api)).
+- **The merge base.** `Reader.MergeBase(ctx, repo, baseSHA, headSHA string) (string, error)` †.
+  - It issues `GET /repos/{r}/compare/{baseSHA}...{headSHA}?per_page=1` through `GetImmutable` (both ends are SHAs, so the answer does not change) and reads `merge_base_commit.sha`, which must be 40 lowercase hex characters. `baseSHA` is the tip of the pull request's base branch that the synchronization observed, and `headSHA` the head.
+  - A 404 (no common ancestor, or a commit that a force push removed) is `rest.ErrNotFound`. The checks job then reads the receipt as `unavailable` with `archive-unavailable`.
+  - **Not measured yet.** The live test (`-tags=live`) of the M2.1 verification must assert that `merge_base_commit` is present with `per_page=1`, and the 404 case.
+- **The budget and the errors.** Every read above goes through the process-wide `rest.Budget` and counts in the pacing of the synchronization tick ([runtime contract](runtime.md#execution-m21-normative)). An exhausted budget or a secondary limit is transient and is returned as before. Bodies are bounded and decoded into these types only, and errors and logs never carry GitHub text or a redirect's address.

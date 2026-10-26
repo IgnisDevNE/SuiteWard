@@ -31,7 +31,7 @@ Every setting is an environment variable named `SUITEWARD_<NAME>`. A secret sett
 | `INSTALLATION_TIER` (M1.5) | no | `co-located` | `isolated` or `co-located` (D-TIER). Declared by the deployment, never detected; the remote quadlet sets `isolated`, and `suiteward install` sets it on the service container to the tier it installs (`--tier`, `co-located` by default; `internal/installer/stack.go` for the co-located containers, the rendered quadlet for the isolated ones). |
 | `REPORT_BASE_URL` (M1.13) | no | none | `http://127.0.0.1:<port>` or `http://localhost:<port>` (the host is lowercased, the port is 1 to 65535 without a leading zero, no path, query, fragment or user info, and a trailing slash is dropped): the origin that the change report links of a revision comment name, the HTTP port of the instance as the machine that runs it sees it (on the isolated tier, the end of a port forward). Anything else is refused at startup; the value is not echoed. Unset: the revision comment has no link. `suiteward install` sets it on both tiers from `--http-port` (`http://127.0.0.1:<HTTP port>`); a stack of an earlier release lacks it until `install --upgrade` adds it ([install guide, section 12](../install.md#what-the-installer-does-for-review)). |
 | `EXECUTOR_TOKEN` (M2.1) | yes | none | The bearer token of the executor API ([Execution](#execution-m21-normative)), at least 32 bytes like `MCP_TOKEN`, normally given as `EXECUTOR_TOKEN_FILE`. Unset: the executor routes are not served (404) and no execution job is created. A build without the Go image stamp has the same effect. |
-| `EXECUTOR_JOB_TIMEOUT` (M2.1) † | no | `30m` | Go duration, 1m to 6h: how long an execution job may take from its creation to a result, queue wait included. Not `JOB_TIMEOUT`, which bounds a River job. |
+| `EXECUTOR_JOB_TIMEOUT` (M2.1) † | no | `30m` | Go duration, 1m to 6h: how long a job may wait for a lease, and how long one attempt may run once leased ([job lifecycle](#job-lifecycle)). Not `JOB_TIMEOUT`, which bounds a River job. |
 
 Later phases add settings under the same rules. A † in this document marks a choice of task A0 (M2.1) inside [ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md): a name, a size or a duration that the integrator may change. The GitHub settings of M1.4 are an interim operator configuration: they do not establish the trusted App installation association, which D-IDENTITY and M1.5 decide (see [github](github.md#configuration-interim-m14)).
 
@@ -601,22 +601,24 @@ A revision that is not found, one that expects no canonical (a baseline), a cano
 
 [ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md) decides the rules and [D-M2.1](../plan/decisions.md#d-m21-canonical-execution-the-receipt-and-the-go-profile) records them; this section is the wire and the behavior. A † marks a choice of task A0 (a name, a size or a duration). The persistence side is in the [persistence contract](persistence.md#execution-m21-normative).
 
-**The effective policy.** The checks job and the commands job read it from the declaration of the Suite's current canonical version: the bytes that the canonical manifest names for `.suiteward.yml`, read through `ContentReader` and parsed by `scope.ParseDeclaration` (which reads the `execution` block). The pair `(canonical level, receipt level)` is `(off, off)` when the block or its `profile` is absent. The canonical declaration governs every pull request, the one that changes it included. Before the first version there is no policy and nothing runs. Fork pull requests get no job: they stay `fork-unsupported`.
+**The effective policy.** The checks job and the commands job read it from the declaration of the Suite's current canonical version: the bytes that the canonical manifest names for `.suiteward.yml`, read through `ContentReader` and parsed by `scope.ParseDeclaration` (which reads the `execution` block). The pair `(canonical level, receipt level)` is `(off, off)` when the block is absent or empty. A block that names a level without a `profile` is an invalid declaration, so such a pair never exists. The canonical declaration governs every pull request, the one that changes it included. Before the first version there is no policy and nothing runs. Fork pull requests get no job: they stay `fork-unsupported`.
 
-**Unavailable reasons.** A run that cannot be completed is `unavailable` with one reason from a closed set of codes †:
+**Applicable and not applicable.** A receipt is wanted for a head that has a revision when the `receipt` level is not `off`. It is **applicable** when at least one file that the canonical `include` matches (and the canonical `exclude` does not) is added or changed in the revision's manifest against the manifest of the canonical version that the revision expects. The service decides this from the two manifests, with no Go parsing. Otherwise the receipt is `not-applicable`: no job is created, the receipt gate does not apply, and no Receipt check is published. Applicability depends on the revision, not on the head.
 
-| Reason | Set by | Meaning |
-| --- | --- | --- |
-| `executor-error` | executor | the executor failed in a way no other code names |
-| `sandbox-unavailable` | executor | the sandbox could not be built, or the runtime cannot honor a required property |
-| `toolchain-mismatch` | executor | the repository needs a Go that the pinned image does not have |
-| `source-mismatch` | executor | the source check failed: a missing, extra or mismatched file, or an unsafe symlink |
-| `archive-unavailable` | executor | an archive or a manifest file could not be read |
-| `profile-unsupported` | executor | the job names a profile that this executor lacks |
-| `too-large` | executor, service | an archive, a tree or a result passed its limit |
-| `timeout` | service | the job passed `deadlineAt` |
-| `attempts-exhausted` | service | the lease expired on the last attempt |
-| `executor-not-configured` | service | no executor token, or no Go image stamp; no job is created |
+**Unavailable reasons.** A run that cannot be completed is `unavailable` with one reason from a closed set of codes †. An attempt that fails with a reason marked "retried" runs again, up to 3 attempts, with a backoff; any other reason is final for the head and the binding.
+
+| Reason | Set by | Meaning | Retried |
+| --- | --- | --- | --- |
+| `executor-error` | executor | the executor failed in a way no other code names | yes |
+| `sandbox-unavailable` | executor | the sandbox could not be built, or the runtime cannot honor a required property | yes |
+| `archive-unavailable` | executor | an archive or a manifest file could not be read | yes |
+| `attempts-exhausted` | service | a lease expired with no result: the executor was lost | yes |
+| `timeout` | service | a run went past its deadline (retried); or no executor leased the job within the job timeout (final) | see text |
+| `toolchain-mismatch` | executor | the repository needs a Go that the pinned image does not have | no |
+| `source-mismatch` | executor | the source check failed: a missing, extra or mismatched file, or an unsafe symlink | no |
+| `too-large` | executor, service | an archive, a tree or a result passed its limit | no |
+| `profile-unsupported` | executor | the job names a profile that this executor lacks | no |
+| `executor-not-configured` | service | no executor token, or no Go image stamp; no job is created | no |
 
 A job is cancelled, not unavailable, when its binding is no longer wanted: `head-moved` (the pull request has another head), `closed` (the pull request is not open) or `obsolete` (the governing manifest or the policy changed) †.
 
@@ -629,17 +631,17 @@ Base path `/executor/v1` on the service's HTTP listener. It is not served (404, 
 - **No `Host` rule.** The loopback `Host` check of the report pages does not apply. The report pages need it because they have no authentication. These routes have a bearer token, which a browser page cannot send cross-origin (no CORS header is ever served).
 - **Lease header.** Every request under `/jobs/{id}` carries `Suiteward-Lease: <leaseId>`.
 - **Format.** JSON bodies are UTF-8 and strictly decoded: an unknown field, a trailing value or a non-object is 400 `invalid`. Times are RFC 3339 in UTC. Every answer carries `Cache-Control: no-store`.
-- **Errors** are `{"error": "<code>"}` with a fixed code and never an echo of the request: `invalid` (400), `not-found` (404), `lease-lost` (409), `conflict` (409), `too-large` (413), `github` (502: GitHub could not be read, retryable), `unavailable` (503: the service is shutting down or not ready) and `internal` (500, the cause logged). Any 409 under `/jobs/{id}` means: stop, discard the work, post nothing.
+- **Errors** are `{"error": "<code>"}` with a fixed code and never an echo of the request: `invalid` (400), `not-found` (404), `lease-lost` (409), `conflict` (409), `too-large` (413), `github` (502: GitHub could not be read, or the request budget is spent; retryable), `unavailable` (503: the service is shutting down or not ready) and `internal` (500, the cause logged). Any 409 under `/jobs/{id}` means: stop, discard the work, post nothing.
 - **Deadlines.** The listener's 30 s read and write bounds stay for every route except the two downloads. Each download extends its own write deadline, for that request, to the job's remaining time, at most 10 minutes †. Each handler caps its request body.
 - **Limits of a job.** The service refuses to lease a job whose commit has more than 50,000 tree entries †; such a job becomes `unavailable` (`too-large`).
 
 **`POST /lease`.** Grants at most one job.
 - *Request:* no body, or `{}`. Any other body is 400.
 - *204:* no job is ready.
-- *200:* the job, as below. The service reads the tree entries of each commit when it grants the lease. A GitHub failure is 502 and leaves the job pending with its attempts unchanged. A truncated tree makes the job `unavailable` (`too-large`).
+- *200:* the job, as below. The service reads the tree entries of each commit when it grants the lease, through the budget. A GitHub failure or an exhausted budget is 502 and leaves the job pending with its attempts unchanged. A truncated tree makes the job `unavailable` (`too-large`).
 - *Also:* 401, 503.
 - *Not idempotent:* each call that grants a lease takes a job. An executor that restarts asks again and gets the next job; the job it had leased comes back when its lease expires.
-- *Rules:* the oldest job that is `pending`, or `leased` with an expired lease, goes first. Granting increments `attempts` and sets a new `leaseId` and `leaseExpiresAt` (60 s from now †, never beyond `deadlineAt`). The answer is at most 16 MiB †.
+- *Rules:* the oldest job that is `pending` with `not_before` reached, or `leased` with an expired lease, goes first. Granting increments `attempts` and sets a new `leaseId`, `leaseExpiresAt` (60 s from now †) and `deadlineAt` (the job timeout from now, the deadline of this run). The answer is at most 16 MiB †.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -651,15 +653,15 @@ Base path `/executor/v1` on the service's HTTP listener. It is not served (404, 
 | `profile` | object | `id` (`go`) and `image`, the pinned Go image by digest (`<name>@sha256:<64 hex>`, at most 300 bytes) |
 | `head` | object | `sha` (40 lowercase hex) and `tree`, the entries of that commit |
 | `base` | object | the same shape as `head`; present exactly for `receipt` (the merge base) |
-| `manifest` | object | `source` (`V<n>` or `P<n>-R<m>`), `digest` (`sha256:<64 hex>`) and `files`, an array of `{path, digest}`. For `canonical` it is the governing manifest. For `receipt` it is the canonical version that the revision expects |
-| `scope` | object | `include` and `exclude`, arrays of patterns: the declaration of that manifest, at most 1000 patterns in all |
+| `manifest` | object | `source` (`V<n>` or `P<n>-R<m>`), `digest` (`sha256:<64 hex>`) and `files`, an array of `{path, digest}`. For `canonical` it is the whole governing manifest. For `receipt` it is the canonical version that the revision expects |
+| `scope` | object | `include`, `exclude` and `runner`, arrays of patterns, at most 1000 in all. For `canonical` they are the declaration of the governing manifest, for the overlay and the removals (the executor builds the scope with the same code as the service, so the protected defaults come from the code). For `receipt` they are the canonical version's, and `runner` is empty |
 | `limits` | object | `archiveBytes` 268435456, `fileBytes` 8388608, `testTimeoutSeconds` 600, `memoryMiB` 2048, `cpus` 2, `pids` 512, `reruns` 2 † |
 
-A tree entry is `{path, mode, sha}`: `path` is at most 4096 bytes, `mode` is one of `100644`, `100755`, `120000` and `160000`, and `sha` is the 40-hex git id of the blob (of the commit, for a submodule).
+A tree entry is `{path, mode, sha}`: `path` is at most 4096 bytes, `mode` is one of `100644`, `100664` (a regular file), `100755`, `120000` and `160000`, and `sha` is the 40-hex git id of the blob (of the commit, for a submodule).
 
-**`GET /jobs/{id}/archive/{head|base}`.** The commit's `tar.gz`, streamed by the service from GitHub's archive of that exact SHA, with a token that holds Contents read only. The executor never holds a GitHub token.
-- *200:* `application/gzip`, no `Content-Length`. The service sends at most `limits.archiveBytes` plus 1 byte. An archive that reaches the limit is `too-large`, which the executor reports.
-- *404:* an unknown job, `base` of a `canonical` job, or any other side. *409:* the lease. *502:* GitHub. Also 401.
+**`GET /jobs/{id}/archive/{head|base}`.** The commit's `tar.gz`, streamed by the service from GitHub's archive of that exact SHA, with a token that holds Contents read only (the [GitHub contract](github.md#m21-execution-reads-normative) has the redirect and the budget). The executor never holds a GitHub token.
+- *200:* `application/gzip`, no `Content-Length`. The service streams through `Reader.Archive` with `limits.archiveBytes` as the limit, so it sends at most that many bytes. A stream that stops after exactly that many bytes and before the tar ends means that the archive is larger: the executor reports `too-large`.
+- *404:* an unknown job, `base` of a `canonical` job, or any other side. *409:* the lease. *502:* GitHub or the budget. Also 401.
 - *Idempotent:* it may be repeated.
 
 **`GET /jobs/{id}/files/{digest}`.** One file of `manifest.files`, from the service's store.
@@ -671,7 +673,7 @@ A tree entry is `{path, mode, sha}`: `path` is at most 4096 bytes, `mode` is one
 - *Request:* no body. *200:* `{"leaseExpiresAt": "..."}`, 60 s from now, never beyond `deadlineAt`. *409:* the lease was lost (another lease, or the job is cancelled or finished). Also 401, 404.
 - *Idempotent.* The executor should send one about every 20 s †.
 
-**`POST /jobs/{id}/result`.** At most 4 MiB †. A 200 answer is `{"state": "complete"}` or `{"state": "unavailable"}`.
+**`POST /jobs/{id}/result`.** At most 4 MiB †. A 200 answer is `{"state": "complete"}`, `{"state": "unavailable"}`, or `{"state": "pending"}` when the attempt failed with a retried reason and the job was queued again (the executor discards the work and asks for a lease as before).
 
 | Field | Type | Rule |
 | --- | --- | --- |
@@ -682,16 +684,16 @@ A tree entry is `{path, mode, sha}`: `path` is at most 4096 bytes, `mode` is one
 | `sandbox` | object | `imageDigest` (`sha256:<64 hex>`) and `toolchain` (at most 64 printable ASCII bytes, for example `go1.25.1`); required for `complete` |
 | `startedAt`, `endedAt` | string | RFC 3339; `endedAt` is not before `startedAt`; neither is more than 5 minutes ahead of the service's clock |
 | `tests` | array | `complete` only; at most 10,000 † (below) |
-| `unapproved` | array | `receipt` only: at most 100 paths of test files under patterns that only the head adds |
 | `markers` | array | `receipt` only: at most 200 objects `{kind, path, line}`. `kind` is `testing-import`, `testing-testing`, `flag-lookup-test`, `exit-in-init`, `test-file-read` or `env-read` †; `line` is 1 to 10,000,000 |
 | `submodules` | array | at most 100 paths that were skipped |
 
 A test is `{package, name, file, kind, head, base, excluded}`:
 - `package` is the directory of the package relative to the repository root (`.` for the root), at most 512 bytes. `name` is `Test` followed by letters, digits and `_`, at most 200 bytes. `file` is the declaring file, a path ending `_test.go`, at most 1024 bytes. A path is clean and relative, with no `..`.
 - `kind` is `declared` for `canonical`, and `added` or `changed` for `receipt`.
-- `head` has 1 to 3 observations in run order, each `pass`, `fail`, `build-error`, `skip` or `absent`. `base` is the same, and is present exactly for a `receipt` test that is not excluded.
+- `head` has 1 to 3 observations in run order, each `pass`, `fail`, `build-error`, `skip` or `absent`. `base` is the same, and is present exactly for a `receipt` test that is not excluded. A package that does not build reports `build-error` for every expected test of it.
 - `excluded` is `build-constraint` †. A test with it has no `head` and no `base`.
 - `(package, name)` is unique in the result. An internal and an external test package of one directory share one `package` value. A name that both declare is reported once, and its observation is the worst of the two (a failure of either reads `fail`), because `go test -run` selects by name alone. That is a limit, not a feature.
+- When the exit status of a package contradicts its report (a non-zero exit with every test reported passing, or the reverse), the executor reports every expected test of that package as `fail`.
 
 The service validates, in this order:
 1. the token and the job (404);
@@ -702,33 +704,35 @@ The service validates, in this order:
 6. the heads against the job;
 7. every rule above.
 
-Every string is valid UTF-8 and holds no control or format character and no newline. A result that breaks a rule is 400 and nothing is stored. The service derives each test's state from its observations with the domain, stores the result, sets the job's state and wakes `github_checks`. The result carries no output, no error text and no free text: an executor cannot put words into a check or a page.
+Every string is valid UTF-8 and holds no control or format character and no newline. A result that breaks a rule is 400 and nothing is stored. For a retried reason with attempts left, the service stores no result: it queues the job again and answers `pending`. Otherwise it derives each test's state from its observations with the domain, stores the result, sets the job's state and wakes `github_checks`. The result carries no output, no error text and no free text: an executor cannot put words into a check or a page.
 
 #### Job lifecycle
 
-States of a job †: `pending`, `leased`, `complete`, `unavailable`, `cancelled`. The last three are final. The run status of ADR 0028 is `pending` for `pending` and `leased`, and otherwise the job's state. A `cancelled` job is the run of no binding.
+States of a job †: `pending`, `leased`, `complete`, `unavailable`, `cancelled`. The last three are final. The run status of ADR 0028 is `pending` for `pending` and `leased`, and otherwise the job's state. A `cancelled` job is the run of no binding. A receipt that is `not-applicable` has no job.
 
 | From | To | When |
 | --- | --- | --- |
-| (none) | `pending` | the checks job creates it |
-| `pending` | `leased` | a lease is granted; `attempts` goes up by one |
-| `leased` | `pending` | the lease expired and `attempts` is below 3 † |
-| `leased` | `unavailable` | the lease expired on the third attempt (`attempts-exhausted`) |
-| `pending`, `leased` | `unavailable` | `deadlineAt` passed (`timeout`) |
-| `leased` | `complete`, `unavailable` | a result is stored |
+| (none) | `pending` | the checks job creates it, with `deadline_at` the job timeout from now |
+| `pending` | `leased` | a lease is granted once `not_before` is reached; `attempts` goes up by one; `deadline_at` is set to the job timeout from now |
+| `leased` | `pending` | the attempt failed with a retried reason (a lease that expired, a run past its deadline, or such a reason from the executor) and `attempts` is below 3 †; `reason` keeps that reason, `not_before` is 30 s † after the first failure and 2 min † after the second, and `deadline_at` is the job timeout after `not_before` |
+| `leased` | `unavailable` | the attempt failed on the third attempt (its reason), or the executor reported a reason that is not retried |
+| `pending` | `unavailable` | `deadline_at` passed and no executor leased the job (`timeout`) |
+| `leased` | `complete` | a result is stored |
 | `pending`, `leased` | `cancelled` | the binding is no longer wanted |
 
-The lease query applies expiry when it picks a job. The checks job applies the rest at the start of each run, and wakes itself on any change it makes. Nothing is ever deleted. An unavailable run is final for its head and binding. Only a new head, or a changed manifest or policy, makes the checks job create another job. There is no rerun command (ADR 0028, open item 8).
+The lease query applies expiry when it picks a job. The checks job applies the rest at the start of each run, and wakes itself on any change it makes. Nothing is ever deleted. A final `unavailable` run stays so for its head and binding: a new head, or a changed manifest or policy, makes the checks job create another job, and the owner can lift it for the head with `/suiteward unblock`.
 
 **What the checks job does for execution.** It stays the only writer of check states.
 1. It sweeps expiry and deadlines. It cancels the jobs of a pull request that is closed or has another head (`closed`, `head-moved`), and the jobs whose binding is no longer the wanted one (`obsolete`).
 2. For each open, non-fork pull request of a repository with a canonical, a policy that is not `(off, off)`, an executor token and a Go image stamp, after the head assessment, it wants:
    - when `canonical` is not `off`: the **canonical** plan. The governing manifest is the current revision's manifest when that revision has an eligible exact approval and a passed assessment of this head (the condition for `ready`), and the canonical's manifest otherwise;
-   - when `receipt` is not `off` and the head has a revision: the **receipt** plan, with the canonical's manifest and, as the base, the merge base of the head and the pull request's base branch. The service reads the merge base through GitHub's compare endpoint, the `merge_base_commit` of `base_sha...head_sha`. That is a new read for the GitHub adapter (M2.1-T8).
+   - when `receipt` is not `off`, the head has a revision and the receipt is applicable: the **receipt** plan, with the canonical's manifest and, as the base, the merge base of the head and the pull request's base branch ([GitHub contract](github.md#m21-execution-reads-normative)). It also computes the paths "not evaluated: pattern not approved yet": the files that the pull request adds or changes and that the head's `include` matches but the canonical `include` does not, at most 100 paths.
 3. It creates the job for each wanted plan unless a job with the same key exists and is not cancelled. The **job key** is the SHA-256, in lowercase hex, of six lines, each ended by a newline †: the plan, the profile, the head SHA, the base SHA (empty for the canonical plan), the governing manifest digest and the digest of the canonical declaration. The policy levels are inside that declaration, so a changed policy is a new job.
 4. Without an executor token or a Go image stamp it creates nothing, and every run reads `unavailable` with `executor-not-configured`.
 
-A result, `complete` or `unavailable`, wakes `github_checks` after its commit, by the rule of "Latency (M1.7c)": the handler inserts the wake-up as a job does, and a failed wake-up is logged and never fails the request.
+A result stored, in any state, wakes `github_checks` after its commit, by the rule of "Latency (M1.7c)": the handler inserts the wake-up as a job does, and a failed wake-up is logged and never fails the request.
+
+**The GitHub budget.** The reads that execution makes (the trees at lease time, the merge base, the archives) go through the process-wide `rest.Budget` and count in the pacing of `github_sync_tick`, as the requests of `github_sync_repo` do ("Latency (M1.7c)"). An exhausted budget or a secondary limit is transient: the lease answers 502 `github` and the checks job tries again at its next run.
 
 #### The canonical gate on the `SuiteWard / Contract` check
 
@@ -736,18 +740,22 @@ Under `canonical: required`, and only where the check would otherwise be `succes
 
 | Run | State | Reason † |
 | --- | --- | --- |
-| no job yet, `pending` or `leased` | `in_progress` | `canonical-pending` |
+| no job yet, `pending` or `leased` (a job queued again after a failed attempt included) | `in_progress` | `canonical-pending` |
 | `unavailable`, or no executor token or Go image stamp (`executor-not-configured`) | `in_progress` | `canonical-unavailable` |
 | `complete` with any `FAIL`, `MISSING` or `FLAKY` | `failure` | `canonical-failed` |
 | `complete` with none of them | `success` | the reason it would have had |
 
-Every other reason keeps its precedence, as with `runner-uncovered`. A canonical run with no declared test is `complete` with zero tests. Both are provisional (ADR 0028, open items 6 and 9). The gate never turns another state into `success`.
+Every other reason keeps its precedence, as with `runner-uncovered`. A canonical run with no declared test is `complete`, and the summary says "0 tests ran". The gate never turns another state into `success`.
 
-Under `advisory` or `off` the check and its publication rule are unchanged, so its text does not change either: the results of an advisory run are on the [receipt page](#the-receipt-page) only. Under `required`, the summary of the check states counts only, with no repository text, no path, no test name and no link: the tests run, how many passed, were skipped, failed, were missing or flaky, and how many are excluded and were not run, with the words "Excluded tests are not covered." when there are some. It still names the tier. Under `required` the summary may say that SuiteWard ran the tests. Under `advisory` and `off` it never does. The amendment of D-CHECKS and of ADR 0015 is in [D-M2.1](../plan/decisions.md#d-m21-canonical-execution-the-receipt-and-the-go-profile).
+**Unblocked.** When the run is `unavailable` and the owner unblocked the head for the canonical plan, the gate does not withhold: the check is what it would otherwise be, and the publication is marked `unblocked`. Nothing else is lifted: `canonical-pending` and `canonical-failed` stand.
+
+Under `advisory` or `off` the check and its publication rule are unchanged, so its text does not change either: the results of an advisory run are on the [receipt page](#the-receipt-page) only. Under `required`, the summary of the check states counts only, with no repository text, no path, no test name and no link: the tests run, how many passed, were skipped, failed, were missing or flaky, and how many are excluded and were not run, with the words "Excluded tests are not covered." when there are some. It still names the tier. When the publication is `unblocked` it says: "The owner unblocked this head: its canonical run was unavailable, so the approved tests did not run on it." Under `required` the summary may say that SuiteWard ran the tests. Under `advisory` and `off` it never does. The amendment of D-CHECKS and of ADR 0015 is in [D-M2.1](../plan/decisions.md#d-m21-canonical-execution-the-receipt-and-the-go-profile).
+
+**Changes to the `github_check` message and its ledger.** The `github_check` payload gains `execution` (optional): `tests`, `passed`, `skipped`, `failed`, `missing`, `flaky` and `excluded`, all integers, present for a `complete` canonical run under `required`; and `unblocked` (optional boolean). `pr_checks` gains `unblocked`, and `checks.Store.Publish` advances the generation when it changes, as it does for the state, the reason and the reference ([persistence contract](persistence.md#changes-to-pr_checks)).
 
 #### The `SuiteWard / Receipt` check
 
-The `github_checks` job writes it for each open, non-fork pull request of a repository with a canonical whose `receipt` level is not `off`, for a head that has a revision (provisional; ADR 0028, open item 2). The check is never required. It is published like the Contract check: one run per head and generation, `POST` only, a generation that advances when the head, the state, the reason or the reference changes, and the lost-publication rule of the check ledger (a message that failed is sent again under the next generation after 15 minutes). It reads the head's receipt run:
+The `github_checks` job writes it for each open, non-fork pull request of a repository with a canonical whose `receipt` level is not `off`, for a head that has a revision whose receipt is applicable. A `not-applicable` receipt publishes nothing. The check is never required. It is published like the Contract check: one run per head and generation, `POST` only, a generation that advances when the head, the state, the reason, the reference or `unblocked` changes, and the lost-publication rule of the check ledger (a message that failed is sent again under the next generation after 15 minutes). It reads the head's receipt run:
 
 | Run | State | Reason † | Title † |
 | --- | --- | --- | --- |
@@ -756,9 +764,9 @@ The `github_checks` job writes it for each open, non-fork pull request of a repo
 | `complete`, otherwise | `success` | `receipt-complete` | "Receipt ready" |
 | `unavailable`, or no executor | `neutral` | `receipt-unavailable` | "Receipt unavailable" |
 
-The conclusion never depends on a mode. The summary is public text. It holds the count of each state (`DETECTS`, `INERT`, `NEW API`, `FAILS`, `MISSING`, `FLAKY`, `SKIPPED`), the number of excluded tests, the number of marker lines seen, the tier, the sentence "Observed by this instance's executor. Evidence, not a verdict.", and, for `unavailable`, the reason code in words. It has no repository text, no path, no test name, no link and no mode.
+The conclusion never depends on a mode. An unblock does not change it: an unblocked head's receipt stays `neutral`, marked `unblocked`. The summary is public text. It holds the count of each state (`DETECTS`, `INERT`, `NEW API`, `FAILS`, `MISSING`, `FLAKY`, `SKIPPED`), the number of excluded tests, the number of marker lines seen, the tier, the sentence "Observed by this instance's executor. Evidence, not a verdict.", for `unavailable` the reason code in words, and, when the owner unblocked the head, "The owner unblocked this head: its receipt was unavailable, so the tests did not run." It has no repository text, no path, no test name, no link and no mode.
 
-**Outbox kind `github_receipt_check`.** Key `receipt-check:<repository id>:<pull>:<generation>`, a system row. The payload (explicit tags, strict decoding) has `repositoryId`, `repo`, `pull`, `headSha`, `generation`, `state`, `reason`, `reference`, `tier`, `counts` (`detects`, `inert`, `newApi`, `fails`, `missing`, `flaky`, `skipped`, `excluded`, `markers`, all integers) and, for `neutral`, `unavailable`, the reason code.
+**Outbox kind `github_receipt_check`.** Key `receipt-check:<repository id>:<pull>:<generation>`, a system row. The payload (explicit tags, strict decoding) has `repositoryId`, `repo`, `pull`, `headSha`, `generation`, `state`, `reason`, `reference`, `tier`, `counts` (`detects`, `inert`, `newApi`, `fails`, `missing`, `flaky`, `skipped`, `excluded`, `markers`, all integers), `unavailable` (optional, the reason code, for `neutral`) and `unblocked` (optional boolean).
 
 The publisher follows the `github_check` publisher. It drops a message whose generation is no longer the current one. It looks for a check run named `SuiteWard / Receipt` from this App whose `external_id` is `suiteward:<instance id>:<key>`, and otherwise posts it: `success`, `failure` and `neutral` as `completed` with that conclusion, `in_progress` as `in_progress`. A 422 for a head that no longer exists is logged and counts as delivered.
 
@@ -768,28 +776,42 @@ The publisher follows the `github_check` publisher. It drops a message whose gen
 - `/suiteward approve P<n>-R<m> [fix|feature|refactor] <code>`: the mode, when given, is the word between the reference and the code. A third token that is not a mode word is read as the code, so a misspelled mode is `bad-code`. With a mode word as the third token, the fourth must be the six-digit code.
 - `/suiteward revoke P<n>-R<m> <code>` is unchanged. It takes no mode, and a mode word is a `bad-code`.
 - `/suiteward mode <fix|feature|refactor>`: owner only, no code. A bare `mode` is `missing-mode`, another word is `bad-mode`, and anything after the mode is `extra-text`.
+- `/suiteward unblock <code>`: owner only, no reference, a six-digit code. It reads like `skip`: no code is `missing-code`, a token that is not a code (a reference, say) is `bad-code`, and a second token is `extra-text`.
 - The `malformed` reasons gain `missing-mode` and `bad-mode` †.
 
-**Dispositions** (migration `00021`; each is a code of `pr_commands`): `receipt-refused`, `mode-set` and `mode-refused` †.
-- `mode-set`: the preview mode was recorded. `mode-refused`, with `reason` `fork` or `not-open` †, is acknowledged and records nothing else. Both carry no code, take no step and no operation id, and are never counted by `LatestOwnerCommand`: they never set or clear `owner-command-rejected`.
-- `receipt-refused`: an `approve` whose code was valid and was consumed, refused by the receipt gate. It carries no operation id and records no consent. It is never counted by `LatestOwnerCommand` and never sets `owner-command-rejected`.
+**Dispositions** (migration `00021`; each is a code of `pr_commands`): `receipt-refused`, `mode-set`, `mode-refused`, `unblocked` and `unblock-refused` †.
+- `mode-set`: the preview mode was recorded. `mode-refused`, with `reason` `fork` or `not-open` †, is acknowledged and records nothing else. Both carry no code, take no step and no operation id.
+- `receipt-refused`: an `approve` whose code was valid and was consumed, refused by the receipt gate. It carries no operation id and records no consent.
+- `unblocked` and `unblock-refused`: an `unblock` whose code was valid and was consumed. Neither carries an operation id.
+- None of the five is counted by `LatestOwnerCommand`. None sets or clears `owner-command-rejected`. A wrong or reused code on an `unblock` is `invalid-code` or `replayed-code` and sets it, as for any command that carries a code.
 - The mode of the comment (`mode-set`, and any `approve` that carried one, whatever its disposition) is recorded in `pr_commands.mode`.
+- The guard for a closed pull request (a command first observed after the pull request stopped being open is ignored, with no step and no acknowledgment) covers `unblock` as it covers `approve`, `revoke` and `skip`.
 
-**The receipt gate in the commands job.** It is step 6a of "Owner-authored", after `ConsumeStep` and before `ProcessConsent`. It acts on an `approve` only: `revoke`, `skip`, `propose` and `suggest` are never gated.
-1. It applies only when the policy's `receipt` level is not `off`, and when the approve names the proposal's current revision. Another reference goes on to `ProcessConsent`, which rejects it as before (provisional; ADR 0028, open item 5).
-2. It reads the pull request's head as the synchronization observed it when the command is processed, and that head's receipt run. No job yet counts as `pending`. No executor token or Go image stamp counts as `unavailable` (`executor-not-configured`), whatever the head: no job will ever exist.
-3. `off` and `advisory`: proceed. `before-approval`: refuse unless the run is `complete`. `required`: refuse unless the run is `complete`, the comment carries a mode, and the summary for that mode is met.
-4. A refusal is recorded `receipt-refused` through `Record`, with an acknowledgment and the gate record of the persistence contract, in one transaction. The `reason` of the acknowledgment is the first that applies: `pending` (the run is pending or missing), `unavailable`, `mode-missing`, `mode-not-met`.
-5. When it proceeds, `ProcessConsent` runs as before, and `Record(processed)` writes the gate record in the same transaction as the ledger entry.
-6. A retry after a crash that finds the consent already recorded (the replay of the operation) skips the gate and records the entry as `processed` with no gate record: the state at the approval was not recorded, and a state read now would not be that one. The missing record marks the retry.
+**The receipt gate in the commands job.** It is step 6a of "Owner-authored", after `ConsumeStep` and before `ProcessConsent`. It acts on an `approve` only: `revoke`, `skip`, `propose`, `suggest` and `unblock` are never gated.
+1. It applies only when the policy's `receipt` level is not `off`, when the approve names the proposal's current revision (another reference goes on to `ProcessConsent`, which rejects it as before), and when the revision's receipt is applicable. A `not-applicable` receipt passes the gate, and the approve needs no mode.
+2. It reads the pull request's head as the synchronization observed it when the command is processed, and that head's receipt run: `pending` (no job yet, or pending or leased, or queued again), `complete`, or `unavailable` (the job is unavailable, or no executor token or Go image stamp is configured, whatever the head: no job will ever exist).
+3. `off` and `advisory`: proceed. `before-approval`: refuse only while the run is `pending`. `required`: refuse unless the run is `complete`, the comment carries a mode, and the summary for that mode is met.
+4. An `unavailable` run that the owner unblocked for the head passes the gate: nothing is refused, and no mode is needed.
+5. A refusal is recorded `receipt-refused` through `Record`, with an acknowledgment and the gate record of the persistence contract, in one transaction. The `reason` of the acknowledgment is the first that applies: `pending`, `unavailable` (under `required` only), `mode-missing`, `mode-not-met`.
+6. When it proceeds, `ProcessConsent` runs as before, and `Record(processed)` writes the gate record in the same transaction as the ledger entry. A gate that passed a `not-applicable` receipt or an unblocked run writes its record too, with `run_state` `not-applicable`, or `unavailable` and `unblocked`.
+7. A retry after a crash that finds the consent already recorded (the replay of the operation) skips the gate and records the entry as `processed` with no gate record: the state at the approval was not recorded, and a state read now would not be that one. The missing record marks the retry.
 
 The acknowledgment of `receipt-refused` is `ack:<repository id>:<comment id>` with `disposition`, `comment`, `owner`, `reference`, `reason`, `mode` (optional) and, for `mode-not-met`, `counts` (as in the receipt check). It says that the code was used and nothing was approved, what is missing, and that the next attempt needs the next code. For `mode-set` the payload has `disposition`, `comment`, `owner` and `mode`. For `mode-refused` it has `disposition`, `comment`, `owner` and `reason`.
 
-**The preview mode** of a pull request is the `mode` of its latest `mode-set` entry created at or after the current enrollment. It lasts across heads and revisions (provisional; ADR 0028, open item 7). The receipt page shows it, and no gate reads it.
+**`unblock` in the commands job.** It goes through the D-COMMANDS checks first (before enrollment, not a command, author, edited first, the closed-pull guard), then the code is verified at the comment's `created_at` and consumed (`ConsumeStep`, source `github-comment:<id>`), as for `approve` and `skip`. Then:
+1. It reads the pull request's head as the synchronization observed it when the command is processed, and the policy.
+2. It refuses, recorded `unblock-refused` with an acknowledgment, for the first of these: `fork`, `not-open`, `not-unavailable` (none of the head's runs is unavailable: no policy, a run pending or complete, or no receipt that applies) †. The code stays consumed.
+3. Otherwise the plans to lift are the head's runs that are `unavailable` now: the canonical plan when the `canonical` level is not `off`, and the receipt plan when the `receipt` level is not `off` and the receipt is applicable. A run with no job because no executor is configured is unavailable too.
+4. It records `unblocked` through `Record`, with the acknowledgment, and one `execution_unblocks` row naming the head and the plans, in one transaction. The commands job then wakes `github_checks`, as for any ledger entry.
+5. The gates read the row through `Unblocked(repositoryID, pull, head, plan, since)`, with `since` the current enrollment's `enrolled_at`. A row covers its head and its plans and nothing else: another head, a plan that was not unavailable when the command was processed, and any run that is pending, complete or failing are not lifted.
+
+The acknowledgment of `unblocked` is `ack:<repository id>:<comment id>` with `disposition`, `comment`, `owner` and `plans`; it says that the checks will state that the owner unblocked this head and that the tests did not run, and that a new push needs a new unblock. The acknowledgment of `unblock-refused` has `disposition`, `comment`, `owner` and `reason`.
+
+**The preview mode** of a pull request is the `mode` of its latest `mode-set` entry created at or after the current enrollment. It lasts across heads and revisions. The receipt page shows it, and no gate reads it.
 
 #### The revision comment
 
-The `revision:` payload gains `receipt` (optional string): the effective `receipt` level when it is not `off`, which the checks job sets from the canonical declaration when it writes the message. The text gains one fixed line, after the change report and before the approve command:
+The `revision:` payload gains `receipt` (optional string): the effective `receipt` level when it is not `off` and the revision's receipt is applicable, which the checks job sets from the canonical declaration and the two manifests when it writes the message. The text gains one fixed line, after the change report and before the approve command, only when `receipt` is set:
 
 > Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. It is evidence, not a verdict. Results: `<link>`. The `SuiteWard / Receipt` check carries the counts.
 
@@ -797,18 +819,19 @@ The `revision:` payload gains `receipt` (optional string): the effective `receip
 - `before-approval` adds "Approving waits until the receipt is complete."
 - `required` adds "Approving needs a mode and a receipt that meets it:" and the copyable command `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>` in place of the usual one.
 - The comment is posted once and never edited, so the line states the level as it was when the comment was written. The acknowledgment of a refusal states what holds now.
-- A weakening of the policy is a reduction. `reducedRules` gains one entry for each level that gets weaker, in the form `execution.canonical: required -> advisory` or `execution.receipt: advisory -> off`. Removing `profile` or the block lists each level that was not `off`. A strengthening lists nothing.
+- A weakening of the policy is a reduction. `reducedRules` gains one entry for each level that gets weaker, in the form `execution canonical: required -> advisory` or `execution receipt: advisory -> off` (the exact prefixes `execution canonical: ` and `execution receipt: `, as `scope.Reductions` writes them). Removing the block lists each level that was not `off`. A strengthening lists nothing. A reduction that holds only such entries has no removed path, and the text says that it lowers the execution policy.
 
 #### The receipt page
 
-`GET /receipts/{owner}/{repo}/{pull}`. It shows the execution results of the pull request's current head (the last head recorded, for a closed pull request). It is rebuilt on every request from stored rows, with the rules of the change report page: only a loopback `Host` is answered (403 otherwise), there is no authentication, the same four headers are on every answer, every string is escaped with its hidden characters written as escapes, and the type is `text/html; charset=utf-8`. An unenrolled repository, a repository before an owner is enrolled and an unknown pull request are 404. A known pull request with no job is 200 with the sentence "No execution results for this pull request yet."
+`GET /receipts/{owner}/{repo}/{pull}`. It shows the execution results of the pull request's current head (the last head recorded, for a closed pull request). It is rebuilt on every request from stored rows, with the rules of the change report page: only a loopback `Host` is answered (403 otherwise), there is no authentication, the same four headers are on every answer, every string is escaped with its hidden characters written as escapes, and the type is `text/html; charset=utf-8`. An unenrolled repository, a repository before an owner is enrolled and an unknown pull request are 404. A known pull request with no job and no applicable receipt is 200 with the sentence "No execution results for this pull request yet.", and, when the current revision's receipt is `not-applicable`, "This revision changes no file that the approved patterns match, so it has no receipt."
 
 For the head it shows:
 - the head SHA and the base SHA;
 - the tier, and the sentence that the results are evidence reported by an executor, with the reduced-assurance sentence on the co-located tier;
-- the evidence binding of each run: the governing manifest and its source, the policy levels, the profile, the executor's version and binary SHA-256, the image digest and the times;
+- the evidence binding of each run: the governing manifest and its source, the policy levels, the profile, the executor's version and binary SHA-256, the image digest and the times, and for a run that was tried again, the attempts and the reason of the last failure;
 - the receipt: the state of each evaluated test with its package and file, the paths "not evaluated: pattern not approved yet", the skipped submodules, and the marker lines with their path and line;
-- the canonical run: the state of each declared test, the number of excluded tests and their reasons;
+- the canonical run: the state of each declared test ("0 tests ran" when none is declared), the number of excluded tests and their reasons;
+- when the owner unblocked the head: that it was unblocked, and for which plans;
 - the preview mode, and whether the summary of each of the three modes is met.
 
 A test name is shown escaped. No output of a test is shown, because none is stored.
@@ -863,7 +886,7 @@ This section is normative from M1.7c. It amends "Synchronization jobs" and "Comm
 - A tick returns at once, recording nothing and calling no GitHub, while it is not yet due:
   - it is due 18 s after the previous tick started. The 20 s periodic grid fires on fixed multiples, but each run starts a little after its slot, so a gate of exactly 20 s would skip about half of the ticks. The 2 s tolerance absorbs that pickup jitter (whole-phase review, 2026-10-16);
   - and no sooner than `previous requests × 60 s / 450` after that start.
-- The previous tick's start and the requests made since it started are kept in memory, and a restart starts at once. Those requests are the tick's own, counting those of a tick that ends early (a deadline or a budget stop), and those of every `github_sync_repo` job that finished since: an MCP `sync` spends the same budget, so it paces the next tick. A job that ran before the previous tick started is not counted.
+- The previous tick's start and the requests made since it started are kept in memory, and a restart starts at once. Those requests are the tick's own, counting those of a tick that ends early (a deadline or a budget stop), and those of every `github_sync_repo` job that finished since: an MCP `sync` spends the same budget, so it paces the next tick. Since M2.1 the requests that execution makes count the same way (see [Execution](#execution-m21-normative)). A job that ran before the previous tick started is not counted.
 
 **Queues and wake-ups.**
 - `github_sync_tick`, `github_commands`, `github_checks`, `github_merges`, `github_bootstrap` and, since SH-H5, `canonical_integrity` each run on their own River queue with `MaxWorkers` 1. Runs of one kind never overlap, so "a run does not start while an earlier one runs" no longer needs the unique periodic insert.

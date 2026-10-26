@@ -35,7 +35,7 @@
 | [0025](0025-test-driven-development.md) | Mandatory task-level test-driven development | Test-first for authority, consent, promotion, idempotency, concurrency and adapter behavior; reviewed by `sw-reviewer`; amended (R1): no evidence JSON or ancestry validator. |
 | [0026](0026-versioned-postgresql-migrations.md) | Versioned PostgreSQL migrations | Embedded Goose Provider, pinned dependencies, sequential forward-only SQL, session locking and real upgrade evidence. Amended (R1): single normalized migration `00001`; amended (M1.2): River's schema vendored into goose; amended (SH): the least-privilege role and `suiteward migrate`. |
 | [0027](0027-agent-human-trust-separation.md) | Agent/human trust separation | TOTP code on every approve and revoke command, isolated and co-located installation tiers, and separate agent identity. Amended (SH): the code is consumed by its comment; commands apply to their own pull request. |
-| [0028](0028-canonical-execution-and-the-receipt.md) | Canonical execution and the receipt | Opt-in execution policy in `.suiteward.yml`, the canonical plan and the receipt, the receipt and canonical gates, the `SuiteWard / Receipt` check, the `mode` command, the separate executor and its API, the sandbox and the Go profile, the trust layers and the evidence binding. Accepted for phase M2.1; not implemented yet. |
+| [0028](0028-canonical-execution-and-the-receipt.md) | Canonical execution and the receipt | Opt-in execution policy in `.suiteward.yml`, the canonical plan and the receipt, the receipt and canonical gates, the `SuiteWard / Receipt` check, the `mode` and `unblock` commands, the separate executor and its API, the sandbox and the Go profile, the trust layers and the evidence binding. Accepted for phase M2.1; not implemented yet. |
 
 Naming, English as the project language, initial audience, and product positioning are recorded in the [project baseline](../project-baseline.md). They do not each need an architecture decision record.
 
@@ -48,7 +48,7 @@ An accepted architecture direction is not a claim that a feature is implemented,
 Details explicitly marked open remain open. In particular:
 
 - Strict GitHub gate-to-merge-to-promotion coordination is not proved by database CAS alone.
-- The first execution profile (Go) and the execution trust model are decided in ADR 0028. Hosted execution versus customer infrastructure stays open ([D-MANAGED-EXECUTION](../plan/decisions.md#open)), and so do the open items of ADR 0028, such as the escape from a `required` level.
+- The first execution profile (Go) and the execution trust model are decided in ADR 0028. Hosted execution versus customer infrastructure stays open ([D-MANAGED-EXECUTION](../plan/decisions.md#open)), and so do the few readings listed in the open items of ADR 0028.
 - The license grant is decided: `AGPL-3.0-only`, with the release notices and the source offer settled by D-RELEASE (2026-10-17).
 
 ## Relation to the earlier system design
@@ -78,4 +78,4 @@ The security assessment of 2026-10-20 led to the hardening phase [SH](../plan/ph
 
 ## Next product decision
 
-None is blocking. Strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone, and the open items of ADR 0028 wait for the owner before `required` execution levels are called safe. Accepted and open product gates are in the [decision register](../plan/decisions.md).
+None is blocking. Strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone, and the few readings in the open items of ADR 0028 wait for the owner. Accepted and open product gates are in the [decision register](../plan/decisions.md).

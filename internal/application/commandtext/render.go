@@ -508,12 +508,14 @@ const (
 )
 
 // display returns s as one printable line of at most maxShown bytes, plus a
-// marker when it was cut: as is when every rune is graphic, otherwise
-// Go-quoted so newlines, bidi controls and invalid UTF-8 are visible. The cut
+// marker when it was cut: as is when every rune is graphic and holds no HTML comment opener, otherwise
+// Go-quoted so newlines, bidi controls and invalid UTF-8 are visible. An opener is written \u003c!--: Parse hides every line
+// from one that holds "<!--" to the next that holds "-->", whatever Markdown makes of it (a code span shows it as text), so the
+// fences that follow would be read out of step and a copyable command in one would read as a command. The cut
 // applies to the shown text, which is valid UTF-8, so it never splits a rune.
 func display(s string) string {
-	if hasHidden(s) {
-		s = escapeHidden(strconv.QuoteToGraphic(s))
+	if hasHidden(s) || strings.Contains(s, "<!--") {
+		s = strings.ReplaceAll(escapeHidden(strconv.QuoteToGraphic(s)), "<!--", `\u003c!--`)
 	}
 	if len(s) <= maxShown {
 		return s

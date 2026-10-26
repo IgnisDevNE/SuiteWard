@@ -7,6 +7,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
@@ -131,11 +132,16 @@ func proxyName(m module.Version, ext string) (string, error) {
 	return escPath + "/@v/" + escVersion + "." + ext, nil
 }
 
-// refuse is an ErrInstallFailed whose text carries a bounded amount of candidate text.
+// refuse is an ErrInstallFailed whose text carries a bounded amount of candidate text, cut on a rune boundary and quoted, so that no control
+// character and no broken UTF-8 leaves the package.
 func refuse(format string, args ...any) error {
 	detail := fmt.Sprintf(format, args...)
 	if len(detail) > maxDetail {
-		detail = detail[:maxDetail] + "..."
+		cut := maxDetail
+		for cut > 0 && !utf8.RuneStart(detail[cut]) {
+			cut--
+		}
+		detail = detail[:cut] + "..."
 	}
-	return fmt.Errorf("%w: %s", ErrInstallFailed, detail)
+	return fmt.Errorf("%w: %q", ErrInstallFailed, detail)
 }

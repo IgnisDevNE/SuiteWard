@@ -26,12 +26,12 @@ const (
 
 // Client is the HTTP client of Fetch: a request is only made to the https base that Fetch is given, and a redirect is only followed to
 // https://storage.googleapis.com. It asks for no compression, because the Content-Length of an answer that go would decompress is lost, and the
-// length is how a file streams into the tar. timeout bounds one request, its body included.
+// length is how a file streams into the tar. It does not read HTTP_PROXY, HTTPS_PROXY or NO_PROXY: the egress of the executor goes direct, so
+// that an allow-list for proxy.golang.org holds. timeout bounds one request, its body included.
 func Client(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			Proxy:               http.ProxyFromEnvironment,
 			DisableCompression:  true,
 			TLSHandshakeTimeout: 10 * time.Second,
 			IdleConnTimeout:     30 * time.Second,
@@ -67,8 +67,8 @@ func Fetch(ctx context.Context, c *http.Client, base string, p Plan, sink Sink, 
 
 // fetch is Fetch with the size of the tail as a parameter, for the tests.
 func fetch(ctx context.Context, c *http.Client, base string, p Plan, sink Sink, l Limits, tail int) (Stats, error) {
-	if u, err := url.Parse(base); err != nil || u.Scheme != "https" || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
-		return Stats{}, errors.New("prefetch: the proxy base is not an https URL without a query or a fragment")
+	if u, err := url.Parse(base); err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return Stats{}, errors.New("prefetch: the proxy base is not an https URL without user info, a query or a fragment")
 	}
 	f := &fetcher{client: c, root: strings.TrimRight(base, "/"), sink: sink, tail: tail}
 	var st Stats

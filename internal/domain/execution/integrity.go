@@ -159,7 +159,6 @@ func refuseBelowFile(paths, files map[string]bool, invalid error) error {
 	return nil
 }
 
-
 // indexTree validates the entries of a commit's tree. It returns its files by path, and the sorted paths of its submodules.
 func indexTree(entries []TreeEntry) (map[string]blob, []string, error) {
 	files := map[string]blob{}

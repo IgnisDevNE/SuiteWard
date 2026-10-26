@@ -51,7 +51,7 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"receipt unavailable",
 			refused(execution.ReasonReceiptUnavailable, execution.ModeNone),
-			[]string{"Approval of P4-R2 by @octo-owner was refused by the receipt gate: the receipt of this head is unavailable. " + codeUsed, "```\n/suiteward unblock <code>\n```", "lifts only a run that is unavailable", nextCode},
+			[]string{"Approval of P4-R2 by @octo-owner was refused by the receipt gate: the receipt of this head is unavailable. " + codeUsed, "```\n/suiteward unblock <code>\n```", "Then comment the approve again, with the next code.", "lifts only a run that is unavailable", nextCode},
 			[]string{"mode", "eligible"},
 		},
 		{

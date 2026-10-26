@@ -52,3 +52,26 @@ func TestRepositoryTextWithoutAnHTMLCommentOpenerIsShownAsItIs(t *testing.T) {
 		t.Errorf("a path without an opener is not shown as it is:\n%s", body)
 	}
 }
+
+// With no declaration the comment offers the exact pattern to paste, so it offers none for a path that the fence shows escaped, which is not the
+// pattern. display escapes an HTML comment opener as it escapes a hidden character, so the same goes for a link path that holds one. With the head's
+// own declaration, which is shown as it is, the offer stays.
+func TestInvalidSourceCommentOffersNoExcludeForALinkPathHoldingAnHTMLCommentOpener(t *testing.T) {
+	const path = "docs/a<!--b"
+	without := render(t, func() string {
+		return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: path})
+	})
+	if strings.Contains(without, "accept") || strings.Contains(without, "exclude") || strings.Contains(without, "<!--") ||
+		!strings.Contains(without, `"docs/a\u003c!--b"`) || !strings.Contains(without, "remove the link or point it to a regular file, and push") {
+		t.Errorf("the comment offers an exclude for a path that is shown escaped, holds an opener or lacks the other step:\n%s", without)
+	}
+
+	const declaration = "version: 1\nexclude:\n  - /docs/a<!--b\n"
+	with := render(t, func() string {
+		return commandtext.InvalidSourceComment(commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: path, Declaration: []byte(declaration)})
+	})
+	if !strings.Contains(with, "accept the link") || !strings.Contains(with, "```\n"+declaration+"```") {
+		t.Errorf("the comment with a declaration lacks the offer or the declaration as it is:\n%s", with)
+	}
+	checkBodyInert(t, with)
+}

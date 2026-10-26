@@ -4,11 +4,14 @@ package installer
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -61,7 +64,9 @@ func startConsoleWindow(ctx context.Context, name string, args []string) (func()
 		return nil, fmt.Errorf("find the system directory: %w", err)
 	}
 	powershell := filepath.Join(system, "WindowsPowerShell", "v1.0", "powershell.exe")
-	dir, err := os.MkdirTemp("", "suiteward-setup-")
+	// shortcut: a failed sweep is dropped, because a windowStarter has no way to hand the user a note; give it one when the starter learns to.
+	_ = sweepSetupDirs(os.TempDir(), time.Now())
+	dir, err := os.MkdirTemp("", setupDirPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("make a directory for the exit code of setup: %w", err)
 	}
@@ -130,4 +135,44 @@ func killTree(system string, pid int, process windows.Handle) {
 	if err := commandContext(ctx, filepath.Join(system, "taskkill.exe"), "/T", "/F", "/PID", strconv.Itoa(pid)).Run(); err != nil {
 		_ = windows.TerminateProcess(process, 1) // the best that is left; the process may have ended on its own meanwhile
 	}
+}
+
+// setupDirPrefix names the folder that startConsoleWindow makes for the exit code of a window; staleSetupDir is how long the exit file of
+// one must have been there before a later setup removes the folder.
+const (
+	setupDirPrefix = "suiteward-setup-"
+	staleSetupDir  = 24 * time.Hour
+)
+
+// sweepSetupDirs removes the folders that earlier windows left in tmp (a crash, a power cut, a file that antivirus held open): the ones
+// that hold their exit file, which a window leaves once setup ends, when that file is more than a day old. A folder with no exit file, or a
+// newer one, may be the setup of another enroll or install in flight, and what is not a folder of the starter's (a file, a link) is not
+// touched. It removes what it can and reports every folder it could not.
+func sweepSetupDirs(tmp string, now time.Time) error {
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		return fmt.Errorf("list %s: %w", tmp, err)
+	}
+	var failed []error
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), setupDirPrefix) { // IsDir is false for a link or a junction
+			continue
+		}
+		dir := filepath.Join(tmp, e.Name())
+		exit, err := os.Lstat(filepath.Join(dir, "exit"))
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			continue
+		case err != nil:
+			failed = append(failed, fmt.Errorf("look in %s: %w", dir, err))
+			continue
+		}
+		if !exit.Mode().IsRegular() || now.Sub(exit.ModTime()) <= staleSetupDir {
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			failed = append(failed, fmt.Errorf("remove %s: %w", dir, err))
+		}
+	}
+	return errors.Join(failed...)
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
@@ -75,6 +76,20 @@ func (t *faultTx) Assessment(ctx context.Context, reference contract.ProposalRef
 		return contract.IntegrityAssessment{}, false, t.failure()
 	}
 	return t.Tx.Assessment(ctx, reference, source)
+}
+
+func (t *faultTx) Version(ctx context.Context, id contract.SuiteVersionID) (contract.HistoricalCanonical, bool, error) {
+	if t.hits("Version") {
+		return contract.HistoricalCanonical{}, false, t.failure()
+	}
+	return t.Tx.Version(ctx, id)
+}
+
+func (t *faultTx) VersionsHolding(ctx context.Context, digest artifact.Digest) (map[contract.SuiteVersionID]bool, error) {
+	if t.hits("VersionsHolding") {
+		return nil, t.failure()
+	}
+	return t.Tx.VersionsHolding(ctx, digest)
 }
 
 func (t *faultTx) RecordAssessment(ctx context.Context, write governance.AssessmentWrite) error {
@@ -332,6 +347,15 @@ func (t missingVersionTx) Version(ctx context.Context, id contract.SuiteVersionI
 		return contract.HistoricalCanonical{}, false, nil
 	}
 	return t.Tx.Version(ctx, id)
+}
+
+func (t missingVersionTx) VersionsHolding(ctx context.Context, digest artifact.Digest) (map[contract.SuiteVersionID]bool, error) {
+	holding, err := t.Tx.VersionsHolding(ctx, digest)
+	if err != nil {
+		return nil, err
+	}
+	delete(holding, t.id)
+	return holding, nil
 }
 
 // A correction names the current version, which the history must hold: a missing one is a broken state, not a zero version

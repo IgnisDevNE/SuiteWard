@@ -240,6 +240,8 @@ func mergeCases() []struct {
 		{"MergePromotesAnApprovedChange", mcPromotes},
 		{"MergeReplayIsADuplicateThatWritesAndSaysNothing", mcReplay},
 		{"MergeCorrectsAnEarlierVersion", mcCorrects},
+		{"VersionsHoldingListsEveryVersionOfTheLockedSuite", mvListsEveryVersionOfTheLockedSuite},
+		{"VersionsHoldingIsEmptyWithoutVersionsAndFailsAfterTheUnitOfWork", mvIsEmptyWithoutVersionsAndFailsAfterTheUnitOfWork},
 		{"MergeOfASecondPRApprovedAgainstTheSameCanonicalIsBlocked", mcSecondPRBlocked},
 		{"MergeOfARebasedPRWithoutApprovalIsBlocked", mcRebasedPRBlocked},
 		{"MergeOfAPRBoundToAnotherPolicyIsBlocked", mcPolicyChanged},

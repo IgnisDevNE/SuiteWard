@@ -284,7 +284,7 @@ func TestManifestPageOfTheIsolatedTierHasThePortForward(t *testing.T) {
 	done := startManifest(env, "acme")
 	base := waitForListener(t, out)
 	port := strings.TrimSuffix(strings.TrimPrefix(base, "http://127.0.0.1:"), "/")
-	for _, want := range []string{"AWS-StartPortForwardingSession", `"portNumber":["` + port + `"]`} {
+	for _, want := range []string{"forward the port from your computer first, then open the address on the computer", "AWS-StartPortForwardingSession", `"portNumber":["` + port + `"]`} {
 		if !shows(out.String(), want) {
 			t.Errorf("the page lacks %q:\n%s", want, out.String())
 		}

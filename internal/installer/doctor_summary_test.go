@@ -226,17 +226,15 @@ func TestTheDoctorRowOfAHealthyInstanceHasNoWarningsAndNothingToCheckAgain(t *te
 // ruleset and an owner who is not enrolled, and the Status and Doctor rows stay, with the first warning.
 func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 	f, s := colocated{checkOut: instanceChecks}.build(t)
-	dir, err := os.MkdirTemp("", "s") // a path as short as a real one: the page is short of rows
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	path := filepath.Join(dir, "settings.yaml")
+	// The settings and the ruleset files are named relative to a folder the test works in: a path under the temp folder wraps at 80 columns when
+	// that folder is long, and the page would lose the first warning for the length of the path and not for the number of rows.
+	t.Chdir(t.TempDir())
+	const path = "settings.yaml"
 	if err := SaveSettings(path, s); err != nil {
 		t.Fatal(err)
 	}
 	for _, repo := range []string{"Acme/api", "Acme/web"} {
-		if _, err := writeRuleset(dir, repo, []byte("{}\n")); err != nil {
+		if _, err := writeRuleset(".", repo, []byte("{}\n")); err != nil {
 			t.Fatal(err)
 		}
 	}

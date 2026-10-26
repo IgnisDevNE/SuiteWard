@@ -275,6 +275,21 @@ func (t *tx) Version(ctx context.Context, id contract.SuiteVersionID) (contract.
 	return historical, true, nil
 }
 
+func (t *tx) VersionsHolding(ctx context.Context, digest artifact.Digest) (map[contract.SuiteVersionID]bool, error) {
+	rows, err := t.q.ListVersionsHoldingManifest(ctx, dbgen.ListVersionsHoldingManifestParams{ProjectID: string(t.project), SuiteID: string(t.suite), ManifestDigest: digest.String()})
+	if err != nil {
+		return nil, fmt.Errorf("list the versions holding a manifest: %w", err)
+	}
+	holding := make(map[contract.SuiteVersionID]bool, len(rows))
+	for _, row := range rows {
+		if !row.Consistent { // the check Version makes in NewHistoricalCanonical, without decoding the manifest
+			return nil, invalidState("version "+row.VersionID, errors.New("its promotion binds another manifest digest than the version stores"))
+		}
+		holding[contract.SuiteVersionID(row.VersionID)] = row.Holds
+	}
+	return holding, nil
+}
+
 func (t *tx) PromotionFor(ctx context.Context, reference contract.ProposalReference) (contract.PromotionRecord, bool, error) {
 	if !t.inScope(reference) {
 		return contract.PromotionRecord{}, false, nil

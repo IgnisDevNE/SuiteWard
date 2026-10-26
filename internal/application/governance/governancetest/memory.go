@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
@@ -265,6 +266,18 @@ func (t *tx) Version(ctx context.Context, id contract.SuiteVersionID) (contract.
 	}
 	h, ok := t.s.history[id]
 	return h, ok, nil
+}
+
+func (t *tx) VersionsHolding(ctx context.Context, digest artifact.Digest) (map[contract.SuiteVersionID]bool, error) {
+	if err := t.live(ctx); err != nil {
+		return nil, err
+	}
+	// A HistoricalCanonical is sealed with its promotion binding the version's own digest, so no stored version can disagree with it.
+	holding := make(map[contract.SuiteVersionID]bool, len(t.s.history))
+	for id, h := range t.s.history {
+		holding[id] = h.Version().Manifest().Digest() == digest
+	}
+	return holding, nil
 }
 
 func (t *tx) PromotionFor(ctx context.Context, reference contract.ProposalReference) (contract.PromotionRecord, bool, error) {

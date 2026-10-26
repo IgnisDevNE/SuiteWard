@@ -435,22 +435,24 @@ func blockedMerge(kept MergeOutcome, reason MergeReason) MergeOutcome {
 }
 
 // nextMergeVersion allocates V<n+1> after the current V<n>. When an earlier version holds the integrated manifest,
-// the merge restores it and the version corrected is the current one.
+// the merge restores it and the version corrected is the current one. The versions are read once, by digest, and no
+// manifest is decoded: the decision compares manifest digests, and the current version, which it corrects, is read in full.
 func nextMergeVersion(ctx context.Context, tx Tx, current contract.SuiteVersionID, integrated contract.ProtectedContract) (next, corrects contract.SuiteVersionID, err error) {
 	n, ok := numbered(string(current), "V")
 	if !ok || n == 0 {
 		return "", "", fmt.Errorf("%w: the current version %q is not V<n>", ErrInvalidState, current)
 	}
+	holding, err := tx.VersionsHolding(ctx, integrated.Manifest().Digest())
+	if err != nil {
+		return "", "", fmt.Errorf("list the versions holding the integrated manifest: %w", err)
+	}
 	for i := uint64(1); i < n; i++ {
 		id := contract.SuiteVersionID("V" + strconv.FormatUint(i, 10))
-		earlier, found, err := tx.Version(ctx, id)
-		if err != nil {
-			return "", "", fmt.Errorf("load version %q: %w", id, err)
-		}
+		holds, found := holding[id]
 		if !found {
 			return "", "", fmt.Errorf("%w: version %q is missing below the current %q", ErrInvalidState, id, current)
 		}
-		if earlier.Version().Manifest().Digest() == integrated.Manifest().Digest() {
+		if holds {
 			corrects = current
 			break
 		}

@@ -193,7 +193,7 @@ var installFlags = []struct{ name, usage string }{
 	{"answers", "read answers from this YAML file (a flag wins over it)"},
 	{"settings", "the installer settings file (default: the per-user configuration directory)"},
 	{"token-file", "where the copy of the MCP token for a client is written (default: the per-user directory)"},
-	{"tier", "co-located (this PC) or isolated"},
+	{"tier", "co-located (this computer) or isolated"},
 	{"runtime", "podman (recommended) or docker"},
 	{"connection", "the Podman connection, or the Docker context (default: the rootless Podman machine, or Docker Desktop's)"},
 	{"image", "the release image pinned by digest, ghcr.io/ignisdevne/suiteward@sha256:<64 hex> (default: the installed image, else the release this binary carries; a development build needs it)"},
@@ -480,8 +480,11 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 	if waitErr != nil {
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n", waitErr) // a failed write to stderr cannot be reported anywhere else
 	}
+	if closeErr != nil { // Doctor's own 1 for a report it could not write comes with this error too: the screen keeps the first failed write
+		_, _ = fmt.Fprintf(stderr, "suiteward: the terminal failed while doctor ran: %v\n", closeErr) // a failed write to stderr cannot be reported anywhere else
+	}
 	if code == 0 && (waitErr != nil || closeErr != nil) {
-		return 1 // the report could not be held or written to the terminal, and nothing else says so
+		return 1 // the report could not be held or written to the terminal, and the lines above say which
 	}
 	return code
 }
@@ -497,14 +500,14 @@ func (r *Resolver) preset(key, def string) string {
 	return def
 }
 
-const dockerWarning = `Docker is allowed on this PC, but Podman is strongly recommended.
+const dockerWarning = `Docker is allowed on this computer, but Podman is strongly recommended.
   - Docker's daemon runs as root (a rootful daemon): the containers are not isolated from whoever controls that daemon the way rootless Podman's are.
   - Docker has no secret store outside Swarm, so the secrets (the database owner URL, the App key, the MCP token) live in named volumes that anyone who controls the Docker daemon can read.
 `
 
 // dockerWarningShort is the same two risks for a full screen, in the few rows that the smallest window leaves above the question: a typed
 // yes must be an informed one there too.
-const dockerWarningShort = `Docker is allowed on this PC, but Podman is strongly recommended.
+const dockerWarningShort = `Docker is allowed on this computer, but Podman is strongly recommended.
   - Docker's daemon runs as root: its containers are not isolated from whoever controls it.
   - Its secrets live in volumes that anyone who controls the daemon can read.
 `
@@ -559,7 +562,7 @@ func quoteArg(arg string) string {
 
 // tierChoices are the answers of the tier question.
 var tierChoices = []ui.Choice{
-	{Name: string(config.TierCoLocated), Desc: "on this PC, next to the agent"},
+	{Name: string(config.TierCoLocated), Desc: "on this computer, next to the agent"},
 	{Name: string(config.TierIsolated), Desc: "a separate user, VM or host"},
 }
 
@@ -580,7 +583,7 @@ func chooseTier(r *Resolver, def config.Tier) (string, error) {
 		r.screen.Steps(steps...)
 		r.screen.Page("Where SuiteWard runs",
 			ui.Fields(
-				ui.KV{Key: string(config.TierCoLocated), Value: "On this PC, next to the coding agent: the simplest way to start, with reduced assurance. The agent can reach SuiteWard's key, its database and its secret."},
+				ui.KV{Key: string(config.TierCoLocated), Value: "On this computer, next to the coding agent: the simplest way to start, with reduced assurance. The agent can reach SuiteWard's key, its database and its secret."},
 				ui.KV{Key: string(config.TierIsolated), Value: "On a separate Linux host or account that the agent cannot reach. Full assurance. It needs an EL9 host, such as AlmaLinux."}),
 			ui.Para("Recommended: co-located to start."))
 	}

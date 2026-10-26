@@ -217,7 +217,7 @@ func TestTheDockerWarningIsOneWarningWithItsPointsOnTheScreenAndInTheScrollback(
 		t.Fatal(err)
 	}
 	// A full screen has the same two points in fewer words, so that the smallest window still shows them above the question.
-	want := "! Docker is allowed on this PC, but Podman is strongly recommended.\n" +
+	want := "! Docker is allowed on this computer, but Podman is strongly recommended.\n" +
 		"    - Docker's daemon runs as root: its containers are not isolated from whoever controls it.\n" +
 		"    - Its secrets live in volumes that anyone who controls the daemon can read.\n"
 	if got := c.tail(); got != want {

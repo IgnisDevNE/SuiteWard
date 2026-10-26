@@ -3,6 +3,8 @@ include:
   - "**/*_test.go"
   - "**/testdata/**"
   - scripts/test-*.ps1
+  - scripts/install_test.sh
+  - deploy/smoke_test.sh
 runner:
   - scripts/ci.ps1
   - scripts/check-*.ps1
@@ -11,3 +13,5 @@ runner:
   - /dev/tools.json
   - /.golangci.yml
   - /codecov.yml
+  - scripts/install.sh
+  - deploy/smoke.sh

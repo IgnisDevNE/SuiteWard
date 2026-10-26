@@ -153,7 +153,7 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 		}
 		if env.Tier == config.TierIsolated {
 			port := addr[strings.LastIndex(addr, ":")+1:]
-			blocks = append(blocks, ui.Para("Isolated host: forward the port from your PC first, then open the address on the PC.\n"+
+			blocks = append(blocks, ui.Para("Isolated host: forward the port from your computer first, then open the address on the computer.\n"+
 				"aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\""+port+"\"],\"localPortNumber\":[\""+port+"\"]}'"))
 		}
 		blocks = append(blocks, ui.Para("Note the App name: if the installer cannot finish, the App has to be deleted on GitHub. You may rename it there."))
@@ -163,7 +163,7 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 		ghSay(env.Out, "Create the GitHub App: open this address in the browser of this machine and approve the App on GitHub. The App is named %s unless you rename it there; note the name, in case the installer cannot finish and the App has to be deleted.\n  http://%s/\n", name, addr)
 		if env.Tier == config.TierIsolated {
 			port := addr[strings.LastIndex(addr, ":")+1:]
-			ghSay(env.Out, "This host is isolated: from your PC, forward the port first, then open the address on the PC (the browser reaches the listener through the forward).\n"+
+			ghSay(env.Out, "This host is isolated: from your computer, forward the port first, then open the address on the computer (the browser reaches the listener through the forward).\n"+
 				"  aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"%s\"],\"localPortNumber\":[\"%s\"]}'\n", port, port)
 		}
 	}
@@ -183,8 +183,9 @@ var errNoMoreInput = errors.New("no more input")
 // waitForCode waits for the code of GitHub's callback. It reads nothing from the terminal while it waits: a read that was still pending
 // when the callback came would take the answer to the next question (the Resolver's reader is shared, and a read cannot be given up),
 // or need an Enter to end it. After PasteAfter without an answer, a terminal is offered the paste of the code, or of the address the
-// browser ended on (askPaste); the offer comes again after each Enter that keeps waiting. A callback that comes while it is open is
-// taken when it ends. redraw draws the page again, so that the questions do not pile up on it.
+// browser ended on (askPaste); the offer comes again after each Enter that keeps waiting. A callback that comes while it is open ends it
+// (where the screen can end it without a read left on the input), or is taken when it ends. redraw draws the page again, so that the
+// questions do not pile up on it.
 func waitForCode(ctx context.Context, env githubEnv, codes <-chan string, state string, redraw func()) (string, error) {
 	canPaste := env.R.term.IsTerminal
 	for {
@@ -223,14 +224,36 @@ func waitForCode(ctx context.Context, env githubEnv, codes <-chan string, state 
 // The code is a credential until it is converted: it is read with no echo, and neither the terminal nor the frame shows it. The read is
 // the screen's HiddenLine, which Ctrl-C and the end of the wait (ctx) stop; the question is short, because the page it is under must
 // keep the address and the command in sight on a small screen.
+// GitHub's answer ends the question where the screen can end a read without leaving one on the input (HiddenLineStopsCleanly): the installer
+// continues by itself, as its page says, with the code of the callback and nothing drawn from the paste. Elsewhere the read ends with an
+// Enter, and the question says so.
 func askPaste(ctx context.Context, env githubEnv, codes <-chan string, state string, redraw func()) (string, error) {
-	label := "No answer from GitHub yet. Paste the address, or press Enter (also if the browser says SuiteWard received the answer)"
+	scr := env.R.screen
+	endsOnCallback := scr.HiddenLineStopsCleanly()
+	label := "No answer from GitHub yet. Paste the address, or press Enter if the browser says SuiteWard received the answer"
+	if endsOnCallback {
+		label = "No answer from GitHub yet. If the browser shows an error, paste its address, or press Enter to keep waiting"
+	}
 	for {
 		redraw()
-		secret, err := env.R.screen.HiddenLine(ctx, label, env.R.term.ReadPassword)
+		read, called, stop := ctx, (<-chan string)(nil), func() {}
+		if endsOnCallback {
+			read, called, stop = untilCallback(ctx, codes, scr.HiddenLineStopsCleanly)
+		}
+		secret, err := scr.HiddenLine(read, label, env.R.term.ReadPassword)
+		stop()
+		callback, answered := "", false
+		if endsOnCallback {
+			select {
+			case callback, answered = <-called:
+			default:
+			}
+		}
 		switch {
 		case ctx.Err() != nil: // Ctrl-C, or the time is over, as the read saw it or after it
 			return "", waitError(ctx, env.ManifestWait)
+		case answered:
+			return callback, nil
 		case errors.Is(err, io.EOF):
 			ghSay(env.Out, "No more input: waiting for GitHub's callback only.\n")
 			return "", errNoMoreInput
@@ -253,6 +276,28 @@ func askPaste(ctx context.Context, env githubEnv, codes <-chan string, state str
 		}
 		label = fmt.Sprintf("That was refused: %v. Paste the address again, or press Enter", perr)
 	}
+}
+
+// untilCallback is ctx that also ends when the callback brings its code, and the channel that holds that code. The question ends only while
+// canEnd says that it can be ended without a read left on the input: when the screen stopped waiting for keys (a wait of it failed), the code
+// waits in the channel for the Enter that ends the question, and an abandoned read never holds the keyboard from the next one. stop ends the
+// watch, and must be called when the question is over: a code that came before it is in the channel, and one that came after is left in codes.
+func untilCallback(ctx context.Context, codes <-chan string, canEnd func() bool) (context.Context, <-chan string, func()) {
+	paste, cancel := context.WithCancel(ctx)
+	called := make(chan string, 1)
+	watching := make(chan struct{})
+	go func() {
+		defer close(watching)
+		select {
+		case code := <-codes:
+			called <- code
+			if canEnd() {
+				cancel()
+			}
+		case <-paste.Done():
+		}
+	}()
+	return paste, called, func() { cancel(); <-watching }
 }
 
 // spoken is a duration as the pages say it: whole minutes in words, anything else as Go writes it.

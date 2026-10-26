@@ -219,7 +219,7 @@ func TestConfirmDockerNeedsAnExplicitYes(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("confirmDocker = %v, want an error containing %q", err, tc.want)
 			}
-			if !strings.Contains(out.String(), "Docker is allowed on this PC") {
+			if !strings.Contains(out.String(), "Docker is allowed on this computer") {
 				t.Errorf("the warning was not printed:\n%s", out.String())
 			}
 		})

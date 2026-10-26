@@ -70,9 +70,7 @@ func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 	if res.AccountType == "User" {
 		defaultOwner = res.Account
 	}
-	if env.R.screen.FullScreen() && env.R.asks("owner") {
-		env.R.screen.Page("Instance owner", ui.Para("Your GitHub username, as in github.com/<username>. Only this account's /suiteward commands and approvals count, and it cannot be an organization."))
-	}
+	env.R.explain([]string{"owner"}, "Instance owner", ownerPage)
 	if res.OwnerLogin, err = env.R.Value("owner", "GitHub login of the instance owner, the only account whose approvals count", defaultOwner); err != nil {
 		return fail(err)
 	}
@@ -100,6 +98,9 @@ func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 	}
 	return res, nil
 }
+
+// ownerPage is the explanation of the owner question, which the install and enroll draw on a full screen that is going to ask it.
+var ownerPage = ui.Para("Your GitHub username, as in github.com/<username>. Only this account's /suiteward commands and approvals count, and it cannot be an organization.")
 
 // chooseApp finds the App the flow works with: the one an answer names, else a new one when --github new-app asks for it, else
 // the one an earlier run created and recorded (PendingApp) when it is not the App of the settings, else the one the settings name,
@@ -1075,7 +1076,7 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		}
 		// One page, before the warnings below, which a page that came after them would take off the screen. What the user must keep is
 		// kept when the pause is over (keepImports), and only for what is left to do.
-		importPage(scr, "Import each file on GitHub.", env.WebURL, res.Account, repos, files, nil)
+		importPage(scr, "Import each file on GitHub.", env.WebURL, repos, files, nil)
 		for _, r := range repos {
 			warnPrivate(scr, r)
 		}
@@ -1139,7 +1140,7 @@ func keepImport(scr *ui.Screen, r repoInfo, path string) {
 
 // keepSteps prints how to import the ruleset of r, as a line that stays.
 func keepSteps(scr *ui.Screen, webURL string, r repoInfo) {
-	scr.Keep("Import it: open %s/%s/settings/rules, choose New ruleset, then Import a ruleset, select that file and create the ruleset.\n", webURL, r.name)
+	scr.Keep("Import it: open %s, choose New ruleset, then Import a ruleset, select that file and create the ruleset.\n", rulesPageURL(webURL, r))
 }
 
 // warnPrivate warns that a private repository cannot be protected on GitHub Free.
@@ -1160,25 +1161,26 @@ func keepImports(scr *ui.Screen, webURL string, repos []repoInfo, files map[stri
 	}
 }
 
-// importPage draws the page of the import: one row for each repository in repos, its name and the file of its ruleset (and what is
-// missing, when missing says it), then how to import. The folder of the files comes first, and the explanation last: a page that is too
-// long for the screen loses the end of it, and the user imports from the folder and the rows.
-func importPage(scr *ui.Screen, lead, webURL, owner string, repos []repoInfo, files map[string]string, missing map[string]string) {
-	rows := make([]ui.KV, 0, len(repos))
+// importPage draws the page of the import: for each repository in repos its name and the file of its ruleset, the link of its rules page
+// and what is missing, when missing says it; then how to import. The folder of the files comes first, and the explanation last: a page
+// that is too long for the screen loses the end of it, and the user imports from the folder and the rows.
+func importPage(scr *ui.Screen, lead, webURL string, repos []repoInfo, files map[string]string, missing map[string]string) {
+	rows := make([]ui.KV, 0, 3*len(repos))
 	dir := ""
 	for _, r := range repos {
-		_, name, _ := strings.Cut(r.name, "/") // one instance serves one owner, who is in the address below
-		value := filepath.Base(files[r.name])
+		_, name, _ := strings.Cut(r.name, "/") // one instance serves one owner: the short name is enough to tell the rows apart
+		rows = append(rows, ui.KV{Key: name, Value: filepath.Base(files[r.name])}, ui.KV{Value: rulesPageURL(webURL, r)})
 		if m := missing[r.name]; m != "" {
-			value += ": " + m
+			rows = append(rows, ui.KV{Value: m})
 		}
-		rows = append(rows, ui.KV{Key: name, Value: value})
 		dir = filepath.Dir(files[r.name])
 	}
-	scr.Page("Import the rulesets", ui.Para(lead+" The files are in "+dir+":"), ui.Fields(rows...), ui.Para(fmt.Sprintf(
-		"For each repository open %s/%s/<name>/settings/rules, choose New ruleset, then Import a ruleset, select its file and create the ruleset. If an older SuiteWard ruleset (of an earlier App) is already there, delete it first: both would apply.",
-		webURL, owner)))
+	scr.Page("Import the rulesets", ui.Para(lead+" The files are in "+dir+":"), ui.Fields(rows...),
+		ui.Para("Open the link of each repository, choose New ruleset, then Import a ruleset, select its file and create the ruleset. If an older SuiteWard ruleset (of an earlier App) is already there, delete it first: both would apply."))
 }
+
+// rulesPageURL is the page of the rules of r on GitHub, where its ruleset is imported.
+func rulesPageURL(webURL string, r repoInfo) string { return webURL + "/" + r.name + "/settings/rules" }
 
 // pauseForImport holds the user at the page while the rulesets are imported on GitHub, and reads the protection back when they say so. A
 // repository that is not protected yet, or whose protection cannot be read, is shown with what is missing and the same two choices are
@@ -1214,7 +1216,7 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, cmd, webURL string, rea
 				open = append(open, r)
 			}
 		}
-		importPage(scr, "Not enforced yet.", webURL, res.Account, open, files, missing)
+		importPage(scr, "Not enforced yet.", webURL, open, files, missing)
 	}
 	results = unchecked(repos, results)
 	keepImports(scr, webURL, repos, files, results)
@@ -1268,12 +1270,28 @@ func findingCodes(r protection.Result) string {
 	return strings.Join(codes, ", ")
 }
 
-// unfinishedText says what keeps a repository from being protected: the findings of its protection, or that it could not be read.
+// findingWords is what each finding of a protection (D-PROTECTION) means, in words.
+var findingWords = map[protection.Code]string{
+	protection.MissingContractCheck: protection.ContractCheck + " is not required",
+	protection.MissingTestCheck:     "the test check is not required",
+	protection.NotUpToDate:          "branches need not be up to date",
+	protection.AdminBypass:          "administrators can bypass it",
+}
+
+// unfinishedText says what keeps a repository from being protected: the findings of its protection, each code with its words, or that the
+// protection could not be read.
 func unfinishedText(r protection.Result) string {
 	if len(r.Findings) == 0 {
 		return "the protection could not be read"
 	}
-	return findingCodes(r)
+	parts := make([]string, len(r.Findings))
+	for i, c := range r.Findings {
+		parts[i] = string(c)
+		if words, ok := findingWords[c]; ok {
+			parts[i] += " (" + words + ")"
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // readProtections reads the protection of each repository and returns what it found with the lines that report it.
@@ -1450,7 +1468,7 @@ func afterSetup(scr *ui.Screen, cmd string, err error) error {
 		}
 		return fmt.Errorf("setup failed: %w", err)
 	}
-	scr.Page("Setup finished", ui.Para("The TOTP secret was shown only in the terminal of setup: the installer did not see it, keep it or log it. From now on an approval of this instance needs the code your authenticator shows."))
+	scr.Page("Setup finished", ui.Para("The TOTP secret was shown only in the terminal of setup: the installer did not see, keep or log it. From now on an approval of this instance needs the code your authenticator shows."))
 	return nil
 }
 

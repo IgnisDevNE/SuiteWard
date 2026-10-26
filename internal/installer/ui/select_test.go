@@ -110,11 +110,11 @@ func TestSelectShowsTheHighlightAndThenTheAnswer(t *testing.T) {
 		}
 	}
 	last := frames[len(frames)-1]
-	if !has(last, selectLabel+": isolated") || strings.ContainsAny(last, "●○") || strings.Contains(last, "to choose") {
+	if !has(last, selectLabel+" isolated") || strings.ContainsAny(last, "●○") || strings.Contains(last, "to choose") {
 		t.Errorf("the last frame is not the question with its answer:\n%s", last)
 	}
 	mustClose(t, s)
-	if got, want := afterLastLeave(out.String()), selectLabel+": isolated\n"; got != want {
+	if got, want := afterLastLeave(out.String()), selectLabel+" isolated\n"; got != want {
 		t.Errorf("the normal screen received %q, want %q", got, want)
 	}
 }

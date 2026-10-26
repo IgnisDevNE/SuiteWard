@@ -47,7 +47,7 @@ func guardDefaultSettings(t installTarget, runtimeName, connection string) error
 	default:
 		return nil
 	}
-	return fmt.Errorf("the default settings file %s belongs to %s of this PC, and this command would take it over: "+
+	return fmt.Errorf("the default settings file %s belongs to %s of this computer, and this command would take it over: "+
 		"pass --settings and --token-file with files of their own for a second instance, or remove the other instance first",
 		t.settingsPath, other)
 }
@@ -190,11 +190,11 @@ func chooseSettings(r *Resolver, base Settings, runtimeName, connection string) 
 	s := base
 	s.Tier, s.Runtime, s.Connection = config.TierCoLocated, runtimeName, connection
 	r.explain([]string{"http-port", "mcp-port"}, "Ports",
-		ui.Para("SuiteWard listens on two ports, both only on 127.0.0.1: nothing outside this PC can reach them."),
+		ui.Para("SuiteWard listens on two ports, both only on 127.0.0.1: nothing outside this computer can reach them."),
 		ui.Fields(
 			ui.KV{Key: "HTTP", Value: fmt.Sprintf("Offered: %d. Serves /status and the local change report page.", base.HTTPPort)},
 			ui.KV{Key: "MCP", Value: fmt.Sprintf("Offered: %d. Your coding agent's client connects to it with the token.", base.MCPPort)}),
-		ui.Para("Change a port only if something else on this PC uses it: the installer refuses a port that is busy."))
+		ui.Para("Change a port only if something else on this computer uses it: the installer refuses a port that is busy."))
 	var err error
 	if s.HTTPPort, err = r.Int("http-port", "HTTP port on 127.0.0.1", base.HTTPPort); err != nil {
 		return Settings{}, err
@@ -387,7 +387,7 @@ type colocatedInstall struct {
 
 	machineUser string // the rootless user of the Podman machine, once it has been looked up
 
-	copyRows summaryRows // what the offer of the copy of the program says in the summary (installSelf, upgradeSelf)
+	copyRows summaryRows // what the offer of the copy of the program says in the summary (installSelf)
 }
 
 // secretState is what the stack already has of its database secrets, read before anything is changed.
@@ -840,7 +840,7 @@ func (c *colocatedInstall) restartAfterReboot(ctx context.Context) {
 		screenOn(c.out).Warn("Note: %s could not be enabled (%v). Without it, containers do not restart after the machine restarts: %s.\n", restartUnit, err, fix)
 	}
 	if d.GOOS != "linux" {
-		screenOn(c.out).Warn("Note: the Podman machine is not started at logon. After this PC restarts, run `podman machine start`; the stack comes back with it.\n")
+		screenOn(c.out).Warn("Note: the Podman machine is not started at logon. After this computer restarts, run `podman machine start`; the stack comes back with it.\n")
 	}
 }
 

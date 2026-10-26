@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"regexp"
@@ -392,7 +393,7 @@ func TestTheRulesetStepIsAPageAndAPause(t *testing.T) {
 	run := startRulesetRun(t, g)
 	waitForText(t, run.out, "I imported it, check now")
 	text := run.out.String()
-	for _, want := range []string{"Import the rulesets", "suiteward-ruleset-acme-app.json", "https://github.example/acme/<name>/settings/rules", "Skip, import later", "older SuiteWard ruleset"} {
+	for _, want := range []string{"Import the rulesets", "suiteward-ruleset-acme-app.json", "https://github.example/acme/app/settings/rules", "Skip, import later", "older SuiteWard ruleset"} {
 		if !shows(text, want) {
 			t.Errorf("the screen lacks %q:\n%s", want, text)
 		}
@@ -551,22 +552,39 @@ func TestTheFilesOfWhatIsStillMissingAreOnTheScreenAfterACheck(t *testing.T) {
 
 // ---- the ruleset pages on a small screen ----
 
-// Every repository is one row of the page: its name and the file of its ruleset, the folder said once, the missing checks in the row of
-// the check that found them. A page that is only 18 rows must show the file of each repository that still needs one, whatever
-// the number of them (up to what the rows hold): the user imports from it.
+// Every repository is a group of rows of the page: its name and the file of its ruleset, the link of its rules page and what is missing,
+// the folder said once. A page that is only 18 rows must show the file of each repository that still needs one, up to what the rows hold:
+// the user imports from it. Three repositories that each miss one thing fit; a repository that misses two, with their words, takes three
+// rows of its own, so two of them fit and the page says that the rest is cut (the scrollback keeps every file).
 func TestTheRulesetPagesShowTheFileOfEveryRepositoryOnA80By24Screen(t *testing.T) {
+	t.Run("three repositories that each miss one thing", func(t *testing.T) {
+		checkRulesetPagesOn80By24(t, 3, "not-up-to-date", func(r *fakeRepo) {
+			r.ruleChecks, r.ruleStrict = []fakeRuleChk{{protection.ContractCheck, fakeAppID}, {"CI / test", 0}}, false
+		})
+	})
+	t.Run("two repositories with nothing imported", func(t *testing.T) {
+		checkRulesetPagesOn80By24(t, 2, "missing-contract-check", func(r *fakeRepo) { r.noRule = true })
+	})
+}
+
+// checkRulesetPagesOn80By24 runs the pause for n repositories that mutate makes miss something, which the page says with the code found.
+func checkRulesetPagesOn80By24(t *testing.T, n int, found string, mutate func(*fakeRepo)) {
+	t.Helper()
 	g := newFakeGitHub(t)
-	g.repos = manyRepos(3)
+	g.repos = manyRepos(n)
 	g.changeRepos(func(repos []fakeRepo) {
 		for i := range repos {
-			repos[i].noRule = true
+			mutate(&repos[i])
 		}
 	})
-	names := []string{"acme/r1", "acme/r2", "acme/r3"}
+	var names []string
+	for i := 1; i <= n; i++ {
+		names = append(names, fmt.Sprintf("acme/r%d", i))
+	}
 	flags := existingFlags(t, map[string]string{"repositories": strings.Join(names, ",")})
 	delete(flags, "test-check")
-	for _, n := range names {
-		flags["test-check."+n] = "CI / test"
+	for _, name := range names {
+		flags["test-check."+name] = "CI / test"
 	}
 	// The page says the folder of the files once, above the rows, as one long word that it cuts wherever a row ends (after a separator when
 	// one fits): with the path of a temp directory, which the test name and a random number make long, the last part of it could be cut in
@@ -580,27 +598,30 @@ func TestTheRulesetPagesShowTheFileOfEveryRepositoryOnA80By24Screen(t *testing.T
 	onScreen := func(when string, codes bool) {
 		t.Helper()
 		frame := lastFrame(run.out.String())
-		for _, n := range names {
-			file := "suiteward-ruleset-" + strings.ReplaceAll(n, "/", "-") + ".json"
+		for _, name := range names {
+			file := "suiteward-ruleset-" + strings.ReplaceAll(name, "/", "-") + ".json"
 			if got := strings.Count(flat(frame), file); got != 1 {
 				t.Errorf("%s: the file %s shows %d times, want once:\n%s", when, file, got, frame)
+			}
+			if link := "https://github.example/" + name + "/settings/rules"; !shows(frame, link) {
+				t.Errorf("%s: the link %s is not on the screen:\n%s", when, link, frame)
 			}
 		}
 		if got := strings.Count(flat(frame), folder); got != 1 {
 			t.Errorf("%s: the folder of the files shows %d times, want once:\n%s", when, got, frame)
 		}
 		if codes {
-			if got := strings.Count(flat(frame), "missing-contract-check"); got != len(names) {
-				t.Errorf("%s: the missing checks show %d times, want once in the row of each repository:\n%s", when, got, frame)
+			if got := strings.Count(flat(frame), found); got != len(names) {
+				t.Errorf("%s: %s shows %d times, want once in the rows of each repository:\n%s", when, found, got, frame)
 			}
 		}
 	}
 	onScreen("the first page", false)
 	run.answer(t, "1")
-	waitForText(t, run.out, "missing-contract-check")
+	waitForText(t, run.out, found)
 	onScreen("after a check", true)
 	run.answer(t, "1")
-	waitForText(t, run.out, "missing-contract-check")
+	waitForText(t, run.out, found)
 	onScreen("after a second check", true)
 	run.answer(t, "2")
 	run.result(t)

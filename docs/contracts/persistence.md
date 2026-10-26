@@ -1240,7 +1240,7 @@ There is no foreign key to `github_pulls` (observation rows are state, not histo
 
 ### Table `execution_results`
 
-Insert-only. One row for each job that ended with a result from the executor, `complete` or `unavailable`: the result of the last attempt, never one of an attempt that was queued again. A job that ended on the GitHub bound also gets a row, written by the service, with its final state and reason (`origin` `service`). A job that the service made unavailable in any other way (`no-executor`, `lease-expired` on the third failure, or one created final) has none, and its `execution_jobs` row says why.
+Insert-only. One row for each job that ended with a result from the executor, `complete` or `unavailable`: the result of the last attempt, never one of an attempt that was queued again. A job that ended on the GitHub bound also gets a row, written by the service, with its final state and reason (`origin` `service`). A job that the service made unavailable in any other way (`no-executor`, `lease-expired` on the third failure) has none, and neither has a job that was created already final (`no-merge-base`, `executor-not-configured`, or `github-unavailable` for a merge base that could not be read): its `execution_jobs` row says why. A row of `origin` `service` builds no evidence binding, because no executor, image or runtime took part. The page shows such a job as "not run" with its reason.
 
 | Column | Type | Rule |
 | --- | --- | --- |
@@ -1252,6 +1252,7 @@ Insert-only. One row for each job that ended with a result from the executor, `c
 | `executor_sha256` | `text` | `^[0-9a-f]{64}$`; null exactly when `origin = 'service'` |
 | `image_digest` | `text` | `^sha256:[0-9a-f]{64}$`; not null for `complete` |
 | `toolchain` | `text` | at most 64 bytes; not null for `complete` |
+| `runtime` | `text` | the name and version of the container runtime, at most 64 bytes; not null for `complete`, null for `origin = 'service'` |
 | `started_at`, `ended_at` | `timestamptz NOT NULL` | `ended_at >= started_at`; for `origin = 'service'`, `github_since` and the time the bound was applied |
 | `received_at` | `timestamptz NOT NULL` | the service's clock |
 | `body_digest` | `text` | `^sha256:[0-9a-f]{64}$`; of the request body, so that the same result sent again is recognized; null exactly when `origin = 'service'` |
@@ -1452,7 +1453,7 @@ Property every reconstitution test must check: state produced by domain operatio
 | `github_protection_results` (M1.5) | repository_id | latest result, replaced | result, findings text[], caveats text[], checked_at |
 | `github_comment_versions` (M1.4) | (repo, comment_id, updated_at, body_digest) | insert-only except `not_seen_since`, by trigger; no delete | pull_number, author_id, author_login, created_at, body bytea, body_digest (checked against the bytes), first_seen, not_seen_since |
 | `execution_jobs` (M2.1) | job_id (identity); unique job_key among the current jobs (not `cancelled`, and not `unavailable` for `executor-not-configured` or `no-executor`) | open jobs change by guard trigger (state, reason, lease, attempts, failures, github_since, not_before); final rows never change; no delete, no truncate | repository_id, pull_number, plan (`canonical`, `receipt`), profile, head_sha, base_sha, governing_digest, governing_source, declaration_digest, canonical_level, receipt_level, unapproved_paths, changed_paths, changed_total, state, reason, attempts, failures, github_since, not_before, lease_id, lease_expires_at, leased_at, deadline_at, created_at, finished_at |
-| `execution_results` (M2.1) | job_id | insert-only | origin, status, reason, executor_version, executor_sha256, image_digest, toolchain, started_at, ended_at, received_at, body_digest, markers jsonb, submodules |
+| `execution_results` (M2.1) | job_id | insert-only | origin, status, reason, executor_version, executor_sha256, image_digest, toolchain, runtime, started_at, ended_at, received_at, body_digest, markers jsonb, submodules |
 | `execution_tests` (M2.1) | (job_id, package, name) | insert-only | file, kind, excluded_reason, head_runs, base_runs, state |
 | `execution_unblocks` (M2.1) | (repository_id, comment_id, job_id) | insert-only | pull_number, head_sha, decided_at |
 | `pr_receipt_checks` (M2.1) | (repository_id, pull_number) | current state, updated in place; no delete, no truncate | head_sha, head_since, state (`success`, `in_progress`, `failure`, `neutral`), reason, reference, job_id, unblocked, generation, message_key, decided_at |

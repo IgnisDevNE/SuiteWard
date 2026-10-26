@@ -1207,7 +1207,7 @@ One row for each wanted run: a plan on a head, for one binding. A not-applicable
 | Column | Type | Rule |
 | --- | --- | --- |
 | `job_id` | `bigint GENERATED ALWAYS AS IDENTITY` | primary key |
-| `job_key` | `text NOT NULL` | `^[0-9a-f]{64}$`; the SHA-256 of the six lines of the [runtime contract](runtime.md#job-lifecycle); unique among the current jobs, those that are not `cancelled` and not `unavailable` for `executor-not-configured` (a partial unique index; a job that was made final only because no executor was configured does not keep a configured one from creating a fresh job) |
+| `job_key` | `text NOT NULL` | `^[0-9a-f]{64}$`; the SHA-256 of the six lines of the [runtime contract](runtime.md#job-lifecycle); unique among the current jobs, those that are not `cancelled` and not `unavailable` for `executor-not-configured` or `no-executor` (a partial unique index; a job that was made final only because no executor was configured or seen does not keep a fresh job from being created once one is) |
 | `repository_id` | `bigint NOT NULL` | `> 0` |
 | `pull_number` | `integer NOT NULL` | `> 0` |
 | `plan` | `text NOT NULL` | `canonical` or `receipt` |
@@ -1340,7 +1340,7 @@ The mode of the approve is in `pr_commands.mode`, next to the disposition, so th
 ### Store operations of `execution_jobs` and the results
 
 The behavior is in the [runtime contract](runtime.md#the-executor-api); these are the semantics that the store must guarantee. The signatures belong to the port that task P1 writes.
-- **Enqueue.** Idempotent by `job_key` among the current jobs (not `cancelled`, and not `unavailable` for `executor-not-configured`): it returns the existing job and writes nothing. It also creates a job that is already `unavailable` with reason `no-merge-base`, `executor-not-configured` or `github-unavailable`, a receipt one with no `base_sha`. A job that breaks a constraint is `ErrInvalidRequest`.
+- **Enqueue.** Idempotent by `job_key` among the current jobs (not `cancelled`, and not `unavailable` for `executor-not-configured` or `no-executor`): it returns the existing job and writes nothing. It also creates a job that is already `unavailable` with reason `no-merge-base`, `executor-not-configured` or `github-unavailable`, a receipt one with no `base_sha`. A job that breaks a constraint is `ErrInvalidRequest`.
 - **Lease.** In one transaction, picks the oldest job (by `created_at`, then `job_id`) that is `pending` with `not_before` reached, or `leased` with an expired lease, with `FOR UPDATE SKIP LOCKED`. A candidate that is `leased` and expired counts as a failure with reason `lease-expired`, or `timeout` when it ran past its `deadline_at`: with fewer than 3 failures it goes back to `pending` with its `not_before`, otherwise it becomes `unavailable` with that reason. The transaction goes on to the next candidate. Otherwise it increments `attempts`, sets `leased_at`, a new `lease_id`, `lease_expires_at` and `deadline_at`, and returns the job. It returns none when nothing is ready. Two concurrent leases never return one job.
 - **GitHub failure.** The store records that a read for the job failed: it sets `github_since` if it is null, sets `reason` to `github-unavailable`, moves `not_before` a minute † ahead, counts no failure, and leaves the job `pending`. When `github_since` is older than the wait, the job becomes `unavailable` with `github-unavailable`. The result of an executor that gives the job back as `github-unavailable` does the same to a `leased` job, which goes back to `pending`.
 - **Heartbeat.** Extends `lease_expires_at`, never beyond `deadline_at`, when the job is `leased`, the lease matches and has not expired. Anything else is a lost lease (`ErrLeaseLost`, P1's name †).
@@ -1352,7 +1352,7 @@ The behavior is in the [runtime contract](runtime.md#the-executor-api); these ar
 
 The fake and PostgreSQL suites cover:
 - `execution_jobs`:
-  - Enqueue is idempotent, and a `cancelled` job, or one that is `unavailable` for `executor-not-configured`, does not block a new one with the same key;
+  - Enqueue is idempotent, and a `cancelled` job, or one that is `unavailable` for `executor-not-configured` or `no-executor`, does not block a new one with the same key, and the old job keeps its row, its reason and its unblock rows;
   - the lease is exclusive under concurrency (PostgreSQL), takes the oldest first by `created_at` and `job_id`, and honors `not_before`;
   - a job whose lease expired is queued again with its backoff and is leased once `not_before` is reached, and the third failure is `unavailable`;
   - a failed attempt with a retried reason goes back to `pending` with the backoff and keeps its reason, and a reason that is not retried is `unavailable` at once;

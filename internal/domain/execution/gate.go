@@ -34,7 +34,8 @@ func (m Mode) String() string { return modeNames[m] }
 // RunStatus is the status of one plan on one head.
 type RunStatus uint8
 
-// The run statuses. An unavailable run is never treated as a pass.
+// The run statuses. An unavailable run is never treated as a pass. RunNotApplicable is a receipt status only: no file
+// matched by the canonical include differs from the canonical version the revision expects, so there is no receipt.
 const (
 	RunPending RunStatus = iota + 1
 	RunComplete
@@ -42,9 +43,11 @@ const (
 	RunNotApplicable
 )
 
-var runStatusNames = map[RunStatus]string{RunPending: "pending", RunComplete: "complete", RunUnavailable: "unavailable"}
+var runStatusNames = map[RunStatus]string{
+	RunPending: "pending", RunComplete: "complete", RunUnavailable: "unavailable", RunNotApplicable: "not-applicable",
+}
 
-// ParseRunStatus reads pending, complete or unavailable, exactly as spelled.
+// ParseRunStatus reads pending, complete, unavailable or not-applicable, exactly as spelled.
 func ParseRunStatus(s string) (RunStatus, error) {
 	return parseEnum(runStatusNames, s, ErrInvalidRunStatus)
 }
@@ -138,67 +141,103 @@ func (c ReceiptCounts) judgeRefactor() ModeSummary {
 	return ModeSummary{Verdict: VerdictMet}
 }
 
-// settled is none when the run is complete, and otherwise the reason its status gives; a value that is not a status is an error.
-func settled(status RunStatus, pending, unavailable Reason) (Reason, error) {
-	switch status {
-	case RunComplete:
-		return ReasonNone, nil
-	case RunPending:
-		return pending, nil
-	case RunUnavailable:
-		return unavailable, nil
-	}
-	return ReasonNone, fmt.Errorf("%w: %d", ErrInvalidRunStatus, status)
-}
-
 // ApproveGate decides whether the receipt of the current head lets an approve proceed; the reason is none when it does.
-// off and advisory never refuse. before-approval refuses unless the receipt is complete. required also refuses when the
-// approve carries no mode, or the summary of its mode is not met.
+//
+//   - off and advisory never refuse.
+//   - before-approval refuses only while the receipt is pending: an unavailable one does not refuse, whatever the tests say.
+//   - required refuses unless the receipt is complete, the approve carries a mode, and the summary of that mode is met.
+//   - A receipt that is not applicable never refuses, and the approve needs no mode.
+//   - unblocked is the owner's /suiteward unblock for the head. It lifts an unavailable receipt under required, which has
+//     nothing to judge, so only the mode is still required; it never lifts a pending receipt or a summary that is not met.
+//
+// On an error the reason is none, so check the error first.
 func (l ReceiptLevel) ApproveGate(status RunStatus, counts ReceiptCounts, mode Mode, unblocked bool) (Reason, error) {
 	switch l {
 	case ReceiptLevelOff, ReceiptLevelAdvisory:
 		return ReasonNone, nil
 	case ReceiptLevelBeforeApproval:
-		return settled(status, ReasonReceiptPending, ReasonReceiptUnavailable)
+		return approveBeforeApproval(status)
 	case ReceiptLevelRequired:
-		if reason, err := settled(status, ReasonReceiptPending, ReasonReceiptUnavailable); err != nil || reason != ReasonNone {
-			return reason, err
-		}
-		return counts.judgeApprove(mode)
+		return counts.approveRequired(status, mode, unblocked)
 	}
 	return ReasonNone, fmt.Errorf("%w: %d", ErrInvalidLevel, l)
 }
 
-func (c ReceiptCounts) judgeApprove(mode Mode) (Reason, error) {
+func approveBeforeApproval(status RunStatus) (Reason, error) {
+	switch status {
+	case RunPending:
+		return ReasonReceiptPending, nil
+	case RunComplete, RunUnavailable, RunNotApplicable:
+		return ReasonNone, nil
+	}
+	return ReasonNone, fmt.Errorf("%w: %d", ErrInvalidRunStatus, status)
+}
+
+func (c ReceiptCounts) approveRequired(status RunStatus, mode Mode, unblocked bool) (Reason, error) {
+	switch status {
+	case RunNotApplicable:
+		return ReasonNone, nil
+	case RunPending:
+		return ReasonReceiptPending, nil
+	case RunUnavailable:
+		if !unblocked {
+			return ReasonReceiptUnavailable, nil
+		}
+		return modeGiven(mode)
+	case RunComplete:
+		if reason, err := modeGiven(mode); err != nil || reason != ReasonNone {
+			return reason, err
+		}
+		summary, err := c.Summarize(mode)
+		if err != nil || summary.Verdict == VerdictMet {
+			return ReasonNone, err
+		}
+		return ReasonModeNotMet, nil
+	}
+	return ReasonNone, fmt.Errorf("%w: %d", ErrInvalidRunStatus, status)
+}
+
+// modeGiven is ReasonModeRequired when the approve carries no mode, and an error for a value that is not a mode.
+func modeGiven(mode Mode) (Reason, error) {
 	if mode == ModeNone {
 		return ReasonModeRequired, nil
 	}
-	summary, err := c.Summarize(mode)
-	if err != nil {
-		return ReasonNone, err
-	}
-	if summary.Verdict != VerdictMet {
-		return ReasonModeNotMet, nil
+	if _, ok := modeNames[mode]; !ok {
+		return ReasonNone, fmt.Errorf("%w: %d", ErrInvalidMode, mode)
 	}
 	return ReasonNone, nil
 }
 
 // CheckGate decides whether the canonical run of the current head lets the Contract check pass; the reason is none when
 // it may. off and advisory never hold it. required holds it unless the run is complete with no FAIL, MISSING or FLAKY test.
+// unblocked is the owner's /suiteward unblock for the head: it lifts an unavailable run, and never a pending run or a failing
+// test. RunNotApplicable is a receipt status, and an error here.
 func (l CanonicalLevel) CheckGate(status RunStatus, counts CanonicalCounts, unblocked bool) (Reason, error) {
 	switch l {
 	case CanonicalLevelOff, CanonicalLevelAdvisory:
 		return ReasonNone, nil
 	case CanonicalLevelRequired:
-		if reason, err := settled(status, ReasonCanonicalPending, ReasonCanonicalUnavailable); err != nil || reason != ReasonNone {
-			return reason, err
+		return counts.checkRequired(status, unblocked)
+	}
+	return ReasonNone, fmt.Errorf("%w: %d", ErrInvalidLevel, l)
+}
+
+func (c CanonicalCounts) checkRequired(status RunStatus, unblocked bool) (Reason, error) {
+	switch status {
+	case RunPending:
+		return ReasonCanonicalPending, nil
+	case RunUnavailable:
+		if unblocked {
+			return ReasonNone, nil
 		}
-		if counts.Blocking() > 0 {
+		return ReasonCanonicalUnavailable, nil
+	case RunComplete:
+		if c.Blocking() > 0 {
 			return ReasonCanonicalFailing, nil
 		}
 		return ReasonNone, nil
 	}
-	return ReasonNone, fmt.Errorf("%w: %d", ErrInvalidLevel, l)
+	return ReasonNone, fmt.Errorf("%w: %d", ErrInvalidRunStatus, status)
 }
 
 // Conclusion is the conclusion of the SuiteWard / Receipt check.
@@ -210,7 +249,7 @@ const (
 	ConclusionSuccess
 	ConclusionFailure
 	ConclusionNeutral
-	ConclusionNone
+	ConclusionNone // not a GitHub value: no check is published, because the receipt does not apply
 )
 
 var conclusionNames = map[Conclusion]string{
@@ -218,20 +257,25 @@ var conclusionNames = map[Conclusion]string{
 	ConclusionSuccess:    "success",
 	ConclusionFailure:    "failure",
 	ConclusionNeutral:    "neutral",
+	ConclusionNone:       "none",
 }
 
-// String returns the name GitHub gives the status or conclusion, or empty for a value that is not one.
+// String returns the name GitHub gives the status or conclusion ("none" for ConclusionNone, which GitHub does not know),
+// or empty for a value that is not a conclusion.
 func (c Conclusion) String() string { return conclusionNames[c] }
 
 // ReceiptConclusion is the conclusion of the Receipt check: in progress while the receipt is pending, neutral when it is
-// unavailable, and when it is complete a failure on any FAILS or MISSING test and a success otherwise. It takes no mode:
-// the conclusion never depends on it.
+// unavailable, and when it is complete a failure on any FAILS or MISSING test and a success otherwise. A receipt that is not
+// applicable is ConclusionNone, a value and not an error because it is an ordinary outcome: the caller publishes no check.
+// It takes no mode: the conclusion never depends on it.
 func ReceiptConclusion(status RunStatus, counts ReceiptCounts) (Conclusion, error) {
 	switch status {
 	case RunPending:
 		return ConclusionInProgress, nil
 	case RunUnavailable:
 		return ConclusionNeutral, nil
+	case RunNotApplicable:
+		return ConclusionNone, nil
 	case RunComplete:
 		if counts.Fails+counts.Missing > 0 {
 			return ConclusionFailure, nil

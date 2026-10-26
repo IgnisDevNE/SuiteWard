@@ -94,7 +94,7 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	var token tokenCopy
 	var listing []string
 	if purge { // before anything is removed: a place that cannot be found refuses the purge, it does not stop it half way
-		if token, err = tokenFileOf(r, env.Deps, defaultPath); err != nil {
+		if token, err = tokenFileOf(r, env.Deps, settingsPath, defaultPath); err != nil {
 			return err
 		}
 		question = "Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network, the MCP token copy and the settings file?"
@@ -139,7 +139,7 @@ func removeStack(ctx context.Context, r *Resolver, rt Runtime, purge bool, token
 		return err
 	}
 	r.say("Removed the volumes, the secrets, %s. Backups under %s (or the --backup-dir an upgrade was given) are kept.\n", removed, backupParent(r, filepath.Dir(token.path)))
-	if !token.mine {
+	if token.kept {
 		r.say("Kept the MCP token file %s: it may belong to another instance. Delete it yourself if it is this instance's.\n", token.path)
 	}
 	return nil
@@ -149,17 +149,41 @@ func removeStack(ctx context.Context, r *Resolver, rt Runtime, purge bool, token
 type tokenCopy struct {
 	path string
 	mine bool // this instance's, so a purge removes it
+	kept bool // not this instance's, and there (or not known to be gone): a purge leaves it and says so
 }
 
 // tokenFileOf is where the copy of the MCP token is, and whether it is this instance's: the file --token-file names is. The default file is
 // only with the default settings file: any other settings file is another instance's, whose default file may be the main instance's (the
 // install refuses to adopt it for a second one), so a purge keeps it.
-func tokenFileOf(r *Resolver, d Deps, defaultSettings bool) (tokenCopy, error) {
+func tokenFileOf(r *Resolver, d Deps, settingsPath string, defaultPath bool) (tokenCopy, error) {
 	if file := r.preset("token-file", ""); file != "" {
 		return tokenCopy{path: file, mine: true}, nil
 	}
 	file, err := defaultTokenFile(d)
-	return tokenCopy{path: file, mine: defaultSettings}, err
+	if err != nil {
+		return tokenCopy{}, err
+	}
+	mine := defaultPath
+	if !mine {
+		if mine, err = isDefaultSettings(d.GOOS, settingsPath); err != nil {
+			return tokenCopy{}, err
+		}
+	}
+	_, statErr := os.Stat(file)
+	return tokenCopy{path: file, mine: mine, kept: !mine && !errors.Is(statErr, os.ErrNotExist)}, nil
+}
+
+// isDefaultSettings says that --settings names the per-user default settings file, however it spells it: the same path once cleaned, and on
+// Windows whatever the case. A relative path is not resolved, so one that names it is not recognised: the purge then keeps the token file.
+func isDefaultSettings(goos, path string) (bool, error) {
+	def, err := DefaultSettingsPath()
+	if err != nil {
+		return false, err
+	}
+	if goos == "windows" {
+		return strings.EqualFold(filepath.Clean(path), filepath.Clean(def)), nil
+	}
+	return filepath.Clean(path) == filepath.Clean(def), nil
 }
 
 // purgeLines say what a purge deletes before it does, and which token file it keeps and how to name the one it should remove. The token file
@@ -167,7 +191,7 @@ func tokenFileOf(r *Resolver, d Deps, defaultSettings bool) (tokenCopy, error) {
 // The settings file is on the line above the lines in plain mode, and on the page.
 func purgeLines(settingsPath string, token tokenCopy) []string {
 	var lines []string
-	if !token.mine {
+	if token.kept {
 		lines = append(lines, "The MCP token file "+token.path+" is kept: it may belong to another instance. To delete a token file with this purge, give it as --token-file <path>.")
 	}
 	lines = append(lines, "This purge deletes:")
@@ -241,27 +265,25 @@ func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, q
 
 // showRemoval says which instance is about to be removed: a page on a full screen, and the line it always printed otherwise. The page
 // says that nothing is removed before the confirmation only where a question is going to ask for it: --yes answers for the person. The
-// listing, what a purge deletes, comes under the instance on the page, and as lines otherwise: --yes shows it before it acts too.
+// listing, what a purge deletes, comes under the instance as lines that the screen keeps for the scrollback, so that it stays after the page
+// is gone, and --yes shows it before it acts too.
 func showRemoval(r *Resolver, purge bool, id, engine, settings string, listing []string) {
 	if !r.screen.FullScreen() {
 		r.say("This is the instance %s on %s. Its settings file: %s.\n", id, engine, settings)
-		for _, line := range listing {
-			r.say("%s\n", line)
+	} else {
+		title := "Remove the containers"
+		if purge {
+			title = "Remove everything of this instance"
 		}
-		return
+		blocks := []ui.Block{ui.Fields(ui.KV{Key: "Instance", Value: id}, ui.KV{Key: "Engine", Value: engine}, ui.KV{Key: "Settings", Value: settings})}
+		if yes, _ := r.yes(); r.term.IsTerminal && !yes { // a --yes that cannot be read is refused by the confirmation itself
+			blocks = append([]ui.Block{ui.Para("Nothing is removed until you confirm.")}, blocks...)
+		}
+		r.screen.Page(title, blocks...)
 	}
-	title := "Remove the containers"
-	if purge {
-		title = "Remove everything of this instance"
+	for _, line := range listing {
+		r.screen.Keep("%s\n", line)
 	}
-	blocks := []ui.Block{ui.Fields(ui.KV{Key: "Instance", Value: id}, ui.KV{Key: "Engine", Value: engine}, ui.KV{Key: "Settings", Value: settings})}
-	if len(listing) > 0 {
-		blocks = append(blocks, ui.Para(strings.Join(listing, "\n")))
-	}
-	if yes, _ := r.yes(); r.term.IsTerminal && !yes { // a --yes that cannot be read is refused by the confirmation itself
-		blocks = append([]ui.Block{ui.Para("Nothing is removed until you confirm.")}, blocks...)
-	}
-	r.screen.Page(title, blocks...)
 }
 
 // refuseUnnamed refuses a purge by --yes of an instance that nothing names (its id is "unknown"), with no settings file, while its database volume is

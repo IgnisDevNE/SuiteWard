@@ -332,7 +332,9 @@ func TestThePurgeThatNamesTheDefaultSettingsFileRemovesTheDefaultTokenFile(t *te
 	}{
 		{"as it is, unix", "linux", testInstance, func(p string) string { return p }, false},
 		{"as it is, windows", "windows", unknownValue, func(p string) string { return p }, false},
-		{"not cleaned, unix", "linux", testInstance, func(p string) string { return filepath.Dir(p) + string(filepath.Separator) + "." + string(filepath.Separator) + filepath.Base(p) }, false},
+		{"not cleaned, unix", "linux", testInstance, func(p string) string {
+			return filepath.Dir(p) + string(filepath.Separator) + "." + string(filepath.Separator) + filepath.Base(p)
+		}, false},
 		{"in another case, windows", "windows", unknownValue, strings.ToUpper, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -358,6 +360,34 @@ func TestThePurgeThatNamesTheDefaultSettingsFileRemovesTheDefaultTokenFile(t *te
 			}
 			if exists(settings) || exists(mainToken) {
 				t.Errorf("the settings file (%v) or the default token file (%v) of the main instance are still there", exists(settings), exists(mainToken))
+			}
+		})
+	}
+}
+
+// The case of the path tells settings files apart on a unix-style system and not on Windows: what the harness cannot show on a file system of
+// the other kind.
+func TestSettingsNamedByPathAreTheDefaultFileByTheRulesOfTheSystem(t *testing.T) {
+	useDefaultConfigDir(t)
+	def, err := DefaultSettingsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sep := string(filepath.Separator)
+	for _, tc := range []struct {
+		name, goos, path string
+		want             bool
+	}{
+		{"as it is", "linux", def, true},
+		{"not cleaned", "linux", filepath.Dir(def) + sep + "." + sep + filepath.Base(def), true},
+		{"in another case, unix", "linux", strings.ToUpper(def), false},
+		{"in another case, windows", "windows", strings.ToUpper(def), true},
+		{"another file of the same directory", "windows", filepath.Join(filepath.Dir(def), "other.yaml"), false},
+		{"a relative path", "linux", filepath.Base(def), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, err := isDefaultSettings(tc.goos, tc.path); err != nil || got != tc.want {
+				t.Errorf("isDefaultSettings(%q, %q) = %v, %v, want %v", tc.goos, tc.path, got, err, tc.want)
 			}
 		})
 	}

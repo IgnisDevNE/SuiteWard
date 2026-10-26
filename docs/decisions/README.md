@@ -1,8 +1,8 @@
 # Architecture decision records
 
-- **Updated:** 2026-10-22
+- **Updated:** 2026-10-26
 - **Product:** SuiteWard
-- **State:** Accepted decisions. M1.2 to M1.11 are implemented and released (`v0.2.0` is current); the security hardening phase SH amended several records for it.
+- **State:** Accepted decisions. M1.2 to M1.11 are implemented and released (`v0.2.0` is current); the security hardening phase SH amended several records for it. [ADR 0028](0028-canonical-execution-and-the-receipt.md) records the design of phase M2.1 (canonical execution, the receipt and the Go profile), which is not implemented yet.
 
 ## Accepted records
 
@@ -15,7 +15,7 @@
 | [0005](0005-river-background-jobs.md) | River background jobs | Transactional enqueueing, repeatable processing, periodic triggers, and restart recovery. Amended (M1.10): the outbox carries the transactional guarantee; `Tx.Enqueue` removed. |
 | [0006](0006-provider-agnostic-modular-monolith.md) | Provider-agnostic modular monolith | Control plane, execution plane, SCM adapter, and GitHub-first delivery. |
 | [0007](0007-canonical-contract-authority.md) | Canonical contract authority | Immutable versions, candidate non-authority, exact approval, bound evidence, and atomic promotion. Amended (R1): verify bytes at write; normalized state. Amended (SH): the service's database role. |
-| [0008](0008-progressive-integrity-and-execution.md) | Integrity before canonical execution | M0-M3 sequence, distinct assurance levels, and DockerExecutionBackend in M2. Amended (SH): release provenance, SBOM and keyless signing ahead of M3. |
+| [0008](0008-progressive-integrity-and-execution.md) | Integrity before canonical execution | M0-M3 sequence, distinct assurance levels, and DockerExecutionBackend in M2. Amended (SH): release provenance, SBOM and keyless signing ahead of M3. Amended (M2.1): M2 is delivered as M2.1 to M2.3, through a separate executor (ADR 0028). |
 | [0009](0009-agpl-3.0-distribution.md) | AGPLv3 distribution | The grant is `AGPL-3.0-only`; D-RELEASE (2026-10-17) settles the release notices and the source offer. |
 | [0010](0010-repository-bootstrap.md) | Repository bootstrap | Initial authority, existing baseline import, first-test PR, and conditional first promotion. Amended (R1): first-test-PR path deferred; restored by M1.7b and made precise in the amendments of 2026-10-14 to 2026-10-16. |
 | [0011](0011-approval-revocation-and-acknowledgments.md) | Approval revocation and PR acknowledgments | Explicit withdrawal, processed comment semantics, promotion races, and durable visible outcomes. |
@@ -35,6 +35,7 @@
 | [0025](0025-test-driven-development.md) | Mandatory task-level test-driven development | Test-first for authority, consent, promotion, idempotency, concurrency and adapter behavior; reviewed by `sw-reviewer`; amended (R1): no evidence JSON or ancestry validator. |
 | [0026](0026-versioned-postgresql-migrations.md) | Versioned PostgreSQL migrations | Embedded Goose Provider, pinned dependencies, sequential forward-only SQL, session locking and real upgrade evidence. Amended (R1): single normalized migration `00001`; amended (M1.2): River's schema vendored into goose; amended (SH): the least-privilege role and `suiteward migrate`. |
 | [0027](0027-agent-human-trust-separation.md) | Agent/human trust separation | TOTP code on every approve and revoke command, isolated and co-located installation tiers, and separate agent identity. Amended (SH): the code is consumed by its comment; commands apply to their own pull request. |
+| [0028](0028-canonical-execution-and-the-receipt.md) | Canonical execution and the receipt | Opt-in execution policy in `.suiteward.yml`, the canonical plan and the receipt, the receipt and canonical gates, the `SuiteWard / Receipt` check, the `mode` and `unblock` commands, the separate executor and its API, the sandbox and the Go profile, the trust layers and the evidence binding. Accepted for phase M2.1; not implemented yet. |
 
 Naming, English as the project language, initial audience, and product positioning are recorded in the [project baseline](../project-baseline.md). They do not each need an architecture decision record.
 
@@ -47,7 +48,7 @@ An accepted architecture direction is not a claim that a feature is implemented,
 Details explicitly marked open remain open. In particular:
 
 - Strict GitHub gate-to-merge-to-promotion coordination is not proved by database CAS alone.
-- Execution-profile selection (hosted execution versus customer infrastructure) is deferred to M2.
+- The first execution profile (Go) and the execution trust model are decided in ADR 0028. Hosted execution versus customer infrastructure stays open ([D-MANAGED-EXECUTION](../plan/decisions.md#open)).
 - The license grant is decided: `AGPL-3.0-only`, with the release notices and the source offer settled by D-RELEASE (2026-10-17).
 
 ## Relation to the earlier system design
@@ -77,4 +78,4 @@ The security assessment of 2026-10-20 led to the hardening phase [SH](../plan/ph
 
 ## Next product decision
 
-None is blocking. Strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone, and execution-profile selection is deferred to M2. Accepted and open product gates are in the [decision register](../plan/decisions.md).
+None is blocking. Strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone. Accepted and open product gates are in the [decision register](../plan/decisions.md).

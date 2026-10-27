@@ -4,6 +4,7 @@ run:
   build-tags:
     - integration
     - quadlet
+    - sandbox
 
 linters:
   default: none

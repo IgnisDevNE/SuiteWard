@@ -341,15 +341,6 @@ func summaryOf(status domain.RunStatus, counts domain.ReceiptCounts, mode domain
 	return execution.SummaryNotMet, nil
 }
 
-// receiptRun is the state of the receipt of a head, as the gate reads it.
-type receiptRun struct {
-	status  domain.RunStatus
-	state   execution.RunState
-	job     execution.Job // the zero job for none
-	counts  domain.ReceiptCounts
-	markers int
-}
-
 // receiptRun reads the receipt job of the head: the newest job that is not cancelled and names the manifest of the version the revision expects. A head with no
 // such job counts as pending.
 func (j *commandsJob) receiptRun(ctx context.Context, c commands.Candidate, head string, governing artifact.Digest) (receiptRun, error) {

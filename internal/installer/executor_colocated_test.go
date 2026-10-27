@@ -622,3 +622,41 @@ func TestTheWrapperOfTheWindowsTaskDoublesAPercentSignInItsProgramAndLogPaths(t 
 		t.Errorf("the wrapper lacks the line that starts the program with its percent signs doubled, %s:\n%s", want, wrapper)
 	}
 }
+
+// An uninstall that could not remove the executor says how to, with the commands of the operating system that keeps it running.
+func TestTheUninstallWarningNamesTheCommandsOfTheOperatingSystemThatKeepsTheExecutor(t *testing.T) {
+	cases := []struct {
+		goos string
+		set  func(un *harness)
+		want []string
+	}{
+		{"windows", func(un *harness) {
+			un.first("/Query /TN SuiteWard Executor", "") // the task is registered, and this instance made its two files
+			writeFile(un.t, filepath.Join(un.executorDir(), executorWrapperName), "the wrapper")
+			writeFile(un.t, filepath.Join(un.executorDir(), "task.xml"), "the task")
+			un.f.fail("IMAGENAME eq suiteward-executor.exe", errors.New("tasklist: access denied"))
+		}, []string{`schtasks /End /TN "SuiteWard Executor"`, "suiteward-executor.exe", `schtasks /Delete /TN "SuiteWard Executor" /F`}},
+		{"darwin", func(un *harness) { un.f.fail("=-u", errors.New("id: not found")) }, []string{"launchctl bootout gui/$(id -u)/" + executorLabel}},
+	}
+	for _, c := range cases {
+		t.Run(c.goos, func(t *testing.T) {
+			un := machineHarnessOn(t, c.goos)
+			podmanStackExists(un)
+			un.writeFiles()
+			un.writeExecutorFiles()
+			c.set(un)
+			if err := un.uninstall("--runtime", "podman", "--connection", "pm", "--yes"); err != nil {
+				t.Fatalf("an uninstall must go on with the stack: %v", err)
+			}
+			out := un.out.String()
+			if !strings.Contains(out, "executor was not removed") || strings.Contains(out, "systemctl") {
+				t.Errorf("the output must say that the executor is still there, and not give the command of Linux:\n%s", out)
+			}
+			for _, want := range c.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("the output lacks %s:\n%s", want, out)
+				}
+			}
+		})
+	}
+}

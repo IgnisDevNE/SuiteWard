@@ -75,6 +75,15 @@ FROM execution_jobs
 WHERE repository_id = sqlc.arg(repository_id) AND pull_number = sqlc.arg(pull_number) AND head_sha = sqlc.arg(head_sha) AND plan = sqlc.arg(plan)
 ORDER BY job_id;
 
+-- The open jobs of a repository, in id order, with no lock: the checks job cancels the ones that are no longer wanted.
+-- name: RepositoryOpenExecutionJobs :many
+SELECT job_id, job_key, repository_id, pull_number, plan, profile, head_sha, base_sha, governing_digest, governing_source, declaration_digest, canonical_level,
+       receipt_level, unapproved_paths, changed_paths, changed_total, state, reason, attempts, failures, github_since, not_before, lease_id, lease_expires_at,
+       leased_at, deadline_at, created_at, finished_at
+FROM execution_jobs
+WHERE repository_id = sqlc.arg(repository_id) AND state IN ('pending', 'leased')
+ORDER BY job_id;
+
 -- name: CountExecutionJobs :many
 SELECT state, count(*) AS jobs FROM execution_jobs GROUP BY state;
 

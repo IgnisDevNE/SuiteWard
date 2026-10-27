@@ -508,7 +508,14 @@ func (s executionStore) HeadJobs(ctx context.Context, repositoryID int64, pull i
 
 // OpenJobs implements execution.Store.
 func (s executionStore) OpenJobs(ctx context.Context, repositoryID int64) ([]execution.Job, error) {
-	return nil, errors.New("postgres: OpenJobs is not implemented")
+	if err := execution.ValidateRepository(repositoryID); err != nil {
+		return nil, err
+	}
+	rows, err := dbgen.New(s.pool).RepositoryOpenExecutionJobs(ctx, repositoryID)
+	if err != nil {
+		return nil, fmt.Errorf("read the open jobs of a repository: %w", err)
+	}
+	return jobsFromRows(rows)
 }
 
 // parseHex is a digest column that holds the 64 hexadecimal digits of a SHA-256 without its prefix.

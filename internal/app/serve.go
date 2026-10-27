@@ -130,7 +130,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		checkProblems := &bootstrapProblems{}
 		checkJob := &checksJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(), commands: store,
 			pulls: store, tier: tier, problems: checkProblems, logger: logger, now: time.Now,
-			executions: executions, liveness: liveness, executor: cfg.Executor, executorConfigured: executorConfigured}
+			executions: executions, receipts: store.ReceiptChecks(), liveness: liveness, executor: cfg.Executor, executorConfigured: executorConfigured}
 		riverConfig.Checks = checkJob.run
 		mergeProblems := &bootstrapProblems{}
 		mergeJob := &mergesJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, content: artifacts, store: store, integrity: store.Integrity(), tier: tier,

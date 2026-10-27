@@ -2,6 +2,7 @@ package river
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -51,4 +52,9 @@ func (w *waker) insert(ctx context.Context, kind string, args riverqueue.JobArgs
 	}
 	_, err := w.client.Insert(ctx, args, &riverqueue.InsertOpts{Queue: kind, MaxAttempts: 1})
 	return err
+}
+
+// Wake queues one job of each kind, as the wake-up of a run does, for a caller that is not a job.
+func (r *Runtime) Wake(_ context.Context, _ Wake) error {
+	return errors.New("not implemented")
 }

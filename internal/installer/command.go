@@ -34,7 +34,7 @@ const Usage = `usage: suiteward install [flags]
        suiteward backup [--to DIR] [--settings PATH] [--tier isolated] [--plain]
        suiteward restore <backup.tar.age> [--kit PATH] [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
        suiteward restore --plaintext-dir DIR [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
-       suiteward doctor [--json] [--settings PATH] [--plain]
+       suiteward doctor [--json] [--settings PATH] [--token-file PATH] [--plain]
        suiteward version
 `
 

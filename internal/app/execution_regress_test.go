@@ -18,6 +18,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
 // The receipt needs only the revision of the head and the canonical it expects, never whether the revision is ready: a check that another rule decided
@@ -423,6 +424,29 @@ func TestChecksRestoreARunnerBlockWithItsRunnerSetWhenTheStepFails(t *testing.T)
 		t.Fatalf("the run failed with %v, want the failure of the step and no complaint of a missing runner set", err)
 	}
 	w.want(5, checks.InProgress, "runner-uncovered", 2)
+}
+
+// The fresh assessment of a run can decide no runner block where the stored check has one (the owner revoked the approval, so the head is approval-missing): the
+// first pass has no runner set, and the check that a failed step restores must come out of a second pass that reads one.
+func TestChecksRestoreAStoredRunnerBlockWithItsRunnerSetWhenTheFreshAssessmentDoesNotRepeatItAndTheStepFails(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.reader.files = map[int][]github.PullFile{5: added(cjJest)}
+	w.scopePull(withFiles(bootFiles("v2"), cjJest), bootFiles("v1")) // a protected change, and a runner file
+	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
+	w.mustCheck()
+	w.want(5, checks.InProgress, "runner-uncovered", 2)
+	w.consent(contract.RevokeConsent, 202, 2, 1, 5)                             // the next assessment says approval-missing
+	if err := w.memory.FailMessage(t.Context(), "check:1001:5:2"); err != nil { // the message of the check is lost, so the next run publishes it again, with its files
+		t.Fatal(err)
+	}
+	w.check.executions = headJobsFail{w.check.executions}
+
+	err := w.runChecks()
+
+	if err == nil || strings.Contains(err.Error(), "no runner set") {
+		t.Fatalf("the run failed with %v, want the failure of the step and no complaint of a missing runner set", err)
+	}
+	w.want(5, checks.InProgress, "runner-uncovered", 3)
 }
 
 func TestChecksFailARunnerBlockOnAFreshWrongCodeWhenTheStepFails(t *testing.T) {

@@ -277,6 +277,7 @@ type pullDecision struct {
 	wait    bool          // the decision cannot be made now: keep the stored check of this head
 	problem string        // a code for /status when the decision had to wait for the next run
 	source  sourceProblem // what made the head invalid, when this run assessed it
+	runners *runnerSet    // what a runner block was decided from: nil while no runner block applies, and when GitHub could not be read for it
 }
 
 // pull decides and publishes the check of one open pull request, in the order of docs/contracts/runtime.md, "Check job and publisher (M1.6b)": the
@@ -298,8 +299,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		j.overrideWait(s, &d)
 	}
 	assessed := ungated(d.result) // what execution plans from: the check before the canonical gate, a wrong code or the runner block holds it back
-	runners, err := j.settle(ctx, s, &d)
-	if err != nil {
+	if err := j.settle(ctx, s, &d); err != nil {
 		return "", err
 	}
 	var executed executionOutcome
@@ -314,7 +314,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			executed, d.wait = executionOutcome{}, true
 			j.overrideWait(s, &d)
 			// In the order of the wait path: a wrong code entered since still fails the check, and a restored runner block carries its runner set.
-			if runners, err = j.settle(ctx, s, &d); err != nil {
+			if err := j.settle(ctx, s, &d); err != nil {
 				return "", err
 			}
 		}
@@ -322,13 +322,13 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
 		return "", err
 	}
-	if err := j.publishCheck(ctx, s, d.result, runners, executed.counts); err != nil {
+	if err := j.publishCheck(ctx, s, d.result, d.runners, executed.counts); err != nil {
 		return "", err
 	}
 	if err := j.publishReceipt(ctx, s, executed.receipt); err != nil {
 		return "", err
 	}
-	if err := j.commentAfterCheck(ctx, s, d.result, runners); err != nil {
+	if err := j.commentAfterCheck(ctx, s, d.result, d.runners); err != nil {
 		return "", err
 	}
 	return d.problem, stepErr
@@ -376,16 +376,14 @@ func (j *checksJob) decide(ctx context.Context, s *pullState) (d pullDecision, e
 }
 
 // settle applies to the check decided so far the rules that follow the decision, in their order: a wrong code fails it, and the runner block holds a success. It
-// returns the runner set of a runner block, nil for none.
-func (j *checksJob) settle(ctx context.Context, s *pullState, d *pullDecision) (*runnerSet, error) {
-	if err := j.applyWrongCode(ctx, s, d); err != nil {
-		return nil, err
+// sets the runner set of the decision, and leaves it nil when the runner block does not apply.
+func (j *checksJob) settle(ctx context.Context, s *pullState, d *pullDecision) (err error) {
+	d.runners = nil // a second pass, after the check was restored, decides again
+	if err = j.applyWrongCode(ctx, s, d); err != nil || !d.runnerBlockApplies(s) {
+		return err
 	}
-	var runners *runnerSet
-	if !d.runnerBlockApplies(s) {
-		return runners, nil
-	}
-	return j.applyRunnerBlock(ctx, s, d)
+	d.runners, err = j.applyRunnerBlock(ctx, s, d)
+	return err
 }
 
 // overrideWait keeps the stored check of this head, or says that a new head is pending, so it never stays without a check.

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
@@ -97,7 +96,7 @@ func (j *commandsJob) liftable(ctx context.Context, c commands.Candidate, head s
 		return nil, commandtext.Plans{}, err
 	}
 	if canonicalLevel != domain.CanonicalLevelOff {
-		job, found, err := j.newestJob(ctx, c, head, execution.PlanCanonical, func(execution.Job) bool { return true })
+		job, found, err := j.reads().gateJob(ctx, c.RepositoryID, c.PullNumber, head, execution.PlanCanonical, artifact.Digest{})
 		if err != nil {
 			return nil, commandtext.Plans{}, err
 		}
@@ -112,7 +111,7 @@ func (j *commandsJob) liftable(ctx context.Context, c commands.Candidate, head s
 	if err != nil || !applies {
 		return jobs, plans, err
 	}
-	job, found, err := j.newestJob(ctx, c, head, execution.PlanReceipt, func(job execution.Job) bool { return job.GoverningDigest == governing })
+	job, found, err := j.reads().gateJob(ctx, c.RepositoryID, c.PullNumber, head, execution.PlanReceipt, governing)
 	if err != nil {
 		return nil, commandtext.Plans{}, err
 	}
@@ -120,21 +119,6 @@ func (j *commandsJob) liftable(ctx context.Context, c commands.Candidate, head s
 		jobs, plans.Receipt = append(jobs, job), true
 	}
 	return jobs, plans, nil
-}
-
-// newestJob is the newest job of the head for the plan that is not cancelled and that keep accepts. It counts a job created for executor-not-configured, which a
-// fresh job replaces once an executor is configured: until the checks job makes that one, it is the job of its plan.
-func (j *commandsJob) newestJob(ctx context.Context, c commands.Candidate, head string, plan execution.Plan, keep func(execution.Job) bool) (execution.Job, bool, error) {
-	jobs, err := j.executions.HeadJobs(ctx, c.RepositoryID, c.PullNumber, head, plan) // oldest first
-	if err != nil {
-		return execution.Job{}, false, &opaque{what: "read the jobs of the head", cause: err}
-	}
-	for _, job := range slices.Backward(jobs) {
-		if job.State != execution.StateCancelled && keep(job) {
-			return job, true, nil
-		}
-	}
-	return execution.Job{}, false, nil
 }
 
 // levels are the levels of the effective policy, from the declaration of the Suite's current canonical version: off and off before the first version and when the
@@ -154,13 +138,9 @@ func (j *commandsJob) levels(ctx context.Context, canonical contract.CanonicalSn
 	if !named {
 		return domain.CanonicalLevelOff, domain.ReceiptLevelOff, nil
 	}
-	canonicalLevel, err := domain.ParseCanonicalLevel(policy.Canonical)
+	canonicalLevel, receiptLevel, err := executionLevels(policy)
 	if err != nil {
-		return 0, 0, &opaque{what: "read the canonical level", cause: err}
-	}
-	receiptLevel, err := domain.ParseReceiptLevel(policy.Receipt)
-	if err != nil {
-		return 0, 0, &opaque{what: "read the receipt level", cause: err}
+		return 0, 0, &opaque{what: "read the levels of the policy", cause: err}
 	}
 	return canonicalLevel, receiptLevel, nil
 }
@@ -231,31 +211,11 @@ func (j *commandsJob) receiptApplies(ctx context.Context, view receiptView) (app
 			return false, artifact.Digest{}, &opaque{what: "parse the declaration of the version", cause: err}
 		}
 	}
-	revision, err := j.revisionManifest(ctx, view.binding.ManifestDigest())
+	files, err := j.reads().evaluatedFiles(ctx, view.binding.ManifestDigest(), view.expected, domain.Selection{Include: declaration.Include(), Exclude: declaration.Exclude()})
 	if err != nil {
 		return false, artifact.Digest{}, err
 	}
-	files, err := domain.EvaluatedFiles(revision, view.expected, domain.Selection{Include: declaration.Include(), Exclude: declaration.Exclude()})
-	if err != nil {
-		return false, artifact.Digest{}, &opaque{what: "list the files of the receipt", cause: err}
-	}
 	return len(files) > 0, view.expected.Digest(), nil
-}
-
-// revisionManifest reads the manifest of a revision from the content store, and checks that it is the one the digest names.
-func (j *commandsJob) revisionManifest(ctx context.Context, digest artifact.Digest) (artifact.Manifest, error) {
-	raw, err := j.contents.Read(ctx, digest)
-	if err != nil {
-		return artifact.Manifest{}, &opaque{what: "read the manifest of the revision", cause: err}
-	}
-	manifest, err := artifact.ParseManifest(raw)
-	if err == nil && manifest.Digest() != digest {
-		err = fmt.Errorf("%w: the entries are those of %s", artifact.ErrInvalidEncoding, manifest.Digest())
-	}
-	if err != nil {
-		return artifact.Manifest{}, &opaque{what: "parse the manifest of the revision", cause: err}
-	}
-	return manifest, nil
 }
 
 // gateOutcome is what the receipt gate decided for an approve. applies says that it read a receipt, so the entry is recorded with record; reason is why it refuses the
@@ -341,76 +301,15 @@ func summaryOf(status domain.RunStatus, counts domain.ReceiptCounts, mode domain
 	return execution.SummaryNotMet, nil
 }
 
-// receiptRun is the state of the receipt of a head, as the gate reads it.
-type receiptRun struct {
-	status  domain.RunStatus
-	state   execution.RunState
-	job     execution.Job // the zero job for none
-	counts  domain.ReceiptCounts
-	markers int
-}
-
 // receiptRun reads the receipt job of the head: the newest job that is not cancelled and names the manifest of the version the revision expects. A head with no
 // such job counts as pending.
 func (j *commandsJob) receiptRun(ctx context.Context, c commands.Candidate, head string, governing artifact.Digest) (receiptRun, error) {
-	job, found, err := j.newestJob(ctx, c, head, execution.PlanReceipt, func(job execution.Job) bool { return job.GoverningDigest == governing })
+	reads := j.reads()
+	job, found, err := reads.gateJob(ctx, c.RepositoryID, c.PullNumber, head, execution.PlanReceipt, governing)
 	if err != nil {
 		return receiptRun{}, err
 	}
-	run := receiptRun{job: job}
-	switch {
-	case !found:
-		run.status, run.state = domain.RunPending, execution.RunNone
-	case job.State == execution.StatePending || job.State == execution.StateLeased:
-		run.status, run.state = domain.RunPending, execution.RunPending
-	case job.State == execution.StateUnavailable:
-		run.status, run.state = domain.RunUnavailable, execution.RunUnavailable
-	case job.State == execution.StateComplete:
-		run.status, run.state = domain.RunComplete, execution.RunComplete
-		run.counts, run.markers, err = j.receiptCounts(ctx, job.ID)
-	default:
-		err = &opaque{what: "read the receipt job", cause: fmt.Errorf("job %d is %s", job.ID, job.State)}
-	}
-	return run, err
-}
-
-// receiptStates are the states of a stored test, which the store keeps in lower case, by name.
-var receiptStates = func() map[string]domain.ReceiptState {
-	states := map[string]domain.ReceiptState{}
-	for s := domain.ReceiptExcluded; s <= domain.ReceiptInert; s++ {
-		states[strings.ToLower(s.String())] = s
-	}
-	return states
-}()
-
-// receiptCounts counts the states of the tests of a complete receipt and its changed test files that do not parse, which block like a failing test, and the marker
-// lines it saw.
-func (j *commandsJob) receiptCounts(ctx context.Context, jobID int64) (domain.ReceiptCounts, int, error) {
-	tests, err := j.executions.Tests(ctx, jobID)
-	if err != nil {
-		return domain.ReceiptCounts{}, 0, &opaque{what: "read the tests of the receipt", cause: err}
-	}
-	states := make([]domain.ReceiptState, len(tests))
-	for i, test := range tests {
-		state, known := receiptStates[test.State]
-		if !known {
-			return domain.ReceiptCounts{}, 0, &opaque{what: "read the tests of the receipt", cause: fmt.Errorf("the stored state of a test is %q", test.State)}
-		}
-		states[i] = state
-	}
-	counts, err := domain.CountReceipt(states)
-	if err != nil {
-		return domain.ReceiptCounts{}, 0, &opaque{what: "count the tests of the receipt", cause: err}
-	}
-	result, found, err := j.executions.Result(ctx, jobID)
-	if err != nil {
-		return domain.ReceiptCounts{}, 0, &opaque{what: "read the result of the receipt", cause: err}
-	}
-	if !found { // a complete job always has its results row
-		return domain.ReceiptCounts{}, 0, &opaque{what: "read the result of the receipt", cause: fmt.Errorf("job %d is complete and has no results row", jobID)}
-	}
-	counts.Unparsed = len(result.Unparsed)
-	return counts, len(result.Markers), nil
+	return reads.receipt(ctx, job, found)
 }
 
 // refuseApproval records an approve that the receipt gate refused, with its acknowledgment and the approval receipt, in one transaction. The code stays consumed.

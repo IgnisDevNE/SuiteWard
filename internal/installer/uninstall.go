@@ -123,8 +123,10 @@ func removeStack(ctx context.Context, r *Resolver, d Deps, rt Runtime, purge boo
 	r.screen.Step(2) // Uninstall set the steps on this screen
 	// The executor first: it asks the service for jobs, and it is stopped before the service goes. It is this instance's only when the token file is.
 	if token.mine {
-		existed, err := removeExecutor(ctx, d, token.path)
+		existed, foreign, err := removeExecutor(ctx, d, token.path)
 		switch {
+		case foreign:
+			r.say("Kept the executor of this user: it is registered for another instance's token file, and a computer has one executor.\n")
 		case err != nil: // the executor is not the stack: the uninstall goes on, and says what is left
 			r.screen.Warn("Note: the executor was not removed (%v). It is in %s: where the user manager of this user runs, `systemctl --user disable --now %s` stops it, and deleting that directory and its unit file removes it.\n", err, executorDirOf(token.path), executorUnitName)
 		case existed:

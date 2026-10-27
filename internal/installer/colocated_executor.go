@@ -88,9 +88,14 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	if err != nil {
 		return plan, err
 	}
-	_, running, err := plan.state(ctx, d)
+	registered, running, err := plan.state(ctx, d)
 	if err != nil {
 		return plan, err
+	}
+	if other, err := plan.foreign(ctx, d, registered); err != nil {
+		return plan, err
+	} else if other {
+		return plan, errors.New("a computer has one executor, and the one of this user is registered for another instance's token file: this instance did not change it; remove that instance (`uninstall`), then install again")
 	}
 	if err := os.MkdirAll(plan.dir, 0o700); err != nil {
 		return plan, fmt.Errorf("create %s: %w", plan.dir, err)
@@ -151,23 +156,26 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 }
 
 // removeExecutor stops the executor, takes it out of the operating system and deletes its files, the token copy apart (a purge removes that).
-// existed says that there was something of it to remove.
-func removeExecutor(ctx context.Context, d Deps, tokenFile string) (existed bool, err error) {
+// existed says that there was something of it to remove; foreign, that the one that is registered is another instance's, which is left alone.
+func removeExecutor(ctx context.Context, d Deps, tokenFile string) (existed, foreign bool, err error) {
 	plan, err := planExecutor(d, tokenFile, Settings{Runtime: RuntimePodman}, "")
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	registered, _, err := plan.state(ctx, d)
 	if err != nil {
 		if !pathExists(plan.dir) && !pathExists(plan.definition) {
-			return false, nil // nothing of the executor was made here, so an operating system that cannot be asked has nothing to say of it
+			return false, false, nil // nothing of the executor was made here, so an operating system that cannot be asked has nothing to say of it
 		}
-		return false, err
+		return false, false, err
+	}
+	if foreign, err = plan.foreign(ctx, d, registered); err != nil || foreign {
+		return false, foreign, err // the executor of another instance is not this one's to remove
 	}
 	if !registered && !pathExists(plan.dir) {
-		return false, nil
+		return false, false, nil
 	}
-	return true, plan.remove(ctx, d, registered)
+	return true, false, plan.remove(ctx, d, registered)
 }
 
 // pathExists says whether something is at the path.

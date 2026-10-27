@@ -93,7 +93,7 @@ func planExecutor(d Deps, tokenFile string, s Settings, engineDir string) (execu
 	}
 	switch d.GOOS {
 	case "windows":
-		p.wrapper, p.taskXML = filepath.Join(p.dir, "run.cmd"), filepath.Join(p.dir, "task.xml")
+		p.wrapper, p.taskXML = filepath.Join(p.dir, executorWrapperName), filepath.Join(p.dir, "task.xml")
 		if engineDir != "" {
 			p.env = append(p.env, envEntry{"PATH", engineDir + ";%PATH%"}) // the one value that is meant to be expanded
 		}
@@ -388,4 +388,38 @@ func (p executorPlan) remove(ctx context.Context, d Deps, registered bool) error
 		}
 	}
 	return nil
+}
+
+// foreign says whether the executor that this user has registered belongs to another instance. The unit, the launch agent and the task have one
+// name for each user, so an executor of another token file is registered under the same one: its definition names a program in another directory.
+// registered is what state said; a definition that cannot be read as another's (no file, a task that is not there, an answer that names no wrapper)
+// is not taken for one.
+func (p executorPlan) foreign(ctx context.Context, d Deps, registered bool) (bool, error) {
+	switch p.goos {
+	case "windows":
+		if !registered {
+			return false, nil
+		}
+		out, err := d.Exec(ctx, "schtasks", []string{"/Query", "/TN", executorTaskName, "/XML"}, nil)
+		if err != nil {
+			return false, fmt.Errorf("read the scheduled task: %w", err)
+		}
+		return strings.Contains(string(out), executorWrapperName) && !strings.Contains(string(out), xmlEscaper.Replace(p.wrapper)), nil
+	case "darwin":
+		return definitionNames(p.definition, xmlEscaper.Replace(p.binary))
+	default:
+		return definitionNames(p.definition, unitValue(p.binary))
+	}
+}
+
+// definitionNames says that the file exists and does not name the program: the definition is another instance's.
+func definitionNames(file, program string) (other bool, err error) {
+	raw, err := os.ReadFile(filepath.Clean(file))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", file, err)
+	}
+	return !strings.Contains(string(raw), program), nil
 }

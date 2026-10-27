@@ -549,3 +549,17 @@ func TestUninstallKeepsTheExecutorThatIsRegisteredForAnotherInstance(t *testing.
 		t.Errorf("the output must say that the executor is another instance's:\n%s", out)
 	}
 }
+
+func TestInstallDoesNotRepointAScheduledTaskOfAnotherInstance(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	h.f.on("/Query /TN SuiteWard Executor /XML", `<Actions><Exec><Command>D:\elsewhere\executor\run.cmd</Command></Exec></Actions>`)
+	if err := h.podman(); err != nil {
+		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
+	}
+	if len(h.f.find("/Create /TN")) != 0 || len(h.f.find("/End /TN")) != 0 {
+		t.Errorf("the task of the other instance was recreated or ended: %v", h.f.calls)
+	}
+	if out := h.out.String(); !strings.Contains(out, "another instance") {
+		t.Errorf("the output must say that the task is another instance's:\n%s", out)
+	}
+}

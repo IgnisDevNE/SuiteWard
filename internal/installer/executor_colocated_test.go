@@ -516,7 +516,7 @@ func TestInstallDoesNotRepointTheExecutorOfAnotherInstance(t *testing.T) {
 	if err := h.podman(); err != nil {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
 	}
-	if raw, err := os.ReadFile(path); err != nil || string(raw) != anotherInstancesUnit {
+	if raw, err := os.ReadFile(filepath.Clean(path)); err != nil || string(raw) != anotherInstancesUnit {
 		t.Errorf("the unit of the other instance was rewritten: %q (%v)", raw, err)
 	}
 	if len(h.f.find("enable --now suiteward-executor.service")) != 0 || len(h.f.find("--user stop")) != 0 {
@@ -539,7 +539,7 @@ func TestUninstallKeepsTheExecutorThatIsRegisteredForAnotherInstance(t *testing.
 	if err := un.uninstall("--runtime", "podman", "--connection", "pm", "--yes"); err != nil {
 		t.Fatal(err)
 	}
-	if raw, err := os.ReadFile(path); err != nil || string(raw) != anotherInstancesUnit {
+	if raw, err := os.ReadFile(filepath.Clean(path)); err != nil || string(raw) != anotherInstancesUnit {
 		t.Errorf("the unit of the other instance was removed or rewritten: %q (%v)", raw, err)
 	}
 	if len(un.f.find("disable --now suiteward-executor.service")) != 0 {

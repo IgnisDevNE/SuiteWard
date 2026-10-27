@@ -58,7 +58,7 @@ func healthyColocatedExecutor(t *testing.T, f *fakeEngine) {
 	for path, content := range map[string]string{
 		files.token:  strings.Repeat("c", 64),
 		files.binary: coloProgramText,
-		files.pin:    hex.EncodeToString(sum[:]) + "  suiteward-executor\n",
+		files.pin:    hex.EncodeToString(sum[:]) + "  " + testReleaseAsset(f.goos) + "\n", // made from a release's sums
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)

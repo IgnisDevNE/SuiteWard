@@ -84,12 +84,9 @@ func (n notStored) Read(ctx context.Context, d artifact.Digest) ([]byte, error) 
 	return n.inner.Read(ctx, d)
 }
 
-// A manifest that the content store lacks is an impossible state, since nothing is deleted from it: the step of that pull request fails with an error that
-// says nothing of the store, /status says "failed", and the run goes on with the other pull requests (docs/contracts/runtime.md, "What the checks job does for
-// execution", step 6).
-func TestChecksFailTheStepOfAPullRequestWhoseRevisionManifestIsNotStoredAndGoOn(t *testing.T) {
-	decl := execDeclaration("off", "required")
-	w := newExecWorld(t, decl)
+// hideManifests makes the content store hold only the files of the test, so that every manifest, which only the revisions of the pull requests name, is missing.
+func (w *cjJobWorld) hideManifests(decl string) {
+	w.t.Helper()
 	allowed := map[artifact.Digest]bool{}
 	for _, files := range []map[string]string{execHeadFiles(decl, "v1"), execHeadFiles(decl, "v2")} {
 		for _, content := range files {
@@ -97,21 +94,52 @@ func TestChecksFailTheStepOfAPullRequestWhoseRevisionManifestIsNotStoredAndGoOn(
 		}
 	}
 	w.check.contents = notStored{inner: w.content, allowed: allowed}
-	w.tree(cjHead2, execHeadFiles(decl, "v2"))
-	w.sync(map[int]string{4: bootHead, 5: cjHead2})
-	w.check.liveness.Saw(w.clock.Add(time.Minute))
+}
 
-	err := w.runChecks()
+// A manifest that the content store lacks is an impossible state, since nothing is deleted from it: the step of that pull request fails with an error that
+// says nothing of the store, /status says "failed", and the run goes on with the other pull requests (docs/contracts/runtime.md, "What the checks job does for
+// execution", step 6). The check is held as the wait rule holds it, so that a head always has one and none of them is a success that was not decided: a new head
+// reads assessment-pending, and a head that has a check keeps it.
+func TestChecksFailTheStepOfAPullRequestWhoseRevisionManifestIsNotStoredAndHoldItsCheck(t *testing.T) {
+	decl := execDeclaration("off", "required")
+	t.Run("a new head reads assessment-pending", func(t *testing.T) {
+		w := newExecWorld(t, decl)
+		w.hideManifests(decl)
+		w.tree(cjHead2, execHeadFiles(decl, "v2"))
+		w.sync(map[int]string{4: bootHead, 5: cjHead2})
+		w.check.liveness.Saw(w.clock.Add(time.Minute))
 
-	if err == nil || !strings.Contains(err.Error(), "pull 5") || strings.Contains(err.Error(), "file does not exist") {
-		t.Fatalf("the run failed with %v, want an opaque failure of pull 5 that says nothing of the store", err)
-	}
-	if got := w.problems.lookup(bootRepo); got != "failed" {
-		t.Errorf("problem %q, want failed", got)
-	}
-	w.want(4, checks.Success, "unchanged", 1) // the run went on with the other pull request
-	w.wantNone(5)                             // and the step that failed published nothing
-	w.noJobs(5, cjHead2, execution.PlanReceipt)
+		err := w.runChecks()
+
+		if err == nil || !strings.Contains(err.Error(), "pull 5") || strings.Contains(err.Error(), "file does not exist") {
+			t.Fatalf("the run failed with %v, want an opaque failure of pull 5 that says nothing of the store", err)
+		}
+		if got := w.problems.lookup(bootRepo); got != "failed" {
+			t.Errorf("problem %q, want failed", got)
+		}
+		w.want(4, checks.Success, "unchanged", 1)             // the run went on with the other pull request
+		w.want(5, checks.InProgress, "assessment-pending", 1) // and the head that failed has a check that is no success
+		w.noJobs(5, cjHead2, execution.PlanReceipt)
+	})
+	t.Run("a head that has a check keeps it", func(t *testing.T) {
+		w := newExecWorld(t, decl)
+		w.reader.mergeErrs = map[string]error{cjHead2: errors.New("github: 502")} // no receipt job yet, so the next run reads the manifest of the revision
+		w.execPullFive(execHeadFiles(decl, "v2"))
+		w.want(5, checks.InProgress, "approval-missing", 1)
+		w.noJobs(5, cjHead2, execution.PlanReceipt)
+		w.hideManifests(decl)
+
+		w.check.liveness.Saw(w.clock.Add(time.Minute))
+		err := w.runChecks()
+
+		if err == nil || !strings.Contains(err.Error(), "pull 5") {
+			t.Fatalf("the run failed with %v, want a failure of pull 5", err)
+		}
+		w.want(5, checks.InProgress, "approval-missing", 1) // the stored check of the head, republished as it was
+		if got := w.problems.lookup(bootRepo); got != "failed" {
+			t.Errorf("problem %q, want failed", got)
+		}
+	})
 }
 
 // The clock of a GitHub failure runs for a head until a job is created for it, whatever the job is: creating one ends it, so a later failure for the same

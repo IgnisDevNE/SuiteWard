@@ -196,28 +196,29 @@ func TestParseTakesTheWorstOfTheResultsOfOneName(t *testing.T) {
 		results []string
 		want    execution.Observation
 	}{
-		"pass and fail":    {[]string{"pass", "fail"}, fail},
-		"fail and pass":    {[]string{"fail", "pass"}, fail},
-		"skip and fail":    {[]string{"skip", "fail"}, fail},
-		"pass and skip":    {[]string{"pass", "skip"}, skip},
-		"skip and pass":    {[]string{"skip", "pass"}, skip},
-		"pass and pass":    {[]string{"pass", "pass"}, pass},
-		"skip and skip":    {[]string{"skip", "skip"}, skip},
-		"a pass, a start":  {[]string{"pass", "run"}, pass},
-		"a start, a fail":  {[]string{"run", "fail"}, fail},
-		"a start and more": {[]string{"run", "run"}, fail},
+		"pass and fail":   {[]string{"pass", "fail"}, fail},
+		"fail and pass":   {[]string{"fail", "pass"}, fail},
+		"skip and fail":   {[]string{"skip", "fail"}, fail},
+		"pass and skip":   {[]string{"pass", "skip"}, skip},
+		"skip and pass":   {[]string{"skip", "pass"}, skip},
+		"pass and pass":   {[]string{"pass", "pass"}, pass},
+		"skip and skip":   {[]string{"skip", "skip"}, skip},
+		"a pass, a start": {[]string{"pass", "run"}, fail},
+		"a twin that passes and a twin that never ends": {[]string{"run", "pass", "run"}, fail},
+		"a twin that never ends and a twin that passes": {[]string{"run", "run", "pass"}, fail},
+		"two twins that pass, parallel":                 {[]string{"run", "run", "pass", "pass"}, pass},
+		"two twins, one skips":                          {[]string{"run", "pass", "run", "skip"}, skip},
+		"a start, a fail":                               {[]string{"run", "fail"}, fail},
+		"a start and more":                              {[]string{"run", "run"}, fail},
 	} {
 		t.Run(name, func(t *testing.T) {
-			var lines []string
+			// A test of another package fails and the status is failing, so that the exit status contradicts nothing and
+			// the observation is the one that the events of the name give.
+			lines := []string{line("fail", module+"/b", "TestOther")}
 			for _, action := range c.results {
 				lines = append(lines, line(action, p, "TestA"))
 			}
-			// A failing status over a passing report would read fail, so the status is the one that agrees.
-			exit := 0
-			if c.want == fail {
-				exit = 1
-			}
-			wantObservations(t, observe(t, stream(lines...), exit, at("a", "TestA")), map[TestID]execution.Observation{at("a", "TestA"): c.want})
+			wantObservations(t, observe(t, stream(lines...), 1, at("a", "TestA")), map[TestID]execution.Observation{at("a", "TestA"): c.want})
 		})
 	}
 }
@@ -299,15 +300,40 @@ func TestReruns(t *testing.T) {
 		done, most int
 		want       []TestID
 	}{
-		"the failing tests, and not a pass, a build error or an absent test": {obs, 1, 3, []TestID{a, c}},
-		"after a rerun, with one left":                                       {obs, 2, 3, []TestID{a, c}},
-		"a test that has had its runs":                                       {obs, 3, 3, nil},
-		"more runs than allowed":                                             {obs, 4, 3, nil},
-		"one run and no reruns":                                              {obs, 1, 1, nil},
-		"nothing failed":                                                     {map[TestID]execution.Observation{a: pass, b: skip}, 1, 3, nil},
-		"nothing at all":                                                     {nil, 1, 3, nil},
-		"no runs allowed":                                                    {obs, 0, 0, nil},
+		"the failing and the absent tests, and not a pass, a skip or a build error": {obs, 1, 3, []TestID{e, a, c}},
+		"after a rerun, with one left": {obs, 2, 3, []TestID{e, a, c}},
+		"a test that has had its runs": {obs, 3, 3, nil},
+		"more runs than allowed":       {obs, 4, 3, nil},
+		"one run and no reruns":        {obs, 1, 1, nil},
+		"nothing failed":               {map[TestID]execution.Observation{a: pass, b: skip}, 1, 3, nil},
+		"nothing at all":               {nil, 1, 3, nil},
+		"no runs allowed":              {obs, 0, 0, nil},
 	} {
 		t.Run(name, func(t *testing.T) { sameIDs(t, "reruns", Reruns(tc.obs, tc.done, tc.most), tc.want) })
 	}
+}
+
+// An invocation that exits with a failing status and wrote no event at all ran nothing: go refused before it built a
+// package (a vendor/ that does not agree with go.mod, a toolchain that does not suit go.mod, a pattern it rejects). No
+// test of it built, and none is absent for want of a run.
+func TestParseReadsAFailingStatusWithNoEventAsNothingBuilt(t *testing.T) {
+	expected := []TestID{at("a", "TestA"), at(".", "TestRoot")}
+	for name, stdout := range map[string][]byte{
+		"no output":                    nil,
+		"blank lines":                  []byte("\n\r\n  \n"),
+		"lines that are not events":    []byte("go: inconsistent vendoring\n[1]\n{\"Action\":5}\nnull\n"),
+		"objects that name no action":  []byte("{}\n{\"Package\":\"" + module + "/a\"}\n"),
+		"a cut off event, and nothing": []byte(`{"Action":"pass","Package":"` + module + `/a","Test":"TestA"`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			want := map[TestID]execution.Observation{expected[0]: buildErr, expected[1]: buildErr}
+			wantObservations(t, observe(t, stdout, 1, expected...), want)
+			wantObservations(t, observe(t, stdout, 2, expected...), want)
+		})
+	}
+	// A zero status over no event is no refusal: the tests were not reported, so they are absent.
+	wantObservations(t, observe(t, nil, 0, expected...), map[TestID]execution.Observation{expected[0]: absent, expected[1]: absent})
+	// With any event the contradiction rule decides, as before.
+	wantObservations(t, observe(t, fixture(t, "no-tests-ran"), 1, at("good", "TestNothing")),
+		map[TestID]execution.Observation{at("good", "TestNothing"): fail})
 }

@@ -95,3 +95,60 @@ func TestMarkersAreSortedByPathThenLine(t *testing.T) {
 		t.Errorf("no files gave %v", got)
 	}
 }
+
+// The position of a marker is the line of the file, whatever //line directives the file holds: a candidate must not be
+// able to push a marker to a line the wire refuses, or hide it at line 1.
+func TestMarkersAreAtTheLineOfTheFileNotOfALineDirective(t *testing.T) {
+	const source = "package p\n\nimport \"os\"\n\n//line other.go:99999999\nvar a = os.Getenv(\"CI\")\n//line other.go:1\nvar b = os.Getenv(\"TESTING\")\n/*line :7:1*/ var c = os.Getenv(\"CI\")\n"
+	got := Markers(map[string][]byte{"p.go": []byte(source)})
+	want := []Marker{{"env-read", "p.go", 6}, {"env-read", "p.go", 8}, {"env-read", "p.go", 9}}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v\nwant %v", got, want)
+	}
+}
+
+func TestMarkersFlagExitsThatInitIsNotNeededFor(t *testing.T) {
+	cases := map[string]struct {
+		src  string
+		want []Marker
+	}{
+		"syscall.Exit anywhere": {
+			"package p\n\nimport \"syscall\"\n\nfunc f() {\n\tsyscall.Exit(1)\n}\n",
+			[]Marker{{"exit-in-init", "p.go", 6}},
+		},
+		"syscall.Exit under another name": {
+			"package p\n\nimport sc \"syscall\"\n\nfunc f() { sc.Exit(1) }\n",
+			[]Marker{{"exit-in-init", "p.go", 5}},
+		},
+		"syscall.Exit inside init is one marker": {
+			"package p\n\nimport \"syscall\"\n\nfunc init() {\n\tsyscall.Exit(1)\n}\n",
+			[]Marker{{"exit-in-init", "p.go", 6}},
+		},
+		"os.Exit and syscall.Exit in package-level var initializers": {
+			"package p\n\nimport (\n\t\"os\"\n\t\"syscall\"\n)\n\nvar a = func() int { os.Exit(1); return 0 }()\nvar (\n\tb = func() int { syscall.Exit(2); return 0 }()\n\tc = 3\n)\n",
+			[]Marker{{"exit-in-init", "p.go", 8}, {"exit-in-init", "p.go", 10}},
+		},
+		"os.Exit in a function, and in a var of a function, is not a marker": {
+			"package p\n\nimport \"os\"\n\nfunc f() {\n\tos.Exit(1)\n}\n\nfunc g() {\n\tvar x = func() { os.Exit(2) }\n\t_ = x\n}\n",
+			nil,
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Markers(map[string][]byte{"p.go": []byte(c.src)}); !slices.Equal(got, c.want) {
+				t.Errorf("got %v\nwant %v", got, c.want)
+			}
+		})
+	}
+}
+
+// go test marks the events of a test binary with a SYN byte (\x16). A package that prints such frames in an init and
+// exits with status 0 reports whatever it likes and contradicts nothing: its literal is the only sign.
+func TestMarkersFlagALiteralThatHoldsAFrameByte(t *testing.T) {
+	const source = "package p\n\nvar a = \"\x16=== RUN   TestX\n\"\nvar b = \"\026\"\nvar c = \"\u0016\"\nvar d = `\x16`\nvar e = \"plain \x15 text\"\nvar f = \"\x1b[0m\"\n"
+	got := Markers(map[string][]byte{"p.go": []byte(source)})
+	want := []Marker{{"forged-event", "p.go", 3}, {"forged-event", "p.go", 4}, {"forged-event", "p.go", 5}, {"forged-event", "p.go", 6}}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v\nwant %v", got, want)
+	}
+}

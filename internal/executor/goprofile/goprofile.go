@@ -52,4 +52,5 @@ type ExcludedTest struct {
 type Declared struct {
 	Tests    []TestID
 	Excluded []ExcludedTest
+	Unparsed []string
 }

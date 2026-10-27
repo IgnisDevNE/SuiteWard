@@ -112,6 +112,12 @@ func TestDeclaredTestsFollowTheBuildContextOfTheSandbox(t *testing.T) {
 		"x/release_test.go":     constrained("go1.21", "func TestRelease(t *testing.T) {}\n"),
 		"x/future_test.go":      constrained("go99.0", "func TestFuture(t *testing.T) {}\n"),
 		"x/_hidden_test.go":     src("func TestHidden(t *testing.T) {}\n"),
+		// The tool tags of the toolchain: the default level of each architecture, and no other.
+		"x/lv1_test.go":   constrained("amd64.v1", "func TestAmd64V1(t *testing.T) {}\n"),
+		"x/lv3_test.go":   constrained("amd64.v3", "func TestAmd64V3(t *testing.T) {}\n"),
+		"x/arm80_test.go": constrained("arm64.v8.0", "func TestArm64V80(t *testing.T) {}\n"),
+		"x/arm90_test.go": constrained("arm64.v9.0", "func TestArm64V90(t *testing.T) {}\n"),
+		"x/notv2_test.go": constrained("!amd64.v2", "func TestNotV2(t *testing.T) {}\n"),
 	}
 	names := func(ids []TestID) []string {
 		var out []string
@@ -120,17 +126,20 @@ func TestDeclaredTestsFollowTheBuildContextOfTheSandbox(t *testing.T) {
 		}
 		return out
 	}
-	always := []string{"TestLinux", "TestNoCgo", "TestPlain", "TestRelease", "TestUnix"}
-	never := []string{"TestCgo", "TestDarwin", "TestFuture", "TestHidden", "TestIgnore", "TestIntegration", "TestOldStyle", "TestWindows"}
-	for goarch, arch := range map[string][2]string{"amd64": {"TestAmd64", "TestArm64"}, "arm64": {"TestArm64", "TestAmd64"}} {
+	always := []string{"TestLinux", "TestNoCgo", "TestNotV2", "TestPlain", "TestRelease", "TestUnix"}
+	never := []string{"TestAmd64V3", "TestArm64V90", "TestCgo", "TestDarwin", "TestFuture", "TestHidden", "TestIgnore", "TestIntegration", "TestOldStyle", "TestWindows"}
+	for goarch, arch := range map[string][2][]string{
+		"amd64": {{"TestAmd64", "TestAmd64V1"}, {"TestArm64", "TestArm64V80"}},
+		"arm64": {{"TestArm64", "TestArm64V80"}, {"TestAmd64", "TestAmd64V1"}},
+	} {
 		declared, err := DeclaredTests(files, goarch)
 		if err != nil {
 			t.Fatal(goarch, err)
 		}
-		if got, want := names(declared.Tests), slices.Sorted(slices.Values(append([]string{arch[0]}, always...))); !slices.Equal(got, want) {
+		if got, want := names(declared.Tests), slices.Sorted(slices.Values(append(slices.Clone(arch[0]), always...))); !slices.Equal(got, want) {
 			t.Errorf("%s tests: got %v want %v", goarch, got, want)
 		}
-		if got, want := names(excludedIDs(declared.Excluded)), slices.Sorted(slices.Values(append([]string{arch[1]}, never...))); !slices.Equal(got, want) {
+		if got, want := names(excludedIDs(declared.Excluded)), slices.Sorted(slices.Values(append(slices.Clone(arch[1]), never...))); !slices.Equal(got, want) {
 			t.Errorf("%s excluded: got %v want %v", goarch, got, want)
 		}
 		for name, reason := range reasons(declared.Excluded) {
@@ -160,31 +169,52 @@ func TestDeclaredTestsListANameOnce(t *testing.T) {
 	sameIDs(t, "excluded", excludedIDs(declared.Excluded), []TestID{idOf("r/e_darwin_test.go", "TestElsewhere")})
 }
 
-func TestDeclaredTestsRefuseAFileThatDoesNotParse(t *testing.T) {
+// A file that go cannot read is the candidate's content, never an error here: the build of its package fails when the
+// tests run, and the file is listed so that the caller can say so. It contributes no test.
+func TestDeclaredTestsListAFileThatDoesNotParseAndGoOn(t *testing.T) {
 	good := src("func TestGood(t *testing.T) {}\n")
-	if _, err := DeclaredTests(map[string][]byte{"a/good_test.go": good}, "amd64"); err != nil {
-		t.Fatal("a file that parses is an error:", err)
+	control, err := DeclaredTests(map[string][]byte{"a/good_test.go": good}, "amd64")
+	if err != nil || len(control.Unparsed) != 0 || len(control.Tests) != 1 {
+		t.Fatalf("a file that parses: %v, %v", control, err)
 	}
 	for name, bad := range map[string][]byte{
-		"a syntax error":    src("func TestBad( {\n"),
-		"no package clause": []byte("func TestBad(t *testing.T) {}\n"),
+		"a syntax error":              src("func TestBad( {\n"),
+		"no package clause":           []byte("func TestBad(t *testing.T) {}\n"),
+		"a constraint that is broken": constrained("integration &&", "func TestBad(t *testing.T) {}\n"),
+		"a NUL byte":                  append([]byte(header+"func TestBad(t *testing.T) {}\n"), 0),
 	} {
-		// The second file is one that the build context leaves out: its tests are listed, so it has to be read.
-		for _, file := range []string{"a/bad_test.go", "a/bad_windows_test.go"} {
-			if _, err := DeclaredTests(map[string][]byte{"a/good_test.go": good, file: bad}, "amd64"); err == nil {
-				t.Errorf("%s in %s was not an error", name, file)
+		t.Run(name, func(t *testing.T) {
+			declared, err := DeclaredTests(map[string][]byte{"a/good_test.go": good, "a/bad_test.go": bad}, "amd64")
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
+			sameIDs(t, "tests", declared.Tests, []TestID{idOf("a/good_test.go", "TestGood")})
+			if !slices.Equal(declared.Unparsed, []string{"a/bad_test.go"}) {
+				t.Errorf("unparsed %v", declared.Unparsed)
+			}
+		})
 	}
 }
 
-func TestDeclaredTestsRefuseABrokenBuildConstraint(t *testing.T) {
-	if _, err := DeclaredTests(map[string][]byte{"a/ok_test.go": constrained("integration && unix", "func TestOK(t *testing.T) {}\n")}, "amd64"); err != nil {
-		t.Fatal("a constraint that parses is an error:", err)
+// go reads only the header of a file that its build context leaves out, so the body of such a file is no concern: it is
+// skipped, whatever it holds, and so is a file of a nested module or of a directory that go does not build.
+func TestDeclaredTestsSkipTheBodyOfAFileTheContextLeavesOut(t *testing.T) {
+	bad := src("func TestBad( {\n")
+	declared, err := DeclaredTests(map[string][]byte{
+		"a/good_test.go":        src("func TestGood(t *testing.T) {}\n"),
+		"a/bad_windows_test.go": bad,
+		"a/bad_ignored_test.go": append([]byte("//go:build ignore\n\n"), bad...),
+		"n/go.mod":              []byte("module example.com/n\n"),
+		"n/bad_test.go":         bad,
+		"testdata/bad_test.go":  bad,
+	}, "amd64")
+	if err != nil {
+		t.Fatal(err)
 	}
-	files := map[string][]byte{"a/bad_test.go": constrained("integration &&", "func TestBad(t *testing.T) {}\n")}
-	if _, err := DeclaredTests(files, "amd64"); err == nil {
-		t.Error("a constraint that does not parse was not an error")
+	sameIDs(t, "tests", declared.Tests, []TestID{idOf("a/good_test.go", "TestGood")})
+	sameIDs(t, "excluded", excludedIDs(declared.Excluded), nil)
+	if len(declared.Unparsed) != 0 {
+		t.Errorf("unparsed %v", declared.Unparsed)
 	}
 }
 
@@ -321,18 +351,24 @@ func TestChangedTests(t *testing.T) {
 	}
 }
 
-func TestChangedTestsRefuseAFileThatDoesNotParse(t *testing.T) {
+// A file that does not parse contributes no test to either side, and is no error.
+func TestChangedTestsSkipAFileThatDoesNotParse(t *testing.T) {
 	good := map[string][]byte{"a/a_test.go": src("func TestA(t *testing.T) {}\n")}
 	bad := map[string][]byte{"a/a_test.go": src("func TestA( {\n")}
-	if _, _, err := ChangedTests(good, good, "amd64"); err != nil {
-		t.Fatal("files that parse are an error:", err)
+	added, changed, err := ChangedTests(good, good, "amd64")
+	if err != nil || len(added) != 0 || len(changed) != 0 {
+		t.Fatalf("files that parse: %v, %v, %v", added, changed, err)
 	}
-	if _, _, err := ChangedTests(bad, good, "amd64"); err == nil {
-		t.Error("a head that does not parse was not an error")
+	added, changed, err = ChangedTests(bad, good, "amd64")
+	if err != nil || len(added) != 0 || len(changed) != 0 {
+		t.Errorf("a head that does not parse: %v, %v, %v", added, changed, err)
 	}
-	if _, _, err := ChangedTests(good, bad, "amd64"); err == nil {
-		t.Error("a canonical that does not parse was not an error")
+	added, changed, err = ChangedTests(good, bad, "amd64")
+	if err != nil {
+		t.Fatal(err)
 	}
+	sameIDs(t, "added", added, []TestID{idOf("a/a_test.go", "TestA")})
+	sameIDs(t, "changed", changed, nil)
 }
 
 // A directory with a go.mod of its own is another module: the invocation of the root module cannot name its packages,

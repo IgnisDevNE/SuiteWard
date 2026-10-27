@@ -761,6 +761,16 @@ func validateRevision(r Revision) error {
 		return errors.New("commandtext: a reduced rule that is none of a \"rule \", an \"exclude \", an \"execution canonical: \" and an \"execution receipt: \" entry")
 	case r.ReducedOmitted && (!r.Reduced || len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0):
 		return errors.New("commandtext: reduction detail omitted on a revision that does not reduce the scope or that lists it")
+	}
+	if _, err := reference(r.Proposal, r.Revision); err != nil {
+		return err
+	}
+	return errors.Join(validateReceipt(r), validateReport(r), validatePrevious(r))
+}
+
+// validateReceipt reports why the receipt line of r, its link and what a reduction whose detail was left out lowers cannot be stated.
+func validateReceipt(r Revision) error {
+	switch {
 	case (r.LowersPolicy || r.ReducesScope) && !r.ReducedOmitted:
 		return errors.New("commandtext: what a reduction lowers is stated only for one whose detail was left out: otherwise its entries say it")
 	case r.Receipt != "" && !slices.Contains(receiptLevels, r.Receipt):
@@ -768,12 +778,11 @@ func validateRevision(r Revision) error {
 	case r.ReceiptURL != "" && (r.Receipt == "" || !ValidReceiptLink(r.ReceiptURL, r.Pull)):
 		return errors.New("commandtext: the receipt link is not the link of the loopback receipt page of this pull request, or the revision has no receipt")
 	}
-	if _, err := reference(r.Proposal, r.Revision); err != nil {
-		return err
-	}
-	if err := validateReport(r); err != nil {
-		return err
-	}
+	return nil
+}
+
+// validatePrevious reports why the revision that r supersedes is not an earlier revision of its proposal.
+func validatePrevious(r Revision) error {
 	if r.Previous == "" {
 		return nil
 	}

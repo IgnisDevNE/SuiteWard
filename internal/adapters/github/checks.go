@@ -42,6 +42,17 @@ func NewChecks(client *rest.Client) (*Checks, error) {
 	return &Checks{client: client}, nil
 }
 
+// concludes reports whether the conclusion is one that GitHub takes of this check run: success or failure, and neutral for the Receipt check alone.
+func (r CheckRun) concludes() bool {
+	switch r.Conclusion {
+	case "success", "failure":
+		return true
+	case "neutral":
+		return r.Name == ReceiptCheckName
+	}
+	return false
+}
+
 func (r CheckRun) validate() error {
 	switch {
 	case r.Name == "":
@@ -50,7 +61,7 @@ func (r CheckRun) validate() error {
 		return fmt.Errorf("%w: head SHA %q is not 40 lowercase hex characters", ErrInvalidArgument, r.HeadSHA)
 	case r.Status == "in_progress" && r.Conclusion != "":
 		return fmt.Errorf("%w: an in_progress check run has no conclusion", ErrInvalidArgument)
-	case r.Status == "completed" && r.Conclusion != "success" && r.Conclusion != "failure" && !(r.Conclusion == "neutral" && r.Name == ReceiptCheckName):
+	case r.Status == "completed" && !r.concludes():
 		return fmt.Errorf("%w: a completed check run concludes success or failure (and neutral for the receipt), not %q", ErrInvalidArgument, r.Conclusion)
 	case r.Status != "in_progress" && r.Status != "completed":
 		return fmt.Errorf("%w: check run status %q is not in_progress or completed", ErrInvalidArgument, r.Status)

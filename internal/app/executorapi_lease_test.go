@@ -491,9 +491,7 @@ func TestLeaseAnswers500WhenTheServiceCannotReadWhatTheJobNames(t *testing.T) {
 		if stored := e.job(job.ID); stored.State != execution.StatePending || stored.Attempts != 0 || stored.Reason != "" {
 			t.Errorf("job = %+v; want it untouched", stored)
 		}
-		if !strings.Contains(e.logs.String(), `"level":"ERROR"`) {
-			t.Errorf("log = %s; want the failure logged at Error", e.logs.String())
-		}
+		e.wantErrorLoggedForJob(job.ID)
 	})
 	t.Run("the repository is not enrolled", func(t *testing.T) {
 		e := newExecEnv(t)
@@ -504,6 +502,7 @@ func TestLeaseAnswers500WhenTheServiceCannotReadWhatTheJobNames(t *testing.T) {
 		if stored := e.job(job.ID); stored.State != execution.StatePending || stored.Attempts != 0 {
 			t.Errorf("job = %+v; want it untouched", stored)
 		}
+		e.wantErrorLoggedForJob(job.ID)
 	})
 	t.Run("the manifest is not a manifest", func(t *testing.T) {
 		e := newExecEnv(t)
@@ -514,7 +513,26 @@ func TestLeaseAnswers500WhenTheServiceCannotReadWhatTheJobNames(t *testing.T) {
 		if stored := e.job(job.ID); stored.State != execution.StatePending {
 			t.Errorf("job = %+v; want it pending", stored)
 		}
+		e.wantErrorLoggedForJob(job.ID)
 	})
+}
+
+// wantErrorLoggedForJob requires exactly one Error line that carries the job's id as its job attribute: the queue is stuck on that job, and the line is what
+// says which. The same failure is not logged twice at Error.
+func (e *execTestEnv) wantErrorLoggedForJob(id int64) {
+	e.t.Helper()
+	logged := 0
+	for line := range strings.SplitSeq(e.logs.String(), "\n") {
+		if strings.Contains(line, `"level":"ERROR"`) {
+			logged++
+			if !strings.Contains(line, fmt.Sprintf(`"job":%d`, id)) {
+				e.t.Errorf("an Error line does not carry the job %d: %s", id, line)
+			}
+		}
+	}
+	if logged != 1 {
+		e.t.Errorf("%d Error lines; want one for the job that cannot be prepared:\n%s", logged, e.logs.String())
+	}
 }
 
 // The tree reads run inside the lease transaction: each has a deadline.

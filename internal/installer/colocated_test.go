@@ -38,6 +38,19 @@ type harness struct {
 	githubSeen  []githubEnv
 	status      func(ctx context.Context, address string) ([]byte, error) // GET /status of the service; nil: no owner is enrolled yet
 	atServe     map[string]bool                                           // facts at the moment the service container was started
+	exe         string                                                    // the program of this run, which the executor gets a copy of; program() makes a small one
+}
+
+// program is the program of this run: a small file of the test, so that the install copies bytes that a test can compare.
+func (h *harness) program() string {
+	h.t.Helper()
+	if h.exe == "" {
+		h.exe = filepath.Join(h.t.TempDir(), "suiteward")
+		if err := os.WriteFile(h.exe, []byte("the program of this run"), 0o755); err != nil { //nolint:gosec // a test program
+			h.t.Fatal(err)
+		}
+	}
+	return h.exe
 }
 
 func newHarness(t *testing.T, goos string) *harness {
@@ -101,7 +114,9 @@ func (h *harness) uninstall(args ...string) error {
 }
 
 func (h *harness) newEnv() Env {
+	h.f.env["HOME"] = h.dir // where the executor's unit or launch agent goes: a directory of the test, never the real one
 	d := h.f.deps()
+	d.Executable = func() (string, error) { return h.program(), nil }
 	inner := d.Exec
 	d.Exec = func(ctx context.Context, name string, a []string, stdin io.Reader) ([]byte, error) {
 		var data []byte

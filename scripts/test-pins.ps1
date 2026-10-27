@@ -25,6 +25,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Cannot create the fixture repository.' }
     Write-Fixture
     Assert-Pins 'agreeing copies' $true
+    New-Item -ItemType File -Path (Join-Path $testRoot 'empty.json') | Out-Null
+    Assert-Pins 'an empty file in the repository' $true
+    Remove-Item -LiteralPath (Join-Path $testRoot 'empty.json')
     Write-Fixture -Copy "postgres:18.6-trixie@sha256:$b"
     Assert-Pins 'a copy with another digest' $false
     Write-Fixture -Copy "postgres:18.7-trixie@sha256:$a"

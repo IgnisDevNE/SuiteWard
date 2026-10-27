@@ -298,14 +298,9 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		j.overrideWait(s, &d)
 	}
 	assessed := ungated(d.result) // what execution plans from: the check before the canonical gate, a wrong code or the runner block holds it back
-	if err := j.applyWrongCode(ctx, s, &d); err != nil {
+	runners, err := j.settle(ctx, s, &d)
+	if err != nil {
 		return "", err
-	}
-	var runners *runnerSet
-	if d.runnerBlockApplies(s) {
-		if runners, err = j.applyRunnerBlock(ctx, s, &d); err != nil {
-			return "", err
-		}
 	}
 	var executed executionOutcome
 	var stepErr error // the step of execution failed: the check is held, and the failure is returned once the check is published
@@ -318,6 +313,10 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			// success that was not decided. The run goes on, and /status says failed.
 			executed, d.wait = executionOutcome{}, true
 			j.overrideWait(s, &d)
+			// In the order of the wait path: a wrong code entered since still fails the check, and a restored runner block carries its runner set.
+			if runners, err = j.settle(ctx, s, &d); err != nil {
+				return "", err
+			}
 		}
 	}
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
@@ -374,6 +373,19 @@ func (j *checksJob) decide(ctx context.Context, s *pullState) (d pullDecision, e
 		d.result, d.problem, d.wait, d.source, err = j.assess(ctx, s.p, suite, pull, base, s.tier)
 	}
 	return d, err
+}
+
+// settle applies to the check decided so far the rules that follow the decision, in their order: a wrong code fails it, and the runner block holds a success. It
+// returns the runner set of a runner block, nil for none.
+func (j *checksJob) settle(ctx context.Context, s *pullState, d *pullDecision) (*runnerSet, error) {
+	if err := j.applyWrongCode(ctx, s, d); err != nil {
+		return nil, err
+	}
+	var runners *runnerSet
+	if !d.runnerBlockApplies(s) {
+		return runners, nil
+	}
+	return j.applyRunnerBlock(ctx, s, d)
 }
 
 // overrideWait keeps the stored check of this head, or says that a new head is pending, so it never stays without a check.

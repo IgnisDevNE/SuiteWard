@@ -23,7 +23,7 @@ const (
 	headSHA = "1111111111111111111111111111111111111111"
 	baseSHA = "2222222222222222222222222222222222222222"
 	digest  = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	image   = "docker.io/library/golang:1.27.3-alpine@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	image   = "registry.example.com/images/toolchain:1@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
 // leaseAnswer is a valid answer of POST /lease for a receipt, as a map so that a test changes one field.

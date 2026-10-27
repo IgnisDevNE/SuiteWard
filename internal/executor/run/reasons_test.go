@@ -176,7 +176,7 @@ func TestAnOutcomeThatComesWithAnErrorIsNotTrusted(t *testing.T) {
 
 func TestAnImageThatIsNotTheOneThePinnedProfileNamesIsUnsupportedAndNothingRuns(t *testing.T) {
 	s := withTests()
-	s.profile.Image = "docker.io/library/golang:1.28.0-alpine@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	s.profile.Image = "registry.example.com/images/other:1@sha256:1111111111111111111111111111111111111111111111111111111111111111"
 	rt := newRuntime(passing)
 	d := start(t, newService(t, s.serve(1)), rt)
 	assertBody(t, d.result().body, unavailable(reasonProfileUnsupported, sandboxWithout))

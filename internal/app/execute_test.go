@@ -17,6 +17,9 @@ import (
 
 const executorToken = "an-executor-token-of-more-than-32-bytes"
 
+// mountedFile is where a test puts the file that holds the value.
+const mountedFile = "/run/files/executor"
+
 // executorEnv is the environment of a valid executor, with the changes of a test.
 func executorEnv(change map[string]string) Env {
 	vars := map[string]string{"SUITEWARD_EXECUTOR_URL": "https://suiteward.example.com", "SUITEWARD_EXECUTOR_TOKEN": executorToken}
@@ -45,9 +48,9 @@ func TestTheExecutorReadsItsThreeSettings(t *testing.T) {
 }
 
 func TestTheExecutorTokenMayComeFromAFile(t *testing.T) {
-	env := executorEnv(map[string]string{"SUITEWARD_EXECUTOR_TOKEN": "", "SUITEWARD_EXECUTOR_TOKEN_FILE": "/run/secrets/executor"})
+	env := executorEnv(map[string]string{"SUITEWARD_EXECUTOR_TOKEN": "", "SUITEWARD_EXECUTOR_TOKEN_FILE": mountedFile})
 	env.ReadFile = func(path string) ([]byte, error) {
-		if path != "/run/secrets/executor" {
+		if path != mountedFile {
 			return nil, os.ErrNotExist
 		}
 		return []byte(executorToken + "\n"), nil
@@ -72,8 +75,8 @@ func TestBadExecutorSettingsAreEachRefusedByName(t *testing.T) {
 		"no token":                {map[string]string{"SUITEWARD_EXECUTOR_TOKEN": ""}, "SUITEWARD_EXECUTOR_TOKEN"},
 		"a short token":           {map[string]string{"SUITEWARD_EXECUTOR_TOKEN": short}, "SUITEWARD_EXECUTOR_TOKEN"},
 		"an unknown runtime":      {map[string]string{"SUITEWARD_EXECUTOR_RUNTIME": "rkt"}, "SUITEWARD_EXECUTOR_RUNTIME"},
-		"a token twice":           {map[string]string{"SUITEWARD_EXECUTOR_TOKEN_FILE": "/run/secrets/executor"}, "SUITEWARD_EXECUTOR_TOKEN_FILE"},
-		"a token file that fails": {map[string]string{"SUITEWARD_EXECUTOR_TOKEN": "", "SUITEWARD_EXECUTOR_TOKEN_FILE": "/run/secrets/none"}, "SUITEWARD_EXECUTOR_TOKEN_FILE"},
+		"a token twice":           {map[string]string{"SUITEWARD_EXECUTOR_TOKEN_FILE": mountedFile}, "SUITEWARD_EXECUTOR_TOKEN_FILE"},
+		"a token file that fails": {map[string]string{"SUITEWARD_EXECUTOR_TOKEN": "", "SUITEWARD_EXECUTOR_TOKEN_FILE": mountedFile + ".none"}, "SUITEWARD_EXECUTOR_TOKEN_FILE"},
 	} {
 		_, err := readExecutorSettings(executorEnv(tc.change))
 		if err == nil || !strings.Contains(err.Error(), tc.named) {

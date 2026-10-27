@@ -198,7 +198,8 @@ func treeOf(m artifact.Manifest, src execution.Source) []execution.TreeFile {
 // withModules adds, for each go.mod of the tree, an empty file: DeclaredTests reads the places of the modules, which decide the nested ones,
 // and never their text.
 func withModules(files map[string][]byte, tree []execution.TreeFile) map[string][]byte {
-	out := maps.Clone(files)
+	out := make(map[string][]byte, len(files))
+	maps.Copy(out, files)
 	for _, f := range tree {
 		if path.Base(f.Path) == "go.mod" {
 			if _, ok := out[f.Path]; !ok {

@@ -137,7 +137,7 @@ func envValues(env []envEntry) []string {
 	return out
 }
 
-// cmdValue is a value inside `set "K=V"` of a batch file: a percent sign is doubled so that cmd does not read a variable.
+// cmdValue is a value inside `set "K=V"`, or a path inside the quotes of a command, of a batch file: a percent sign is doubled so that cmd does not read a variable.
 func cmdValue(v string) string { return strings.ReplaceAll(v, "%", "%%") }
 
 // windowsWrapper is the script that the task runs: the environment of the executor, then the program. The window of the script shows, as a
@@ -152,7 +152,7 @@ func (p executorPlan) windowsWrapper() string {
 		}
 		fmt.Fprintf(&b, "set \"%s=%s\"\r\n", e.key, value)
 	}
-	fmt.Fprintf(&b, "\"%s\" execute >> \"%s\" 2>&1\r\n", p.binary, p.log)
+	fmt.Fprintf(&b, "\"%s\" execute >> \"%s\" 2>&1\r\n", cmdValue(p.binary), cmdValue(p.log))
 	return b.String()
 }
 

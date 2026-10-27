@@ -197,6 +197,7 @@ var installFlags = []struct{ name, usage string }{
 	{"runtime", "podman (recommended) or docker"},
 	{"connection", "the Podman connection, or the Docker context (default: the rootless Podman machine, or Docker Desktop's)"},
 	{"image", "the release image pinned by digest, ghcr.io/ignisdevne/suiteward@sha256:<64 hex> (default: the installed image, else the release this binary carries; a development build needs it)"},
+	{"sha256sums", "co-located tier, optional: the verified SHA256SUMS of the release this program was downloaded from; this program must be listed in it, and its line is the executor's pin (without it the pin is the hash of the program as copied, and doctor warns)"},
 	{"http-port", "loopback port of the HTTP listener (default 27081)"},
 	{"mcp-port", "loopback port of the MCP listener (default 27091)"},
 	{"job-timeout", "a Go duration for SUITEWARD_JOB_TIMEOUT (serve only)"},

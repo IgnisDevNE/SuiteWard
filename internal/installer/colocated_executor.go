@@ -2,6 +2,7 @@ package installer
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -126,7 +127,8 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 			return plan, err
 		}
 	}
-	if err := writeFileAtomic(plan.pin, []byte(sum+"  "+executorPinName+"\n"), 0o700); err != nil {
+	pin := cmp.Or(c.executorPin, sum+"  "+executorPinName) // the release's line, or the hash of the program as copied
+	if err := writeFileAtomic(plan.pin, []byte(pin+"\n"), 0o700); err != nil {
 		return plan, err
 	}
 	if running {
@@ -156,6 +158,9 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 	}
 	scr.Say("The executor holds one credential, its own token (%s), and it reaches the service at http://127.0.0.1:%d. It runs as your user, next to your coding agent, so its assurance is lower than on a separate host: what doctor pins catches drift and accident, not a determined agent.\n", plan.tokenFile, c.s.HTTPPort)
 	scr.Say("Keep one executor for each container engine: at start it removes every %s container of its engine, so a second one (the executor started by hand, say) would remove the sandboxes of the first.\n", sandboxNamePrefix)
+	if c.executorPin == "" {
+		scr.Say("The executor's binary was not checked against a release's SHA256SUMS: it is a copy of this program as it is. Verify the download as the install guide says, then run `%s install --upgrade --sha256sums <the SHA256SUMS of the release>` to pin it to the release's line.\n", c.env.Deps.command())
+	}
 }
 
 // removeExecutor stops the executor, takes it out of the operating system and deletes its files, the token copy apart (a purge removes that).
@@ -197,12 +202,37 @@ func instanceTokenFile(r *Resolver, d Deps) (string, error) {
 
 // refreshExecutor is what an upgrade at the installed release does about the executor: the same as an install, so that a program that was
 // replaced since reaches the executor's copy, and an executor that stopped is started. It needs the token copy that the install made.
-func refreshExecutor(ctx context.Context, r *Resolver, env Env, rt Runtime, s Settings) error {
+func refreshExecutor(ctx context.Context, r *Resolver, env Env, rt Runtime, s Settings, pin string) error {
 	tokenFile, err := instanceTokenFile(r, env.Deps)
 	if err != nil {
 		return err
 	}
-	c := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, tokenFile: tokenFile}
+	c := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, tokenFile: tokenFile, executorPin: pin}
 	c.setUpExecutor(ctx)
 	return nil
+}
+
+// releasePin is the pin that --sha256sums gives the executor: the line of the release's SHA256SUMS that lists this program for this system, checked
+// before anything is changed. It is empty when the flag is not given: the pin is then the hash of the program as copied.
+func releasePin(r *Resolver, d Deps) (string, error) {
+	sumsFile := r.preset("sha256sums", "")
+	if sumsFile == "" {
+		return "", nil
+	}
+	if d.Executable == nil {
+		return "", errors.New("the installer cannot find its own program to check it against the SHA256SUMS")
+	}
+	exe, err := d.Executable()
+	if err != nil {
+		return "", fmt.Errorf("find this program: %w", err)
+	}
+	sum, err := hashFile(exe)
+	if err != nil {
+		return "", err
+	}
+	sums, err := os.ReadFile(filepath.Clean(sumsFile))
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", sumsFile, err)
+	}
+	return pinFromSums(string(sums), sum, sumsFile, d.GOOS)
 }

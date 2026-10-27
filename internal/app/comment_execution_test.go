@@ -153,3 +153,23 @@ func TestTheCountsOfAModeThatWasNotMetCarryTheUnparsedFiles(t *testing.T) {
 		t.Fatalf("the acknowledgment holds counts %+v and %d markers; want 1 DETECTS, 3 unparsed and 2 markers", ack.Counts, ack.Markers)
 	}
 }
+
+// The counts of an unmet mode are the ten counts of the Receipt check's payload, every key present: the producer always writes them all, and a key that is missing
+// would read as a count of zero, so the publisher refuses the payload instead of stating a receipt that was never recorded.
+func TestCommentPublisherRefusesTheCountsOfAnUnmetModeThatLackAKey(t *testing.T) {
+	for _, key := range receiptCountKeys {
+		t.Run(key, func(t *testing.T) {
+			counts := cjCounts(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+			delete(counts, key)
+			w := newCmtWorld(t)
+			message := executionAck(t, map[string]any{"disposition": "receipt-refused", "reference": "P2-R1", "reason": "mode-not-met", "mode": "fix", "counts": counts})
+
+			if err := w.deliver(message); err == nil {
+				t.Fatalf("publish accepted the payload %s", message.Payload)
+			}
+			if posts := w.writer.posts(); len(posts) != 0 {
+				t.Fatalf("posted %d comments for counts that lack %q", len(posts), key)
+			}
+		})
+	}
+}

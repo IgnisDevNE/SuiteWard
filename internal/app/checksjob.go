@@ -175,7 +175,7 @@ func (j *checksJob) pullRequests(ctx context.Context, enrollment owner.State, p 
 			problem = pullProblem
 		}
 	}
-	if err := j.cancelStale(ctx, p.RepositoryID, pulls); err != nil {
+	if err := j.cancelStale(ctx, p.RepositoryID, pulls, suite.integrityFailed); err != nil {
 		if cancelled := ctx.Err(); cancelled != nil {
 			return "", cancelled
 		}

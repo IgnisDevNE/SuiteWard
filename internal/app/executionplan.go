@@ -123,8 +123,9 @@ func (j *checksJob) sweep(ctx context.Context) error {
 	return nil
 }
 
-// cancelStale cancels the open jobs of a repository whose pull request is no longer open (closed) or whose head moved (head-moved).
-func (j *checksJob) cancelStale(ctx context.Context, repositoryID int64, pulls []githubsync.PullState) error {
+// cancelStale cancels the open jobs of a repository whose pull request is no longer open (closed) or whose head moved (head-moved), and, when the canonical of
+// the repository failed its integrity check, all the others (obsolete): nothing is run against a canonical that cannot be trusted.
+func (j *checksJob) cancelStale(ctx context.Context, repositoryID int64, pulls []githubsync.PullState, integrityFailed bool) error {
 	open, err := j.executions.OpenJobs(ctx, repositoryID)
 	if err != nil {
 		return fmt.Errorf("read the open execution jobs: %w", err)
@@ -137,12 +138,15 @@ func (j *checksJob) cancelStale(ctx context.Context, repositoryID int64, pulls [
 	}
 	var failures []error
 	for _, job := range open {
-		head, isOpen := heads[job.PullNumber]
-		reason := execution.ReasonClosed
-		if isOpen {
+		var reason execution.Reason
+		switch head, isOpen := heads[job.PullNumber]; {
+		case !isOpen:
+			reason = execution.ReasonClosed
+		case head != job.HeadSHA:
 			reason = execution.ReasonHeadMoved
-		}
-		if isOpen && head == job.HeadSHA {
+		case integrityFailed:
+			reason = execution.ReasonObsolete
+		default:
 			continue
 		}
 		if _, err := j.executions.Cancel(ctx, job.ID, reason, j.now()); err != nil {

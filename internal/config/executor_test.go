@@ -64,26 +64,24 @@ func TestLoadExecutorReadsEverySetting(t *testing.T) {
 }
 
 func TestLoadExecutorToken(t *testing.T) {
-	for name, test := range map[string]struct {
-		token   string
-		wantErr bool
+	for _, test := range []struct {
+		token    string
+		accepted bool
 	}{
-		"31 bytes":             {strings.Repeat("x", 31), true},
-		"32 bytes":             {strings.Repeat("x", 32), false},
-		"30 bytes of 15 runes": {strings.Repeat("é", 15), true},
-		"32 bytes of 16 runes": {strings.Repeat("é", 16), false},
+		{strings.Repeat("x", 31), false},
+		{strings.Repeat("x", 32), true},
+		{strings.Repeat("é", 15), false}, // 30 bytes
+		{strings.Repeat("é", 16), true},  // 32 bytes
 	} {
-		t.Run(name, func(t *testing.T) {
-			vars := required(t)
-			vars["SUITEWARD_EXECUTOR_TOKEN"] = test.token
-			_, _, err := fakeEnv{vars: vars}.load()
-			if (err != nil) != test.wantErr {
-				t.Fatalf("Load = %v, want error %v", err, test.wantErr)
-			}
-			if err != nil && (!strings.Contains(err.Error(), "SUITEWARD_EXECUTOR_TOKEN") || strings.Contains(err.Error(), test.token)) {
-				t.Fatalf("error = %v, want it to name EXECUTOR_TOKEN without the value", err)
-			}
-		})
+		vars := required(t)
+		vars["SUITEWARD_EXECUTOR_TOKEN"] = test.token
+		_, _, err := fakeEnv{vars: vars}.load()
+		switch {
+		case test.accepted && err != nil:
+			t.Errorf("a token of %d bytes was refused: %v", len(test.token), err)
+		case !test.accepted && (err == nil || !strings.Contains(err.Error(), "SUITEWARD_EXECUTOR_TOKEN") || strings.Contains(err.Error(), test.token)):
+			t.Errorf("a token of %d bytes: error = %v, want one that names EXECUTOR_TOKEN without the value", len(test.token), err)
+		}
 	}
 }
 

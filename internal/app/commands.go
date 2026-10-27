@@ -20,6 +20,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/totp"
 )
@@ -185,16 +186,33 @@ func (j *commandsJob) horizon(ctx context.Context, enrollment owner.State) (hori
 	return earliest.Add(-commandListingMargin), true, nil
 }
 
-// record writes the decision for the candidate, with its acknowledgment in the same transaction. Its error is a ledger failure.
-func (j *commandsJob) record(ctx context.Context, c commands.Candidate, d commands.Disposition, operation contract.OperationID, ack *governance.OutboxMessage) error {
+// entry is the ledger entry of the decision for the candidate. The mode that the command carried is recorded whatever the disposition is.
+func (j *commandsJob) entry(c commands.Candidate, d commands.Disposition, operation contract.OperationID) commands.Entry {
 	m := c.Comment
-	entry := commands.Entry{RepositoryID: c.RepositoryID, CommentID: m.CommentID, PullNumber: c.PullNumber, AuthorID: m.AuthorID, CreatedAt: m.CreatedAt,
-		BodyDigest: m.BodyDigest, Disposition: d, Operation: operation, DecidedAt: j.now()}
-	if err := j.ledger.Record(ctx, entry, ack); err != nil {
+	return commands.Entry{RepositoryID: c.RepositoryID, CommentID: m.CommentID, PullNumber: c.PullNumber, AuthorID: m.AuthorID, CreatedAt: m.CreatedAt,
+		BodyDigest: m.BodyDigest, Disposition: d, Operation: operation, Mode: commandMode(m.Body), DecidedAt: j.now()}
+}
+
+// commandMode is the mode that the command line of the body names, and empty for none.
+func commandMode(body string) string {
+	if parsed := commandtext.Parse(body); parsed.Kind == commandtext.KindCommand {
+		return parsed.Command.Mode.String()
+	}
+	return ""
+}
+
+// written notes a write to the ledger: its error is a ledger failure, and an entry that was written wakes the jobs that read it.
+func (j *commandsJob) written(err error) error {
+	if err != nil {
 		return &opaque{what: "record the command", cause: errors.Join(errLedger, err)}
 	}
 	j.recorded = true
 	return nil
+}
+
+// record writes the decision for the candidate, with its acknowledgment in the same transaction. Its error is a ledger failure.
+func (j *commandsJob) record(ctx context.Context, c commands.Candidate, d commands.Disposition, operation contract.OperationID, ack *governance.OutboxMessage) error {
+	return j.written(j.ledger.Record(ctx, j.entry(c, d, operation), ack))
 }
 
 // decide applies the disposition steps of the contract to one candidate, in order. Its errors never carry comment text
@@ -223,10 +241,8 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 		return j.propose(ctx, enrollment, c)
 	case commandtext.Suggest: // no code, no reference: it reads no step and grants nothing
 		return j.suggest(ctx, enrollment, c)
-	case commandtext.SetMode, commandtext.Unblock:
-		// shortcut: the parser reads these verbs before the commands job runs them, so they are acknowledged as an unknown verb, as before the parser knew them, and
-		// never reach consent, which would ask for a reference they do not carry; M2.1-T8 replaces this with the mode and unblock flows.
-		return reject(commands.Malformed, commandtext.UnknownVerb, "")
+	case commandtext.SetMode: // no code, so no step and no closed-pull guard
+		return j.setMode(ctx, enrollment, c, command.Mode)
 	default:
 		return j.consent(ctx, enrollment, c, command, reject)
 	}
@@ -248,8 +264,8 @@ func ignoredDisposition(enrollment owner.State, botID int64, m githubsync.Commen
 // rejectFunc records a command as rejected with its acknowledgment.
 type rejectFunc func(d commands.Disposition, reason commandtext.Reason, reference string) error
 
-// consent decides an approve, a revoke or a skip: it ignores one first observed after its pull request stopped being open, refuses an approve or a revoke
-// for a proposal that another pull request carries, and otherwise verifies and consumes the code, then applies the command.
+// consent decides an approve, a revoke, a skip or an unblock: it ignores one first observed after its pull request stopped being open, refuses an approve or a
+// revoke for a proposal that another pull request carries, and otherwise verifies and consumes the code, then applies the command.
 func (j *commandsJob) consent(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, reject rejectFunc) error {
 	pull, err := j.observedPull(ctx, c)
 	if err != nil {
@@ -260,8 +276,8 @@ func (j *commandsJob) consent(ctx context.Context, enrollment owner.State, c com
 	if !pull.NotOpenSince.IsZero() && !c.Comment.FirstSeen.Before(pull.NotOpenSince) {
 		return j.record(ctx, c, commands.NotCommand, "", nil)
 	}
-	var reference string // a skip names no proposal
-	if command.Verb != commandtext.Skip {
+	var reference string // a skip and an unblock name no proposal
+	if command.Verb == commandtext.Approve || command.Verb == commandtext.Revoke {
 		reference = commandtext.Reference(command.Proposal, command.Revision)
 		elsewhere, err := j.carriedElsewhere(ctx, c, command)
 		if err != nil {
@@ -275,8 +291,11 @@ func (j *commandsJob) consent(ctx context.Context, enrollment owner.State, c com
 	if verified, err := j.verifyCode(ctx, enrollment, c, command, source, reference, reject); !verified {
 		return err
 	}
-	if command.Verb == commandtext.Skip {
+	switch command.Verb {
+	case commandtext.Skip:
 		return j.skip(ctx, enrollment, c)
+	case commandtext.Unblock:
+		return j.unblock(ctx, enrollment, c, pull)
 	}
 	return j.process(ctx, enrollment, c, command, source, reference, reject)
 }
@@ -325,10 +344,20 @@ func (j *commandsJob) verifyCode(ctx context.Context, enrollment owner.State, c 
 	return true, nil
 }
 
-// process applies a verified approve or revoke through ProcessConsent and records the command.
+// process applies a verified approve or revoke through ProcessConsent and records the command. An approve goes through the receipt gate first, which can refuse it.
 func (j *commandsJob) process(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, source contract.SourceCommandID, reference string, reject rejectFunc) error {
 	m := c.Comment
 	project, operation := owner.ProjectID(c.RepositoryID), contract.OperationID("consent:"+string(source))
+	var gate gateOutcome
+	if command.Verb == commandtext.Approve {
+		var err error
+		if gate, err = j.receiptGate(ctx, enrollment, c, command, operation); err != nil {
+			return err
+		}
+		if gate.reason != domain.ReasonNone {
+			return j.refuseApproval(ctx, enrollment, c, command, reference, gate)
+		}
+	}
 	ack, err := newProcessedAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, m.CommentID, enrollment.Owner.Login, project, defaultSuite, operation)
 	if err != nil {
 		return &opaque{what: "build the acknowledgment", cause: err}
@@ -364,7 +393,7 @@ func (j *commandsJob) process(ctx context.Context, enrollment owner.State, c com
 	if err != nil {
 		return &opaque{what: "process the consent", cause: err}
 	}
-	return j.record(ctx, c, commands.Processed, operation, nil)
+	return j.recordProcessed(ctx, c, operation, gate)
 }
 
 // consentRequest is the command of the owner's comment with the identifiers of D-COMMANDS.

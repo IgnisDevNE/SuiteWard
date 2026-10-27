@@ -24,7 +24,7 @@ const (
 	redacted = "[redacted]"
 
 	maxGitHubRepositories = 20 // D-SYNC
-	minMCPTokenBytes      = 32
+	minTokenBytes         = 32 // MCP_TOKEN and EXECUTOR_TOKEN
 )
 
 // GitHub caps an owner at 39 characters and a name at 100: the size of a payload that carries the repository is measured with that longest name.
@@ -159,6 +159,7 @@ func Load(lookup func(string) (string, bool), environ []string, readFile func(st
 	c.OutboxLease = number(l, "OUTBOX_LEASE", "1m", 5*time.Second, 0, time.ParseDuration)
 	c.Tier = l.tier("INSTALLATION_TIER")
 	c.ReportBaseURL = l.reportBaseURL("REPORT_BASE_URL")
+	c.ExecutorToken, c.Executor = l.executor()
 	c.GitHub = l.github()
 	c.MCP = l.mcp(c.HTTPAddr)
 
@@ -311,8 +312,8 @@ func (l *loader) mcp(httpAddr string) *MCP {
 
 	m := MCP{Addr: "127.0.0.1:8090", Token: Secret(token)}
 	// An empty value here was already reported by raw.
-	if token != "" && len(token) < minMCPTokenBytes {
-		l.fail("MCP_TOKEN", fmt.Errorf("must be at least %d bytes", minMCPTokenBytes))
+	if token != "" && len(token) < minTokenBytes {
+		l.fail("MCP_TOKEN", fmt.Errorf("must be at least %d bytes", minTokenBytes))
 	}
 	if addr != "" {
 		m.Addr = addr
@@ -333,6 +334,21 @@ func (l *loader) mcp(httpAddr string) *MCP {
 		}
 	}
 	return &m
+}
+
+// executor reads the executor settings. An unset token is valid (the executor routes are not served); the durations are validated either way.
+func (l *loader) executor() (Secret, ExecutorTimes) {
+	token, _ := l.present("EXECUTOR_TOKEN", true)
+	// An empty value here was already reported by raw.
+	if token != "" && len(token) < minTokenBytes {
+		l.fail("EXECUTOR_TOKEN", fmt.Errorf("must be at least %d bytes", minTokenBytes))
+	}
+	// shortcut: 11m is limits.testTimeoutSeconds (600 s) plus the executor's 60 s kill grace, written as a literal; tie it to that constant once the executor API defines it.
+	return Secret(token), ExecutorTimes{
+		JobTimeout: number(l, "EXECUTOR_JOB_TIMEOUT", "30m", 11*time.Minute, 6*time.Hour, time.ParseDuration),
+		LeaseWait:  number(l, "EXECUTOR_LEASE_WAIT", "5m", 10*time.Second, time.Hour, time.ParseDuration),
+		GitHubWait: number(l, "EXECUTOR_GITHUB_WAIT", "30m", time.Minute, 6*time.Hour, time.ParseDuration),
+	}
 }
 
 func (l *loader) positive(name, value string) int64 {

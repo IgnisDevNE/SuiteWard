@@ -18,11 +18,16 @@ Environment=SUITEWARD_EXECUTOR_RUNTIME=podman
 # and the analysis files of both sides in memory (a few hundred MiB at most). That is about 1.5 GiB live, and the Go runtime lets its heap grow to
 # about twice what is live before it collects, so the resident size can reach 3 GiB: a lower limit would kill the executor in the middle of a job
 # that is within every bound. A host that runs one sandbox at a time needs 8 GiB (3 GiB of sandbox, 3 GiB of executor, the database and the
-# service). The sandboxes are containers that Podman puts in scopes of their own, outside this unit's cgroup: that is assumed here and to be
-# confirmed on a live host. NoNewPrivileges stays off: it would stop newuidmap and newgidmap, which rootless Podman needs.
+# service). Each sandbox gets a scope of its own under user@UID.service, bounded by its own `--memory 3g`, so it is outside this unit's 3 GiB: that is
+# assumed here and to be confirmed on a live host. NoNewPrivileges stays off: it would stop newuidmap and newgidmap, which rootless Podman needs.
 MemoryMax=3G
 MemorySwapMax=0
-# On SIGTERM the executor gives a job 30 s to finish and post its result, then kills its sandbox and exits: the stop timeout exceeds that.
+# GOMEMLIMIT is a variable of the Go runtime, not a setting of the executor: below MemoryMax, it makes the runtime collect before the cgroup kills the process.
+Environment=GOMEMLIMIT=2500MiB
+# On SIGTERM the executor gives a job 30 s to finish and post its result, then kills its sandbox and exits: the stop timeout exceeds that. systemd
+# signals the main process only (mixed): the default would also reach the `podman run` child of a sandbox, which forwards it to `go test` and makes the
+# job fail; what is left after the timeout is killed.
+KillMode=mixed
 TimeoutStopSec=45
 Restart=always
 RestartSec=5

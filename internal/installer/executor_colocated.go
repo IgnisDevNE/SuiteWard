@@ -235,7 +235,10 @@ StartLimitIntervalSec=0
 
 [Service]
 ExecStart="` + unitValue(p.binary) + `" execute
-` + env.String() + `TimeoutStopSec=45
+` + env.String() + `# On stop systemd signals the main process only: the default would also reach the container CLI that runs a sandbox, which forwards the signal
+# to the tests and makes a job fail. The executor stops its sandbox itself; what is left after the timeout is killed.
+KillMode=mixed
+TimeoutStopSec=45
 Restart=always
 RestartSec=5
 

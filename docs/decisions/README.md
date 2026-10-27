@@ -2,7 +2,7 @@
 
 - **Updated:** 2026-10-27
 - **Product:** SuiteWard
-- **State:** Accepted decisions. M1.2 to M1.11 are implemented and released (`v0.2.0` is current); the security hardening phase SH amended several records for it. [ADR 0028](0028-canonical-execution-and-the-receipt.md) records the design of phase M2.1 (canonical execution, the receipt and the Go profile), which is being implemented on the phase branch and is not released yet.
+- **State:** Accepted decisions. M1.2 to M1.11 are implemented and released, and `v0.2.0` (2026-10-22) is the current release; the installer phases M1.12 to M1.15 are implemented and released as the pre-releases `v0.3.0-alpha.1` to `v0.4.0-alpha.3`, the latest. The security hardening phase SH amended several records for `v0.2.0`. [ADR 0028](0028-canonical-execution-and-the-receipt.md) records the design of phase M2.1 (canonical execution, the receipt and the Go profile), which is being implemented on the phase branch and is not released yet.
 
 ## Accepted records
 

@@ -28,13 +28,13 @@ var (
 	ErrSetupFailed = errors.New("the sandbox failed before the program started")
 )
 
-// Limits are the resource limits of one sandbox. Every one is required: the runtimes read zero as no limit.
+// Limits are the resource limits of one sandbox. Every one but KillAfter is required: the runtimes read zero as no limit.
 type Limits struct {
 	MemoryMiB int // the memory limit; the swap limit is the same, and the tmpfs counts in it
 	CPUs      int
 	Pids      int
 	TmpfsMiB  int           // the size of /work
-	KillAfter time.Duration // the executor kills the container this long after it starts
+	KillAfter time.Duration // the runner kills the container this long after it starts; zero is no clock (the executor passes none: its bound is the context), kept for the tagged integration tests of this package and of source
 }
 
 // Spec describes one run.
@@ -104,8 +104,8 @@ func (s Spec) validate() error {
 }
 
 func (l Limits) validate() error {
-	if l.MemoryMiB <= 0 || l.CPUs <= 0 || l.Pids <= 0 || l.TmpfsMiB <= 0 || l.KillAfter <= 0 {
-		return invalid("every limit is required and positive: %+v", l)
+	if l.MemoryMiB <= 0 || l.CPUs <= 0 || l.Pids <= 0 || l.TmpfsMiB <= 0 || l.KillAfter < 0 {
+		return invalid("every limit is required and positive, and the kill deadline is not negative: %+v", l)
 	}
 	return nil
 }
@@ -113,3 +113,18 @@ func (l Limits) validate() error {
 // CompleteMarker is the file, relative to /work, that must be the last entry of the standard input tar: the container refuses to
 // start Argv when tar has not extracted it, so a stream that was cut short is never run, wherever the cut falls.
 const CompleteMarker = ".suiteward/complete"
+
+// CLIEnv is the environment of the runtime's CLI, which the executor starts: the executor's own, without a SUITEWARD_ variable. The
+// executor token is in it when it is not given as a file, and a CLI has no use for it. The other variables stay: the engine's address
+// and its config, and the proxy variables, which a rootless engine may need to pull an image (the no-proxy rule is for the executor's own
+// HTTP clients).
+func CLIEnv(environ []string) []string {
+	kept := make([]string, 0, len(environ))
+	for _, entry := range environ {
+		// The names are compared in any case: the environment of Windows has no case.
+		if name, _, _ := strings.Cut(entry, "="); !strings.HasPrefix(strings.ToUpper(name), "SUITEWARD_") {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
+}

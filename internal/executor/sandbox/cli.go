@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -60,6 +61,7 @@ type execFunc func(ctx context.Context, name string, args []string, stdin io.Rea
 
 func osExec(ctx context.Context, name string, args []string, stdin io.Reader, stdout io.Writer) (int, string, error) {
 	cmd := commandContext(ctx, name, args...)
+	cmd.Env = CLIEnv(os.Environ())
 	cmd.Stdin, cmd.Stdout = stdin, stdout
 	stderr := &capped{limit: stderrBytes}
 	cmd.Stderr = stderr
@@ -147,7 +149,9 @@ func (c *cli) engineName(ctx context.Context) (string, error) {
 func runArgs(engine, name string, s Spec) []string {
 	l := s.Limits
 	memory := strconv.Itoa(l.MemoryMiB) + "m"
-	args := []string{"run", "--name", name, "-i", "--pull=never", "--network=none", "--read-only"}
+	// --sig-proxy=false: a signal to the attached CLI (systemd stopping the executor's unit) is not forwarded to the container's first process, go
+	// test, which would end with 143 and make every expected test read fail. The executor's grace and its kill by name end a container.
+	args := []string{"run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only"}
 	if engine == enginePodman {
 		// Under --read-only Podman still mounts a writable tmpfs on /tmp, /var/tmp, /run and /dev/shm unless it is told not to.
 		args = append(args, "--read-only-tmpfs=false")
@@ -227,8 +231,8 @@ func verdict(ctx context.Context, stdinErr, runErr error, stderr string, state c
 	return nil
 }
 
-// execute runs the container and watches it. The container is killed by name when the clock runs out, and as soon as the standard
-// input breaks; it returns whether the clock killed it.
+// execute runs the container and watches it. The container is killed by name when the clock runs out (if the caller has one), as soon as
+// the standard input breaks, and when the context ends; it returns whether the clock killed it.
 func (c *cli) execute(ctx context.Context, name string, args []string, after time.Duration, stdin *guardedStdin, stdout io.Writer) (killed bool, stderr string, err error) {
 	done := make(chan struct{})
 	watched := make(chan bool, 1)
@@ -238,19 +242,34 @@ func (c *cli) execute(ctx context.Context, name string, args []string, after tim
 	return <-watched, stderr, err
 }
 
-// killWhen kills the container by name when the time is up or the broken channel closes, because killing the `run` client leaves
-// the container running (spike S0). The container may not exist yet, so a kill that fails is tried again until the run ends. It reports
-// whether the clock was the cause of a kill that landed.
-func (c *cli) killWhen(ctx context.Context, name string, after time.Duration, broken, done <-chan struct{}) bool {
-	timer := time.NewTimer(after)
-	defer timer.Stop()
-	clock := false
+// awaitKill waits for a reason to kill the container: the clock, if there is one, which runs from the start of the container, a standard
+// input that broke, or the end of the context. It reports false when the run ended first.
+func awaitKill(ctx context.Context, after time.Duration, broken, done <-chan struct{}) (kill, clock bool) {
+	var clockRuns <-chan time.Time // nil, which no select takes, when the caller has no clock
+	if after > 0 {
+		timer := time.NewTimer(after)
+		defer timer.Stop()
+		clockRuns = timer.C
+	}
 	select {
 	case <-done:
-		return false
-	case <-timer.C:
-		clock = true
+		return ctx.Err() != nil, false // a context that ended with the run may have left its container behind
+	case <-ctx.Done():
+		return true, false
 	case <-broken:
+		return true, false
+	case <-clockRuns:
+		return true, true
+	}
+}
+
+// killWhen kills the container by name when awaitKill says so, because killing the `run` client leaves the container running (spike S0).
+// The container may not exist yet, so a kill that fails is tried again until the run ends. It reports whether the clock was the cause of
+// a kill that landed.
+func (c *cli) killWhen(ctx context.Context, name string, after time.Duration, broken, done <-chan struct{}) bool {
+	kill, clock := awaitKill(ctx, after, broken, done)
+	if !kill {
+		return false
 	}
 	for {
 		if _, err := c.output(context.WithoutCancel(ctx), "kill", name); err == nil {

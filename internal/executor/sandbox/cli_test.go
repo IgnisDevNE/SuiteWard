@@ -163,7 +163,9 @@ func TestRunBuildsTheIsolationOfADR0028ForBothEngines(t *testing.T) {
 			// --sig-proxy=false: a signal to the CLI (systemd stopping the executor's unit reaches it) is never forwarded to go test, which is
 			// the container's first process: it would end with 143, and every expected test would read fail. The executor's grace and its
 			// kill by name decide how a container ends.
-			want := []string{"run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only"}
+			// --log-driver=none: the runtime keeps no copy of the container's output on the host (Docker on Linux defaults to an unbounded
+			// json-file); the attached CLI still gets the standard output, which is all the runner reads.
+			want := []string{"run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only", "--log-driver=none"}
 			if tc.podman {
 				// Podman keeps /tmp, /var/tmp, /run and /dev/shm writable under --read-only unless it is told not to.
 				want = append(want, "--read-only-tmpfs=false")

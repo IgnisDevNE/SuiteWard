@@ -327,6 +327,9 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		}
 	}
 	countsErr := j.restoreCounts(ctx, s, x, &d, &executed)
+	if cancelled := ctx.Err(); cancelled != nil {
+		return "", cancelled
+	}
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
 		return "", err
 	}
@@ -357,6 +360,9 @@ func (j *checksJob) restoreCounts(ctx context.Context, s *pullState, x *executio
 	var run canonicalRun
 	if err == nil {
 		run, err = j.reads().canonical(ctx, job, found)
+	}
+	if cancelled := ctx.Err(); cancelled != nil { // the run is stopping, and the read failed because of it: that says nothing of the counts
+		return cancelled
 	}
 	c := run.counts // zero unless the run is complete
 	blocking := c.Fail+c.Missing+c.Flaky > 0

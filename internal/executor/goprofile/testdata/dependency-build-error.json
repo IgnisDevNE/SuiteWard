@@ -1,0 +1,15 @@
+{"ImportPath":"example.com/fx/baddep","Action":"build-output","Output":"# example.com/fx/baddep\n"}
+{"ImportPath":"example.com/fx/baddep","Action":"build-output","Output":"baddep/baddep.go:3:28: cannot use \"text\" (untyped string constant) as int value in return statement\n"}
+{"ImportPath":"example.com/fx/baddep","Action":"build-fail"}
+{"Time":"2026-10-26T22:44:25.279844204Z","Action":"start","Package":"example.com/fx/good"}
+{"Time":"2026-10-26T22:44:25.280107501Z","Action":"start","Package":"example.com/fx/usesdep"}
+{"Time":"2026-10-26T22:44:25.280132672Z","Action":"output","Package":"example.com/fx/usesdep","Output":"FAIL\texample.com/fx/usesdep [build failed]\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:25.280160373Z","Action":"fail","Package":"example.com/fx/usesdep","Elapsed":0,"FailedBuild":"example.com/fx/baddep"}
+{"Time":"2026-10-26T22:44:25.282169535Z","Action":"output","Package":"example.com/fx/good","Output":"-test.shuffle 1793054665282114579\n"}
+{"Time":"2026-10-26T22:44:25.282248666Z","Action":"run","Package":"example.com/fx/good","Test":"TestGood"}
+{"Time":"2026-10-26T22:44:25.282254556Z","Action":"output","Package":"example.com/fx/good","Test":"TestGood","Output":"=== RUN   TestGood\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:25.282262522Z","Action":"output","Package":"example.com/fx/good","Test":"TestGood","Output":"--- PASS: TestGood (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:25.282265342Z","Action":"pass","Package":"example.com/fx/good","Test":"TestGood","Elapsed":0}
+{"Time":"2026-10-26T22:44:25.282269311Z","Action":"output","Package":"example.com/fx/good","Output":"PASS\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:25.282539552Z","Action":"output","Package":"example.com/fx/good","Output":"ok  \texample.com/fx/good\t0.002s\n"}
+{"Time":"2026-10-26T22:44:25.282590349Z","Action":"pass","Package":"example.com/fx/good","Elapsed":0.003}

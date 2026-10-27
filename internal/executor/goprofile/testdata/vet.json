@@ -1,0 +1,7 @@
+{"ImportPath":"example.com/fx/vet [example.com/fx/vet.test]","Action":"build-output","Output":"# example.com/fx/vet\n"}
+{"ImportPath":"example.com/fx/vet [example.com/fx/vet.test]","Action":"build-output","Output":"# [example.com/fx/vet]\n"}
+{"ImportPath":"example.com/fx/vet [example.com/fx/vet.test]","Action":"build-output","Output":"vet/vet_test.go:5:38: (*testing.common).Logf format %d has arg \"text\" of wrong type string\n"}
+{"ImportPath":"example.com/fx/vet [example.com/fx/vet.test]","Action":"build-fail"}
+{"Time":"2026-10-26T22:44:29.189484587Z","Action":"start","Package":"example.com/fx/vet"}
+{"Time":"2026-10-26T22:44:29.189570949Z","Action":"output","Package":"example.com/fx/vet","Output":"FAIL\texample.com/fx/vet [build failed]\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:29.189578591Z","Action":"fail","Package":"example.com/fx/vet","Elapsed":0,"FailedBuild":"example.com/fx/vet [example.com/fx/vet.test]"}

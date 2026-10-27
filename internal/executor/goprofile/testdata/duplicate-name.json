@@ -1,0 +1,18 @@
+{"Time":"2026-10-26T22:44:37.196087819Z","Action":"start","Package":"example.com/fx/dup"}
+{"Time":"2026-10-26T22:44:37.197413075Z","Action":"output","Package":"example.com/fx/dup","Output":"-test.shuffle 1793054677197377252\n"}
+{"Time":"2026-10-26T22:44:37.19754328Z","Action":"run","Package":"example.com/fx/dup","Test":"TestDup"}
+{"Time":"2026-10-26T22:44:37.197545503Z","Action":"output","Package":"example.com/fx/dup","Test":"TestDup","Output":"=== RUN   TestDup\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:37.197548634Z","Action":"output","Package":"example.com/fx/dup","Test":"TestDup","Output":"    dup_x_test.go:5: the external one fails\n","OutputType":"error"}
+{"Time":"2026-10-26T22:44:37.19755273Z","Action":"output","Package":"example.com/fx/dup","Test":"TestDup","Output":"--- FAIL: TestDup (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:37.197554603Z","Action":"fail","Package":"example.com/fx/dup","Test":"TestDup","Elapsed":0}
+{"Time":"2026-10-26T22:44:37.197557457Z","Action":"run","Package":"example.com/fx/dup","Test":"TestDup"}
+{"Time":"2026-10-26T22:44:37.19755838Z","Action":"output","Package":"example.com/fx/dup","Test":"TestDup","Output":"=== RUN   TestDup\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:37.197559895Z","Action":"output","Package":"example.com/fx/dup","Test":"TestDup","Output":"--- PASS: TestDup (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:37.197561008Z","Action":"pass","Package":"example.com/fx/dup","Test":"TestDup","Elapsed":0}
+{"Time":"2026-10-26T22:44:37.197562141Z","Action":"run","Package":"example.com/fx/dup","Test":"TestOnlyInternal"}
+{"Time":"2026-10-26T22:44:37.197565007Z","Action":"output","Package":"example.com/fx/dup","Test":"TestOnlyInternal","Output":"=== RUN   TestOnlyInternal\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:37.197567024Z","Action":"output","Package":"example.com/fx/dup","Test":"TestOnlyInternal","Output":"--- PASS: TestOnlyInternal (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:37.197570123Z","Action":"pass","Package":"example.com/fx/dup","Test":"TestOnlyInternal","Elapsed":0}
+{"Time":"2026-10-26T22:44:37.197571177Z","Action":"output","Package":"example.com/fx/dup","Output":"FAIL\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:37.197927673Z","Action":"output","Package":"example.com/fx/dup","Output":"FAIL\texample.com/fx/dup\t0.002s\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:37.197971256Z","Action":"fail","Package":"example.com/fx/dup","Elapsed":0.002}

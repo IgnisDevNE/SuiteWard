@@ -1,0 +1,6 @@
+{"Time":"2026-10-26T22:44:41.097907836Z","Action":"start","Package":"example.com/fx/good"}
+{"Time":"2026-10-26T22:44:41.09943311Z","Action":"output","Package":"example.com/fx/good","Output":"-test.shuffle 1793054681099380541\n"}
+{"Time":"2026-10-26T22:44:41.099595701Z","Action":"output","Package":"example.com/fx/good","Output":"testing: warning: no tests to run\n"}
+{"Time":"2026-10-26T22:44:41.099613859Z","Action":"output","Package":"example.com/fx/good","Output":"PASS\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:44:41.09989154Z","Action":"output","Package":"example.com/fx/good","Output":"ok  \texample.com/fx/good\t0.002s [no tests to run]\n"}
+{"Time":"2026-10-26T22:44:41.099904264Z","Action":"pass","Package":"example.com/fx/good","Elapsed":0.002}

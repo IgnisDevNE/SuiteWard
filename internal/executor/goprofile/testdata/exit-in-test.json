@@ -1,0 +1,29 @@
+{"Time":"2026-10-26T22:45:38.12020289Z","Action":"start","Package":"example.com/fx/exits"}
+{"Time":"2026-10-26T22:45:38.12245356Z","Action":"output","Package":"example.com/fx/exits","Output":"-test.shuffle 1793054738122318397\n"}
+{"Time":"2026-10-26T22:45:38.123077279Z","Action":"run","Package":"example.com/fx/exits","Test":"TestOther"}
+{"Time":"2026-10-26T22:45:38.123135473Z","Action":"output","Package":"example.com/fx/exits","Test":"TestOther","Output":"=== RUN   TestOther\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:45:38.123153253Z","Action":"output","Package":"example.com/fx/exits","Test":"TestOther","Output":"--- PASS: TestOther (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:45:38.123158417Z","Action":"pass","Package":"example.com/fx/exits","Test":"TestOther","Elapsed":0}
+{"Time":"2026-10-26T22:45:38.123167988Z","Action":"run","Package":"example.com/fx/exits","Test":"TestExitZero"}
+{"Time":"2026-10-26T22:45:38.123169485Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"=== RUN   TestExitZero\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:45:38.123223402Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"--- FAIL: TestExitZero (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:45:38.125631162Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"panic: unexpected call to os.Exit(0) during test [recovered, repanicked]\n"}
+{"Time":"2026-10-26T22:45:38.125726887Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"\n"}
+{"Time":"2026-10-26T22:45:38.125735404Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"goroutine 18 [running]:\n"}
+{"Time":"2026-10-26T22:45:38.125746884Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"testing.tRunner.func1.2({0x6b43c0, 0x563210})\n"}
+{"Time":"2026-10-26T22:45:38.125750116Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"\t/usr/local/go/src/testing/testing.go:2125 +0x232\n"}
+{"Time":"2026-10-26T22:45:38.125753754Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"testing.tRunner.func1()\n"}
+{"Time":"2026-10-26T22:45:38.125755913Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"\t/usr/local/go/src/testing/testing.go:2128 +0x329\n"}
+{"Time":"2026-10-26T22:45:38.125763412Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"panic({0x6b43c0?, 0x563210?})\n"}
+{"Time":"2026-10-26T22:45:38.125765925Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"\t/usr/local/go/src/runtime/panic.go:859 +0x125\n"}
+{"Time":"2026-10-26T22:45:38.12576851Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"os.Exit(0x0)\n"}
+{"Time":"2026-10-26T22:45:38.125772444Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"\t/usr/local/go/src/os/proc.go:67 +0x51\n"}
+{"Time":"2026-10-26T22:45:38.125775149Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"example.com/fx/exits.TestExitZero(0x1a860c43e488?)\n"}
+{"Time":"2026-10-26T22:45:38.125777194Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"\t/work/src/exits/exits_test.go:8 +0x15\n"}
+{"Time":"2026-10-26T22:45:38.125780848Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"testing.tRunner(0x1a860c43e488, 0x6d4cc8)\n"}
+{"Time":"2026-10-26T22:45:38.125783196Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"\t/usr/local/go/src/testing/testing.go:2195 +0xea\n"}
+{"Time":"2026-10-26T22:45:38.125786711Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"created by testing.(*T).Run in goroutine 1\n"}
+{"Time":"2026-10-26T22:45:38.125788887Z","Action":"output","Package":"example.com/fx/exits","Test":"TestExitZero","Output":"\t/usr/local/go/src/testing/testing.go:2260 +0x4d4\n"}
+{"Time":"2026-10-26T22:45:38.126541388Z","Action":"fail","Package":"example.com/fx/exits","Test":"TestExitZero","Elapsed":0}
+{"Time":"2026-10-26T22:45:38.126597095Z","Action":"output","Package":"example.com/fx/exits","Output":"FAIL\texample.com/fx/exits\t0.006s\n","OutputType":"frame"}
+{"Time":"2026-10-26T22:45:38.126619278Z","Action":"fail","Package":"example.com/fx/exits","Elapsed":0.006}

@@ -1288,7 +1288,7 @@ The ledger of the `SuiteWard / Receipt` check. It mirrors `pr_checks` (migration
 | `head_sha` | `text NOT NULL` | `^[0-9a-f]{40}$` |
 | `head_since` | `timestamptz NOT NULL` | when this head was first recorded |
 | `state` | `text NOT NULL` | `success`, `in_progress`, `failure` or `neutral` |
-| `reason` | `text NOT NULL` | not blank: `receipt-running`, `receipt-failing`, `receipt-complete` or `receipt-not-run` (the names differ from the gate reasons of the domain, `receipt-pending` and `receipt-unavailable`, which are the reasons of a refused approve) |
+| `reason` | `text NOT NULL` | not blank: `receipt-running`, `receipt-failing`, `receipt-complete`, `receipt-not-run` or `receipt-not-applicable` (the last is the one `neutral` run that withdraws a published check when the receipt of the head stops applying or the `receipt` level becomes `off`; the names differ from the gate reasons of the domain, `receipt-pending` and `receipt-unavailable`, which are the reasons of a refused approve) |
 | `reference` | `text NOT NULL` | `^(P[0-9]+-R[0-9]+)?$` |
 | `job_id` | `bigint NOT NULL` | `>= 0`; the receipt job that the state shows, `0` for none; no foreign key, as `pr_checks` has none to the outbox |
 | `unblocked` | `boolean NOT NULL DEFAULT false` | true when the owner unblocked the head's receipt job and it is `unavailable` |
@@ -1464,7 +1464,7 @@ Property every reconstitution test must check: state produced by domain operatio
 | `github_protection_results` (M1.5) | repository_id | latest result, replaced | result, findings text[], caveats text[], checked_at |
 | `github_comment_versions` (M1.4) | (repo, comment_id, updated_at, body_digest) | insert-only except `not_seen_since`, by trigger; no delete | pull_number, author_id, author_login, created_at, body bytea, body_digest (checked against the bytes), first_seen, not_seen_since |
 | `execution_jobs` (M2.1) | job_id (identity); unique job_key among the current jobs (not `cancelled`, and not `unavailable` for `executor-not-configured` or `no-executor`) | open jobs change by guard trigger (state, reason, lease, attempts, failures, github_since, not_before); final rows never change; no delete, no truncate | repository_id, pull_number, plan (`canonical`, `receipt`), profile, head_sha, base_sha, governing_digest, governing_source, declaration_digest, canonical_level, receipt_level, unapproved_paths, changed_paths, changed_total, state, reason, attempts, failures, github_since, not_before, lease_id, lease_expires_at, leased_at, deadline_at, created_at, finished_at |
-| `execution_results` (M2.1) | job_id | insert-only | origin, status, reason, executor_version, executor_sha256, image_digest, toolchain, runtime, started_at, ended_at, received_at, body_digest, markers jsonb, submodules |
+| `execution_results` (M2.1) | job_id | insert-only | origin, status, reason, executor_version, executor_sha256, image_digest, toolchain, runtime, started_at, ended_at, received_at, body_digest, markers jsonb, unparsed, submodules |
 | `execution_tests` (M2.1) | (job_id, package, name) | insert-only | file, kind, excluded_reason, head_runs, base_runs, state |
 | `execution_unblocks` (M2.1) | (repository_id, comment_id, job_id) | insert-only | pull_number, head_sha, decided_at |
 | `pr_receipt_checks` (M2.1) | (repository_id, pull_number) | current state, updated in place; no delete, no truncate | head_sha, head_since, state (`success`, `in_progress`, `failure`, `neutral`), reason, reference, job_id, unblocked, generation, message_key, decided_at |

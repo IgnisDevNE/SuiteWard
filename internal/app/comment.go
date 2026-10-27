@@ -1014,7 +1014,14 @@ type revisionPayload struct {
 	ReducedPaths      []string `json:"reducedPaths,omitempty"`
 	ReducedPathsTotal int      `json:"reducedPathsTotal,omitempty"`
 	ReducedOmitted    bool     `json:"reducedOmitted,omitempty"`
-	Tier              string   `json:"tier"` // the effective tier: owner.TierIsolated or owner.TierCoLocated
+	// ReducedPolicy and ReducedScope say what a reduction whose detail was left out (ReducedOmitted) lowers, which its entries can no longer say: the execution policy,
+	// the protected scope, or both. Neither is set for a payload that was queued before they existed, which reads as a reduction of the scope.
+	ReducedPolicy bool `json:"reducedPolicy,omitempty"`
+	ReducedScope  bool `json:"reducedScope,omitempty"`
+	// Receipt is the effective receipt level when it is not off and the receipt of the revision applies (docs/contracts/runtime.md, "The revision comment"); the comment
+	// then has the fixed receipt line. The link of the line is not part of the payload: the publisher builds it from the settings.
+	Receipt string `json:"receipt,omitempty"`
+	Tier    string `json:"tier"` // the effective tier: owner.TierIsolated or owner.TierCoLocated
 }
 
 // revision maps the payload to the values the renderer takes. The renderer checks the rest and panics on what cannot be stored.
@@ -1058,6 +1065,11 @@ func referenceText(r contract.ProposalReference) string {
 // newRevisionMessage builds the revision comment of a revision AssessHead committed, for HeadRequest.Revision. A
 // payload the publisher could not render is an error, so the revision is not committed with a message nobody can post.
 func newRevisionMessage(target commentTarget, notice governance.RevisionNotice, tier string) (governance.OutboxMessage, error) {
+	return newRevisionMessageOf(target, notice, tier, "")
+}
+
+// newRevisionMessageOf is newRevisionMessage for a revision whose receipt applies at the level receipt (empty for none).
+func newRevisionMessageOf(target commentTarget, notice governance.RevisionNotice, tier, receipt string) (governance.OutboxMessage, error) {
 	p := revisionPayload{commentTarget: target, Reference: referenceText(notice.Reference), Canonical: string(notice.Canonical),
 		Added: boundedText(notice.Added), Modified: boundedText(notice.Modified), Removed: boundedText(notice.Removed),
 		AddedTotal: len(notice.Added), ModifiedTotal: len(notice.Modified), RemovedTotal: len(notice.Removed), Reduced: notice.Reduced, Tier: tier}

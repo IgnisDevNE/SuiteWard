@@ -129,9 +129,10 @@ func (h *host) executor(ctx context.Context) error {
 }
 
 // runAsExecutor runs a command as the executor's account, through its own user manager: it comes with the account's HOME and XDG_RUNTIME_DIR, in the cgroup
-// the drop-in delegates, which `runuser` from root's session does not give. --wait is for the end of the command and carries its exit status.
+// the drop-in delegates, which `runuser` from root's session does not give. --wait is for the end of the command and carries its exit status. The
+// transient unit has a name that systemd picks: a fixed one would collide with a unit that a run cut short left, or that was not collected yet.
 func (h *host) runAsExecutor(ctx context.Context, argv ...string) (string, error) {
-	return h.run(ctx, "systemd-run", append([]string{"--user", "--machine=" + ExecutorAccount + "@.host", "--wait", "--collect", "--unit=" + executorPullUnit}, argv...)...)
+	return h.run(ctx, "systemd-run", append([]string{"--user", "--machine=" + ExecutorAccount + "@.host", "--wait", "--collect"}, argv...)...)
 }
 
 // executorImage pulls the Go image of the sandboxes into the rootless storage of the executor's account and checks that it is there under its
@@ -139,7 +140,7 @@ func (h *host) runAsExecutor(ctx context.Context, argv ...string) (string, error
 // read that storage, which is why this step does it and the service account's doctor cannot. It runs at every host step: a new release names a new digest.
 func (h *host) executorImage(ctx context.Context, uid string) error {
 	if _, err := h.runAsExecutor(ctx, "podman", "pull", goprofile.Image); err != nil {
-		return fmt.Errorf("pull %s as %s: %w (read `journalctl _SYSTEMD_USER_UNIT=%s.service _UID=%s -n 50 --no-pager`)", goprofile.Image, ExecutorAccount, err, executorPullUnit, uid)
+		return fmt.Errorf("pull %s as %s: %w (read `journalctl _UID=%s -n 50 --no-pager`)", goprofile.Image, ExecutorAccount, err, uid)
 	}
 	if _, err := h.runAsExecutor(ctx, "podman", "image", "exists", goprofile.Image); err != nil { // a reference with a digest exists only when an image has that digest
 		return fmt.Errorf("the image %s is not in the storage of %s under that digest after the pull: %w", goprofile.Image, ExecutorAccount, err)

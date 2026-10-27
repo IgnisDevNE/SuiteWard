@@ -74,9 +74,6 @@ func executorDirOf(tokenFile string) string {
 	return filepath.Join(filepath.Dir(tokenFile), "executor")
 }
 
-// executorPullUnit names the transient unit in which the host step pulls the sandbox image as the executor's account, so a failure can be read in the journal.
-const executorPullUnit = "suiteward-pull-image"
-
 // executorWrapperName is the script of the Windows task: the file that names the program, the token file and the settings of one executor.
 const executorWrapperName = "run.cmd"
 

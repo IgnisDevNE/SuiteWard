@@ -5,8 +5,8 @@ import "time"
 // TestTimeoutSeconds is the -timeout that go test gets in every job: the limits.testTimeoutSeconds of the lease answer.
 const TestTimeoutSeconds = 600
 
-// MinJobTimeout is the shortest time a job may be given, so that a hung test ends as go test's own kill (a failure) and never as the executor's
-// drop of the attempt (a timeout). It adds up:
+// MinJobTimeout is the shortest time a job may be given, so that the first run of a hung test ends as go test's own kill (a failure) and not as
+// the executor's drop of the attempt (a timeout); a test that hangs on every rerun still ends as a timeout. It adds up:
 //   - the test bound;
 //   - go test's kill of a binary that ran past it, a minute later;
 //   - the margin before its deadline at which the executor drops an attempt, 30 s: a copy of DefaultPacing.Margin in internal/executor/run, which

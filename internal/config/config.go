@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 const (
@@ -343,10 +345,10 @@ func (l *loader) executor() (Secret, ExecutorTimes) {
 	if token != "" && len(token) < minTokenBytes {
 		l.fail("EXECUTOR_TOKEN", fmt.Errorf("must be at least %d bytes", minTokenBytes))
 	}
-	// shortcut: 11m is limits.testTimeoutSeconds (600 s) plus the executor's 60 s kill grace, written as a literal; tie it to that constant once the executor API defines it.
+	// The job timeout starts at go test's -timeout plus the minute after which go test kills its own test binary. The lease wait starts above the executor's 60 s error backoff, so a live executor that backs off is still seen.
 	return Secret(token), ExecutorTimes{
-		JobTimeout: number(l, "EXECUTOR_JOB_TIMEOUT", "30m", 11*time.Minute, 6*time.Hour, time.ParseDuration),
-		LeaseWait:  number(l, "EXECUTOR_LEASE_WAIT", "5m", 10*time.Second, time.Hour, time.ParseDuration),
+		JobTimeout: number(l, "EXECUTOR_JOB_TIMEOUT", "30m", execution.MinJobTimeout, 6*time.Hour, time.ParseDuration),
+		LeaseWait:  number(l, "EXECUTOR_LEASE_WAIT", "5m", 2*time.Minute, time.Hour, time.ParseDuration),
 		GitHubWait: number(l, "EXECUTOR_GITHUB_WAIT", "30m", time.Minute, 6*time.Hour, time.ParseDuration),
 	}
 }

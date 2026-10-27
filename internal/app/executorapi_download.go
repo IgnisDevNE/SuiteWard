@@ -90,6 +90,7 @@ func (h *executorAPI) archive(w http.ResponseWriter, r *http.Request) {
 		stream.start() // an archive with no byte is still a 200
 	case stream.started:
 		h.logGitHubFailure(ctx, "archive", job.ID, err)
+		_ = stream.rc.Flush()       // net/http drops what is still buffered when the handler aborts, and the executor counts the bytes it got: a failed flush is a client that left
 		panic(http.ErrAbortHandler) // the status is out: the connection ends, and the executor sees a broken stream
 	case errors.Is(err, rest.ErrTooLarge):
 		h.fail(w, http.StatusRequestEntityTooLarge, "too-large")

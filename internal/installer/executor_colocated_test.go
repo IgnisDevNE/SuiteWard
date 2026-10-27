@@ -563,3 +563,28 @@ func TestInstallDoesNotRepointAScheduledTaskOfAnotherInstance(t *testing.T) {
 		t.Errorf("the output must say that the task is another instance's:\n%s", out)
 	}
 }
+
+// An upgrade at the installed release has no image to replace, but the program that runs it may be a newer one than the executor's copy: the
+// executor is set up as an install does, so that the copy is replaced and the executor restarted.
+func TestUpgradeAtTheInstalledReleaseRefreshesTheExecutor(t *testing.T) {
+	u := newUpgradeHarness(t, nil)
+	u.have(kindSecret, SecretExecutorAuth)
+	u.writeExecutorFiles() // an executor of an earlier program: "a program"
+	u.f.on("--user show -p LoadState -p ActiveState -p SubState suiteward-executor.service", "LoadState=loaded\nActiveState=active\nSubState=running\n")
+	if err := u.upgradeAt(false, "", "--yes", "--image", oldImage); err != nil {
+		t.Fatal(err)
+	}
+	program, err := os.ReadFile(u.program())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.readHome("executor/suiteward-executor"); got != string(program) {
+		t.Errorf("the executor still runs %q, not this program", got)
+	}
+	if len(u.f.find("--user enable --now suiteward-executor.service")) == 0 {
+		t.Errorf("the executor was not started again: %v", u.f.calls)
+	}
+	if out := u.out.String(); !strings.Contains(out, "Nothing to upgrade") || !strings.Contains(out, "executor") {
+		t.Errorf("the output must say that there is nothing to upgrade and what became of the executor:\n%s", out)
+	}
+}

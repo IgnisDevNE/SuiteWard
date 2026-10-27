@@ -443,3 +443,19 @@ func TestInstallBootsOutALoadedLaunchAgentBeforeItLoadsTheNewDefinition(t *testi
 	}
 	again.assertOrder("bootout gui/501/"+executorLabel, "bootstrap gui/501 ", "kickstart -k gui/501/"+executorLabel)
 }
+
+// A command that succeeds and prints nothing is not an error to format: the message names what is missing and never prints a nil.
+func TestInstallSaysThatTheUserIDIsMissingWhenIdPrintsNothing(t *testing.T) {
+	h := machineHarnessOn(t, "darwin")
+	h.f.on("=-u", "")
+	if err := h.podman(); err != nil {
+		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
+	}
+	out := h.out.String()
+	if !strings.Contains(out, "executor could not be set up") || !strings.Contains(out, "id of this user") {
+		t.Errorf("the output must say that the executor could not be set up because the id of the user is not known:\n%s", out)
+	}
+	if strings.Contains(out, "<nil>") || strings.Contains(out, "%!") {
+		t.Errorf("the output prints a nil error:\n%s", out)
+	}
+}

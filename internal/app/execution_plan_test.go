@@ -10,6 +10,7 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -450,4 +451,52 @@ func TestChecksCancelTheJobsOfAHeadThatMoved(t *testing.T) {
 	}
 	w.onlyJob(5, cjHead3, execution.PlanCanonical)
 	w.onlyJob(5, cjHead3, execution.PlanReceipt)
+}
+
+// A policy whose receipt level is off wants no receipt job, also for a head whose check says nothing of its revision (an invalid source): a receipt job of an
+// older policy that is still open is cancelled as obsolete, so that no executor leases it. With the receipt on, the head's receipt may still be wanted once its
+// revision can be read, and a canonical job of a head with no known basis stays in both cases.
+func TestChecksCancelTheOpenReceiptJobsOfAHeadWhoseCheckSaysNothingOfItsRevisionOnlyWhenTheReceiptIsOff(t *testing.T) {
+	cases := []struct {
+		receiptLevel string
+		want         execution.State
+		reason       execution.Reason
+	}{
+		{"off", execution.StateCancelled, execution.ReasonObsolete},
+		{"required", execution.StatePending, ""},
+	}
+	for _, c := range cases {
+		t.Run("receipt: "+c.receiptLevel, func(t *testing.T) {
+			decl := execDeclaration("advisory", c.receiptLevel)
+			w := newExecWorld(t, decl)
+			files := execHeadFiles(decl, "v2")
+			files[".suiteward.yml"] = "version: 1\ninclude: [\n" // the head's declaration does not parse: the check is invalid-source and says nothing of a revision
+			w.tree(cjHead2, files)
+			w.sync(map[int]string{5: cjHead2})
+			canonical := w.seedJob(execSpec(w, execution.PlanCanonical, cjHead2, 5))
+			receiptSpec := execSpec(w, execution.PlanReceipt, cjHead2, 5)
+			receiptSpec.BaseSHA, receiptSpec.ChangedPaths, receiptSpec.ChangedTotal = execMergeBase, []string{"tests/a_test.go"}, 1
+			receipt := w.seedJob(receiptSpec)
+
+			w.execRun()
+
+			w.want(5, checks.Failure, "invalid-source", 1)
+			if got := w.jobByID(receipt.ID); got.State != c.want || got.Reason != c.reason {
+				t.Errorf("the receipt job is %s/%q, want %s/%q", got.State, got.Reason, c.want, c.reason)
+			}
+			if got := w.jobByID(canonical.ID); got.State != execution.StatePending {
+				t.Errorf("the canonical job is %s, want pending: a head with no known basis keeps it", got.State)
+			}
+		})
+	}
+}
+
+// seedJob creates an open job as an earlier run of the checks job would have.
+func (w *cjJobWorld) seedJob(spec execution.Spec) execution.Job {
+	w.t.Helper()
+	job, _, err := w.jobs.Enqueue(w.t.Context(), execution.NewJob{Spec: spec, At: w.clock})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return job
 }

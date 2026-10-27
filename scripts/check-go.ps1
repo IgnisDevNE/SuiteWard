@@ -15,8 +15,12 @@ try {
     # core.quotepath=false keeps non-ASCII names unquoted so the existence filter does not drop them.
     $sources = @(git -c core.quotepath=false ls-files --cached --others --exclude-standard '*.go' | Where-Object { $_ -cnotmatch '^vendor/' -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Sort-Object -Unique)
     if ($LASTEXITCODE -ne 0 -or $sources.Count -eq 0) { throw 'No Go source files in the checkout' }
-    $unformatted = @(gofmt -l @sources)
-    if ($LASTEXITCODE -ne 0) { throw 'gofmt failed' }
+    # In batches: the whole list passes the 32,767-character command line of Windows, and gofmt then fails to start.
+    $unformatted = @(for ($i = 0; $i -lt $sources.Count; $i += 200) {
+            $batch = @($sources[$i..([Math]::Min($i + 199, $sources.Count - 1))])
+            gofmt -l @batch
+            if ($LASTEXITCODE -ne 0) { throw 'gofmt failed' }
+        })
     if ($unformatted.Count -gt 0) { throw "Run gofmt on: $($unformatted -join ', ')" }
     go vet @buildTags ./...
     if ($LASTEXITCODE -ne 0) { throw 'go vet failed' }

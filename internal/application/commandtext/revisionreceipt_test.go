@@ -35,7 +35,7 @@ func TestRevisionCommentWithoutAReceiptHasNoReceiptLine(t *testing.T) {
 func TestRevisionCommentStatesTheReceiptAfterTheChangesAndBeforeTheApproveCommand(t *testing.T) {
 	for _, level := range []string{"advisory", "before-approval", "required"} {
 		body := revisionText(t, receiptRevision(t, level))
-		line := receiptLead + "Results: " + receiptURL + ". " + receiptTail
+		line := receiptLead + "Results: [" + receiptURL + "](" + receiptURL + "). " + receiptTail
 		report := strings.Index(body, "[Full change report]")
 		at := strings.Index(body, line)
 		approve := strings.Index(body, "/suiteward approve P7-R3")

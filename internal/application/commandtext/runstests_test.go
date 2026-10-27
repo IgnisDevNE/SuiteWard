@@ -123,6 +123,15 @@ func everyBody(t *testing.T) map[string]string {
 	for name, base := range map[string]commandtext.ScopeBase{"pull": commandtext.BasePull, "contract": commandtext.BaseContract, "default branch": commandtext.BaseDefaultBranch} {
 		add("scope reply "+name, func() string { return commandtext.ScopeNoticeComment(reply(base)) })
 	}
+	// The review comments, which post on the diff of .suiteward.yml: the suggestion blocks of a scope notice and of a runner-uncovered check.
+	add("scope suggestion", func() string {
+		return commandtext.ScopeSuggestionBody("  - 'b/**'", "  ", []string{"c/d"}, commandtext.QuotingPlain)
+	})
+	for name, choice := range map[string]commandtext.RunnerChoice{"protect": commandtext.ProtectChoice, "ignore": commandtext.IgnoreChoice} {
+		add("runner choice "+name, func() string {
+			return commandtext.RunnerChoiceBody(choice, "  - 'x'", "  ", []string{"conftest.py"}, "", commandtext.QuotingPlain)
+		})
+	}
 	add("runner uncovered", func() string { return commandtext.RunnerUncoveredComment(runnerNotice()) })
 	add("runner uncovered without a protect declaration", func() string { return commandtext.RunnerUncoveredComment(protectOnly()) })
 	add("invalid source declaration", func() string {

@@ -130,7 +130,7 @@ func TestRevisionCommentPostsTheReceiptLineWithTheLinkOfTheReceiptPage(t *testin
 	body := w.writer.posts()[0].body
 	for _, want := range []string{
 		"Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. It is evidence, not a verdict. " +
-			"Results: http://127.0.0.1:8080/receipts/acme/widgets/7. The `SuiteWard / Receipt` check carries the counts.",
+			"Results: [http://127.0.0.1:8080/receipts/acme/widgets/7](http://127.0.0.1:8080/receipts/acme/widgets/7). The `SuiteWard / Receipt` check carries the counts.",
 		"Approving needs a mode and a receipt that meets it:", "```\n/suiteward approve P2-R2 <fix|feature|refactor> <code>\n```",
 	} {
 		if !strings.Contains(body, want) {
@@ -172,7 +172,7 @@ func TestRevisionCommentKeepsTheChangeReportLinkNextToTheReceiptLink(t *testing.
 	w.reports.report, w.reports.err = revisionReport{Base: "V1", Report: smallReport(t)}, nil
 	w.mustDeliver(receiptMessage(t, "advisory"))
 	body := w.writer.posts()[0].body
-	if !strings.Contains(body, "[Full change report]("+cmtReportBase+"/reports/acme/widgets/P2-R2)") || !strings.Contains(body, "Results: "+cmtReportBase+"/receipts/acme/widgets/7.") {
+	if !strings.Contains(body, "[Full change report]("+cmtReportBase+"/reports/acme/widgets/P2-R2)") || !strings.Contains(body, "Results: ["+cmtReportBase+"/receipts/acme/widgets/7]("+cmtReportBase+"/receipts/acme/widgets/7).") {
 		t.Errorf("comment lacks one of the two links:\n%s", body)
 	}
 	if strings.Index(body, "[Full change report]") > strings.Index(body, "Receipt:") || strings.Index(body, "Receipt:") > strings.Index(body, "/suiteward approve") {

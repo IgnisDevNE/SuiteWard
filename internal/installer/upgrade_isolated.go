@@ -69,6 +69,15 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	// change whether the service has GitHub.
 	params := UnitParamsFrom(s, digest)
 	params.NoGitHub = st.adopted.NoGitHub
+	executorToken, executorFound, err := readExecutorHandover(host.configDir)
+	if err != nil {
+		return err
+	}
+	haveExecutor, err := host.rt.Secrets().Exists(ctx, SecretExecutorAuth)
+	if err != nil {
+		return err
+	}
+	params.NoExecutor = !haveExecutor && !executorFound
 	plan := upgradePlan{oldImage: st.adopted.Image, newImage: image, oldDB: st.adopted.DBImage, newDB: postgres}
 	if _, statErr := os.Stat(host.settingsPath); plan.current() && statErr == nil {
 		say("Nothing to upgrade: already on %s. Check the instance with `%s doctor`.\n", digestOf(image), env.Deps.command())
@@ -111,6 +120,12 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	scr.Step(4)
+	if _, _, err := settleExecutorSecret(ctx, host.rt.Secrets(), executorToken, executorFound); err != nil {
+		return withBackup(env.Deps.command(), err, dir, host.unitsDir, scope)
+	}
+	if params.NoExecutor {
+		scr.Warn("%s", noExecutorNote)
+	}
 	if err := replaceUnits(ctx, host, d, scr, params, plan.dbChanges()); err != nil {
 		return withBackup(env.Deps.command(), err, dir, host.unitsDir, scope)
 	}

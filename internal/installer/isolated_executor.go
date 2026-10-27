@@ -1,0 +1,79 @@
+package installer
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+)
+
+// The service account's half of the executor on the isolated tier. The host step (`sudo suiteward install host`) makes the executor, its
+// token and a copy of that token that this account owns; this account turns the copy into the secret that the service reads.
+
+// minExecutorTokenBytes is the shortest token the service accepts (runtime contract, EXECUTOR_TOKEN).
+const minExecutorTokenBytes = 32
+
+// executorHandoverFile is where the host step leaves the copy of the executor's token, in the account's configuration directory.
+func executorHandoverFile(configDir string) string {
+	return filepath.Join(configDir, executorTokenHandover)
+}
+
+// readExecutorHandover reads the copy of the executor's token that the host step left. found is false when there is none, which is the state of
+// a host that was prepared by an earlier release. A copy that is too short is refused, naming the file and never the content.
+func readExecutorHandover(configDir string) (token []byte, found bool, err error) {
+	file := executorHandoverFile(configDir)
+	raw, err := os.ReadFile(filepath.Clean(file))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read %s: %w", file, err)
+	}
+	token = bytes.TrimSpace(raw)
+	if len(token) < minExecutorTokenBytes {
+		return nil, false, fmt.Errorf("%s holds a token of fewer than %d bytes, which the service refuses: as the administrator, remove %s and run `sudo suiteward install host` again, which makes a new one", file, minExecutorTokenBytes, executorTokenEtc)
+	}
+	return token, true, nil
+}
+
+// settleExecutorSecret makes the service's executor token the host step's: made when it is missing, replaced when it is another. A token that is
+// not the host step's would lock the executor out, and the service reads its secrets only when it starts, so written says that a running
+// service has to be restarted. Without a copy of the host step's there is nothing to make: exists is whether the secret is there all the same,
+// and the service unit mounts it only then.
+func settleExecutorSecret(ctx context.Context, store SecretStore, token []byte, found bool) (exists, written bool, err error) {
+	have, err := store.Exists(ctx, SecretExecutorAuth)
+	if err != nil {
+		return false, false, err
+	}
+	if !found {
+		return have, false, nil
+	}
+	if have {
+		stored, err := store.Read(ctx, SecretExecutorAuth)
+		if err != nil {
+			return false, false, err
+		}
+		if bytes.Equal(bytes.TrimSpace(stored), token) {
+			return true, false, nil
+		}
+	}
+	if err := store.Write(ctx, SecretExecutorAuth, token, have); err != nil {
+		return false, false, err
+	}
+	return true, true, nil
+}
+
+// noExecutorNote is what an install or an upgrade says when the service runs without the executor's token.
+const noExecutorNote = "The host has no executor token for this account yet, so the service runs without an executor and canonical execution has nothing to run on. " +
+	"The administrator makes the executor and its token with `sudo suiteward install host`; run this again after it.\n"
+
+// executorHostNote is what an uninstall says of the executor: it is the administrator's, and the service account cannot reach it.
+func executorHostNote() string {
+	return fmt.Sprintf("The executor, when the host step made one, is the administrator's: its account %[1]s, its unit, its binary and its token are not touched here. "+
+		"It keeps asking for jobs of a service that is gone. As the administrator, to stop it: systemctl --user --machine=%[1]s@.host disable --now %[2]s "+
+		"(to remove all of it: also delete %[3]s, %[4]s, %[5]s and %[6]s, the nft unit %[7]s and the account).\n",
+		ExecutorAccount, executorUnitName, executorUnitPath, executorLibDir, executorTokenEtc, executorRuleFile, executorBlockUnit)
+}

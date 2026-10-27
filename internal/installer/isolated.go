@@ -198,6 +198,10 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := g.checkAppKey(ctx, host.envPath); err != nil {
 		return err
 	}
+	executorToken, executorFound, err := readExecutorHandover(configDir)
+	if err != nil {
+		return err
+	}
 
 	// Changes begin here. The env file comes before the secrets: when the flow just created the App (its key is stored already), a
 	// failure in between must still leave a file for a re-run to take the App from.
@@ -215,7 +219,16 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := ensureSecrets(ctx, rt.Secrets(), g.githubKey); err != nil {
 		return err
 	}
-	units, err := prepareUnits(ctx, host, d, scr, UnitParamsFrom(g.s, digest), false)
+	haveExecutor, executorStored, err := settleExecutorSecret(ctx, rt.Secrets(), executorToken, executorFound)
+	if err != nil {
+		return err
+	}
+	params := UnitParamsFrom(g.s, digest)
+	params.NoExecutor = !haveExecutor
+	if !haveExecutor {
+		scr.Warn("%s", noExecutorNote)
+	}
+	units, err := prepareUnits(ctx, host, d, scr, params, false)
 	if err != nil {
 		return err
 	}
@@ -223,7 +236,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	// A running service reads its unit, its env file and its key secret when it starts: it is restarted when this run changed
 	// one of them, and before setup enrolls the owner, which must not happen on a service that cannot reach GitHub yet.
 	scr.Step(5)
-	leftRunning, err := startStack(ctx, rt, d, scr, installed.mustRestart(units, envChanged, keyStored))
+	leftRunning, err := startStack(ctx, rt, d, scr, installed.mustRestart(units, envChanged, keyStored || executorStored))
 	if err != nil {
 		return err
 	}
@@ -573,7 +586,7 @@ func installedWithGiven(r *Resolver, installed, asked Settings) Settings {
 // sayChanges says which installed port or job timeout this run changes.
 func sayChanges(say func(string, ...any), installed, now Settings) {
 	if now.HTTPPort != installed.HTTPPort {
-		say("Changing the HTTP port of the installed stack from %d to %d, as asked.\n", installed.HTTPPort, now.HTTPPort)
+		say("Changing the HTTP port of the installed stack from %d to %d, as asked. The executor is pointed at the old one by the administrator's step: run `sudo suiteward install host --http-port %d` so that it finds the service.\n", installed.HTTPPort, now.HTTPPort, now.HTTPPort)
 	}
 	if now.MCPPort != installed.MCPPort {
 		say("Changing the MCP port of the installed stack from %d to %d, as asked.\n", installed.MCPPort, now.MCPPort)

@@ -16,6 +16,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 )
 
@@ -34,7 +35,7 @@ var jobLimits = struct {
 	PrefetchModules    int   `json:"prefetchModules"`
 	PrefetchBytes      int64 `json:"prefetchBytes"`
 	Reruns             int   `json:"reruns"`
-}{ArchiveBytes: 268435456, FileBytes: 8388608, TestTimeoutSeconds: 600, MemoryMiB: 3072, CPUs: 4, PIDs: 512, TmpfsMiB: 1024, PrefetchModules: 2000, PrefetchBytes: 536870912, Reruns: 2}
+}{ArchiveBytes: 268435456, FileBytes: 8388608, TestTimeoutSeconds: domain.TestTimeoutSeconds, MemoryMiB: 3072, CPUs: 4, PIDs: 512, TmpfsMiB: 1024, PrefetchModules: 2000, PrefetchBytes: 536870912, Reruns: 2}
 
 // leaseAnswer is the 200 answer of POST /lease.
 type leaseAnswer struct {

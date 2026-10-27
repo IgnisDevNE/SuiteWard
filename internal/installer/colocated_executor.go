@@ -215,9 +215,12 @@ func refreshExecutor(ctx context.Context, r *Resolver, env Env, rt Runtime, s Se
 // releasePin is the pin that --sha256sums gives the executor: the line of the release's SHA256SUMS that lists this program for this system, checked
 // before anything is changed. It is empty when the flag is not given: the pin is then the hash of the program as copied.
 func releasePin(r *Resolver, d Deps) (string, error) {
-	sumsFile := r.preset("sha256sums", "")
-	if sumsFile == "" {
+	sumsFile, given := r.given("sha256sums")
+	if !given {
 		return "", nil
+	}
+	if strings.TrimSpace(sumsFile) == "" {
+		return "", fmt.Errorf("%w: --sha256sums is empty (an unset variable?): give the SHA256SUMS file of the release, or leave the flag out", ErrUsage)
 	}
 	if d.Executable == nil {
 		return "", errors.New("the installer cannot find its own program to check it against the SHA256SUMS")

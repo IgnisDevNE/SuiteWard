@@ -265,7 +265,10 @@ type releaseProgram struct{ exe, sum, pin string }
 // a mistake of the command line (ErrUsage).
 func (h *host) verifyRelease(ctx context.Context) (releaseProgram, error) {
 	sumsFile, ok := h.r.given("sha256sums")
-	if !ok || strings.TrimSpace(sumsFile) == "" {
+	if ok && strings.TrimSpace(sumsFile) == "" {
+		return releaseProgram{}, fmt.Errorf("%w: --sha256sums is empty (an unset variable?): install host requires the SHA256SUMS file of the release this program was downloaded from", ErrUsage)
+	}
+	if !ok {
 		return releaseProgram{}, fmt.Errorf("%w: install host requires --sha256sums FILE, the SHA256SUMS of the release this program was downloaded from (a file beside the binaries of that GitHub Release, verified as the install guide says): the executor runs code that pull requests bring, so its binary must be the release's, which that file lists", ErrUsage)
 	}
 	if h.d.Executable == nil {

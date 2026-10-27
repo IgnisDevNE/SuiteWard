@@ -388,6 +388,9 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 	}
 	switch config.Tier(tier) {
 	case config.TierIsolated:
+		if _, given := r.given("sha256sums"); given {
+			return fmt.Errorf("%w: --sha256sums is not used by the isolated install: the executor is made by the administrator's host step, which takes it: `sudo %s install host --sha256sums <the SHA256SUMS of the release>`", ErrUsage, env.Deps.command())
+		}
 		isolated := saved
 		isolated.Tier, isolated.Runtime = config.TierIsolated, RuntimePodman
 		if upgrade {

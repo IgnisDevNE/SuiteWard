@@ -174,8 +174,8 @@ func (fakeRuntime) Run(context.Context, sandbox.Spec) (sandbox.Outcome, error) {
 	return sandbox.Outcome{}, errors.New("no container runs here")
 }
 
-func fakeDeps(rt fakeRuntime, sum string, sumErr error, swept *[]string) executorDeps {
-	return executorDeps{
+func fakeDeps(rt fakeRuntime, sum string, sumErr error, swept *[]string) executeDeps {
+	return executeDeps{
 		runtime: func(string) sandbox.Runtime { return rt },
 		sweep: func(binary string) func(context.Context) error {
 			return func(context.Context) error { *swept = append(*swept, binary); return nil }

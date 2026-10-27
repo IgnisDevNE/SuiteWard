@@ -97,16 +97,16 @@ func readExecutorToken(env Env) (config.Secret, error) {
 	return config.Secret(direct), nil
 }
 
-// executorDeps are the parts of `suiteward execute` that the tests replace: the container runtime, the sweep of its leftover containers
+// executeDeps are the parts of `suiteward execute` that the tests replace: the container runtime, the sweep of its leftover containers
 // and the digest of the executor's own binary.
-type executorDeps struct {
+type executeDeps struct {
 	runtime   func(binary string) sandbox.Runtime
 	sweep     func(binary string) func(context.Context) error
 	binarySum func() (string, error)
 }
 
-func osExecutorDeps() executorDeps {
-	return executorDeps{runtime: sandbox.NewCLI, sweep: executor.Sweeper, binarySum: func() (string, error) {
+func osExecuteDeps() executeDeps {
+	return executeDeps{runtime: sandbox.NewCLI, sweep: executor.Sweeper, binarySum: func() (string, error) {
 		path, err := os.Executable()
 		if err != nil {
 			return "", err
@@ -136,10 +136,10 @@ func fileSum(path string) (string, error) {
 // and runs before any setting of the service is loaded. Exit 0 is a clean stop at the signal, 1 a fatal error (the settings, the refused
 // environment, no runtime), 2 a usage error.
 func runExecute(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) int {
-	return executeWith(ctx, args, env, stdout, stderr, osExecutorDeps())
+	return executeWith(ctx, args, env, stdout, stderr, osExecuteDeps())
 }
 
-func executeWith(ctx context.Context, args []string, env Env, stdout, stderr io.Writer, deps executorDeps) int {
+func executeWith(ctx context.Context, args []string, env Env, stdout, stderr io.Writer, deps executeDeps) int {
 	if len(args) != 0 {
 		return usageError(stderr)
 	}

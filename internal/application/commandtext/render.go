@@ -318,10 +318,10 @@ func bootstrapAck(a Ack) string {
 	case NothingUncovered:
 		subject, _ := baseNames(a.Base)
 		return paragraphs("`/suiteward suggest`: every test-like path in this pull request's head is covered by " + subject + " already, so there is nothing to suggest. Nothing changed.\n" +
-			"This answer is not an approval, and SuiteWard does not run tests.")
+			"This answer is not an approval.")
 	case BootstrapPromoted:
 		return paragraphs(fmt.Sprintf("Bootstrap complete: %s, approved by %s, is now canonical version V%d.\n", ref, who, a.Version) +
-			"SuiteWard recorded an integrity assessment of the approved files at the pinned origin commit; it did not run any tests.\n" +
+			"SuiteWard recorded an integrity assessment of the approved files at the pinned origin commit.\n" +
 			"Later changes to the protected files need a new proposal and your approval.")
 	}
 	return notInGroup(a.Outcome)
@@ -420,14 +420,14 @@ func BootstrapSummary(s Summary) string {
 	parts = append(parts, listing("Inventory", s.Paths, len(s.Paths)), listing("Scope include rules", s.Include, s.IncludeTotal),
 		listing("Scope runner rules", s.Runner, s.RunnerTotal), listing("Scope exclude rules", s.Exclude, s.ExcludeTotal))
 	if s.Tier == CoLocated {
-		parts = append(parts, coLocatedNotice)
+		parts = append(parts, CoLocatedNotice)
 	}
 	parts = append(parts, review, codeCommand("approve", ref), after)
 	return paragraphs(parts...)
 }
 
-// coLocatedNotice is what a body says when the instance runs beside the coding agent (ADR 0027).
-const coLocatedNotice = "This SuiteWard instance runs beside the coding agent (co-located tier), so its assurance is reduced: " +
+// CoLocatedNotice is what a body says when the instance runs beside the coding agent (ADR 0027).
+const CoLocatedNotice = "This SuiteWard instance runs beside the coding agent (co-located tier), so its assurance is reduced: " +
 	"the agent can reach SuiteWard's credentials, database and confirmation secret."
 
 // tierName is the name of a tier; a value that is not one is an impossible state.
@@ -674,12 +674,21 @@ type Revision struct {
 	Changes                                 *Changes
 	ChangesUnavailable                      bool
 	ReportURL                               string
+	// Receipt is the effective receipt level (advisory, before-approval or required) of a revision whose receipt applies, and empty for one with none: the comment then
+	// has the fixed receipt line. ReceiptURL, set only with Receipt, is the link to the receipt page of pull request Pull, which names the line's results; without it the
+	// line sends the reader to the SuiteWard / Receipt check.
+	Receipt    string
+	ReceiptURL string
+	Pull       int
+	// LowersPolicy and ReducesScope say what a reduction whose detail was left out (ReducedOmitted) does, which its entries can no longer say: it lowers the execution
+	// policy, reduces the protected scope, or both. Neither set is a reduction of the scope. They are set only with ReducedOmitted.
+	LowersPolicy, ReducesScope bool
 }
 
 // RevisionComment renders the comment of a new change-proposal revision: the protected files added, modified
 // and removed against the canonical (as numbers when Changes is set), the approve command for this exact revision and the
 // revision it supersedes.
-// It never says that tests ran. The paths come from the repository, so they are shown only inside code, bounded
+// It never says that tests ran; the fixed receipt line, which only says what the receipt is, is all it says of tests. The paths come from the repository, so they are shown only inside code, bounded
 // and with control characters escaped, like the bootstrap summary.
 func RevisionComment(r Revision) string {
 	must(validateRevision(r))
@@ -694,16 +703,43 @@ func RevisionComment(r Revision) string {
 		parts = append(parts, reductionParts(r)...)
 	}
 	if r.Tier == CoLocated {
-		parts = append(parts, coLocatedNotice)
+		parts = append(parts, CoLocatedNotice)
 	}
-	parts = append(parts,
-		"This comment is a record, not an approval. SuiteWard compares the protected files only; it does not run tests. To approve this exact revision, comment:",
-		codeCommand("approve", ref),
-	)
+	parts = append(parts, approvalParts(r, ref)...)
 	if r.Previous != "" {
 		parts = append(parts, "This supersedes `"+r.Previous+"`.")
 	}
 	return paragraphs(parts...)
+}
+
+// receiptLevels are the effective receipt levels of a revision whose receipt applies.
+var receiptLevels = []string{"advisory", "before-approval", "required"}
+
+// receiptLine is the fixed line about the receipt (docs/contracts/runtime.md, "The revision comment"): what the receipt is, where its results are and where its counts are.
+func receiptLine(r Revision) string {
+	results := "Results: see the `SuiteWard / Receipt` check."
+	if r.ReceiptURL != "" {
+		results = "Results: [" + r.ReceiptURL + "](" + r.ReceiptURL + ")."
+	}
+	return "Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. " +
+		"It is evidence, not a verdict. " + results + " The `SuiteWard / Receipt` check carries the counts."
+}
+
+// approvalParts are the paragraphs that end the comment before the superseded revision: the receipt line and what the level adds, when the revision has a receipt, and the
+// approve command. Under a required receipt the approve needs a mode, and the copyable command has its placeholder.
+func approvalParts(r Revision, ref string) []string {
+	var parts []string
+	lead, command := "This comment is a record, not an approval. To approve this exact revision, comment:", codeCommand("approve", ref)
+	if r.Receipt != "" {
+		parts = append(parts, receiptLine(r))
+		switch r.Receipt {
+		case "before-approval":
+			parts = append(parts, "Approving waits until the receipt is complete.")
+		case "required":
+			lead, command = "This comment is a record, not an approval. Approving needs a mode and a receipt that meets it:", modeApproveCommand(ref)
+		}
+	}
+	return append(parts, lead, command)
 }
 
 // validateRevision reports why RevisionComment would panic on r.
@@ -720,7 +756,7 @@ func validateRevision(r Revision) error {
 	case !r.Reduced && (len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0 || r.ReducedPathsTotal != 0):
 		return errors.New("commandtext: reduction detail on a revision that does not reduce the scope")
 	case slices.ContainsFunc(r.ReducedRules, func(e string) bool {
-		return !strings.HasPrefix(e, "rule ") && !strings.HasPrefix(e, "exclude ") && !executionEntry(e)
+		return !strings.HasPrefix(e, "rule ") && !strings.HasPrefix(e, "exclude ") && !ExecutionEntry(e)
 	}):
 		return errors.New("commandtext: a reduced rule that is none of a \"rule \", an \"exclude \", an \"execution canonical: \" and an \"execution receipt: \" entry")
 	case r.ReducedOmitted && (!r.Reduced || len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0):
@@ -729,9 +765,24 @@ func validateRevision(r Revision) error {
 	if _, err := reference(r.Proposal, r.Revision); err != nil {
 		return err
 	}
-	if err := validateReport(r); err != nil {
-		return err
+	return errors.Join(validateReceipt(r), validateReport(r), validatePrevious(r))
+}
+
+// validateReceipt reports why the receipt line of r, its link and what a reduction whose detail was left out lowers cannot be stated.
+func validateReceipt(r Revision) error {
+	switch {
+	case (r.LowersPolicy || r.ReducesScope) && !r.ReducedOmitted:
+		return errors.New("commandtext: what a reduction lowers is stated only for one whose detail was left out: otherwise its entries say it")
+	case r.Receipt != "" && !slices.Contains(receiptLevels, r.Receipt):
+		return fmt.Errorf("commandtext: receipt level %q is none of %q", r.Receipt, receiptLevels)
+	case r.ReceiptURL != "" && (r.Receipt == "" || !ValidReceiptLink(r.ReceiptURL, r.Pull)):
+		return errors.New("commandtext: the receipt link is not the link of the loopback receipt page of this pull request, or the revision has no receipt")
 	}
+	return nil
+}
+
+// validatePrevious reports why the revision that r supersedes is not an earlier revision of its proposal.
+func validatePrevious(r Revision) error {
 	if r.Previous == "" {
 		return nil
 	}
@@ -744,16 +795,20 @@ func validateRevision(r Revision) error {
 // executionPrefixes start the entries that scope.Reductions writes for a level of the execution policy that gets weaker.
 var executionPrefixes = []string{"execution canonical: ", "execution receipt: "}
 
-// executionEntry reports whether entry lowers a level of the execution policy.
-func executionEntry(entry string) bool {
+// ExecutionEntry reports whether entry is one that scope.Reductions writes for a level of the execution policy that gets weaker: it begins with "execution canonical: " or
+// "execution receipt: ". The checks job tells the lowering of the policy from the removal of the scope by it.
+func ExecutionEntry(entry string) bool {
 	return slices.ContainsFunc(executionPrefixes, func(p string) bool { return strings.HasPrefix(entry, p) })
 }
 
 // lowersPolicyOnly reports whether the reduction of r lowers the execution policy and removes nothing from the scope: every entry
 // it lists is an execution entry, and it has no path, no total of paths and no detail that was left out.
 func (r Revision) lowersPolicyOnly() bool {
+	if r.ReducedOmitted { // its entries are gone: the revision says what it lowers
+		return r.Reduced && r.LowersPolicy && !r.ReducesScope
+	}
 	return r.Reduced && len(r.ReducedRules) > 0 && len(r.ReducedPaths) == 0 && r.ReducedPathsTotal == 0 && !r.ReducedOmitted &&
-		!slices.ContainsFunc(r.ReducedRules, func(e string) bool { return !executionEntry(e) })
+		!slices.ContainsFunc(r.ReducedRules, func(e string) bool { return !ExecutionEntry(e) })
 }
 
 // reductionParts are the paragraphs that say a revision reduces the protected scope or lowers the execution policy, with what it removes.
@@ -763,7 +818,7 @@ func reductionParts(r Revision) []string {
 		switch p, isExclude := strings.CutPrefix(entry, "exclude "); {
 		case isExclude:
 			excludes = append(excludes, p)
-		case executionEntry(entry):
+		case ExecutionEntry(entry):
 			levels = append(levels, strings.TrimPrefix(entry, "execution "))
 		default:
 			rules = append(rules, strings.TrimPrefix(entry, "rule "))
@@ -773,7 +828,7 @@ func reductionParts(r Revision) []string {
 	switch {
 	case r.lowersPolicyOnly():
 		lead = "This revision lowers the execution policy."
-	case len(levels) > 0:
+	case len(levels) > 0 || (r.ReducedOmitted && r.LowersPolicy):
 		lead = "This revision reduces the protected scope and lowers the execution policy."
 	}
 	parts := []string{"**" + lead + "** Review it carefully before approving."}

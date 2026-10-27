@@ -33,7 +33,7 @@ func TestRunnerUncoveredCommentListsTheFilesAndGivesBothDeclarationsAndTheEditLi
 	for _, w := range []string{
 		"```\njest.config.js\npkg/conftest.py\n```", "can change how the protected tests run", "`in_progress`",
 		"Protect the files", "```\n" + string(n.Protect) + "```", "Ignore the files", "```\n" + string(n.Ignore) + "```",
-		"reduction", "approves", "Commit suggestion", "not an approval", "does not run tests",
+		"reduction", "approves", "Commit suggestion", "not an approval",
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)

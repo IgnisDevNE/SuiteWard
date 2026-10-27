@@ -53,7 +53,7 @@ const smallChangeComment = "**SuiteWard contract change P7-R3**\n\n" +
 	"Changed files, most changed lines first:\n\n```\n+2/−1  modified  tests/a_test.go\n+3/−0  added     tests/new_test.go\n```\n\n" +
 	"[Full change report](" + reportURL + ")\n\n" +
 	"This link opens on the machine that runs this SuiteWard instance; on the isolated tier, through a port forward of the HTTP port. Ctrl+click (Cmd+click on a Mac, or middle-click) the link to open it in a new tab.\n\n" +
-	"This comment is a record, not an approval. SuiteWard compares the protected files only; it does not run tests. To approve this exact revision, comment:\n\n" +
+	"This comment is a record, not an approval. To approve this exact revision, comment:\n\n" +
 	"```\n/suiteward approve P7-R3 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\n" +
 	"This supersedes `P7-R2`.\n"
 

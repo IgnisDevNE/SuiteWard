@@ -68,7 +68,7 @@ func InvalidSourceComment(s InvalidSourceNotice) string {
 	}
 	return paragraphs("**SuiteWard could not read the contract source of this pull request**", problem, next,
 		"Any canonical contract already in force stays in force, and the check stays `failure` until a push fixes it.",
-		"This comment is evidence, not an approval, and SuiteWard does not run tests.")
+		"This comment is evidence, not an approval.")
 }
 
 // editSentence is the paragraph that links to GitHub's editor for .suiteward.yml on the pull request's branch, led by lead; none for a notice without the link.

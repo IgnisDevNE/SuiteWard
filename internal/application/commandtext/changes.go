@@ -319,3 +319,13 @@ func Visible(s string) string {
 	}
 	return b.String()
 }
+
+// receiptLinkPattern is the link to the receipt page of a pull request: a loopback address, as the settings allow, the repository and the number of the pull request. It is no
+// report link: the two patterns are apart, so that a link of the one kind is never taken for the other.
+var receiptLinkPattern = regexp.MustCompile(`^http://(?:127\.0\.0\.1|localhost):[0-9]{1,5}/receipts/[A-Za-z0-9._%-]+/[A-Za-z0-9._%-]+/([1-9][0-9]*)$`)
+
+// ValidReceiptLink reports whether link is the link to the receipt page of pull request pull: a loopback address, as the settings allow, and the path /receipts/<owner>/<repo>/<pull>.
+func ValidReceiptLink(link string, pull int) bool {
+	m := receiptLinkPattern.FindStringSubmatch(link)
+	return m != nil && pull >= 1 && m[1] == strconv.Itoa(pull) && !strings.Contains(link, "/../") && !strings.Contains(link, "/./") // a segment of dots climbs or stays
+}

@@ -83,13 +83,13 @@ func TestMergeCommentForAFailedIntegrityVerificationSendsTheOperatorToTheArtifac
 	}
 }
 
-func TestMergeCommentForAPromotionNamesTheVersionAndTheCommitAndSaysTestsWereNotRun(t *testing.T) {
+func TestMergeCommentForAPromotionNamesTheVersionAndTheCommitAndSaysWhatWasChecked(t *testing.T) {
 	for name, m := range map[string]commandtext.Merge{
 		"promoted":  {Kind: commandtext.MergePromoted, Source: mergeSHA, Version: 2, Proposal: 2, Revision: 1, Tier: commandtext.Isolated},
 		"corrected": {Kind: commandtext.MergeCorrected, Source: mergeSHA, Version: 3, Corrects: 2, Proposal: 4, Revision: 2, Tier: commandtext.Isolated},
 	} {
 		text := mergeText(t, m)
-		want := []string{"V" + strconv.Itoa(m.Version), mergeSHA, commandtext.Reference(m.Proposal, m.Revision), "did not run the tests",
+		want := []string{"V" + strconv.Itoa(m.Version), mergeSHA, commandtext.Reference(m.Proposal, m.Revision),
 			"checked the approval and the integrity of the protected files"}
 		if m.Corrects != 0 {
 			want = append(want, "correction of V2")
@@ -163,9 +163,9 @@ func TestMergeCommentPanicsOnAStateThatCannotBeStored(t *testing.T) {
 	}
 }
 
-func TestMergeCommentForTheFirstCanonicalVersionNamesTheCommitAndSaysTestsWereNotRun(t *testing.T) {
+func TestMergeCommentForTheFirstCanonicalVersionNamesTheCommitAndSaysWhatWasChecked(t *testing.T) {
 	text := mergeText(t, commandtext.Merge{Kind: commandtext.MergePromoted, Source: mergeSHA, Version: 1, Proposal: 1, Revision: 2, Tier: commandtext.Isolated})
-	for _, phrase := range []string{"promoted the canonical contract to V1", "first canonical version", mergeSHA, "P1-R2", "did not run the tests"} {
+	for _, phrase := range []string{"promoted the canonical contract to V1", "first canonical version", mergeSHA, "P1-R2"} {
 		if !strings.Contains(text, phrase) {
 			t.Errorf("the comment lacks %q:\n%s", phrase, text)
 		}
@@ -244,7 +244,7 @@ func TestMergeCommentPanicsOnAVersionThatCannotBeMissing(t *testing.T) {
 func TestMergeCommentKeepsItsExistingTexts(t *testing.T) {
 	const (
 		facts    = "- Merge commit: `" + mergeSHA + "`\n- Proposal revision: P2-R1\n- Installation tier: `isolated`\n\n"
-		checked  = "SuiteWard checked the approval and the integrity of the protected files at that commit. It did not run the tests.\n"
+		checked  = "SuiteWard checked the approval and the integrity of the protected files at that commit.\n"
 		recovery = "open a new pull request that restores the protected files of V3, or one that carries the integrated files for a new exact approval. There is no reset command.\n"
 	)
 	unreadable := blocked("integration-unreadable")

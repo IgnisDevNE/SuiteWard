@@ -190,9 +190,10 @@ type suiteView struct {
 	exists          bool // the bootstrap job created the Suite
 	revision        int64
 	canonical       contract.SuiteVersionID
-	manifest        artifact.Digest  // the digest of the canonical's manifest: what a canonical job runs against until a revision is approved
-	integrityFailed bool             // the stored bytes of the canonical failed their verification
-	carrier         bootstrapCarrier // without a canonical: the Suite's latest bootstrap proposal
+	base            artifact.Manifest // the canonical's manifest, which the receipt of a revision is decided against
+	manifest        artifact.Digest   // the digest of the canonical's manifest: what a canonical job runs against until a revision is approved
+	integrityFailed bool              // the stored bytes of the canonical failed their verification
+	carrier         bootstrapCarrier  // without a canonical: the Suite's latest bootstrap proposal
 }
 
 // bootstrapCarrier is the Suite's latest bootstrap proposal and the pull request that carries it; found is false when no
@@ -216,7 +217,8 @@ func (j *checksJob) suite(ctx context.Context, p owner.ProjectPolicy) (suiteView
 		view.revision = int64(state.Canonical.Suite().Revision())
 		view.canonical, _ = state.Canonical.Suite().CurrentVersionID()
 		if view.canonical != "" {
-			view.manifest = state.Canonical.Contract().Manifest().Digest()
+			view.base = state.Canonical.Contract().Manifest()
+			view.manifest = view.base.Digest()
 			return nil
 		}
 		id, found, err := tx.LatestBootstrapProposal(ctx)
@@ -268,6 +270,7 @@ type pullState struct {
 	sameHead   bool // the stored check is of this head
 	tier       string
 	base       checks.Result // the result with no state, which every decision starts from
+	exec       *executionRun // what the run knows of the execution of the project: its policy, which the comment of a new revision states
 }
 
 // pullDecision is the check of a pull request as it is decided, step by step.
@@ -288,6 +291,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err != nil {
 		return "", err
 	}
+	s.exec = x
 	d, err := j.decide(ctx, s)
 	if err != nil {
 		return "", err
@@ -357,7 +361,7 @@ func (j *checksJob) decide(ctx context.Context, s *pullState) (d pullDecision, e
 		d.result = base
 		d.result.State, d.result.Reason = checks.InProgress, reasonBootstrapAwaiting
 	case suite.canonical == "": // nothing to compare the head with: only the bootstrap carrier is assessed
-		d.result, d.final, d.problem, d.wait, d.source, err = j.bootstrap(ctx, s.enrollment, s.p, suite, pull, base, s.record, s.sameHead, s.tier)
+		d.result, d.final, d.problem, d.wait, d.source, err = j.bootstrap(ctx, s.enrollment, s.p, suite, pull, base, s.record, s.sameHead, s.tier, s.exec)
 	case suite.integrityFailed: // the canonical cannot be trusted: no head is compared with it, and no tree is read
 		d.result, d.final = base, true
 		d.result.State, d.result.Reason = checks.Failure, reasonIntegrityFailed
@@ -369,8 +373,10 @@ func (j *checksJob) decide(ctx context.Context, s *pullState) (d pullDecision, e
 	case s.sameHead && s.record.Change == changeCodes[inventory.Unchanged] && j.unchanged[checkPull{s.p.RepositoryID, pull.Number}] == unchangedAt{pull.HeadSHA, suite.canonical}:
 		d.result = base
 		d.result.State, d.result.Reason, d.result.Change, d.result.Revision = checks.Success, reasonUnchanged, s.record.Change, suite.revision
+	case s.exec.failed: // the policy cannot be read: the head is assessed once it can, so that the comment of its revision, which is never edited, states the receipt
+		d.wait = true
 	default:
-		d.result, d.problem, d.wait, d.source, err = j.assess(ctx, s.p, suite, pull, base, s.tier)
+		d.result, d.problem, d.wait, d.source, err = j.assess(ctx, s.p, suite, pull, base, s.tier, s.exec)
 	}
 	return d, err
 }
@@ -503,7 +509,7 @@ func (j *checksJob) commentAfterCheck(ctx context.Context, s *pullState, result 
 // before V1"), in the contract's order: a fork, the carrier of the latest bootstrap proposal, a skipped pull request, and any
 // other pull request, which waits.
 func (j *checksJob) bootstrap(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState, base checks.Result, record checks.Record,
-	sameHead bool, tier string) (result checks.Result, final bool, problem string, wait bool, source sourceProblem, err error) {
+	sameHead bool, tier string, x *executionRun) (result checks.Result, final bool, problem string, wait bool, source sourceProblem, err error) {
 	result = base
 	carrier := suite.carrier
 	reference := referenceText(carrier.reference)
@@ -518,7 +524,7 @@ func (j *checksJob) bootstrap(ctx context.Context, enrollment owner.State, p own
 	case carrier.found && carrier.pull == pull.Number && sameHead && record.Reference == reference && record.Revision == suite.revision && record.CommandID == base.CommandID:
 		result = record.Result
 	case carrier.found && carrier.pull == pull.Number:
-		result, problem, wait, source, err = j.assess(ctx, p, suite, pull, base, tier)
+		result, problem, wait, source, err = j.assess(ctx, p, suite, pull, base, tier, x)
 	default:
 		var skipped bool // read every run: the fast path above keys on the latest owner command, which ignores a skip
 		if skipped, err = j.commands.Skipped(ctx, p.RepositoryID, pull.Number, enrollment.EnrolledAt); err != nil {
@@ -573,8 +579,8 @@ func isFork(headRepo, repo string) bool {
 
 // assess reads the head's tree and assesses it against the canonical. wait is true when that cannot be done now (a failed
 // GitHub read, a canonical that moved) and problem says why; any other failure is the error. source says what made an invalid head
-// invalid, when it can be named.
-func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState, base checks.Result, tier string) (result checks.Result, problem string, wait bool, source sourceProblem, err error) {
+// invalid, when it can be named. x is what the run knows of the execution of the project: the comment of a new revision states its receipt.
+func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState, base checks.Result, tier string, x *executionRun) (result checks.Result, problem string, wait bool, source sourceProblem, err error) {
 	var (
 		head      governance.HeadResult
 		bootstrap governance.BootstrapHeadResult
@@ -595,7 +601,11 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 				if err := storeManifest(ctx, j.content, n.Manifest); err != nil {
 					return governance.OutboxMessage{}, false, err
 				}
-				message, err := newRevisionMessage(target, n, tier)
+				receipt, err := revisionReceipt(x, suite, n)
+				if err != nil {
+					return governance.OutboxMessage{}, false, err
+				}
+				message, err := newRevisionMessage(target, n, tier, receipt)
 				return message, err == nil, err
 			}})
 	}

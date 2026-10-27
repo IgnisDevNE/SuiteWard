@@ -313,9 +313,11 @@ func TestChecksWithdrawNoReceiptThatIsNotTheHeadsOrThatTheRunCouldNotDecide(t *t
 }
 
 func TestTheReceiptCheckMessageKnowsEveryReasonOfTheCheckAndNoOther(t *testing.T) {
-	for _, reason := range []string{"receipt-running", "receipt-failing", "receipt-complete", "receipt-not-run", "receipt-not-applicable"} {
-		check := execution.ReceiptCheck{RepositoryID: bootRepoID, PullNumber: 5, HeadSHA: cjHead2, State: execution.CheckNeutral, Reason: reason}
-		if _, err := newReceiptCheckMessage(bootRepo, receiptDecision{publish: true, check: check}, "isolated", 1); err != nil {
+	for reason, state := range map[string]execution.CheckState{"receipt-running": execution.CheckInProgress, "receipt-failing": execution.CheckFailure, "receipt-complete": execution.CheckSuccess,
+		"receipt-not-run": execution.CheckNeutral, "receipt-not-applicable": execution.CheckNeutral} {
+		d := rcpDecision(state, reason) // a decision whose state, counts and reason fit: the message is rendered when it is built
+		d.check.RepositoryID, d.check.PullNumber, d.check.HeadSHA = bootRepoID, 5, cjHead2
+		if _, err := newReceiptCheckMessage(bootRepo, d, "isolated", 1); err != nil {
 			t.Errorf("reason %s: %v", reason, err)
 		}
 	}

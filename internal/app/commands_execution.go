@@ -3,8 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
-	"slices"
 	"strconv"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
@@ -16,7 +14,6 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
-	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
 // The execution commands in the commands job (M2.1; docs/contracts/runtime.md, "Commands"): the preview mode, the unblock and the receipt gate of an approve.
@@ -80,7 +77,7 @@ func (j *commandsJob) unblock(ctx context.Context, enrollment owner.State, c com
 // liftable lists the jobs of the head that an unblock lifts, and their plans: the canonical job when the canonical level is not off, and the receipt job when the
 // receipt level is not off and the receipt applies to the revision of the pull request, each when it is the job of its plan now and is unavailable.
 func (j *commandsJob) liftable(ctx context.Context, c commands.Candidate, head string) (jobs []execution.Job, plans commandtext.Plans, err error) {
-	view, err := j.receiptView(ctx, c.RepositoryID, func(ctx context.Context, tx governance.Tx) (contract.Proposal, bool, error) {
+	view, err := j.reads().receiptView(ctx, c.RepositoryID, func(ctx context.Context, tx governance.Tx) (contract.Proposal, bool, error) {
 		id, found, err := tx.ChangeProposalFor(ctx, carrierID(c.RepositoryID, c.PullNumber))
 		if err != nil || !found {
 			return contract.Proposal{}, false, err
@@ -107,7 +104,7 @@ func (j *commandsJob) liftable(ctx context.Context, c commands.Candidate, head s
 	if receiptLevel == domain.ReceiptLevelOff {
 		return jobs, plans, nil
 	}
-	applies, governing, err := j.receiptApplies(ctx, view)
+	applies, governing, err := j.reads().receiptApplies(ctx, view)
 	if err != nil || !applies {
 		return jobs, plans, err
 	}
@@ -145,79 +142,6 @@ func (j *commandsJob) levels(ctx context.Context, canonical contract.CanonicalSn
 	return canonicalLevel, receiptLevel, nil
 }
 
-// receiptView is what the receipt of a revision is decided on, read in one unit of work.
-type receiptView struct {
-	canonical contract.CanonicalSnapshot // the Suite's; with no current version before the first one
-	revised   bool                       // the revision that was looked for exists
-	binding   contract.ApprovalBinding   // of that revision
-	expected  artifact.Manifest          // of the canonical version that it expects; zero for a revision that expects none
-}
-
-// receiptView reads the Suite's canonical and, when it has a current version, the revision of the proposal that find returns (it reports false for none) and the
-// manifest of the canonical version that the revision expects. A project with no Suite has nothing to read: the view is empty.
-func (j *commandsJob) receiptView(ctx context.Context, repositoryID int64, find func(context.Context, governance.Tx) (contract.Proposal, bool, error)) (receiptView, error) {
-	var view receiptView
-	err := j.suites.Do(ctx, owner.ProjectID(repositoryID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
-		state, err := tx.Suite(ctx)
-		if err != nil {
-			return fmt.Errorf("load suite: %w", err)
-		}
-		view.canonical = state.Canonical
-		if _, current := state.Canonical.Suite().CurrentVersionID(); !current {
-			return nil // no policy before the first version, so nothing to decide
-		}
-		proposal, found, err := find(ctx, tx)
-		if err != nil || !found {
-			return err
-		}
-		view.binding, view.revised = proposal.Current().Binding(), true
-		version := view.binding.ExpectedCanonical()
-		if version == "" {
-			return nil
-		}
-		historical, found, err := tx.Version(ctx, version)
-		if err != nil {
-			return err
-		}
-		if !found { // a binding names a version that was promoted: its absence is stored state that is broken, not a missing Suite
-			return fmt.Errorf("the canonical version %s that %s expects is not stored", version, view.binding.Reference().RevisionID)
-		}
-		view.expected = historical.Version().Manifest()
-		return nil
-	})
-	if errors.Is(err, governance.ErrNotFound) {
-		return receiptView{}, nil
-	}
-	if err != nil {
-		return receiptView{}, &opaque{what: "read the revision", cause: err}
-	}
-	return view, nil
-}
-
-// receiptApplies reports whether the receipt of the revision applies: whether it adds or changes a file that the include of the canonical version it expects
-// matches and the exclude does not (docs/contracts/runtime.md, "Applicable and not applicable"). A revision that expects no canonical, a baseline, has nothing to
-// be added to or changed against. governing is the digest of the manifest of that version, which the receipt jobs of the revision name.
-func (j *commandsJob) receiptApplies(ctx context.Context, view receiptView) (applies bool, governing artifact.Digest, err error) {
-	if !view.revised || view.expected.IsZero() {
-		return false, artifact.Digest{}, nil
-	}
-	declaration := scope.NoDeclaration()
-	if i := slices.IndexFunc(view.expected.Entries(), func(e artifact.Entry) bool { return e.Path == scope.DeclarationPath }); i >= 0 {
-		raw, err := j.contents.Read(ctx, view.expected.Entries()[i].Content)
-		if err != nil {
-			return false, artifact.Digest{}, &opaque{what: "read the declaration of the version", cause: err}
-		}
-		if declaration, err = scope.ParseDeclaration(raw); err != nil {
-			return false, artifact.Digest{}, &opaque{what: "parse the declaration of the version", cause: err}
-		}
-	}
-	files, err := j.reads().evaluatedFiles(ctx, view.binding.ManifestDigest(), view.expected, domain.Selection{Include: declaration.Include(), Exclude: declaration.Exclude()})
-	if err != nil {
-		return false, artifact.Digest{}, err
-	}
-	return len(files) > 0, view.expected.Digest(), nil
-}
-
 // gateOutcome is what the receipt gate decided for an approve. applies says that it read a receipt, so the entry is recorded with record; reason is why it refuses the
 // approve, and none when it lets it through. counts and markers are the receipt of the head, which the acknowledgment of a mode that was not met states.
 type gateOutcome struct {
@@ -235,7 +159,7 @@ type gateOutcome struct {
 func (j *commandsJob) receiptGate(ctx context.Context, enrollment owner.State, c commands.Candidate, command commandtext.Command, operation contract.OperationID) (gateOutcome, error) {
 	var replayed bool
 	revision := contract.ProposalRevisionID("R" + strconv.Itoa(command.Revision))
-	view, err := j.receiptView(ctx, c.RepositoryID, func(ctx context.Context, tx governance.Tx) (contract.Proposal, bool, error) {
+	view, err := j.reads().receiptView(ctx, c.RepositoryID, func(ctx context.Context, tx governance.Tx) (contract.Proposal, bool, error) {
 		proposal, _, err := tx.Proposal(ctx, proposalID(command.Proposal))
 		if errors.Is(err, governance.ErrNotFound) {
 			return contract.Proposal{}, false, nil
@@ -257,7 +181,7 @@ func (j *commandsJob) receiptGate(ctx context.Context, enrollment owner.State, c
 	if err != nil {
 		return gateOutcome{}, err
 	}
-	applies, governing, err := j.receiptApplies(ctx, view)
+	applies, governing, err := j.reads().receiptApplies(ctx, view)
 	if err != nil {
 		return gateOutcome{}, err
 	}

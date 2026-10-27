@@ -12,8 +12,11 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 )
 
+// ReceiptCheckName is the name of the check run of the receipt (docs/contracts/runtime.md, "The SuiteWard / Receipt check"), the only one that may conclude neutral.
+const ReceiptCheckName = "SuiteWard / Receipt"
+
 // CheckRun is a check run to create. Status is in_progress or completed;
-// Conclusion is success or failure with completed and empty otherwise.
+// Conclusion is success or failure with completed (and neutral for the Receipt check) and empty otherwise.
 type CheckRun struct {
 	Name, HeadSHA, Status, Conclusion, ExternalID, Title, Summary string
 }
@@ -39,6 +42,17 @@ func NewChecks(client *rest.Client) (*Checks, error) {
 	return &Checks{client: client}, nil
 }
 
+// concludes reports whether the conclusion is one that GitHub takes of this check run: success or failure, and neutral for the Receipt check alone.
+func (r CheckRun) concludes() bool {
+	switch r.Conclusion {
+	case "success", "failure":
+		return true
+	case "neutral":
+		return r.Name == ReceiptCheckName
+	}
+	return false
+}
+
 func (r CheckRun) validate() error {
 	switch {
 	case r.Name == "":
@@ -47,8 +61,8 @@ func (r CheckRun) validate() error {
 		return fmt.Errorf("%w: head SHA %q is not 40 lowercase hex characters", ErrInvalidArgument, r.HeadSHA)
 	case r.Status == "in_progress" && r.Conclusion != "":
 		return fmt.Errorf("%w: an in_progress check run has no conclusion", ErrInvalidArgument)
-	case r.Status == "completed" && r.Conclusion != "success" && r.Conclusion != "failure":
-		return fmt.Errorf("%w: a completed check run concludes success or failure, not %q", ErrInvalidArgument, r.Conclusion)
+	case r.Status == "completed" && !r.concludes():
+		return fmt.Errorf("%w: a completed check run concludes success or failure (and neutral for the receipt), not %q", ErrInvalidArgument, r.Conclusion)
 	case r.Status != "in_progress" && r.Status != "completed":
 		return fmt.Errorf("%w: check run status %q is not in_progress or completed", ErrInvalidArgument, r.Status)
 	case r.ExternalID == "" || r.Title == "" || r.Summary == "":

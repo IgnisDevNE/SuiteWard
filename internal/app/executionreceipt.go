@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
-	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
@@ -67,9 +65,6 @@ type receiptDecision struct {
 	counts      receiptCheckCounts
 	unavailable execution.Reason
 }
-
-// receiptReasons are the reasons of the Receipt check, which its message accepts and no other.
-var receiptReasons = []string{receiptRunning, receiptFailing, receiptComplete, receiptNotRun, receiptNotApplicable}
 
 // withdrawnReceipt is the one last run of a head whose receipt does not apply (it changes no file that the canonical include matches, or the level is off) but that
 // already has a published Receipt check: neutral, with the counts at zero, and nothing after it while that stays so. A head that never had one gets none, and a
@@ -137,15 +132,8 @@ func newReceiptCheckMessage(repo string, d receiptDecision, tier string, generat
 	p := receiptCheckPayload{commentTarget: commentTarget{RepositoryID: d.check.RepositoryID, Repo: repo, Pull: d.check.PullNumber}, HeadSHA: d.check.HeadSHA, Generation: generation,
 		State: string(d.check.State), Reason: d.check.Reason, Reference: d.check.Reference, Tier: tier, Counts: d.counts, Unavailable: string(d.unavailable), Unblocked: d.check.Unblocked}
 	key := fmt.Sprintf("%s:%d:%d:%d", receiptCheckKey, d.check.RepositoryID, d.check.PullNumber, generation)
-	switch {
-	case p.validate() != nil:
-		return governance.OutboxMessage{}, keyError(receiptCheckKind, key, p.validate().Error())
-	case !headPattern.MatchString(p.HeadSHA) || p.Generation < 1:
-		return governance.OutboxMessage{}, keyError(receiptCheckKind, key, "the head or the generation is invalid")
-	case tier != owner.TierIsolated && tier != owner.TierCoLocated:
-		return governance.OutboxMessage{}, keyError(receiptCheckKind, key, "the tier is unknown")
-	case !slices.Contains(receiptReasons, p.Reason):
-		return governance.OutboxMessage{}, keyError(receiptCheckKind, key, "the reason is unknown")
+	if _, _, err := p.output(key); err != nil { // rendered when it is built, as every github_check message is: a state or a combination the renderer refuses fails this step
+		return governance.OutboxMessage{}, err
 	}
 	payload, err := json.Marshal(p)
 	if err != nil {

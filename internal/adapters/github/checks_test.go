@@ -277,3 +277,40 @@ func TestChecksRunsKeepsRestErrorsTyped(t *testing.T) {
 		t.Errorf("err = %v, want rest.ErrUnprocessable", err)
 	}
 }
+
+// A receipt that was unavailable ends neutral (docs/contracts/runtime.md, "The SuiteWard / Receipt check"); no other check run does.
+func TestChecksPostSendsANeutralConclusionForTheReceiptCheckOnly(t *testing.T) {
+	p := &poster{status: http.StatusCreated, answer: `{"id": 9003}`}
+	run := validRun()
+	run.Name, run.Conclusion = "SuiteWard / Receipt", "neutral"
+	if _, err := newChecks(t, p).Post(t.Context(), repo, run); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(p.requests()[0].body), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent["name"] != "SuiteWard / Receipt" || sent["status"] != "completed" || sent["conclusion"] != "neutral" {
+		t.Errorf("sent = %v, want the completed Receipt run with the conclusion neutral", sent)
+	}
+
+	for name, mutate := range map[string]func(*github.CheckRun){
+		"neutral on the Contract check": func(r *github.CheckRun) { r.Name = "SuiteWard / Contract" },
+		"neutral on another check":      func(r *github.CheckRun) { r.Name = "SuiteWard / Receipt 2" },
+		"cancelled on the Receipt":      func(r *github.CheckRun) { r.Conclusion = "cancelled" },
+		"skipped on the Receipt":        func(r *github.CheckRun) { r.Conclusion = "skipped" },
+		"an empty conclusion":           func(r *github.CheckRun) { r.Conclusion = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := &poster{status: http.StatusCreated, answer: `{"id":1}`}
+			refused := run
+			mutate(&refused)
+			if _, err := newChecks(t, p).Post(t.Context(), repo, refused); !errors.Is(err, github.ErrInvalidArgument) {
+				t.Errorf("err = %v, want ErrInvalidArgument", err)
+			}
+			if n := len(p.requests()); n != 0 {
+				t.Errorf("%d requests, want none", n)
+			}
+		})
+	}
+}

@@ -62,7 +62,7 @@ func (e *executorStatus) report(ctx context.Context) (map[string]any, error) {
 	return map[string]any{"enabled": e.enabled, "jobs": jobs, "lastSeenAt": e.liveness.LastSeen().UTC().Format(time.RFC3339)}, nil
 }
 
-// api serves /healthz, /readyz, /status and the change report pages. Only fixed reasons reach a
+// api serves /healthz, /readyz, /status, the change report pages and the receipt pages. Only fixed reasons reach a
 // response; the cause of a failure is logged.
 type api struct {
 	store          store
@@ -73,6 +73,7 @@ type api struct {
 	executorStatus *executorStatus // the execution block of /status: serve always sets it
 	executor       http.Handler    // the executor API under /executor/v1; nil without EXECUTOR_TOKEN: not served
 	reports        reportSource    // rebuilds the change report of a revision for the report page
+	receipts       receiptSource   // builds the receipt page of a pull request
 	stopping       atomic.Bool     // set when shutdown begins: readiness turns 503 first
 }
 
@@ -85,6 +86,10 @@ func newRouter(a *api) http.Handler {
 	r.Route("/reports", func(r chi.Router) {
 		r.Use(reportGuard)
 		r.Get("/{owner}/{repo}/{revision}", a.report)
+	})
+	r.Route("/receipts", func(r chi.Router) {
+		r.Use(reportGuard)
+		r.Get("/{owner}/{repo}/{pull}", a.receipt)
 	})
 	return r
 }

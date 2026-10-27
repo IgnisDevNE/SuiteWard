@@ -132,6 +132,7 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		{"the first Publish writes generation 1 and one message", ckFirstPublish},
 		{"an identical result writes no message and updates what the verdict carries", ckIdenticalResult},
 		{"a new head, state, reason or reference advances the generation by exactly one", ckAdvancesGeneration},
+		{"a change of unblocked alone advances the generation, and a result that never says it reads false", ckUnblocked},
 		{"the message is built for the generation it publishes", ckMessageGeneration},
 		{"a publication that ended failed is retried under the next generation once the cooldown has passed", ckRetryAfterCooldown},
 		{"a lost publication is not retried before the cooldown has passed", ckNoRetryInCooldown},
@@ -203,6 +204,35 @@ func ckAdvancesGeneration(e *env) {
 		}
 	}
 	e.requireOutbox(key(10, 1, 1), key(10, 1, 2), key(10, 1, 3), key(10, 1, 4), key(10, 1, 5))
+}
+
+func ckUnblocked(e *env) {
+	plain := result(10, 1, headA, checks.Success, "ready")
+	record, written := e.publish(plain, 1)
+	e.requirePublished(record, written, true, 1)
+	if record.Unblocked {
+		e.t.Fatal("a result that never says unblocked reads true")
+	}
+	// The owner's lift is part of what is published: it advances the generation alone, and again when it is gone.
+	lifted := plain
+	lifted.Unblocked = true
+	record, written = e.publish(lifted, 2)
+	e.requirePublished(record, written, true, 2)
+	e.requireCurrent(checks.Record{Result: lifted, HeadSince: at(1), Generation: 2, DecidedAt: at(2)})
+	record, written = e.publish(lifted, 3) // the same again is quiet
+	e.requirePublished(record, written, false, 2)
+	record, written = e.publish(plain, 4)
+	e.requirePublished(record, written, true, 3)
+	if record.Unblocked {
+		e.t.Fatal("a result that no longer says unblocked reads true")
+	}
+	// A first result can carry it, and it is the same record on another pull.
+	first := result(10, 2, headB, checks.Success, "unchanged")
+	first.Unblocked = true
+	if record, written := e.publish(first, 5); !written || !record.Unblocked || record.Generation != 1 {
+		e.t.Fatalf("first result = %+v, written %v; want generation 1, unblocked", record, written)
+	}
+	e.requireOutbox(key(10, 1, 1), key(10, 1, 2), key(10, 1, 3), key(10, 2, 1))
 }
 
 func ckMessageGeneration(e *env) {

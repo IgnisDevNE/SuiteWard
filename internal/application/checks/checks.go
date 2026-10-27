@@ -46,6 +46,7 @@ type Result struct {
 	Change       string // the classification code, or empty when not assessed
 	Revision     int64  // the Suite revision of the verdict, 0 without a Suite
 	CommandID    int64  // the latest owner command on the pull that was considered, 0 for none
+	Unblocked    bool   // the owner unblocked the head's canonical job and that lift decided the outcome (M2.1)
 }
 
 // Record is a stored Result with its publication bookkeeping.

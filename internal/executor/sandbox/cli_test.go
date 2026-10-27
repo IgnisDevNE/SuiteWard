@@ -303,6 +303,28 @@ func TestRunKeepsKillingUntilTheContainerExists(t *testing.T) {
 	}
 }
 
+// KillAfter runs from the start of the container, as it did before the executor stopped using it: the container is killed KillAfter after it
+// starts, whether or not its standard input has ended.
+func TestRunKillsTheContainerKillAfterItStartsEvenWhileItsStandardInputIsOpen(t *testing.T) {
+	f := newFake()
+	f.onRun = func(ctx context.Context, _ io.Reader, _ io.Writer) (int, string, error) {
+		select {
+		case <-f.killed:
+			return 137, "", nil
+		case <-ctx.Done():
+			return -1, "", ctx.Err()
+		case <-time.After(3 * time.Second):
+			return -1, "", errors.New("the container was never killed")
+		}
+	}
+	open, _ := io.Pipe() // never written and never closed
+	s := validSpec()
+	s.Stdin, s.Limits.KillAfter = open, 20*time.Millisecond
+	if out, err := run(t, f, "docker", s); err != nil || !out.Killed {
+		t.Fatalf("Run = %+v, %v; want the container killed KillAfter after it started", out, err)
+	}
+}
+
 // The kill clock is the bound of the program, so it starts when the program can start: when the tar has been written to the standard
 // input, and not when the container does, because the tree and the module files stream in while it runs.
 func TestRunStartsTheKillClockWhenItsStandardInputHasEnded(t *testing.T) {

@@ -22,6 +22,14 @@ func (f fakeJobCounts) Counts(context.Context) (map[execution.State]int, error) 
 	return f.counts, f.err
 }
 
+// idleExecutionJSON is the execution block of idleExecutorStatus as /status writes it.
+const idleExecutionJSON = `"execution":{"enabled":false,"jobs":{"pending":0,"leased":0,"complete":0,"unavailable":0,"cancelled":0},"lastSeenAt":"2026-10-27T12:00:00Z"}`
+
+// idleExecutorStatus is the execution block of a service that has no job and has seen no executor since the origin of these tests.
+func idleExecutorStatus() *executorStatus {
+	return &executorStatus{jobs: fakeJobCounts{}, liveness: execution.NewLiveness(execOrigin)}
+}
+
 func statusOf(t *testing.T, a *api) map[string]any {
 	t.Helper()
 	code, body := call(t, a, http.MethodGet, "/status")

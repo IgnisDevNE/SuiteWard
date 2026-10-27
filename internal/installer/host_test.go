@@ -41,6 +41,9 @@ type hostFake struct {
 	tornCopy      bool              // install leaves a file that is not the one it was given
 	execRunning   bool              // the executor's unit is running when the step starts
 	execEnabled   bool              // enable --now has started the executor's unit
+	imagePulled   bool              // the Go image is in the executor's rootless storage
+	pullFails     bool              // podman pull as the executor fails
+	pullLeavesNothing bool          // podman pull succeeds but the image is not there after it
 }
 
 func newHostFake() *hostFake {

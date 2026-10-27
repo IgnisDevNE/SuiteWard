@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 )
 
 // The host step of the executor (ADR 0028 section 10; spike S4, sections 4.1, 4.5 and 4.6): an account of its own, the cgroup controllers that
@@ -76,6 +78,17 @@ func (h *hostFake) answerExecutor(c call) (out []byte, handled bool, err error) 
 		return nil, true, fail
 	case c.name == "nft" && line == "list table inet suiteward_exec":
 		return []byte("table inet suiteward_exec { chain output { meta skuid 1002 ip daddr 169.254.169.254 reject meta skuid 1002 ip6 daddr fd00:ec2::254 reject } }"), true, nil
+	case c.name == "systemd-run" && strings.Contains(line, execUserSystemd) && strings.Contains(line, "podman pull "+goprofile.Image):
+		if h.pullFails {
+			return nil, true, fail
+		}
+		h.imagePulled = !h.pullLeavesNothing
+		return nil, true, nil
+	case c.name == "systemd-run" && strings.Contains(line, execUserSystemd) && strings.Contains(line, "podman image exists "+goprofile.Image):
+		if !h.imagePulled {
+			return nil, true, fail
+		}
+		return nil, true, nil
 	case c.name == "sha256sum":
 		if sum, ok := h.hashes[line]; ok {
 			return []byte(sum + "  " + line + "\n"), true, nil

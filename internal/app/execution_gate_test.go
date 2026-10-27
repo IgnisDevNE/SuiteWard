@@ -301,3 +301,31 @@ func TestChecksNeverDecideASuccessWhileTheExecutionPolicyCannotBeRead(t *testing
 	w.execRun()
 	w.want(4, checks.Success, "unchanged", 2)
 }
+
+func TestChecksNeverEndALeasedJobOnTheGitHubBound(t *testing.T) {
+	w := gateWorld(t)
+	w.execRun()
+	job := w.onlyJob(4, bootHead, execution.PlanCanonical)
+	if _, err := w.jobs.GitHubFailure(t.Context(), job.ID, w.clock, w.check.executor.GitHubWait); err != nil { // the first GitHub failure of the job
+		t.Fatal(err)
+	}
+	w.clock = w.clock.Add(2 * time.Minute) // its backoff passed
+	leased, found, err := w.jobs.Lease(t.Context(), execution.LeaseRequest{Now: w.clock, LeaseID: fmt.Sprintf("%032x", 9), JobTimeout: time.Hour, GitHubWait: time.Hour},
+		func(context.Context, execution.Job) error { return nil })
+	if err != nil || !found || leased.ID != job.ID {
+		t.Fatalf("lease: job %d, found %v, error %v", leased.ID, found, err)
+	}
+
+	for range 40 { // longer than the wait, with an executor that keeps its lease alive
+		for _, offset := range []time.Duration{20 * time.Second, 40 * time.Second} { // a lease lasts a minute, and a run is a minute after the last
+			if _, err := w.jobs.Heartbeat(t.Context(), job.ID, leased.LeaseID, w.clock.Add(offset)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		w.execRun()
+	}
+
+	if got := w.jobByID(job.ID); got.State != execution.StateLeased {
+		t.Fatalf("the job is %s/%s, want it leased: the GitHub bound never ends a leased job", got.State, got.Reason)
+	}
+}

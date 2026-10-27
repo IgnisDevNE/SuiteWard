@@ -89,11 +89,12 @@ func (h *executorAPI) lease(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), leaseReadTimeout)
 	defer cancel()
-	var prepared *leaseAnswer // prepare may run for more than one job: the last call is the job that is granted
+	readBy := time.Now().Add(h.treeTimeout) // the tree reads of the whole lease end here, whatever the clock of the jobs says
+	var prepared *leaseAnswer               // prepare may run for more than one job: the last call is the job that is granted
 	job, granted, err := h.store.Lease(ctx, execution.LeaseRequest{Now: now, LeaseID: leaseID, JobTimeout: h.times.JobTimeout, GitHubWait: h.times.GitHubWait},
 		func(ctx context.Context, job execution.Job) error {
 			var err error
-			prepared, err = h.prepare(ctx, job, leaseID)
+			prepared, err = h.prepare(ctx, job, leaseID, readBy)
 			return err
 		})
 	switch {
@@ -145,8 +146,8 @@ func newLeaseID() (string, error) {
 // prepare reads what the answer for the job holds and refuses a job that is too large: the manifest and the declaration from the content store,
 // then the tree of each commit from GitHub. A GitHub failure wraps ErrGitHubUnavailable and a limit wraps ErrTooLarge; any other error is the
 // service's own and ends the request with nothing written. The answer's lease times are placeholders of their real length.
-func (h *executorAPI) prepare(ctx context.Context, job execution.Job, leaseID string) (*leaseAnswer, error) {
-	answer, err := h.build(ctx, job, leaseID)
+func (h *executorAPI) prepare(ctx context.Context, job execution.Job, leaseID string, readBy time.Time) (*leaseAnswer, error) {
+	answer, err := h.build(ctx, job, leaseID, readBy)
 	if errors.Is(err, execution.ErrTooLarge) {
 		h.logger.InfoContext(ctx, "executor API: a job is too large to lease", "job", job.ID, "reason", err)
 	}
@@ -167,7 +168,7 @@ func (e *jobError) Error() string { return fmt.Sprintf("job %d: %v", e.job, e.er
 
 func (e *jobError) Unwrap() error { return e.err }
 
-func (h *executorAPI) build(ctx context.Context, job execution.Job, leaseID string) (*leaseAnswer, error) {
+func (h *executorAPI) build(ctx context.Context, job execution.Job, leaseID string, readBy time.Time) (*leaseAnswer, error) {
 	repo, err := h.repoName(ctx, job.RepositoryID)
 	if err != nil {
 		return nil, err
@@ -178,11 +179,11 @@ func (h *executorAPI) build(ctx context.Context, job execution.Job, leaseID stri
 	}
 	answer := &leaseAnswer{JobID: job.ID, LeaseID: leaseID, LeaseExpiresAt: rfc3339(time.Time{}), DeadlineAt: rfc3339(time.Time{}), Plan: string(job.Plan), Pull: job.PullNumber,
 		Profile: leaseProfile{ID: job.Profile, Image: goprofile.Image}, Manifest: manifest, Declaration: declaration, Limits: jobLimits}
-	if answer.Head, err = h.side(ctx, job, repo, job.HeadSHA); err != nil {
+	if answer.Head, err = h.side(ctx, job, repo, job.HeadSHA, readBy); err != nil {
 		return nil, err
 	}
 	if job.Plan == execution.PlanReceipt {
-		base, err := h.side(ctx, job, repo, job.BaseSHA)
+		base, err := h.side(ctx, job, repo, job.BaseSHA, readBy)
 		if err != nil {
 			return nil, err
 		}
@@ -199,7 +200,9 @@ func (h *executorAPI) build(ctx context.Context, job execution.Job, leaseID stri
 }
 
 // side reads the tree entries of one commit of the job.
-func (h *executorAPI) side(ctx context.Context, job execution.Job, repo, sha string) (leaseSide, error) {
+func (h *executorAPI) side(ctx context.Context, job execution.Job, repo, sha string, readBy time.Time) (leaseSide, error) {
+	ctx, cancel := context.WithDeadline(ctx, readBy)
+	defer cancel()
 	entries, err := h.trees(ctx, repo, sha)
 	switch {
 	case errors.Is(err, github.ErrTreeTruncated):

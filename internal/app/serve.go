@@ -163,7 +163,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		if cfg.GitHub != nil {
 			wake = func(ctx context.Context) error { return runtime.Wake(ctx, river.Wake{river.ChecksKind}) }
 		}
-		executorAPI, err := newExecutorAPI(executorDeps{token: []byte(cfg.ExecutorToken.Reveal()), store: executions, liveness: liveness, times: cfg.Executor, content: artifacts,
+		executorAPI, err := newExecutorAPI(executorDeps{token: []byte(cfg.ExecutorToken.Reveal()), store: executions, liveness: liveness, times: cfg.Executor, treeTimeout: treeReadTimeout, content: artifacts,
 			owners: store, trees: trees, archives: archives, wake: wake, stopping: a.stopping.Load, logger: logger, now: time.Now})
 		if err != nil {
 			return errors.Join(err, shutdown(logger, a, newHTTPServer(nil), runtime, pool, cfg.ShutdownTimeout))

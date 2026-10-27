@@ -42,6 +42,10 @@ const (
 // leaseReadTimeout bounds one lease request: the tree reads run inside the store's transaction and the listener closes a response after 30 s.
 const leaseReadTimeout = 20 * time.Second
 
+// treeReadTimeout bounds the tree reads of one lease (docs/contracts/runtime.md, "The executor API"). It is shorter than the lease request's, so a slow
+// GitHub ends the reads while the store still has the time to record the failure, and never as a transaction that rolls back.
+const treeReadTimeout = 15 * time.Second
+
 // treeEntry is one entry of a commit's tree as the lease answer lists it: the contract's {path, mode, sha}.
 type treeEntry struct {
 	Path string `json:"path"`
@@ -90,6 +94,8 @@ func (d executorDeps) validate() error {
 		missing = "liveness record"
 	case d.times.JobTimeout <= 0 || d.times.GitHubWait <= 0:
 		missing = "job timeout and GitHub wait"
+	case d.treeTimeout <= 0 || d.treeTimeout >= leaseReadTimeout:
+		missing = "deadline of the tree reads that is shorter than the lease request's"
 	case d.content == nil:
 		missing = "content store"
 	case d.owners == nil:

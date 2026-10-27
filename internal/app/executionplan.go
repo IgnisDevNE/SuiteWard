@@ -91,7 +91,7 @@ func (w wantedJob) holds(job execution.Job) bool {
 type executionRun struct {
 	policy executionPolicy
 	known  bool // the policy was read: a run that could not read it plans nothing and cancels nothing as unwanted
-	failed bool // the policy could not be read: no check of the project is decided as success while it cannot say whether the canonical run gates it
+	failed bool // the policy could not be read: no new success is decided while it cannot say whether the canonical run gates the check, and the wait rule applies
 }
 
 // executionRunOf reads the policy of the project, once for the run. Before the first canonical, and for a canonical that failed its integrity

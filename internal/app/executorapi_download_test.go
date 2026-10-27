@@ -80,8 +80,11 @@ func TestArchiveGivesTheReaderADeadline(t *testing.T) {
 				if got.status != http.StatusOK || len(calls) != 1 {
 					t.Fatalf("archive = %d %s with %d reader calls; want 200 and one call", got.status, got.text(), len(calls))
 				}
-				if deadline := calls[0].deadline; deadline.Before(started.Add(test.want)) || deadline.After(ended.Add(test.want)) {
-					t.Errorf("the reader's deadline = %v; want %v from the wall clock, between %v and %v", deadline, test.want, started.Add(test.want), ended.Add(test.want))
+				// The store keeps the job's deadline to the microsecond (execution.Stored), which can shorten the remaining time by less than one,
+				// and the clock may not have moved between started and the handler: the lower bound gives that microsecond back.
+				earliest, latest := started.Add(test.want-time.Microsecond), ended.Add(test.want)
+				if deadline := calls[0].deadline; deadline.Before(earliest) || deadline.After(latest) {
+					t.Errorf("the reader's deadline = %v; want %v from the wall clock, between %v and %v", deadline, test.want, earliest, latest)
 				}
 			})
 		}

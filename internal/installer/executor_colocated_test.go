@@ -66,7 +66,7 @@ func TestInstallCopiesTheProgramAsTheExecutorAndRecordsItsPin(t *testing.T) {
 		t.Fatalf("the executor's copy is %d bytes (%v), want the program's %d", len(got), err, len(program))
 	}
 	if runtime.GOOS != "windows" {
-		if info, err := os.Stat(h.executorBinary()); err != nil || info.Mode().Perm() != 0o755 {
+		if info, err := os.Stat(h.executorBinary()); err != nil || info.Mode().Perm() != 0o700 {
 			t.Errorf("the copy: %v %v", info, err)
 		}
 	}

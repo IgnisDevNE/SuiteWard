@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"time"
 
@@ -147,10 +148,10 @@ func (j *checksJob) cancelStale(ctx context.Context, repositoryID int64, pulls [
 	return errors.Join(failures...)
 }
 
-// cancelObsolete cancels the open jobs of the head whose binding is no longer wanted (the governing manifest or the policy changed), so that
-// the newest job of the head that is not cancelled is a wanted one.
-func (j *checksJob) cancelObsolete(ctx context.Context, s *pullState, wants []wantedJob) error {
-	for _, plan := range []execution.Plan{execution.PlanCanonical, execution.PlanReceipt} {
+// cancelObsolete cancels the open jobs of the head, for the plans that the run decided, whose binding is no longer wanted (the governing manifest or the policy
+// changed), so that the newest job of the head that is not cancelled is a wanted one.
+func (j *checksJob) cancelObsolete(ctx context.Context, s *pullState, wants []wantedJob, plans []execution.Plan) error {
+	for _, plan := range plans {
 		jobs, err := j.executions.HeadJobs(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, plan)
 		if err != nil {
 			return fmt.Errorf("read the %s jobs of the head: %w", plan, err)
@@ -169,7 +170,7 @@ func (j *checksJob) cancelObsolete(ctx context.Context, s *pullState, wants []wa
 
 // executionBasis says whether the head stands on a revision that is ready, as its check was decided before another rule held it back: ready
 // when the check is ready, or is a success that the runner block or the canonical gate held back for a head that is not unchanged. ok is
-// false for a check that says nothing of it (a wrong code, an invalid source, a head that could not be assessed): nothing is planned then.
+// false for a check that says nothing of it (a wrong code, an invalid source, a head that could not be assessed): no canonical job is planned then.
 func executionBasis(r checks.Result) (ready, ok bool) {
 	switch r.Reason {
 	case reasonReady:
@@ -210,21 +211,24 @@ func (x *executionRun) baseSpec(s *pullState, plan execution.Plan) execution.Spe
 }
 
 // execute decides what execution wants of the head of a pull request, whose check was decided as assessed before another rule held it back, and
-// creates the jobs (docs/contracts/runtime.md, "What the checks job does for execution", steps 2 to 5). A head whose check says nothing of its
-// revision wants nothing yet, and its open jobs stay.
+// creates the jobs (docs/contracts/runtime.md, "What the checks job does for execution", steps 2 to 5). The canonical plan depends on whether the revision is
+// ready, which a check that another rule decided (a wrong code, an invalid source) does not say: such a head wants no canonical job yet, and its open
+// canonical jobs stay. The receipt plan needs only the revision and the canonical version it expects, so it is decided whenever the check names the revision.
 func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, assessed checks.Result) (headJobs, error) {
 	if !x.known {
 		return headJobs{}, nil
 	}
+	both := []execution.Plan{execution.PlanCanonical, execution.PlanReceipt}
 	if isFork(s.pull.HeadRepo, s.p.Repo) || !x.policy.wants() {
-		return headJobs{}, j.cancelObsolete(ctx, s, nil)
+		return headJobs{}, j.cancelObsolete(ctx, s, nil, both)
 	}
 	ready, known := executionBasis(assessed)
-	if !known {
+	receiptWanted := x.policy.receiptOn() && assessed.Reference != ""
+	if !known && !receiptWanted {
 		return headJobs{}, nil
 	}
 	var bound revisionBinding
-	if assessed.Reference != "" && (ready || x.policy.receiptOn()) {
+	if assessed.Reference != "" && ((known && ready) || receiptWanted) {
 		var current bool
 		var err error
 		if bound, current, err = j.bindingOf(ctx, s, assessed.Reference); err != nil || !current {
@@ -233,46 +237,70 @@ func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, 
 	}
 	var wants []wantedJob
 	jobs := headJobs{reference: assessed.Reference}
-	if x.policy.canonicalOn() {
-		spec := x.baseSpec(s, execution.PlanCanonical)
-		spec.GoverningDigest, spec.GoverningSource = s.suite.manifest, domain.ManifestSource(s.suite.canonical)
-		if ready {
-			spec.GoverningDigest, spec.GoverningSource = bound.manifest, domain.ManifestSource(assessed.Reference)
-		}
-		if _, err := j.canonicalJob(ctx, spec); err != nil {
-			return headJobs{}, err
-		}
-		wants = append(wants, wantedOf(spec))
-	}
-	if x.policy.receiptOn() && assessed.Reference != "" {
-		spec := x.baseSpec(s, execution.PlanReceipt)
-		spec.GoverningDigest, spec.GoverningSource = bound.base.Digest(), domain.ManifestSource(bound.version)
-		var err error
-		if _, _, jobs.receiptApplies, err = j.receiptJob(ctx, s, x, spec, bound); err != nil {
-			return headJobs{}, err
-		}
-		if jobs.receiptApplies {
-			wants = append(wants, wantedOf(spec))
+	plans := []execution.Plan{execution.PlanReceipt}
+	if known {
+		plans = both
+		if x.policy.canonicalOn() {
+			want, err := j.wantCanonical(ctx, s, x, assessed.Reference, ready, bound)
+			if err != nil {
+				return headJobs{}, err
+			}
+			wants, jobs.canonicalPlanned = append(wants, want), true
 		}
 	}
-	if err := j.cancelObsolete(ctx, s, wants); err != nil {
+	if receiptWanted {
+		want, applies, err := j.wantReceipt(ctx, s, x, bound)
+		if err != nil {
+			return headJobs{}, err
+		}
+		if applies {
+			wants, jobs.receiptApplies = append(wants, want), true
+		}
+	}
+	if err := j.cancelObsolete(ctx, s, wants, plans); err != nil {
 		return headJobs{}, err
 	}
-	return j.readHeadJobs(ctx, s, x, bound, jobs)
+	return j.readHeadJobs(ctx, s, bound, jobs)
+}
+
+// wantCanonical creates the canonical job of the head when none holds its binding: the governing manifest is the revision's once the head is ready, and the
+// canonical's otherwise.
+func (j *checksJob) wantCanonical(ctx context.Context, s *pullState, x *executionRun, reference string, ready bool, bound revisionBinding) (wantedJob, error) {
+	spec := x.baseSpec(s, execution.PlanCanonical)
+	spec.GoverningDigest, spec.GoverningSource = s.suite.manifest, domain.ManifestSource(s.suite.canonical)
+	if ready {
+		spec.GoverningDigest, spec.GoverningSource = bound.manifest, domain.ManifestSource(reference)
+	}
+	if err := j.canonicalJob(ctx, spec); err != nil {
+		return wantedJob{}, err
+	}
+	return wantedOf(spec), nil
+}
+
+// wantReceipt finds or creates the receipt job of the head, with the manifest of the canonical version that the revision expects. applies is false when the
+// receipt does not apply to the revision.
+func (j *checksJob) wantReceipt(ctx context.Context, s *pullState, x *executionRun, bound revisionBinding) (want wantedJob, applies bool, err error) {
+	spec := x.baseSpec(s, execution.PlanReceipt)
+	spec.GoverningDigest, spec.GoverningSource = bound.base.Digest(), domain.ManifestSource(bound.version)
+	if applies, err = j.receiptJob(ctx, s, x, spec, bound); err != nil || !applies {
+		return wantedJob{}, false, err
+	}
+	return wantedOf(spec), true, nil
 }
 
 // headJobs are the jobs of a head that the canonical gate and the Receipt check read. A plan with no job reads as pending.
 type headJobs struct {
 	canonical, receipt       execution.Job
 	hasCanonical, hasReceipt bool
+	canonicalPlanned         bool   // a canonical job is wanted for the head, which the canonical gate reads
 	receiptApplies           bool   // the receipt applies to the revision of the head: its job may not exist yet
 	reference                string // the revision of the head: P<n>-R<m>, empty for none
 }
 
 // readHeadJobs reads the job of each wanted plan that the gates and the Receipt check read.
-func (j *checksJob) readHeadJobs(ctx context.Context, s *pullState, x *executionRun, bound revisionBinding, jobs headJobs) (headJobs, error) {
+func (j *checksJob) readHeadJobs(ctx context.Context, s *pullState, bound revisionBinding, jobs headJobs) (headJobs, error) {
 	var err error
-	if x.policy.canonicalOn() {
+	if jobs.canonicalPlanned {
 		if jobs.canonical, jobs.hasCanonical, err = j.gateJob(ctx, s, execution.PlanCanonical, artifact.Digest{}); err != nil {
 			return headJobs{}, err
 		}
@@ -343,51 +371,60 @@ func (j *checksJob) unconfigured() execution.Reason {
 	return execution.ReasonNotConfigured
 }
 
-func (j *checksJob) enqueue(ctx context.Context, spec execution.Spec, final execution.Reason) (execution.Job, error) {
-	job, _, err := j.executions.Enqueue(ctx, execution.NewJob{Spec: spec, Unavailable: final, At: j.now()})
-	if err != nil {
-		return execution.Job{}, fmt.Errorf("create the %s job of the head: %w", spec.Plan, err)
+func (j *checksJob) enqueue(ctx context.Context, spec execution.Spec, final execution.Reason) error {
+	if _, _, err := j.executions.Enqueue(ctx, execution.NewJob{Spec: spec, Unavailable: final, At: j.now()}); err != nil {
+		return fmt.Errorf("create the %s job of the head: %w", spec.Plan, err)
 	}
-	return job, nil
+	return nil
 }
 
-// canonicalJob finds or creates the canonical job of the head under spec: without an executor token it is created already unavailable.
-func (j *checksJob) canonicalJob(ctx context.Context, spec execution.Spec) (execution.Job, error) {
+// canonicalJob creates the canonical job of the head under spec unless one holds its binding: without an executor token it is created already unavailable.
+func (j *checksJob) canonicalJob(ctx context.Context, spec execution.Spec) error {
 	held, found, err := j.holder(ctx, spec)
 	if err != nil || (found && !j.replaceable(held)) {
-		return held, err
+		return err
 	}
 	return j.enqueue(ctx, spec, j.unconfigured())
 }
 
-// receiptJob finds or creates the receipt job of the head under spec. applies is false when the receipt does not apply to the revision. found
-// is false when it applies and there is no job yet, because GitHub could not be read: the receipt reads as pending, and no job is made until it
-// can be, or until EXECUTOR_GITHUB_WAIT has passed.
-func (j *checksJob) receiptJob(ctx context.Context, s *pullState, x *executionRun, spec execution.Spec, bound revisionBinding) (job execution.Job, found, applies bool, err error) {
+// receiptJob creates the receipt job of the head under spec unless one holds its binding. applies is false when the receipt does not apply to the revision,
+// or cannot be told (the manifest of the revision is not stored: the Contract check does not wait for it). When it applies and there is no job yet because
+// GitHub could not be read, the receipt reads as pending, and no job is made until it can be, or until EXECUTOR_GITHUB_WAIT has passed.
+func (j *checksJob) receiptJob(ctx context.Context, s *pullState, x *executionRun, spec execution.Spec, bound revisionBinding) (applies bool, err error) {
 	held, found, err := j.holder(ctx, spec)
 	if err != nil {
-		return execution.Job{}, false, false, err
+		return false, err
 	}
 	if found && !j.replaceable(held) {
-		return held, true, true, nil
+		return true, nil
 	}
-	if spec.ChangedPaths, spec.ChangedTotal, err = j.revisionChanges(ctx, bound, x.policy); err != nil || spec.ChangedTotal == 0 {
-		return execution.Job{}, false, false, err
+	spec.ChangedPaths, spec.ChangedTotal, err = j.revisionChanges(ctx, bound, x.policy)
+	switch {
+	case errors.Is(err, errManifestNotStored):
+		j.logger.WarnContext(ctx, "github checks receipt skipped: the manifest of the revision is not stored", "repo", s.p.Repo, "pull", s.pull.Number)
+		return false, nil
+	case err != nil || spec.ChangedTotal == 0:
+		return false, err
 	}
 	read, err := j.readReceipt(ctx, s, x)
 	if err != nil || read.wait {
-		return execution.Job{}, false, true, err
+		return true, err
 	}
 	spec.UnapprovedPaths, spec.BaseSHA = read.unapproved, read.base
-	job, err = j.enqueue(ctx, spec, read.final)
-	return job, err == nil, true, err
+	return true, j.enqueue(ctx, spec, read.final)
 }
+
+// errManifestNotStored says that the content store has no manifest for a revision (one from before manifests were kept).
+var errManifestNotStored = errors.New("the manifest of the revision is not stored")
 
 // revisionChanges lists the files that the canonical include matches (and its exclude does not) and the revision adds or changes against the
 // manifest of the canonical it expects: at most maxExecutionPaths, in path order, and how many there are. The service decides it from the two
 // manifests, with no Go parsing. None means the receipt is not applicable.
 func (j *checksJob) revisionChanges(ctx context.Context, b revisionBinding, policy executionPolicy) (paths []string, total int, err error) {
 	raw, err := j.contents.Read(ctx, b.manifest)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, 0, errManifestNotStored
+	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("read the manifest %s of the revision: %w", b.manifest, err)
 	}
@@ -435,37 +472,55 @@ type receiptRead struct {
 	wait       bool
 }
 
-// readReceipt reads what the receipt job of the head is created with. Without an executor token no merge base is read. A merge base that GitHub
-// does not have (404) makes the job unavailable for no-merge-base; any other failure waits, and once EXECUTOR_GITHUB_WAIT has passed since the
-// first failure for the head the job is created unavailable for github-unavailable, with none of the two (the first failure is kept in memory,
-// so a restart starts the clock again).
+// readReceipt reads what the receipt job of the head is created with. Without an executor token no merge base is read, and the job is created already
+// unavailable whatever GitHub says of the files that are not evaluated (they are display only, and a head must always find a job). A merge base that GitHub
+// does not have (404) makes the job unavailable for no-merge-base; any other failure waits, and once EXECUTOR_GITHUB_WAIT has passed since the first
+// failure for the head the job is created unavailable for github-unavailable, with none of the two (the first failure is kept in memory, so a restart
+// starts the clock again).
 func (j *checksJob) readReceipt(ctx context.Context, s *pullState, x *executionRun) (receiptRead, error) {
-	unapproved, err := j.unapprovedPaths(ctx, s, x)
-	if err == nil && !j.executorConfigured {
+	unapproved, readable, err := j.unapprovedPaths(ctx, s, x)
+	switch {
+	case err != nil:
+		return receiptRead{}, err
+	case !j.executorConfigured:
 		return receiptRead{unapproved: unapproved, final: execution.ReasonNotConfigured}, nil
+	case !readable:
+		return j.receiptWaits(s), nil
 	}
-	var base string
-	if err == nil {
-		switch base, err = j.reader.MergeBase(ctx, s.p.Repo, s.pull.BaseSHA, s.pull.HeadSHA); {
-		case err == nil:
-			delete(j.mergeFailures, checkPull{s.p.RepositoryID, s.pull.Number})
-			return receiptRead{unapproved: unapproved, base: base}, nil
-		case errors.Is(err, rest.ErrNotFound):
-			return receiptRead{unapproved: unapproved, final: execution.ReasonNoMergeBase}, nil
-		}
-		err = githubRead(err)
+	base, err := j.reader.MergeBase(ctx, s.p.Repo, s.pull.BaseSHA, s.pull.HeadSHA)
+	switch {
+	case err == nil:
+		delete(j.mergeFailures, checkPull{s.p.RepositoryID, s.pull.Number})
+		return receiptRead{unapproved: unapproved, base: base}, nil
+	case errors.Is(err, rest.ErrNotFound):
+		return receiptRead{unapproved: unapproved, final: execution.ReasonNoMergeBase}, nil
 	}
+	if err := j.githubFailure(ctx, s, githubRead(err)); err != nil {
+		return receiptRead{}, err
+	}
+	return j.receiptWaits(s), nil
+}
+
+// githubFailure says what a failed read for the receipt is: nil for GitHub, which could not be read (it is logged, with no text GitHub sent), and the error
+// when the context ended or the failure is not GitHub's.
+func (j *checksJob) githubFailure(ctx context.Context, s *pullState, err error) error {
 	if cancelled := ctx.Err(); cancelled != nil {
-		return receiptRead{}, cancelled
+		return cancelled
 	}
 	if !errors.Is(err, errGitHubRead) && !invalidSource(err) {
-		return receiptRead{}, &opaque{what: "read the receipt of the head", cause: err}
+		return &opaque{what: "read the receipt of the head", cause: err}
 	}
 	logReadFailure(ctx, j.logger, "github checks execution read failed", s.p.Repo, err)
+	return nil
+}
+
+// receiptWaits is what the receipt does while GitHub cannot be read: it waits, and once EXECUTOR_GITHUB_WAIT has passed since the first failure for the head
+// its job is created already unavailable for github-unavailable.
+func (j *checksJob) receiptWaits(s *pullState) receiptRead {
 	if j.firstFailure(s).Add(j.executor.GitHubWait).After(j.now()) {
-		return receiptRead{wait: true}, nil
+		return receiptRead{wait: true}
 	}
-	return receiptRead{final: execution.ReasonGitHubUnavailable}, nil
+	return receiptRead{final: execution.ReasonGitHubUnavailable}
 }
 
 // mergeFailure is the first failed read of the receipt of a head, which EXECUTOR_GITHUB_WAIT is counted from.
@@ -487,10 +542,18 @@ func (j *checksJob) firstFailure(s *pullState) time.Time {
 	return j.now()
 }
 
-// unapprovedPaths lists the files that the pull request adds or changes, that the include of the head's declaration matches and that the include
+// unapprovedPaths lists, with readable false when GitHub could not be read, the files that the pull request adds or changes, that the include of the head's declaration matches and that the include
 // of the canonical's does not: "not evaluated: pattern not approved yet". It is display only, so at most maxExecutionPaths are kept, in path order.
 // The head's declaration is read only when it is not the canonical's (a pull request that does not touch it has none to list).
-func (j *checksJob) unapprovedPaths(ctx context.Context, s *pullState, x *executionRun) ([]string, error) {
+func (j *checksJob) unapprovedPaths(ctx context.Context, s *pullState, x *executionRun) (paths []string, readable bool, err error) {
+	paths, err = j.readUnapproved(ctx, s, x)
+	if err != nil {
+		return nil, false, j.githubFailure(ctx, s, err) // nil: GitHub could not be read
+	}
+	return paths, true, nil
+}
+
+func (j *checksJob) readUnapproved(ctx context.Context, s *pullState, x *executionRun) ([]string, error) {
 	read, err := j.reader.Tree(ctx, s.p.Repo, s.pull.HeadSHA)
 	if err != nil {
 		return nil, githubRead(err)

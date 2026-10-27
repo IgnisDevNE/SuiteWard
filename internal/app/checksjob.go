@@ -323,6 +323,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			}
 		}
 	}
+	countsErr := j.restoreCounts(ctx, s, x, &d, &executed)
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
 		return "", err
 	}
@@ -335,7 +336,35 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err := j.commentAfterCheck(ctx, s, d.result, d.runners); err != nil {
 		return "", err
 	}
-	return d.problem, stepErr
+	return d.problem, errors.Join(stepErr, countsErr)
+}
+
+// restoreCounts gives a check that a wait restored the counts of the canonical run it was decided with. The stored result of the head goes out again when the ledger
+// sends a lost publication, and the builder refuses a canonical-failing check without its counts, which failed the step of every run until the wait ended; a required
+// success carries them too, and went out without. They are read again from the job the gate reads, and the gate is not decided again: a wait decides nothing new. A
+// success is restored with them only under a policy that was read, which says that the check carries counts. A canonical-failing check whose counts cannot be read, or no
+// longer show a blocking test, says assessment-pending, as a head with no decision does. The failure of the read is returned, once the check is published.
+func (j *checksJob) restoreCounts(ctx context.Context, s *pullState, x *executionRun, d *pullDecision, executed *executionOutcome) error {
+	failing := d.result.Reason == reasonCanonicalFailing
+	success := d.result.State == checks.Success && !d.result.Unblocked && x.known && x.policy.canonical == domain.CanonicalLevelRequired
+	if !d.wait || (!failing && !success) {
+		return nil
+	}
+	job, found, err := j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical, artifact.Digest{})
+	var run canonicalRun
+	if err == nil {
+		run, err = j.reads().canonical(ctx, job, found)
+	}
+	c := run.counts // zero unless the run is complete
+	blocking := c.Fail+c.Missing+c.Flaky > 0
+	switch {
+	case err == nil && run.status == domain.RunComplete && failing == blocking: // the counts fit the reason, which is what the builder requires
+		executed.counts = &checkExecution{Tests: c.Pass + c.Fail + c.Skipped + c.Missing + c.Flaky, Passed: c.Pass, Skipped: c.Skipped, Failed: c.Fail, Missing: c.Missing, Flaky: c.Flaky, Excluded: c.Excluded}
+	case failing:
+		d.result = s.base
+		d.result.State, d.result.Reason = checks.InProgress, reasonAssessmentPending
+	}
+	return err
 }
 
 func (j *checksJob) pullState(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState) (*pullState, error) {

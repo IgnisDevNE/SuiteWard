@@ -271,3 +271,35 @@ func TestUpgradeIsolatedWithoutAnExecutorTokenNamesTheReRunToo(t *testing.T) {
 		t.Errorf("an upgrade cannot run again at this release: the output must name the re-run of the install:\n%s", out)
 	}
 }
+
+// A host step that made a new token for a service that has the executor's token already (the administrator removed the old one) leaves the service
+// with a secret that locks the executor out. An upgrade at the installed release settles it, with a restart, instead of saying there is nothing to do.
+func TestUpgradeIsolatedAtTheInstalledReleaseSettlesATokenThatTheHostStepRotated(t *testing.T) {
+	u := newIsoUpgrade(t, nil)
+	u.f.secrets[SecretExecutorAuth] = strings.Repeat("cd", 32)
+	writeHandover(t, u.home, executorTokenValue)
+	if err := u.upgrade("--image", oldImage, "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, u.out.String())
+	}
+	if u.f.secrets[SecretExecutorAuth] != executorTokenValue || !u.f.has("secret create --replace "+SecretExecutorAuth+" -") {
+		t.Errorf("the secret holds %q: %v", u.f.secrets[SecretExecutorAuth], u.f.lines())
+	}
+	if !u.f.has("systemctl --user restart suiteward.service") {
+		t.Errorf("the service reads its secrets when it starts: %v", u.f.lines())
+	}
+	if out := u.out.String(); strings.Contains(out, "Nothing to upgrade") || !strings.Contains(out, "executor token") {
+		t.Errorf("the output must say that the token was replaced and not that there is nothing to do:\n%s", out)
+	}
+}
+
+func TestUpgradeIsolatedAtTheInstalledReleaseLeavesAnUnchangedTokenAlone(t *testing.T) {
+	u := newIsoUpgrade(t, nil)
+	u.f.secrets[SecretExecutorAuth] = executorTokenValue
+	writeHandover(t, u.home, executorTokenValue)
+	if err := u.upgrade("--image", oldImage, "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, u.out.String())
+	}
+	if !strings.Contains(u.out.String(), "Nothing to upgrade") || u.f.has("systemctl --user restart suiteward.service") {
+		t.Errorf("nothing changed, so nothing is restarted: %v\n%s", u.f.lines(), u.out.String())
+	}
+}

@@ -341,8 +341,9 @@ func (b resultBody) reason() (execution.Reason, error) {
 	return "", errors.New("a reason belongs to an unavailable result, and to it only")
 }
 
-// sandbox reads the sandbox of the run: required for a complete result, and well formed whenever it is there. The toolchain and the runtime are
-// printable ASCII.
+// sandbox reads the sandbox of the run: required for a complete result, and well formed whenever it is there. The image digest must parse. The
+// toolchain and the runtime are printable ASCII of at most 64 bytes, and empty only for an unavailable result: the executor may fail before it asked
+// the image or the runtime.
 func (b resultBody) sandbox(report *execution.Report) error {
 	if b.Sandbox == nil {
 		if report.Status == execution.StateComplete {
@@ -350,17 +351,18 @@ func (b resultBody) sandbox(report *execution.Report) error {
 		}
 		return nil
 	}
+	required := report.Status == execution.StateComplete
 	image, err := artifact.ParseDigest(b.Sandbox.ImageDigest)
-	if err != nil || !printableASCII(b.Sandbox.Toolchain) || !printableASCII(b.Sandbox.Runtime) {
+	if err != nil || !printableASCII(b.Sandbox.Toolchain, required) || !printableASCII(b.Sandbox.Runtime, required) {
 		return errors.New("the sandbox needs an image digest and a toolchain and runtime of printable ASCII")
 	}
 	report.ImageDigest, report.Toolchain, report.Runtime = image, b.Sandbox.Toolchain, b.Sandbox.Runtime
 	return nil
 }
 
-// printableASCII is true for 1 to 64 bytes of printable ASCII, spaces included.
-func printableASCII(s string) bool {
-	if s == "" || len(s) > 64 {
+// printableASCII is true for up to 64 bytes of printable ASCII, spaces included, and for at least one when the text is required.
+func printableASCII(s string, required bool) bool {
+	if len(s) > 64 || (required && s == "") {
 		return false
 	}
 	for i := range len(s) {

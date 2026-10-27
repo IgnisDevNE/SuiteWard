@@ -237,7 +237,9 @@ type receiptView struct {
 // manifest of the canonical version that the revision expects. A project with no Suite has nothing to read: the view is empty.
 func (r executionReader) receiptView(ctx context.Context, repositoryID int64, find func(context.Context, governance.Tx) (contract.Proposal, bool, error)) (receiptView, error) {
 	var view receiptView
+	entered := false // Do answers ErrNotFound before it runs the work when the Suite does not exist: one that comes later is a read that failed
 	err := r.suites.Do(ctx, owner.ProjectID(repositoryID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		entered = true
 		state, err := tx.Suite(ctx)
 		if err != nil {
 			return fmt.Errorf("load suite: %w", err)
@@ -265,7 +267,7 @@ func (r executionReader) receiptView(ctx context.Context, repositoryID int64, fi
 		view.expected = historical.Version().Manifest()
 		return nil
 	})
-	if errors.Is(err, governance.ErrNotFound) {
+	if errors.Is(err, governance.ErrNotFound) && !entered {
 		return receiptView{}, nil
 	}
 	if err != nil {

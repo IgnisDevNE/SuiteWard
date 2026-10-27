@@ -291,7 +291,9 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err != nil {
 		return "", err
 	}
-	if d.wait || x.failed { // a policy that cannot be read cannot say whether the canonical run gates the check: it is never decided as success
+	// A policy that cannot be read cannot say whether the canonical run gates the check, so no new success is decided: the wait rule applies, which keeps the stored
+	// check of this head when its reason is one that a failed read keeps (a stored success, or a gate reason, included) and otherwise says assessment-pending.
+	if d.wait || x.failed {
 		d.wait = true
 		j.overrideWait(s, &d)
 	}

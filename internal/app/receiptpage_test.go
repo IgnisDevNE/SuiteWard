@@ -19,6 +19,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner/ownertest"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // The receipt page (docs/contracts/runtime.md, "The receipt page"): the results of the current head of a pull request, rebuilt on every request from the stored rows.
@@ -502,3 +503,54 @@ func TestOnlyOneReceiptPageIsBuiltAtATime(t *testing.T) {
 }
 
 func artifactHash(text string) string { return artifact.Hash([]byte(text)).String() }
+
+// pageReasonsUnknown is an execution store whose unavailable jobs have a reason that no text knows: an impossible state of the store.
+type pageReasonsUnknown struct{ execution.Store }
+
+func (s pageReasonsUnknown) HeadJobs(ctx context.Context, repositoryID int64, pull int, head string, plan execution.Plan) ([]execution.Job, error) {
+	jobs, err := s.Store.HeadJobs(ctx, repositoryID, pull, head, plan)
+	for i := range jobs {
+		if jobs[i].State == execution.StateUnavailable {
+			jobs[i].Reason = "the-moon"
+		}
+	}
+	return jobs, err
+}
+
+// A reason that no text knows is an impossible state of the store, not a word to show: the page is not built, as for every other read that fails.
+func TestReceiptPageIs503ForAnUnavailableJobWhoseReasonNoTextKnows(t *testing.T) {
+	w := newPageWorld(t)
+	w.check.executorConfigured = false
+	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
+	w.pages.executions = pageReasonsUnknown{Store: w.jobs}
+
+	response := w.get("127.0.0.1:8080", receiptPath)
+
+	if response.Code != http.StatusServiceUnavailable || response.Body.String() != "the receipt is unavailable\n" {
+		t.Fatalf("status %d, body %q, want 503 and the fixed text", response.Code, response.Body.String())
+	}
+	if !strings.Contains(w.apiLogs.String(), "the-moon") {
+		t.Errorf("the cause is not logged: %s", w.apiLogs)
+	}
+}
+
+func TestModeLineRefusesASummaryNoTextCanSay(t *testing.T) {
+	for name, summary := range map[string]domain.ModeSummary{
+		"a reason that no words exist for": {Verdict: domain.VerdictNotMet, Reason: "a-reason-from-the-future"},
+		"no reason at all":                 {Verdict: domain.VerdictNotMet},
+		"a verdict that is none":           {},
+		"the verdict of no mode":           {Verdict: domain.VerdictNotJudged},
+	} {
+		if line, err := modeLine(domain.ModeFix, summary); err == nil {
+			t.Errorf("%s: %q", name, line)
+		}
+	}
+	for summary, want := range map[domain.ModeSummary]string{
+		{Verdict: domain.VerdictMet}:                                      "fix: met",
+		{Verdict: domain.VerdictNotMet, Reason: domain.ReasonNoDetection}: "fix: not met: no test detects anything (no-detection)",
+	} {
+		if line, err := modeLine(domain.ModeFix, summary); err != nil || line != want {
+			t.Errorf("modeLine(%+v) = %q, %v; want %q", summary, line, err, want)
+		}
+	}
+}

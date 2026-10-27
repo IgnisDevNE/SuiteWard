@@ -191,7 +191,9 @@ func (p *receiptPages) receiptRun(ctx context.Context, reader executionReader, s
 		return out, nil
 	}
 	out.Counts = commandtext.ReceiptFacts(run.counts, run.markers)
-	out.Modes = modeLines(run.counts)
+	if out.Modes, err = modeLines(run.counts); err != nil {
+		return pageRun{}, err
+	}
 	if run.counts.Empty() {
 		out.Notes = append(out.Notes, "This receipt has nothing to judge, so an approve needs no mode.")
 	}
@@ -239,7 +241,11 @@ func (p *receiptPages) runOf(ctx context.Context, state owner.State, job executi
 		run.Facts = append(run.Facts, evidenceLines(job, result)...)
 	}
 	if job.State == execution.StateUnavailable {
-		run.Notes = append(run.Notes, unavailableNote(job.Reason, ran))
+		note, err := unavailableNote(job.Reason, ran)
+		if err != nil {
+			return pageRun{}, execution.StoredResult{}, err
+		}
+		run.Notes = append(run.Notes, note)
 	}
 	if unblocked {
 		run.Notes = append(run.Notes, "The owner unblocked this run: it was unavailable, so the tests did not run.")
@@ -256,16 +262,16 @@ func stateOf(job execution.Job) string {
 }
 
 // unavailableNote says why a run is unavailable, in words and by its code: "Not run" for a job that no executor ran.
-func unavailableNote(reason execution.Reason, ran bool) string {
+func unavailableNote(reason execution.Reason, ran bool) (string, error) {
 	lead := "Not run: "
 	if ran {
 		lead = "Unavailable: "
 	}
 	code := commandtext.Visible(string(reason))
 	if words, known := commandtext.UnavailableReason(string(reason)); known {
-		return lead + words + " (" + code + ")."
+		return lead + words + " (" + code + ").", nil
 	}
-	return lead + code + "."
+	return lead + code + ".", nil
 }
 
 // evidenceLines are the evidence binding of a run: the manifest that governed it and where it came from, the levels of the policy, the profile, the executor and its
@@ -295,21 +301,31 @@ func evidenceLines(job execution.Job, r execution.StoredResult) []string {
 }
 
 // modeLines say, for each of the three modes, whether the summary of the receipt meets it and, when it does not, why.
-func modeLines(counts domain.ReceiptCounts) []string {
+func modeLines(counts domain.ReceiptCounts) ([]string, error) {
 	var lines []string
 	for _, mode := range []domain.Mode{domain.ModeFix, domain.ModeFeature, domain.ModeRefactor} {
 		summary, err := counts.Summarize(mode)
-		switch {
-		case err != nil: // the three modes are modes: an impossible state
-			lines = append(lines, mode.String()+": unknown")
-		case summary.Verdict == domain.VerdictMet:
-			lines = append(lines, mode.String()+": met")
-		default:
-			words, _ := commandtext.ModeReason(summary.Reason)
-			lines = append(lines, mode.String()+": not met: "+words+" ("+string(summary.Reason)+")")
+		if err != nil { // the three modes are modes
+			return nil, err
 		}
+		line, err := modeLine(mode, summary)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, line)
 	}
-	return lines
+	return lines, nil
+}
+
+// modeLine says whether one summary is met and, when it is not, why.
+func modeLine(mode domain.Mode, summary domain.ModeSummary) (string, error) {
+	switch summary.Verdict {
+	case domain.VerdictMet:
+		return mode.String() + ": met", nil
+	default:
+		words, _ := commandtext.ModeReason(summary.Reason)
+		return mode.String() + ": not met: " + words + " (" + string(summary.Reason) + ")", nil
+	}
 }
 
 // testLines show each test as its state, its package, its name and its file, and for an excluded one its reason.

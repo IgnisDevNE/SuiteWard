@@ -298,3 +298,34 @@ func (f *failingFirstRead) Read(ctx context.Context, digest artifact.Digest) ([]
 	}
 	return f.ContentReader.Read(ctx, digest)
 }
+
+// What a reduction lowers is told from the entries that scope.Reductions writes, exactly as the renderer takes them: the same two prefixes, and nothing that merely begins
+// with the same word.
+func TestReductionKindsTellsTheExecutionEntriesOfScopeReductionsFromEveryOtherRule(t *testing.T) {
+	for name, tc := range map[string]struct {
+		rules, paths  []string
+		policy, scope bool
+	}{
+		"the canonical level":               {[]string{"execution canonical: required -> advisory"}, nil, true, false},
+		"the receipt level":                 {[]string{"execution receipt: advisory -> off"}, nil, true, false},
+		"both levels":                       {[]string{"execution canonical: required -> off", "execution receipt: required -> off"}, nil, true, false},
+		"a rule":                            {[]string{"rule /a/**"}, nil, false, true},
+		"an exclude":                        {[]string{"exclude /a/b_test.go"}, nil, false, true},
+		"a path":                            {nil, []string{"a/b_test.go"}, false, true},
+		"a level and a rule":                {[]string{"execution receipt: advisory -> off", "rule /a/**"}, nil, true, true},
+		"a level and a path":                {[]string{"execution canonical: required -> advisory"}, []string{"a/b_test.go"}, true, true},
+		"a word that begins like an entry":  {[]string{"execution policy: required -> off"}, nil, false, true},
+		"an entry of another kind of level": {[]string{"executions receipt: advisory -> off"}, nil, false, true},
+		"an exclude that names an entry":    {[]string{"exclude execution canonical: x"}, nil, false, true},
+		"an entry without its colon":        {[]string{"execution canonical required -> off"}, nil, false, true},
+		"an entry in upper case":            {[]string{"Execution canonical: required -> off"}, nil, false, true},
+		"nothing":                           {nil, nil, false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			policy, scope := reductionKinds(governance.RevisionNotice{ReducedRules: tc.rules, ReducedPaths: tc.paths})
+			if policy != tc.policy || scope != tc.scope {
+				t.Errorf("reductionKinds = policy %v, scope %v; want %v and %v", policy, scope, tc.policy, tc.scope)
+			}
+		})
+	}
+}

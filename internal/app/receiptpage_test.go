@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner/ownertest"
@@ -188,12 +189,12 @@ func TestReceiptPageStatesTheHeadsTheTierAndThatTheResultsAreEvidence(t *testing
 	w := newPageWorld(t)
 	w.completed(canonicalTests("pass"), receiptTests("detects"))
 	page := w.text()
-	w.wantText(page, "Head: "+cjHead2, "Base: "+bootHead, "Installation tier: isolated", "evidence reported by an executor", "not a verdict")
+	w.wantText(page, "Head: "+cjHead2, "Base branch head: "+bootHead, "Installation tier: isolated", "evidence reported by an executor", "not a verdict")
 	if strings.Contains(page, "assurance is reduced") {
 		t.Errorf("the isolated tier states a reduced assurance:\n%s", page)
 	}
 	w.serve("co-located") // the enrollment recorded isolated: the effective tier is co-located
-	w.wantText(w.text(), "Installation tier: co-located", "assurance is reduced")
+	w.wantText(w.text(), "Installation tier: co-located", commandtext.CoLocatedNotice)
 }
 
 func TestReceiptPageStatesTheEvidenceBindingOfEachRunAndTheReceiptOfThePullRequest(t *testing.T) {

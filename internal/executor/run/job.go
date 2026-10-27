@@ -19,6 +19,12 @@ func (e *Executor) handle(ctx context.Context, lease *client.Lease) {
 	log := e.cfg.Log.With("job", lease.JobID, "plan", lease.Plan, "pull", lease.Pull)
 	work, drop := context.WithCancelCause(context.WithoutCancel(ctx))
 	defer drop(nil)
+	if time.Until(lease.DeadlineAt.Add(-e.cfg.Pacing.Margin)) <= 0 {
+		// A lease that is already past its deadline less the margin never runs: the service ends the attempt as timeout.
+		drop(context.DeadlineExceeded)
+		log.Info("the work was dropped and nothing is posted", "cause", context.Cause(work))
+		return
+	}
 	over, finish := context.WithCancel(work) // ends with the work, and when the attempt is over
 	timers := make(chan struct{}, 2)
 	go func() { e.dropAtDeadline(over, lease.DeadlineAt, drop, log); timers <- struct{}{} }()

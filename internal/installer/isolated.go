@@ -488,7 +488,7 @@ func waitStable(ctx context.Context, env Env, scr *ui.Screen, httpPort int) erro
 // home directory in the passwd database: the installer writes under HOME and must not be steered by the environment. It
 // returns HOME.
 func checkAccount(run func(string, ...string) (string, error), home string) (string, error) {
-	command := "sudo -u " + ServiceAccount + " -H env XDG_RUNTIME_DIR=/run/user/<uid of " + ServiceAccount + "> DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus suiteward install (`sudo suiteward install host` prints it with the uid filled in)"
+	command := "sudo -u " + ServiceAccount + " -H env XDG_RUNTIME_DIR=/run/user/<uid of " + ServiceAccount + "> DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus suiteward install (`sudo suiteward install host --sha256sums <the SHA256SUMS of the release>` prints it with the uid filled in)"
 	if uid, err := run("id", "-u"); err != nil {
 		return "", fmt.Errorf("find out who is running the installer: %w", err)
 	} else if uid == "0" {
@@ -536,7 +536,7 @@ func stackNeverStarted(run func(string, ...string) (string, error), settingsPath
 func checkUserManager(run func(string, ...string) (string, error)) error {
 	state, err := run("systemctl", "--user", "show", "--property=SystemState", "--value")
 	if err != nil {
-		return fmt.Errorf("ask the systemd user manager for its state (open the shell as `sudo suiteward install host` prints it, with XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS set): %w", err)
+		return fmt.Errorf("ask the systemd user manager for its state (open the shell as `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>` prints it, with XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS set): %w", err)
 	}
 	if state != "running" && state != "degraded" {
 		return fmt.Errorf("the systemd user manager is %q, want running or degraded: wait a few seconds and run again", state)
@@ -547,7 +547,7 @@ func checkUserManager(run func(string, ...string) (string, error)) error {
 	}
 	linger, err := run("loginctl", "show-user", user, "--property=Linger", "--value")
 	if err != nil || linger != "yes" {
-		return fmt.Errorf("linger is not enabled for %s, so its services would stop at logout: an administrator runs `sudo suiteward install host`", user)
+		return fmt.Errorf("linger is not enabled for %s, so its services would stop at logout: an administrator runs `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>`", user)
 	}
 	return nil
 }
@@ -595,7 +595,7 @@ func installedWithGiven(r *Resolver, installed, asked Settings) Settings {
 // sayChanges says which installed port or job timeout this run changes.
 func sayChanges(say func(string, ...any), installed, now Settings) {
 	if now.HTTPPort != installed.HTTPPort {
-		say("Changing the HTTP port of the installed stack from %d to %d, as asked. The executor is pointed at the old one by the administrator's step: run `sudo suiteward install host --http-port %d` so that it finds the service.\n", installed.HTTPPort, now.HTTPPort, now.HTTPPort)
+		say("Changing the HTTP port of the installed stack from %d to %d, as asked. The executor is pointed at the old one by the administrator's step: run `sudo suiteward install host --sha256sums <the SHA256SUMS of the release> --http-port %d` so that it finds the service.\n", installed.HTTPPort, now.HTTPPort, now.HTTPPort)
 	}
 	if now.MCPPort != installed.MCPPort {
 		say("Changing the MCP port of the installed stack from %d to %d, as asked.\n", installed.MCPPort, now.MCPPort)
@@ -664,7 +664,7 @@ func adoptUnitsDir(unitsDir, homeEnvFile string, refreshDB bool) (installedStack
 	if st.adopted.EnvFile != DefaultEnvFile {
 		st.oldEnv = st.adopted.EnvFile
 		if _, err := os.Stat(homeEnvFile); err != nil {
-			return installedStack{}, fmt.Errorf("the installed units read the GitHub env file at %s; an administrator runs `sudo suiteward install host`, which copies it to %s, then run this again", st.adopted.EnvFile, homeEnvFile)
+			return installedStack{}, fmt.Errorf("the installed units read the GitHub env file at %s; an administrator runs `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>`, which copies it to %s, then run this again", st.adopted.EnvFile, homeEnvFile)
 		}
 	}
 	return st, nil

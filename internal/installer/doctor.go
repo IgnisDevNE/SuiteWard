@@ -132,7 +132,7 @@ const (
 	defaultMachine = "podman-machine-default"
 	machineUser    = "user" // the rootless user inside a Podman machine; ssh defaults to root, whose store is rootful
 	probeTimeout   = 5 * time.Second
-	metadataFix    = "as an administrator run `sudo suiteward install host --metadata-rule yes`, which adds the nft rule that refuses 169.254.169.254 for the service account, then run doctor again"
+	metadataFix    = "as an administrator run `sudo suiteward install host --sha256sums <the SHA256SUMS of the release> --metadata-rule yes`, which adds the nft rule that refuses 169.254.169.254 for the service account, then run doctor again"
 	// Connects to the instance metadata address from the database container, which sits on the service network. The probe
 	// answers on its own output, so that an exec that fails is not read as "blocked", and first makes the same kind of
 	// connection to the database's own port: when that fails the probe would be "blocked" for any reason.

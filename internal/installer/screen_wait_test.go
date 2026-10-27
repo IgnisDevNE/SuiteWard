@@ -94,7 +94,7 @@ func TestEveryCommandEndsOnAPageThatWaitsForEnter(t *testing.T) {
 		{"install host", 1, func(t *testing.T, c *termConsole, in io.Reader) error {
 			h := newHostFake()
 			env := Env{Deps: h.deps(), Term: Terminal{In: in, Out: &bytes.Buffer{}}, PortFree: func(int) error { return nil }, Sleep: func(time.Duration) {}, OpenScreen: c.open}
-			return installHost(ctx, []string{"--yes", "--metadata-rule", "no"}, env)
+			return installHost(ctx, append([]string{"--yes", "--metadata-rule", "no"}, hostSumsArgs(t, h)...), env)
 		}},
 		{"enroll", 3, func(t *testing.T, c *termConsole, in io.Reader) error { // one Enter starts setup, one ends its page of the real terminal
 			h := enrollHarness(t, statusNoOwner)

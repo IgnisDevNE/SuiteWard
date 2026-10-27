@@ -17,6 +17,7 @@ import (
 // that the host step leaves world-readable, `id`, `loginctl`, `systemctl show` of a system unit and `pgrep`, and from what /status says the
 // service saw.
 
+// warn reports a pass that needs a look: it is counted and shown as a warning, and it does not change the exit code.
 func (d *doctor) warn(name, detail, fix string) {
 	d.results = append(d.results, doctorResult{Name: name, OK: true, Detail: oneLine(detail), Fix: fix, Warning: true})
 }
@@ -29,7 +30,7 @@ func (d *doctor) out(ctx context.Context, name string, args ...string) (string, 
 
 // hostStep is the command that makes the executor on an isolated host, as the fix of most of its results names it.
 func (d *doctor) hostStep() string {
-	return "as the administrator run `sudo " + d.deps.command() + " install host`"
+	return "as the administrator run `sudo " + d.deps.command() + " install host --sha256sums <the SHA256SUMS of the release>`"
 }
 
 // checkExecutorIsolated runs the checks of the executor on an isolated host.
@@ -45,7 +46,7 @@ func (d *doctor) checkExecutorIsolated(ctx context.Context) {
 		notSeen:    "read the executor's log; " + d.hostStep() + " again, then the install as the service account, so that both hold one token and one port",
 	})
 	// The storage of the executor's Podman is its own, and this account cannot read it: the host step is what pulls the image and checks it by digest.
-	d.pass("executor.image", "the Go image of the sandboxes is in the storage of "+ExecutorAccount+", which this account cannot read: it is not checked here, the host step pulls it and verifies its digest at every run (run `sudo "+d.deps.command()+" install host` again after an upgrade)")
+	d.pass("executor.image", "the Go image of the sandboxes is in the storage of "+ExecutorAccount+", which this account cannot read: it is not checked here, the host step pulls it and verifies its digest at every run (run `sudo "+d.deps.command()+" install host --sha256sums <the SHA256SUMS of the release>` again after an upgrade)")
 }
 
 // subidRange is the range an account has in /etc/subuid or /etc/subgid.
@@ -210,10 +211,10 @@ func mustAtoi(digits string) int {
 }
 
 // checkExecutorBinary checks the executor's binary: it is there, it is the one that was installed (the pin beside it), it is this program's
-// build, and, when the pin is a line of the release's SHA256SUMS, it is the release's. A pin that no SHA256SUMS gave is a warning: nothing
-// checked it against the release.
+// build, and the pin is a line of the release's SHA256SUMS, which the host step requires. A pin that no SHA256SUMS gave (one that was made by hand) fails: on
+// this tier the pin is the signed release's.
 func (d *doctor) checkExecutorBinary(ctx context.Context) {
-	fix := d.hostStep() + " with this program (and --sha256sums of its release)"
+	fix := d.hostStep() + " with this program"
 	listed, err := d.out(ctx, "sha256sum", executorBinary)
 	if err != nil || len(strings.Fields(listed)) == 0 {
 		d.fail("executor.binary", "no executor binary at "+executorBinary+": "+fmt.Sprint(err), fix)
@@ -235,9 +236,9 @@ func (d *doctor) checkExecutorBinary(ctx context.Context) {
 		d.fail("executor.binary", fmt.Sprintf("the executor's binary has changed since it was installed (SHA-256 %s, pinned %s)", sum, pinned), fix)
 	case sum != own:
 		d.fail("executor.binary", fmt.Sprintf("the executor runs another build than this program (the executor's SHA-256 %s, this program's %s)", sum, own), fix)
-	case !releaseAsset.MatchString(name):
-		d.warn("executor.binary", "the executor's binary is this program's build (SHA-256 "+sum+"), but no SHA256SUMS of a release was given when it was installed, so nothing checked it against the release",
-			d.hostStep()+" --sha256sums <the SHA256SUMS of the release> with a release binary")
+	case !releaseAssetOf("linux").MatchString(name):
+		d.fail("executor.binary", "the executor's binary (SHA-256 "+sum+") is pinned without a line of a release's SHA256SUMS (the pin names "+name+"), so the release does not list it: on this tier the pin is the signed release's",
+			d.hostStep()+" with that release's binary")
 	default:
 		d.pass("executor.binary", "the executor's binary (SHA-256 "+sum+") is the pinned one, this program's, and the release's line of SHA256SUMS "+name)
 	}

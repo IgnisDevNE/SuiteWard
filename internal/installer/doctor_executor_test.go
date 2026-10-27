@@ -124,6 +124,9 @@ func TestDoctorIsolatedExecutorFailures(t *testing.T) {
 			if !strings.Contains(res[c.check].Fix, c.fix) {
 				t.Errorf("fix %q does not mention %q", res[c.check].Fix, c.fix)
 			}
+			if fix := res[c.check].Fix; strings.Contains(fix, "install host") && !strings.Contains(fix, "--sha256sums") {
+				t.Errorf("fix %q sends the administrator to a host step that refuses to run without --sha256sums", fix)
+			}
 		})
 	}
 }
@@ -140,14 +143,17 @@ func mustUnit(t *testing.T, port int) string {
 	return string(unit)
 }
 
-func TestDoctorIsolatedExecutorBinaryThatNothingPinnedToTheReleaseIsAWarningNotAFailure(t *testing.T) {
+// The pin of the isolated executor is the signed release's: a binary that no line of the release's SHA256SUMS lists (the pin carries the name of the
+// copy and not of a release asset) fails the check, and the fix is the host step with the release's sums.
+func TestDoctorIsolatedExecutorBinaryThatTheReleaseSumsDoNotListFails(t *testing.T) {
 	f, s := isolatedRig{over: []rule{{match: "=" + executorPin, out: ownHash(t) + "  suiteward-executor\n"}}}.build(t)
 	code, res, _ := runDoctor(t, f, s)
-	if code != 0 {
-		t.Errorf("a development build is not a failure: exit %d, %+v", code, res)
+	if code != 1 {
+		t.Errorf("exit %d, want 1: %+v", code, res)
 	}
-	if r := res["executor.binary"]; !r.OK || !r.Warning || !strings.Contains(r.Detail, "SHA256SUMS") {
-		t.Errorf("executor.binary = %+v, want a passing warning that says nothing checked it against SHA256SUMS", r)
+	wantFail(t, res, "executor.binary", "SHA256SUMS")
+	if fix := res["executor.binary"].Fix; !strings.Contains(fix, "install host") || !strings.Contains(fix, "--sha256sums") {
+		t.Errorf("the fix %q must name the host step with --sha256sums", fix)
 	}
 }
 

@@ -40,6 +40,10 @@ type UnitParams struct {
 	// NoReportURL leaves the report base URL out of the service unit. Only the adoption sets it, for units of v0.3.0-alpha.2 that
 	// predate the line, so that they compare equal; an install or an upgrade renders the line (UnitParamsFrom never sets it).
 	NoReportURL bool
+	// NoExecutor leaves the executor token out of the service unit: the secret does not exist (the administrator has not run the host step of
+	// this release, so there is no token to give the service), and a unit that mounts a secret that is not there does not start. The adoption
+	// also sets it for units that predate the executor, so that they compare equal.
+	NoExecutor bool
 }
 
 // reportBaseURLEnv names the variable that tells the service the address of its own HTTP listener, which is published on the loopback.

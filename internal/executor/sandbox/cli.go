@@ -151,7 +151,9 @@ func runArgs(engine, name string, s Spec) []string {
 	memory := strconv.Itoa(l.MemoryMiB) + "m"
 	// --sig-proxy=false: a signal to the attached CLI (systemd stopping the executor's unit) is not forwarded to the container's first process, go
 	// test, which would end with 143 and make every expected test read fail. The executor's grace and its kill by name end a container.
-	args := []string{"run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only"}
+	// --log-driver=none: the runtime keeps no copy of the container's output on the host (Docker on Linux defaults to an unbounded json-file);
+	// the attached CLI still receives it, which is all the runner reads.
+	args := []string{"run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only", "--log-driver=none"}
 	if engine == enginePodman {
 		// Under --read-only Podman still mounts a writable tmpfs on /tmp, /var/tmp, /run and /dev/shm unless it is told not to.
 		args = append(args, "--read-only-tmpfs=false")

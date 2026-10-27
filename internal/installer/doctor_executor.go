@@ -236,8 +236,8 @@ func (d *doctor) checkExecutorBinary(ctx context.Context) {
 	case sum != own:
 		d.fail("executor.binary", fmt.Sprintf("the executor runs another build than this program (the executor's SHA-256 %s, this program's %s)", sum, own), fix)
 	case !releaseAsset.MatchString(name):
-		d.warn("executor.binary", "the executor's binary is this program's build (SHA-256 "+sum+"), but no SHA256SUMS of a release was given when it was installed, so nothing checked it against the release",
-			d.hostStep()+" --sha256sums <the SHA256SUMS of the release> with a release binary")
+		d.fail("executor.binary", "the executor's binary (SHA-256 "+sum+") is pinned without a line of a release's SHA256SUMS (the pin names "+name+"), so the release does not list it: on this tier the pin is the signed release's",
+			d.hostStep()+" --sha256sums <the SHA256SUMS of the release> with that release's binary")
 	default:
 		d.pass("executor.binary", "the executor's binary (SHA-256 "+sum+") is the pinned one, this program's, and the release's line of SHA256SUMS "+name)
 	}

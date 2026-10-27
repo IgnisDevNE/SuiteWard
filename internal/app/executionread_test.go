@@ -116,12 +116,12 @@ func TestTheReceiptJobAGateReadsIsTheNewestOfTheManifestTheRevisionExpects(t *te
 
 func TestAFailedReadOfTheJobsIsReportedInTheClassOfTheJobThatReads(t *testing.T) {
 	storeErr := errors.New("the store is down")
-	_, _, err := readerOf(readerStore{err: storeErr}, opaqueRead).gateJob(t.Context(), 1, 5, "head", execution.PlanReceipt, artifact.Digest{})
+	_, _, err := readerOf(readerStore{err: storeErr}, opaqueRead).gateJob(t.Context(), 1, 5, "head", execution.PlanReceipt, artifact.Hash([]byte("m")))
 	var hidden *opaque
 	if !errors.As(err, &hidden) || err.Error() != "read the receipt jobs of the head failed" || !errors.Is(err, storeErr) {
 		t.Errorf("an opaque reader failed with %v (opaque %v), want the fixed text, and the cause for errors.Is", err, hidden != nil)
 	}
-	_, _, err = readerOf(readerStore{err: storeErr}, wrapRead).gateJob(t.Context(), 1, 5, "head", execution.PlanReceipt, artifact.Digest{})
+	_, _, err = readerOf(readerStore{err: storeErr}, wrapRead).gateJob(t.Context(), 1, 5, "head", execution.PlanReceipt, artifact.Hash([]byte("m")))
 	if errors.As(err, &hidden) || err == nil || err.Error() != "read the receipt jobs of the head: the store is down" {
 		t.Errorf("a wrapping reader failed with %v, want the cause in the text", err)
 	}

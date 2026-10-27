@@ -54,8 +54,12 @@ func (r executionReader) newestJob(ctx context.Context, repositoryID int64, pull
 // gateJob is the job of a plan that every gate reads for the head of a pull request: the newest job of its pull request, head and plan that is not cancelled. For
 // the receipt, governing is the manifest of the canonical version that the revision expects, and only a job it governs counts (a revision whose canonical moved
 // reads the jobs of the one it expects, so it may read none until the checks job rebinds the head); the canonical plan passes the zero digest and takes any.
-// found is false for none, which reads as pending.
+// A receipt with the zero digest is an error, never a wildcard: a baseline revision expects no canonical, so its receipt is not applicable and the caller asks
+// before. found is false for none, which reads as pending.
 func (r executionReader) gateJob(ctx context.Context, repositoryID int64, pull int, head string, plan execution.Plan, governing artifact.Digest) (execution.Job, bool, error) {
+	if plan == execution.PlanReceipt && governing.IsZero() {
+		return execution.Job{}, false, r.report("read the receipt jobs of the head", errors.New("no manifest of an expected canonical version is given"))
+	}
 	return r.newestJob(ctx, repositoryID, pull, head, plan, func(job execution.Job) bool { return governing.IsZero() || job.GoverningDigest == governing })
 }
 

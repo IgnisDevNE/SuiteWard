@@ -368,7 +368,7 @@ func (j *checksJob) restoreCounts(ctx context.Context, s *pullState, x *executio
 	blocking := c.Fail+c.Missing+c.Flaky > 0
 	switch {
 	case err == nil && run.status == domain.RunComplete && failing == blocking: // the counts fit the reason, which is what the builder requires
-		executed.counts = &checkExecution{Tests: c.Pass + c.Fail + c.Skipped + c.Missing + c.Flaky, Passed: c.Pass, Skipped: c.Skipped, Failed: c.Fail, Missing: c.Missing, Flaky: c.Flaky, Excluded: c.Excluded}
+		executed.counts = checkCountsOf(c)
 	case failing:
 		d.result = s.base
 		d.result.State, d.result.Reason = checks.InProgress, reasonAssessmentPending

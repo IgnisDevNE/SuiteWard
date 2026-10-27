@@ -82,6 +82,5 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 	if status != domain.RunComplete {
 		return executionOutcome{}, nil
 	}
-	return executionOutcome{counts: &checkExecution{Tests: counts.Pass + counts.Fail + counts.Skipped + counts.Missing + counts.Flaky, Passed: counts.Pass,
-		Skipped: counts.Skipped, Failed: counts.Fail, Missing: counts.Missing, Flaky: counts.Flaky, Excluded: counts.Excluded}}, nil
+	return executionOutcome{counts: checkCountsOf(counts)}, nil
 }

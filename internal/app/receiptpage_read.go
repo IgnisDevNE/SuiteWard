@@ -161,8 +161,7 @@ func (p *receiptPages) canonicalRun(ctx context.Context, reader executionReader,
 		return out, err
 	}
 	c := run.counts
-	out.Counts = strings.Split(commandtext.ExecutionText(commandtext.CheckExecution{Tests: c.Pass + c.Fail + c.Skipped + c.Missing + c.Flaky, Passed: c.Pass, Skipped: c.Skipped, Failed: c.Fail,
-		Missing: c.Missing, Flaky: c.Flaky, Excluded: c.Excluded}), "\n")
+	out.Counts = strings.Split(commandtext.ExecutionText(commandtext.CheckExecution(*checkCountsOf(c))), "\n")
 	tests, err := p.executions.Tests(ctx, job.ID)
 	if err != nil {
 		return pageRun{}, fmt.Errorf("read the tests of job %d: %w", job.ID, err)

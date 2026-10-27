@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -195,8 +196,28 @@ func (h *hostFake) lines() []string {
 	return out
 }
 
-// runHost runs PrepareHost and returns everything it printed.
+// runHost runs PrepareHost and returns everything it printed. The step requires the release's SHA256SUMS: unless a test gives its own file, the
+// one that lists the program of the run is given.
 func runHost(t *testing.T, h *hostFake, flags map[string]string, tty bool, input string) (string, error) {
+	t.Helper()
+	if h.exe == "" {
+		h.exe = writeProgram(t)
+	}
+	if _, ok := flags["sha256sums"]; !ok {
+		flags = maps.Clone(flags)
+		if flags == nil {
+			flags = map[string]string{}
+		}
+		flags["sha256sums"] = execSums
+		if _, ok := h.files[execSums]; !ok {
+			h.files[execSums] = sha256File(t, h.exe) + "  suiteward_v0.4.0_linux_amd64\n"
+		}
+	}
+	return runHostAsGiven(t, h, flags, tty, input)
+}
+
+// runHostAsGiven runs PrepareHost with exactly the flags it is given.
+func runHostAsGiven(t *testing.T, h *hostFake, flags map[string]string, tty bool, input string) (string, error) {
 	t.Helper()
 	if h.exe == "" {
 		h.exe = writeProgram(t)

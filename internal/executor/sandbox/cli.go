@@ -18,11 +18,16 @@ import (
 )
 
 const (
-	namePrefix = "suiteward-sandbox-" // every sandbox container, so that a leftover can be found and swept
-	user       = "65534:65534"        // nobody: both images and both runtimes already know it (spike S0)
-	// script extracts the tar that arrives on the standard input, goes to the work directory ($1) and replaces the shell with the
-	// program, so that the container's exit status is the program's. The directory and the program are arguments, never script text.
-	script = `tar -x -C /work && cd "/work/$1" && shift && exec "$@"`
+	enginePodman = "podman"             // what Info says of Podman, which runs the sandbox with one more flag
+	namePrefix   = "suiteward-sandbox-" // every sandbox container, so that a leftover can be found and swept
+	user         = "65534:65534"        // nobody: both images and both runtimes already know it (spike S0)
+	// script extracts the tar that arrives on the standard input, refuses to go on without the completion marker that ends it, goes to
+	// the work directory ($1) and replaces the shell with env, which clears the environment and starts the program with the assignments
+	// that follow the work directory, so that the container's exit status is the program's. Every step before the exec exits 113 when it
+	// fails: neither the runtimes (125) nor the shell (126, 127) use it, so a setup failure is told from the status of Argv. The
+	// directory, the assignments and the program are arguments, never script text.
+	script            = `{ tar -x -C /work && test -f /work/` + CompleteMarker + ` && cd "/work/$1"; } || exit 113; shift; exec env -i "$@"`
+	setupFailedStatus = 113
 
 	commandTimeout = 30 * time.Second       // the bound of each command that is not the run
 	killRetry      = 100 * time.Millisecond // a kill that finds no container yet is tried again after this
@@ -41,6 +46,9 @@ func NewCLI(binary string) Runtime { return newCLI(binary, osExec) }
 type cli struct {
 	binary string
 	run    execFunc
+
+	mu     sync.Mutex
+	engine string // what Info reported the first time, for the flags that differ between Docker and Podman
 }
 
 func newCLI(binary string, run execFunc) *cli { return &cli{binary: binary, run: run} }
@@ -111,28 +119,45 @@ func (c *cli) Info(ctx context.Context) (string, string, error) {
 	if engine == nil || !versionText.MatchString(engine.Version) {
 		return "", "", fmt.Errorf("%w: %s reports no usable version", ErrUnavailable, c.binary)
 	}
-	name := "podman"
+	name := enginePodman
 	if slices.ContainsFunc(engine.Components, func(component struct{ Name string }) bool { return component.Name == "Engine" }) {
 		name = "docker"
 	}
 	return name, engine.Version, nil
 }
 
-// runArgs is the whole of `run`: the properties of ADR 0028 section 11 and nothing else, the same for both runtimes. There is no
-// --rm, because the container must exist to be inspected for an out-of-memory kill; the runner removes it.
-func runArgs(name string, s Spec) []string {
+// engineName is the engine behind the command, asked once: the flags of `run` differ between Docker and Podman.
+func (c *cli) engineName(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.engine == "" {
+		name, _, err := c.Info(ctx)
+		if err != nil {
+			return "", err
+		}
+		c.engine = name
+	}
+	return c.engine, nil
+}
+
+// runArgs is the whole of `run`: the properties of ADR 0028 section 11 and nothing else, the same for both engines but one flag.
+// There is no --rm, because the container must exist to be inspected for an out-of-memory kill; the runner removes it. There is no
+// --env either, because the image has an environment of its own: the script starts Argv through env -i with the assignments that
+// follow the work directory, so that Argv sees exactly Spec.Env.
+func runArgs(engine, name string, s Spec) []string {
 	l := s.Limits
 	memory := strconv.Itoa(l.MemoryMiB) + "m"
-	args := []string{
-		"run", "--name", name, "-i", "--pull=never", "--network=none", "--read-only",
-		"--tmpfs", "/work:rw,exec,nosuid,nodev,size=" + strconv.Itoa(l.TmpfsMiB) + "m",
+	args := []string{"run", "--name", name, "-i", "--pull=never", "--network=none", "--read-only"}
+	if engine == enginePodman {
+		// Under --read-only Podman still mounts a writable tmpfs on /tmp, /var/tmp, /run and /dev/shm unless it is told not to.
+		args = append(args, "--read-only-tmpfs=false")
+	}
+	args = append(args,
+		"--tmpfs", "/work:rw,exec,nosuid,nodev,size="+strconv.Itoa(l.TmpfsMiB)+"m",
 		"--cap-drop=ALL", "--security-opt", "no-new-privileges", "--user", user,
 		"--pids-limit", strconv.Itoa(l.Pids), "--memory", memory, "--memory-swap", memory, "--cpus", strconv.Itoa(l.CPUs),
-	}
-	for _, entry := range s.Env {
-		args = append(args, "--env", entry)
-	}
-	args = append(args, s.Image, "sh", "-c", script, "sh", s.Workdir)
+		s.Image, "sh", "-c", script, "sh", s.Workdir)
+	args = append(args, s.Env...)
 	return append(args, s.Argv...)
 }
 
@@ -160,25 +185,30 @@ func (c *cli) Run(ctx context.Context, s Spec) (Outcome, error) {
 	if err := s.validate(); err != nil {
 		return Outcome{}, err
 	}
+	engine, err := c.engineName(ctx)
+	if err != nil {
+		return Outcome{}, err
+	}
 	name := namePrefix + rand.Text()
-	stdin, stdout := &failClosed{r: s.Stdin}, &capped{limit: s.StdoutLimit}
-	killed, stderr, runErr := c.execute(ctx, name, s, stdin, stdout)
+	stdin, stdout := newGuardedStdin(s.Stdin), &capped{limit: s.StdoutLimit}
+	killed, stderr, runErr := c.execute(ctx, name, runArgs(engine, name, s), s.Limits.KillAfter, stdin, stdout)
 	// The state and the removal do not depend on the caller's context: a cancelled run must still remove its container.
 	cleanup := context.WithoutCancel(ctx)
 	state, stateErr := c.inspect(cleanup, name)
 	_, rmErr := c.output(cleanup, "rm", "--force", name)
-	err := verdict(ctx, stdin.failure(), runErr, stderr, state, stateErr)
-	if rmErr != nil && stateErr == nil { // with no container to inspect, there was most likely none to remove
-		err = errors.Join(err, fmt.Errorf("remove the container %s: %w", name, rmErr))
+	err = verdict(ctx, stdin.failure(), runErr, stderr, state, stateErr)
+	var left error // a container the runtime would not remove is its failure; with none to inspect, there was most likely none to remove
+	if rmErr != nil && stateErr == nil {
+		left = fmt.Errorf("%w: remove the container %s: %w", ErrUnavailable, name, rmErr)
 	}
 	if err != nil {
-		return Outcome{}, err
+		return Outcome{}, errors.Join(err, left)
 	}
-	return Outcome{ExitCode: state.ExitCode, OOMKilled: state.OOMKilled, Killed: killed, Truncated: stdout.truncated(), Stdout: stdout.Bytes()}, nil
+	return Outcome{ExitCode: state.ExitCode, OOMKilled: state.OOMKilled, Killed: killed, Truncated: stdout.truncated(), Stdout: stdout.Bytes()}, left
 }
 
-// verdict decides whether a run happened: it names the first reason it did not, and is nil when the container started and ended.
-// Only the state of the container decides it. The text on the container's standard error is the candidate's, and never counts.
+// verdict decides whether a run happened: it names the first reason it did not, and is nil when the container started Argv and it
+// ended. Only the state of the container decides it. The text on the container's standard error is the candidate's, and never counts.
 func verdict(ctx context.Context, stdinErr, runErr error, stderr string, state containerState, stateErr error) error {
 	switch {
 	case stdinErr != nil:
@@ -191,33 +221,40 @@ func verdict(ctx context.Context, stdinErr, runErr error, stderr string, state c
 		return fmt.Errorf("%w: the runtime made no container: %w (it said %q)", ErrUnavailable, stateErr, stderr)
 	case state.Error != "" || state.StartedAt.IsZero():
 		return fmt.Errorf("%w: the runtime did not start the container: %q (it said %q)", ErrUnavailable, state.Error, stderr)
+	case state.ExitCode == setupFailedStatus:
+		return fmt.Errorf("%w: tar, the completion marker or the work directory failed (status %d)", ErrSetupFailed, setupFailedStatus)
 	}
 	return nil
 }
 
-// execute runs the container and watches the clock. It returns whether the executor killed the container.
-func (c *cli) execute(ctx context.Context, name string, s Spec, stdin io.Reader, stdout io.Writer) (killed bool, stderr string, err error) {
+// execute runs the container and watches it. The container is killed by name when the clock runs out, and as soon as the standard
+// input breaks; it returns whether the clock killed it.
+func (c *cli) execute(ctx context.Context, name string, args []string, after time.Duration, stdin *guardedStdin, stdout io.Writer) (killed bool, stderr string, err error) {
 	done := make(chan struct{})
 	watched := make(chan bool, 1)
-	go func() { watched <- c.killAfter(ctx, name, s.Limits.KillAfter, done) }()
-	_, stderr, err = c.run(ctx, c.binary, runArgs(name, s), stdin, stdout)
+	go func() { watched <- c.killWhen(ctx, name, after, stdin.broken, done) }()
+	_, stderr, err = c.run(ctx, c.binary, args, stdin, stdout)
 	close(done)
 	return <-watched, stderr, err
 }
 
-// killAfter kills the container by name once the time is up, because killing the `run` client leaves the container running
-// (spike S0). The container may not exist yet, so a kill that fails is tried again until the run ends. It reports whether a kill landed.
-func (c *cli) killAfter(ctx context.Context, name string, after time.Duration, done <-chan struct{}) bool {
+// killWhen kills the container by name when the time is up or the broken channel closes, because killing the `run` client leaves
+// the container running (spike S0). The container may not exist yet, so a kill that fails is tried again until the run ends. It reports
+// whether the clock was the cause of a kill that landed.
+func (c *cli) killWhen(ctx context.Context, name string, after time.Duration, broken, done <-chan struct{}) bool {
 	timer := time.NewTimer(after)
 	defer timer.Stop()
+	clock := false
 	select {
 	case <-done:
 		return false
 	case <-timer.C:
+		clock = true
+	case <-broken:
 	}
 	for {
 		if _, err := c.output(context.WithoutCancel(ctx), "kill", name); err == nil {
-			return true
+			return clock
 		}
 		select {
 		case <-done:
@@ -260,44 +297,36 @@ func (c *capped) truncated() bool {
 	return c.cut
 }
 
-// poison is a block that no tar reader takes for a header: its magic is wrong and so is its checksum.
-var poison = bytes.Repeat([]byte{0xff}, 512)
-
-// failClosed passes the tar of the caller through and fails the run when the caller's stream breaks. The container reads the tar
-// with busybox tar, which takes a stream that stops at a file boundary for a finished tar, so a closed pipe would let the program
-// run on a part of the tree. After an error, the container is handed the poison block and then the end, so that tar fails and
-// `exec` is never reached, and the error is kept for the caller.
-type failClosed struct {
-	r    io.Reader
-	mu   sync.Mutex
-	err  error
-	left []byte // the poison not yet handed out
+// guardedStdin passes the tar of the caller through and notes when the caller's stream breaks (an error that is not its end). A
+// broken stream kills the container at once, and the run fails with the error of the stream. The tar may stop anywhere, even at a
+// boundary that busybox tar takes for the end of an archive, and then the container's own refusal to start Argv without the completion
+// marker is what keeps a part of the tree from running.
+type guardedStdin struct {
+	r      io.Reader
+	broken chan struct{} // closed at the first error of r
+	mu     sync.Mutex
+	err    error
 }
 
-func (f *failClosed) Read(p []byte) (int, error) {
-	f.mu.Lock()
-	if f.err != nil {
-		n := copy(p, f.left)
-		f.left = f.left[n:]
-		f.mu.Unlock()
-		if n == 0 {
-			return 0, io.EOF
-		}
-		return n, nil
-	}
-	f.mu.Unlock()
-	n, err := f.r.Read(p)
+func newGuardedStdin(r io.Reader) *guardedStdin {
+	return &guardedStdin{r: r, broken: make(chan struct{})}
+}
+
+func (g *guardedStdin) Read(p []byte) (int, error) {
+	n, err := g.r.Read(p)
 	if err != nil && !errors.Is(err, io.EOF) {
-		f.mu.Lock()
-		f.err, f.left = err, poison
-		f.mu.Unlock()
-		return n, nil
+		g.mu.Lock()
+		if g.err == nil {
+			g.err = err
+			close(g.broken)
+		}
+		g.mu.Unlock()
 	}
 	return n, err
 }
 
-func (f *failClosed) failure() error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.err
+func (g *guardedStdin) failure() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.err
 }

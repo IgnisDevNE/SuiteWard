@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,7 +23,7 @@ var (
 	// ErrInvalidSpec reports a Spec the runner refuses before it runs any command.
 	ErrInvalidSpec = errors.New("invalid sandbox spec")
 	// ErrSetupFailed reports a container that failed before Argv started: tar could not extract the standard input, the completion marker
-	// was missing from it, or the work directory is not in the tree. The container exited with the reserved status 113, so a Argv that
+	// was missing from it, or the work directory is not in the tree. The container exited with the reserved status 113, so an Argv that
 	// exits 113 reads the same.
 	ErrSetupFailed = errors.New("the sandbox failed before the program started")
 )
@@ -43,7 +44,7 @@ type Spec struct {
 	Argv        []string  // started with exec after the stdin tar is extracted under /work
 	Workdir     string    // a clean relative directory under /work, "." for /work itself
 	Limits      Limits    // every limit is required
-	Stdin       io.Reader // an uncompressed tar, extracted under /work; an error from it fails the run closed
+	Stdin       io.Reader // an uncompressed tar that ends with CompleteMarker, extracted under /work; an error from it fails the run
 	StdoutLimit int64     // the most of the container's standard output that is kept
 }
 
@@ -60,8 +61,9 @@ type Outcome struct {
 type Runtime interface {
 	// Info names the runtime and its version, for the evidence of a result.
 	Info(ctx context.Context) (name, version string, err error)
-	// Run runs one container to its end and removes it. It returns ErrUnavailable when the runtime cannot honor a property. When
-	// s.Stdin fails, the container never runs Argv and Run returns that error.
+	// Run runs one container to its end and removes it. It returns ErrUnavailable when the runtime cannot honor a property, and
+	// ErrSetupFailed when the container failed before Argv started. When s.Stdin fails, the container is killed at once and Run returns
+	// that error. A container that the runtime cannot remove is reported with the Outcome and an error that wraps ErrUnavailable.
 	Run(ctx context.Context, s Spec) (Outcome, error)
 }
 
@@ -84,8 +86,10 @@ func (s Spec) validate() error {
 		return invalid("the image %q is not name@sha256:<64 lowercase hex digits>", s.Image)
 	case s.Workdir != "." && !artifact.ValidPath(s.Workdir):
 		return invalid("the work directory %q is not a clean relative path", s.Workdir)
-	case len(s.Argv) == 0 || s.Argv[0] == "" || s.Argv[0][0] == '-':
-		return invalid("the program to run is missing, or it reads as a flag")
+	case len(s.Argv) == 0 || s.Argv[0] == "" || s.Argv[0][0] == '-' || strings.Contains(s.Argv[0], "="):
+		return invalid("the program to run is missing, or it reads as a flag or as an assignment of env")
+	case slices.ContainsFunc(s.Argv, func(arg string) bool { return strings.ContainsRune(arg, 0) }):
+		return invalid("an argument holds a NUL")
 	case s.Stdin == nil:
 		return invalid("no standard input: the tree arrives as a tar on it")
 	case s.StdoutLimit <= 0:

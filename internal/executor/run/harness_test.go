@@ -154,10 +154,12 @@ type served struct {
 	job      client.Job
 	archives map[string]func(http.ResponseWriter)
 	files    map[string][]byte
-	beat     func(n int) int           // the status of the n-th heartbeat, from 1
-	answer   func(n int) (int, string) // the status and the state of the n-th result
-	beats    atomic.Int32
-	results  atomic.Int32
+	// fileStatus, when it is not 0, is the status that every manifest file answers with instead of its bytes.
+	fileStatus int
+	beat       func(n int) int           // the status of the n-th heartbeat, from 1
+	answer     func(n int) (int, string) // the status and the state of the n-th result
+	beats      atomic.Int32
+	results    atomic.Int32
 }
 
 func (s *scenario) serve(id int64) *served {
@@ -302,6 +304,10 @@ func (s *service) archive(w http.ResponseWriter, r *http.Request, sv *served) {
 }
 
 func (s *service) file(w http.ResponseWriter, r *http.Request, sv *served) {
+	if sv.fileStatus != 0 {
+		w.WriteHeader(sv.fileStatus)
+		return
+	}
 	if content, ok := sv.files[r.PathValue("digest")]; ok {
 		_, _ = w.Write(content)
 		return

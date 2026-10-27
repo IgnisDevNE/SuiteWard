@@ -150,6 +150,10 @@ func (c *colocatedInstall) readStatus(ctx context.Context) ([]byte, error) {
 func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget) error {
 	scr := r.screen
 	scr.Steps("Plan", "Backup", "Images", "Replace", "Check")
+	tokenFile, err := instanceTokenFile(r, env, t) // before anything else: a second instance names its own, or the executor of the main one is touched
+	if err != nil {
+		return err
+	}
 	image, err := upgradeTarget(r)
 	if err != nil {
 		return err
@@ -200,14 +204,10 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	plan := upgradePlan{oldImage: previous.Image, newImage: image, oldDB: dbImage, newDB: postgres}
 	// A stack without a settings file (made by local.ps1) is converted even when it runs this release: the settings are saved.
 	if plan.current() && t.haveSaved {
-		return upgradeColocatedCurrent(ctx, r, env, rt, s, t, image, pin)
+		return upgradeColocatedCurrent(ctx, r, env, rt, s, t, tokenFile, image, pin)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
 	agreed, err := settleRecipient(r, env, &s)
-	if err != nil {
-		return err
-	}
-	tokenFile, err := instanceTokenFile(r, env.Deps)
 	if err != nil {
 		return err
 	}

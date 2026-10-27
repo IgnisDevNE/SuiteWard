@@ -57,6 +57,10 @@ func guardDefaultSettings(t installTarget, runtimeName, connection string) error
 func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget) error {
 	scr := r.screen
 	scr.Steps(colocatedInstallSteps...)
+	tokenFile, err := instanceTokenFile(r, env, t) // before anything is asked: a second instance names its own
+	if err != nil {
+		return err
+	}
 	rt, connection, err := openRuntime(ctx, r, env, t.saved, true)
 	if err != nil {
 		return err
@@ -91,12 +95,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err != nil {
 		return err
 	}
-	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(env.Deps.command(), r, false)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous, executorPin: pin}
-	if c.tokenFile == "" {
-		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
-			return err
-		}
-	}
+	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(env.Deps.command(), r, false)}, image: image, tokenFile: tokenFile, previous: previous, executorPin: pin}
 	scr.Step(2)
 	if err := c.preflight(ctx); err != nil {
 		return err

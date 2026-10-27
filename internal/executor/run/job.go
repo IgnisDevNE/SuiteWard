@@ -75,7 +75,7 @@ func (e *Executor) attempt(ctx context.Context, lease *client.Lease, log *slog.L
 		err = done.check()
 	}
 	if err == nil {
-		body, err = e.marshal(lease, started, "", &done)
+		body, err = e.marshalComplete(lease, started, done)
 		if err == nil && len(body) > maxBodyBytes {
 			err = refuse(reasonTooLarge, "the result is %d bytes; at most %d are accepted", len(body), maxBodyBytes)
 		}
@@ -89,7 +89,7 @@ func (e *Executor) attempt(ctx context.Context, lease *client.Lease, log *slog.L
 		return nil, true
 	}
 	log.Warn("the run is unavailable", "reason", reason, "error", err)
-	body, err = e.marshal(lease, started, reason, nil)
+	body, err = e.marshalUnavailable(lease, started, reason)
 	if err != nil {
 		log.Error("the result could not be written", "error", err)
 		return nil, true

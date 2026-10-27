@@ -55,27 +55,42 @@ var imageDigest = func() string {
 	return digest
 }()
 
-// marshal writes the result of an attempt that began at started: complete with what the run found, or unavailable with the reason.
-func (e *Executor) marshal(lease *client.Lease, started time.Time, reason string, done *completion) ([]byte, error) {
+// body is the part of a result that every status has: the commits, the executor and the sandbox, and the times of an attempt that began at
+// started and ends now.
+func (e *Executor) body(lease *client.Lease, started time.Time, status string) resultBody {
 	e.mu.Lock()
 	toolchain := e.toolchain
 	e.mu.Unlock()
 	body := resultBody{
-		Status:   "unavailable",
-		Reason:   reason,
-		Head:     commitRef{SHA: lease.Head.SHA},
-		Executor: executorBody{Version: e.cfg.Version, BinarySHA256: e.cfg.BinarySHA256},
-		Sandbox:  sandboxBody{ImageDigest: imageDigest, Toolchain: toolchain, Runtime: e.runtime},
+		Status:    status,
+		Head:      commitRef{SHA: lease.Head.SHA},
+		Executor:  executorBody{Version: e.cfg.Version, BinarySHA256: e.cfg.BinarySHA256},
+		Sandbox:   sandboxBody{ImageDigest: imageDigest, Toolchain: toolchain, Runtime: e.runtime},
+		StartedAt: stamp(started),
+		EndedAt:   stamp(e.cfg.Now()),
 	}
 	if lease.Base != nil {
 		body.Base = &commitRef{SHA: lease.Base.SHA}
 	}
-	if done != nil {
-		body.Status = "complete"
-		body.Tests = &done.tests
-		body.Markers, body.Submodules, body.Unparsed = done.markers, done.submodules, done.unparsed
-	}
-	body.StartedAt, body.EndedAt = stamp(started), stamp(e.cfg.Now())
+	return body
+}
+
+// marshalComplete writes the result of a run that completed with what it found.
+func (e *Executor) marshalComplete(lease *client.Lease, started time.Time, done completion) ([]byte, error) {
+	body := e.body(lease, started, "complete")
+	body.Tests = &done.tests
+	body.Markers, body.Submodules, body.Unparsed = done.markers, done.submodules, done.unparsed
+	return writeResult(body)
+}
+
+// marshalUnavailable writes the result of a run that gives up, with the reason.
+func (e *Executor) marshalUnavailable(lease *client.Lease, started time.Time, reason string) ([]byte, error) {
+	body := e.body(lease, started, "unavailable")
+	body.Reason = reason
+	return writeResult(body)
+}
+
+func writeResult(body resultBody) ([]byte, error) {
 	out, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("write the result: %w", err)

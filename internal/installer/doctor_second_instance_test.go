@@ -52,8 +52,16 @@ func TestDoctorOfASecondInstanceSaysThatTheExecutorIsRegisteredForAnotherInstanc
 			}
 			for _, name := range []string{"executor.lifecycle", "executor.running"} {
 				wantFail(t, res, name, "another instance")
-				if fix := res[name].Fix; !strings.Contains(fix, "uninstall") || strings.Contains(fix, "install --upgrade") {
+			}
+			// This instance has no executor binary of its own, and the install skips the executor that is registered: no fix of these is an install.
+			wantFail(t, res, "executor.binary", "no executor binary")
+			for _, name := range []string{"executor.lifecycle", "executor.running", "executor.binary"} {
+				fix := res[name].Fix
+				if !strings.Contains(fix, "uninstall") || strings.Contains(fix, "install --upgrade") {
 					t.Errorf("%s: the fix %q must name the removal of the other instance, not an install that skips the executor", name, fix)
+				}
+				if !strings.Contains(fix, "that instance's --settings and --token-file (none for the default instance)") {
+					t.Errorf("%s: the fix %q must say which settings file and token file go with the removal", name, fix)
 				}
 			}
 		})

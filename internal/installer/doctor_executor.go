@@ -39,7 +39,7 @@ func (d *doctor) checkExecutorIsolated(ctx context.Context) {
 	d.checkExecutorNetwork(ctx, uid)
 	d.checkExecutorUnit(ctx)
 	d.checkExecutorBinary(ctx)
-	d.checkExecutorRunning(ctx, d.isolatedProcess)
+	d.checkExecutorRunning(ctx, d.isolatedProcess, "read why with `sudo journalctl _SYSTEMD_USER_UNIT="+executorUnitName+" -n 50 --no-pager`; "+d.hostStep()+" starts it")
 }
 
 // subidRange is the range an account has in /etc/subuid or /etc/subgid.
@@ -273,7 +273,7 @@ func (d *doctor) isolatedProcess(ctx context.Context) error {
 // when it starts, so a service that was just restarted looks as if it saw an executor: the process is the evidence that the executor exists, and
 // the age of the last sight that it is the service's executor, with the service's token. A /status without the execution object is the answer
 // of a service older than M2.1.
-func (d *doctor) checkExecutorRunning(ctx context.Context, process func(context.Context) error) {
+func (d *doctor) checkExecutorRunning(ctx context.Context, process func(context.Context) error, processFix string) {
 	body, ok := d.raw["status"]
 	if !ok {
 		d.skip("executor.running", "status")
@@ -296,7 +296,7 @@ func (d *doctor) checkExecutorRunning(ctx context.Context, process func(context.
 		return
 	}
 	if err := process(ctx); err != nil {
-		d.fail("executor.running", err.Error(), "read why with `sudo journalctl _SYSTEMD_USER_UNIT="+executorUnitName+" -n 50 --no-pager`; "+d.hostStep()+" starts it")
+		d.fail("executor.running", err.Error(), processFix)
 		return
 	}
 	age := time.Since(doc.Execution.LastSeenAt).Round(time.Second)

@@ -258,6 +258,8 @@ func (d *doctor) run(ctx context.Context, settingsPath string) {
 		d.checkHost(ctx)
 		d.checkMetadata(ctx)
 		d.checkExecutorIsolated(ctx)
+	} else {
+		d.checkExecutorColocated(ctx)
 	}
 	d.checkInstance(ctx)
 }

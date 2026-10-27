@@ -3,6 +3,7 @@
 package source
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
@@ -144,4 +146,66 @@ func pinnedImage(t *testing.T) string {
 		t.Fatal("the Containerfile no longer pins the golang builder image by digest")
 	}
 	return strings.ReplaceAll(string(pin), "${GO_VERSION}", strings.TrimSpace(string(version)))
+}
+
+// wholeTar is the stream the sandbox should get: the composed tree, one module file and the completion marker, ended.
+func wholeTar(t *testing.T, c *composition, moduleName, module string) []byte {
+	t.Helper()
+	arch, entries := c.build(t)
+	var out bytes.Buffer
+	app, err := Compose(context.Background(), &out, c.tree, arch, entries, c.files, c.limits)
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if err := app.Add(moduleName, int64(len(module)), strings.NewReader(module)); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := app.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	return out.Bytes()
+}
+
+// A cut stream must never run Argv, wherever the cut falls. busybox tar takes a stream that stops at a block boundary for a finished
+// tar, so what keeps a part of the tree from running is the container's refusal to start Argv without the completion marker.
+func TestACutStreamNeverStartsArgvWhereverTheCutFalls(t *testing.T) {
+	rt := dockerForTar(t)
+	c := &composition{
+		head:   []member{file("a.go", "package a\n")},
+		tree:   []execution.TreeFile{treeFile("a.go", "package a\n", execution.FromHead)},
+		files:  &manifestFiles{},
+		limits: generous,
+	}
+	module := strings.Repeat("m", 1300) // three blocks of data, the last of them partly filled
+	whole := wholeTar(t, c, ".suiteward/proxy/m.zip", module)
+	end := len(whole) - 1024 - 512 // the end of the last file: the marker's header and the footer follow
+	boom := errors.New("the archive stream broke")
+	for name, cut := range map[string]int{
+		"at the end of the last file, before the marker":     end,
+		"at the start of the last block of the last file":    end - 512,
+		"in the middle of the last block of the last file":   end - 100,
+		"in the middle of the last file":                     end - 1000,
+		"in the middle of the header of the marker":          end + 200,
+		"after the first block of the header of the marker":  end + 511,
+		"at the start of the header of the last file itself": end - 3*512 - 512,
+	} {
+		for variant, reader := range map[string]func() io.Reader{
+			"the stream ends":   func() io.Reader { return bytes.NewReader(whole[:cut]) },
+			"the stream breaks": func() io.Reader { return io.MultiReader(bytes.NewReader(whole[:cut]), iotest.ErrReader(boom)) },
+		} {
+			t.Run(name+", "+variant, func(t *testing.T) {
+				s := sandboxSpec(t, reader(), "sleep", "300") // Argv would run until the kill if it started
+				s.Limits.KillAfter = 20 * time.Second
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				_, err := rt.Run(ctx, s)
+				switch {
+				case variant == "the stream ends" && !errors.Is(err, sandbox.ErrSetupFailed):
+					t.Errorf("a stream that ends early is a setup failure, got %v", err)
+				case variant != "the stream ends" && !errors.Is(err, boom):
+					t.Errorf("a stream that breaks is the run's error, got %v", err)
+				}
+			})
+		}
+	}
 }

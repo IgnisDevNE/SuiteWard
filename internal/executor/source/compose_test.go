@@ -8,11 +8,20 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"path"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/sandbox"
+)
+
+// What the fake openers answer when they have nothing: errors the tests can recognize, with no sentinel of the package in them.
+var (
+	errNoArchive = errors.New("the service has no such archive")
+	errNoFile    = errors.New("the service has no such file")
 )
 
 type archives struct {
@@ -23,7 +32,7 @@ type archives struct {
 func (a *archives) Open(_ context.Context, side Side) (io.ReadCloser, error) {
 	data, ok := a.data[side]
 	if !ok {
-		return nil, fmt.Errorf("the service has no %s archive", side)
+		return nil, fmt.Errorf("%w: %s", errNoArchive, side)
 	}
 	a.opened = append(a.opened, side)
 	return io.NopCloser(bytes.NewReader(data)), nil
@@ -38,7 +47,7 @@ func (f *manifestFiles) Open(_ context.Context, d artifact.Digest) (io.ReadClose
 	f.opened++
 	data, ok := f.data[d]
 	if !ok {
-		return nil, fmt.Errorf("the service has no file %s", d)
+		return nil, fmt.Errorf("%w: %s", errNoFile, d)
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
@@ -314,7 +323,7 @@ func TestComposeChecksManifestFilesByDigest(t *testing.T) {
 	})
 	t.Run("the service has no such file", func(t *testing.T) {
 		_, _, err := plan(&manifestFiles{}).compose(t)
-		onlyError(t, err, ErrArchiveUnreadable)
+		passedOn(t, err, errNoFile)
 	})
 	t.Run("the file is over its cap", func(t *testing.T) {
 		c := plan(good)
@@ -607,4 +616,173 @@ func TestAppenderSpendChargesTheBudgetWithoutWriting(t *testing.T) {
 		_, app := compose(t)
 		onlyError(t, app.Spend(-1), ErrInvalidPlan)
 	})
+}
+
+// passedOn fails unless err is the error of an opener as it came: it is want, and the package has added no sentinel of its own to
+// it, which would make a caller map one failure to two reasons.
+func passedOn(t *testing.T, err, want error) {
+	t.Helper()
+	if !errors.Is(err, want) {
+		t.Errorf("want the error of the opener %v, got %v", want, err)
+	}
+	for _, sentinel := range allErrors {
+		if errors.Is(err, sentinel) && !errors.Is(want, sentinel) {
+			t.Errorf("the package added %v to the error of the opener: %v", sentinel, err)
+		}
+	}
+}
+
+type failingArchives struct{ err error }
+
+func (a failingArchives) Open(context.Context, Side) (io.ReadCloser, error) { return nil, a.err }
+
+type failingFiles struct{ err error }
+
+func (f failingFiles) Open(context.Context, artifact.Digest) (io.ReadCloser, error) {
+	return nil, f.err
+}
+
+func TestComposePassesTheErrorOfAnOpenerOn(t *testing.T) {
+	github := fmt.Errorf("%w: the service answered 502", ErrGitHubUnavailable)
+	for name, tc := range map[string]struct {
+		err    error
+		source execution.Source
+	}{
+		"an archive, and the sentinel that says why": {github, execution.FromHead},
+		"an archive, and no sentinel":                {errNoArchive, execution.FromHead},
+		"a manifest file, and the sentinel":          {github, execution.FromManifest},
+		"a manifest file, and no sentinel":           {errNoFile, execution.FromManifest},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tree := []execution.TreeFile{treeFile("a.go", "1", tc.source)}
+			entries := map[Side][]execution.TreeEntry{SideHead: treeOf(file("a.go", "1"))}
+			_, err := Compose(context.Background(), io.Discard, tree, failingArchives{tc.err}, entries, failingFiles{tc.err}, generous)
+			passedOn(t, err, tc.err)
+		})
+	}
+}
+
+// tarNames are the names of a tar in the order it holds them.
+func tarNames(t *testing.T, data []byte) []string {
+	t.Helper()
+	var names []string
+	tr := tar.NewReader(bytes.NewReader(data))
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return names
+		}
+		if err != nil {
+			t.Fatalf("the tar is unreadable: %v", err)
+		}
+		names = append(names, h.Name)
+	}
+}
+
+func composeOne(t *testing.T) (*bytes.Buffer, *Appender) {
+	t.Helper()
+	c := &composition{head: []member{file("a.go", "1")}, tree: []execution.TreeFile{treeFile("a.go", "1", execution.FromHead)}}
+	out, app, err := c.compose(t)
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	return out, app
+}
+
+func TestCloseEndsTheTarWithTheCompletionMarker(t *testing.T) {
+	out, app := composeOne(t)
+	if err := app.Add(".suiteward/proxy/m.zip", 3, strings.NewReader("abc")); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := app.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	names := tarNames(t, out.Bytes())
+	if last := names[len(names)-1]; last != sandbox.CompleteMarker {
+		t.Errorf("the last entry is %q, want the marker %q: %q", last, sandbox.CompleteMarker, names)
+	}
+	if marker := readTar(t, out.Bytes())[sandbox.CompleteMarker]; marker.typeflag != tar.TypeReg || marker.body != "" {
+		t.Errorf("the marker is an empty regular file: %+v", marker)
+	}
+	if !bytes.HasSuffix(out.Bytes(), make([]byte, 1024)) {
+		t.Errorf("the footer follows the marker")
+	}
+	length := out.Len()
+	if err := app.Close(); err != nil || out.Len() != length {
+		t.Errorf("a second Close writes nothing: %v, %d more bytes", err, out.Len()-length)
+	}
+}
+
+func TestAddRefusesTheNamesOfTheCompletionMarker(t *testing.T) {
+	for name, add := range map[string]string{
+		"the marker":      sandbox.CompleteMarker,
+		"a path below it": sandbox.CompleteMarker + "/x",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, app := composeOne(t)
+			onlyError(t, app.Add(add, 1, strings.NewReader("x")), ErrInvalidPlan)
+		})
+	}
+	_, app := composeOne(t)
+	if err := app.Add(path.Dir(sandbox.CompleteMarker)+"/proxy/m.zip", 1, strings.NewReader("x")); err != nil {
+		t.Errorf("the directory of the marker is where the module proxy lives: %v", err)
+	}
+}
+
+func TestAnAppenderThatFailedAfterWritingWritesNoMarker(t *testing.T) {
+	boom := errors.New("the module stream broke")
+	for name, reader := range map[string]io.Reader{
+		"fewer bytes than declared":     strings.NewReader("ab"),
+		"more bytes than declared":      strings.NewReader("abcd"),
+		"a read error after the bytes":  io.MultiReader(strings.NewReader("abc"), iotest.ErrReader(boom)),
+		"a read error before the bytes": io.MultiReader(strings.NewReader("a"), iotest.ErrReader(boom)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, app := composeOne(t)
+			if err := app.Add(".suiteward/proxy/m.zip", 3, reader); err == nil {
+				t.Fatalf("Add must fail")
+			}
+			length := out.Len()
+			if err := app.Close(); err == nil {
+				t.Errorf("an Appender that wrote a damaged file must not end the tar as complete")
+			}
+			if out.Len() != length {
+				t.Errorf("neither the marker nor the footer may follow a damaged file: %d bytes were written", out.Len()-length)
+			}
+		})
+	}
+}
+
+func TestAddTakesOnlyTheEndOfInputForTheEndOfAFile(t *testing.T) {
+	boom := errors.New("the module stream broke")
+	_, app := composeOne(t)
+	if err := app.Add("m.zip", 3, io.MultiReader(strings.NewReader("abc"), iotest.ErrReader(boom))); !errors.Is(err, boom) {
+		t.Errorf("an error after the declared bytes is the stream's, not an end: %v", err)
+	}
+	_, app = composeOne(t)
+	if err := app.Add("m.zip", 3, strings.NewReader("abc")); err != nil {
+		t.Errorf("exactly the declared bytes and then the end: %v", err)
+	}
+	_, app = composeOne(t)
+	onlyError(t, app.Add("m.zip", 3, strings.NewReader("abcd")), ErrInvalidPlan)
+}
+
+func TestAFailedAddChargesNothing(t *testing.T) {
+	// A budget of 512 KiB, of which the tree takes 300 KiB: 200 KiB can be spent after a failed Add of 100 KiB.
+	zeros := strings.Repeat("0", 300<<10)
+	c := &composition{
+		head:   []member{file("a.bin", zeros)},
+		tree:   []execution.TreeFile{treeFile("a.bin", zeros, execution.FromHead)},
+		limits: Limits{ArchiveBytes: 1 << 20, FileBytes: 1 << 20, TmpfsMiB: 1},
+	}
+	_, app, err := c.compose(t)
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if err := app.Add("m.zip", 100<<10, strings.NewReader(strings.Repeat("m", 100<<10+1))); err == nil {
+		t.Fatalf("Add must fail: it has a byte too many")
+	}
+	if err := app.Spend(200 << 10); err != nil {
+		t.Errorf("a failed Add must not take budget: %v", err)
+	}
 }

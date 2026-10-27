@@ -99,13 +99,9 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	base.Connection = connection
 	service := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: base}}
 	question := "Remove the containers " + ContainerServe + ", " + ContainerMigrate + " and " + ContainerDB + "? The data stays."
-	var token tokenCopy
-	var listing []string
-	if purge { // before anything is removed: a place that cannot be found refuses the purge, it does not stop it half way
-		if token, question, listing, err = purgePlan(r, env.Deps, settingsPath, isDefault); err != nil {
-			return err
-		}
-	} else if token, err = tokenFileOf(r, env.Deps, isDefault); err != nil { // the executor is beside it, and is removed with the stack
+	// Before anything is removed: a place that cannot be found refuses a purge, it does not stop it half way.
+	token, question, listing, err := removalPlan(r, env.Deps, purge, settingsPath, isDefault, question)
+	if err != nil {
 		return err
 	}
 	inst := instance{rt: rt, settingsPath: settingsPath, haveSettings: haveSaved, status: service.readStatus}
@@ -367,4 +363,14 @@ func purgeState(ctx context.Context, rt Runtime, files []string, settingsPath st
 		}
 	}
 	return nil
+}
+
+// removalPlan is what an uninstall knows before it removes anything: its token file (the executor beside it goes with the stack) and, for a purge,
+// the question that asks for it and the list of what it deletes.
+func removalPlan(r *Resolver, d Deps, purge bool, settingsPath string, isDefault bool, question string) (token tokenCopy, asked string, listing []string, err error) {
+	if !purge {
+		token, err = tokenFileOf(r, d, isDefault)
+		return token, question, nil, err
+	}
+	return purgePlan(r, d, settingsPath, isDefault)
 }

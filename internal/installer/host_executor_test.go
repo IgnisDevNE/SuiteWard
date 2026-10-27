@@ -92,13 +92,23 @@ func (h *hostFake) answerExecutor(c call) (out []byte, err error, handled bool) 
 			h.hashes[dest] = strings.Repeat("9", 64)
 		}
 		return nil, nil, true
-	case c.name == "systemctl" && line == "restart user@1002.service":
+	}
+	return h.answerExecutorUnits(c)
+}
+
+// answerExecutorUnits answers what the host step asks of systemd about the executor.
+func (h *hostFake) answerExecutorUnits(c call) (out []byte, err error, handled bool) {
+	line := c.line()
+	switch {
+	case c.name != "systemctl":
+		return nil, nil, false
+	case line == "restart user@1002.service":
 		h.controllers = h.afterRestart
 		return nil, nil, true
-	case c.name == "systemctl" && strings.Contains(line, execUserSystemd) && strings.Contains(line, "enable --now suiteward-executor.service"):
+	case strings.Contains(line, execUserSystemd) && strings.Contains(line, "enable --now suiteward-executor.service"):
 		h.execEnabled = true
 		return nil, nil, true
-	case c.name == "systemctl" && strings.Contains(line, execUserSystemd) && strings.Contains(line, "show") && strings.HasSuffix(line, "suiteward-executor.service"):
+	case strings.Contains(line, execUserSystemd) && strings.Contains(line, "show") && strings.HasSuffix(line, "suiteward-executor.service"):
 		if !h.execRunning && !h.execEnabled {
 			return []byte("inactive\n"), nil, true // a unit that was not there before the step
 		}

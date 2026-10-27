@@ -252,9 +252,6 @@ func (c *colocatedInstall) preflight(ctx context.Context) error {
 	if err := c.checkTokenFile(); err != nil {
 		return err
 	}
-	if err := c.checkExecutorTokenFile(); err != nil {
-		return err
-	}
 	return c.pullImages(ctx)
 }
 
@@ -494,6 +491,9 @@ func (c colocatedInstall) readSecretState(ctx context.Context) (secretState, err
 		return secretState{}, err
 	}
 	state := secretState{haveDB: haveDB, haveOwner: haveOwner, haveToken: haveToken, haveExecutor: haveExecutor, needAppURL: !haveURL}
+	if err := c.checkExecutorTokenFile(haveExecutor); err != nil { // before anything is changed, by an install and an upgrade alike
+		return secretState{}, err
+	}
 	if !haveURL {
 		return state, nil
 	}
@@ -966,8 +966,8 @@ func engineCommand(rt Runtime, goos string) (string, error) {
 
 // checkExecutorTokenFile refuses to overwrite an executor token copy that this instance did not make, as checkTokenFile does for the MCP token:
 // the file exists, but this instance has no executor token secret.
-func (c colocatedInstall) checkExecutorTokenFile() error {
-	if c.secrets.haveExecutor {
+func (c colocatedInstall) checkExecutorTokenFile(haveSecret bool) error {
+	if haveSecret {
 		return nil
 	}
 	path := executorTokenFile(c.tokenFile)

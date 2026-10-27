@@ -279,3 +279,17 @@ func TestTheLevelsOfAPolicyAreItsTwoLevelsAndAnUnknownOneIsAnError(t *testing.T)
 		}
 	}
 }
+
+// A receipt job is read by the manifest of the canonical version that its revision expects, so a zero digest (a baseline, which expects none, whose receipt is not
+// applicable) is no wildcard for the receipt: it is an error, not a job of another binding. The canonical plan takes any job with the zero digest, as above.
+func TestTheReceiptJobAGateReadsNeedsTheManifestTheRevisionExpects(t *testing.T) {
+	jobs := []execution.Job{readerJob(1, execution.StateComplete, "v1"), readerJob(2, execution.StatePending, "v2")}
+	for name, report := range map[string]func(string, error) error{"opaque": opaqueRead, "wrapping": wrapRead} {
+		t.Run(name, func(t *testing.T) {
+			got, found, err := readerOf(readerStore{jobs: jobs}, report).gateJob(t.Context(), 1, 5, "head", execution.PlanReceipt, artifact.Digest{})
+			if err == nil || found || got.ID != 0 {
+				t.Fatalf("gateJob = job %d, found %v, error %v; want an error and no job", got.ID, found, err)
+			}
+		})
+	}
+}

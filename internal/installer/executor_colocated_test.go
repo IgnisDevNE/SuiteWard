@@ -635,7 +635,7 @@ func TestTheUninstallWarningNamesTheCommandsOfTheOperatingSystemThatKeepsTheExec
 			writeFile(un.t, filepath.Join(un.executorDir(), executorWrapperName), "the wrapper")
 			writeFile(un.t, filepath.Join(un.executorDir(), "task.xml"), "the task")
 			un.f.fail("IMAGENAME eq suiteward-executor.exe", errors.New("tasklist: access denied"))
-		}, []string{`schtasks /End /TN "SuiteWard Executor"`, "suiteward-executor.exe", `schtasks /Delete /TN "SuiteWard Executor" /F`}},
+		}, []string{`schtasks /End /TN "SuiteWard Executor"`, "`taskkill /IM suiteward-executor.exe /F`", `schtasks /Delete /TN "SuiteWard Executor" /F`}},
 		{"darwin", func(un *harness) { un.f.fail("=-u", errors.New("id: not found")) }, []string{"launchctl bootout gui/$(id -u)/" + executorLabel}},
 	}
 	for _, c := range cases {

@@ -14,19 +14,25 @@ import (
 // (docs/contracts/runtime.md, "The canonical gate" and "The SuiteWard / Receipt check"). The domain decides each rule; the job reads the job of the head,
 // counts its tests and asks.
 
-// executionOutcome is what the execution step of a pull request decided beside its jobs: the counts that its Contract check carries.
+// executionOutcome is what the execution step of a pull request decided beside its jobs: the counts that its Contract check carries and its Receipt check.
 type executionOutcome struct {
-	counts *checkExecution
+	counts  *checkExecution
+	receipt receiptDecision
 }
 
-// executionStep plans and creates the jobs of the head and lets the canonical job gate its Contract check. A head that could not be assessed is planned
-// for once it is.
+// executionStep plans and creates the jobs of the head, lets the canonical job gate its Contract check and decides its Receipt check. A head that could not be
+// assessed is planned for once it is.
 func (j *checksJob) executionStep(ctx context.Context, s *pullState, x *executionRun, assessed checks.Result, d *pullDecision) (executionOutcome, error) {
 	jobs, err := j.execute(ctx, s, x, assessed)
 	if err != nil {
 		return executionOutcome{}, err
 	}
-	return j.applyCanonicalGate(ctx, s, x, jobs, d)
+	outcome, err := j.applyCanonicalGate(ctx, s, x, jobs, d)
+	if err != nil {
+		return executionOutcome{}, err
+	}
+	outcome.receipt, err = j.receiptCheck(ctx, s, jobs)
+	return outcome, err
 }
 
 // ungated is the check as it was decided before the canonical gate held it back: a stored check with a gate reason is the success it replaced, unchanged for

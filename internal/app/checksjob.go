@@ -317,6 +317,9 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err := j.publishCheck(ctx, s, d.result, runners, executed.counts); err != nil {
 		return "", err
 	}
+	if err := j.publishReceipt(ctx, s, executed.receipt); err != nil {
+		return "", err
+	}
 	if err := j.commentAfterCheck(ctx, s, d.result, runners); err != nil {
 		return "", err
 	}
@@ -444,6 +447,21 @@ func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result check
 	})
 	if err != nil {
 		return fmt.Errorf("publish the check: %w", err)
+	}
+	return nil
+}
+
+// publishReceipt writes the Receipt check of the head to its ledger, which writes the github_receipt_check message when the head, the state, the reason, the
+// reference or the unblocked mark changed.
+func (j *checksJob) publishReceipt(ctx context.Context, s *pullState, d receiptDecision) error {
+	if !d.publish {
+		return nil
+	}
+	_, _, err := j.receipts.Publish(ctx, d.check, j.now(), func(generation int64) (governance.OutboxMessage, error) {
+		return newReceiptCheckMessage(s.p.Repo, d, s.tier, generation)
+	})
+	if err != nil {
+		return fmt.Errorf("publish the Receipt check: %w", err)
 	}
 	return nil
 }

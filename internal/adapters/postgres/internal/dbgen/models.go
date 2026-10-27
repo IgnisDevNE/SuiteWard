@@ -155,6 +155,7 @@ type ExecutionResult struct {
 	BodyDigest      pgtype.Text
 	Markers         []byte
 	Submodules      []string
+	Unparsed        []string
 }
 
 type ExecutionTest struct {

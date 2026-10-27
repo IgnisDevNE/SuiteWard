@@ -297,7 +297,7 @@ func insertResultParams(jobID int64, origin execution.Origin, receivedAt time.Ti
 	return dbgen.InsertExecutionResultParams{JobID: jobID, Status: string(r.Status), Origin: string(origin), Reason: optionalText(string(r.Reason)),
 		ExecutorVersion: optionalText(r.ExecutorVersion), ExecutorSha256: optionalText(strings.TrimPrefix(r.ExecutorSHA256.String(), "sha256:")),
 		ImageDigest: optionalText(r.ImageDigest.String()), Toolchain: optionalText(r.Toolchain), Runtime: optionalText(r.Runtime), StartedAt: timestamp(r.StartedAt),
-		EndedAt: timestamp(r.EndedAt), ReceivedAt: timestamp(receivedAt), BodyDigest: optionalText(r.BodyDigest.String()), Markers: encoded, Submodules: stringList(r.Submodules)}, nil
+		EndedAt: timestamp(r.EndedAt), ReceivedAt: timestamp(receivedAt), BodyDigest: optionalText(r.BodyDigest.String()), Markers: encoded, Submodules: stringList(r.Submodules), Unparsed: stringList(r.Unparsed)}, nil
 }
 
 func insertTestsParams(jobID int64, tests []execution.Test) []dbgen.InsertExecutionTestsParams {
@@ -537,7 +537,7 @@ func (s executionStore) Result(ctx context.Context, jobID int64) (execution.Stor
 		return execution.StoredResult{}, false, fmt.Errorf("read the result of job %d: stored markers: %w", jobID, err)
 	}
 	report := execution.Report{Status: execution.State(row.Status), Reason: execution.Reason(row.Reason.String), ExecutorVersion: row.ExecutorVersion.String, Toolchain: row.Toolchain.String,
-		Runtime: row.Runtime.String, StartedAt: observedTime(row.StartedAt), EndedAt: observedTime(row.EndedAt), Submodules: row.Submodules}
+		Runtime: row.Runtime.String, StartedAt: observedTime(row.StartedAt), EndedAt: observedTime(row.EndedAt), Submodules: row.Submodules, Unparsed: row.Unparsed}
 	for _, m := range markers {
 		report.Markers = append(report.Markers, execution.Marker(m))
 	}

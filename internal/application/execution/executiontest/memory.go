@@ -200,7 +200,7 @@ func (m *Memory) Complete(ctx context.Context, jobID int64, r execution.Result, 
 }
 
 func cloneReport(r execution.Report) execution.Report {
-	r.Markers, r.Submodules = slices.Clone(r.Markers), slices.Clone(r.Submodules)
+	r.Markers, r.Submodules, r.Unparsed = slices.Clone(r.Markers), slices.Clone(r.Submodules), slices.Clone(r.Unparsed)
 	return r
 }
 

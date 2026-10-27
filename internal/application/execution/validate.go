@@ -3,6 +3,7 @@ package execution
 import (
 	"fmt"
 	"math"
+	"path"
 	"regexp"
 	"strings"
 
@@ -158,7 +159,7 @@ var (
 	observations   = []string{"pass", "fail", "build-error", "skip", "absent"}
 	canonicalTests = []string{"pass", "fail", "skipped", "missing", "flaky", "excluded"}
 	receiptTests   = []string{"excluded", "missing", "flaky", "skipped", "fails", "new_api", "detects", "inert"}
-	markerKinds    = []string{"testing-import", "testing-testing", "flag-lookup-test", "exit-in-init", "test-file-read", "env-read"}
+	markerKinds    = []string{"testing-import", "testing-testing", "flag-lookup-test", "exit-in-init", "test-file-read", "env-read", "forged-event"}
 )
 
 func contains(list []string, s string) bool {
@@ -194,16 +195,35 @@ func (r Report) validate() error {
 		return invalid("the run needs a start and an end that is not before it")
 	case r.Status == StateComplete && r.ImageDigest.IsZero():
 		return invalid("a complete result needs the image digest")
+	}
+	required := r.Status == StateComplete
+	return errorsOf(r.validPaths(), validText("the toolchain", r.Toolchain, required), validText("the runtime", r.Runtime, required))
+}
+
+// validPaths checks the skipped submodules and the changed test files that do not parse.
+func (r Report) validPaths() error {
+	switch {
 	case len(r.Submodules) > maxSubmodules:
 		return invalid("%d submodules; at most %d", len(r.Submodules), maxSubmodules)
+	case len(r.Unparsed) > maxPaths:
+		return invalid("%d unparsed files; at most %d", len(r.Unparsed), maxPaths)
 	}
 	for _, p := range r.Submodules {
 		if len(p) > maxTreePathBytes {
 			return invalid("a submodule path of %d bytes; at most %d", len(p), maxTreePathBytes)
 		}
 	}
-	required := r.Status == StateComplete
-	return errorsOf(validText("the toolchain", r.Toolchain, required), validText("the runtime", r.Runtime, required))
+	for _, p := range r.Unparsed {
+		if !validTestFile(p) {
+			return invalid("an unparsed file must be a clean relative path of at most %d bytes that ends _test.go", maxPathBytes)
+		}
+	}
+	return nil
+}
+
+// validTestFile is true for a clean relative path, with no .. segment, that ends _test.go and is at most 1024 bytes.
+func validTestFile(p string) bool {
+	return len(p) <= maxPathBytes && strings.HasSuffix(p, "_test.go") && !strings.HasPrefix(p, "/") && path.Clean(p) == p && p != ".." && !strings.HasPrefix(p, "../")
 }
 
 func (m Marker) validate() error {
@@ -223,8 +243,8 @@ func (r Result) Validate(plan Plan) error {
 		return invalid("an unavailable result has no tests")
 	case len(r.Tests) > MaxTests:
 		return invalid("%d tests; at most %d", len(r.Tests), MaxTests)
-	case plan == PlanCanonical && len(r.Markers) > 0:
-		return invalid("a canonical result has no markers")
+	case plan == PlanCanonical && (len(r.Markers) > 0 || len(r.Unparsed) > 0):
+		return invalid("a canonical result has no markers and no unparsed files")
 	case len(r.Markers) > maxMarkers:
 		return invalid("%d markers; at most %d", len(r.Markers), maxMarkers)
 	}

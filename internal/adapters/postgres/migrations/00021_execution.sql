@@ -27,6 +27,17 @@ CREATE FUNCTION execution_markers_valid(markers jsonb) RETURNS boolean
 $$;
 -- +goose StatementEnd
 
+-- The changed test files that go cannot parse: at most 100 paths, each at most 1024 bytes, clean and relative (no empty, . or .. segment, no
+-- leading or trailing slash), ending _test.go.
+-- +goose StatementBegin
+CREATE FUNCTION execution_unparsed_valid(paths text[]) RETURNS boolean
+    LANGUAGE sql IMMUTABLE AS $$
+    SELECT coalesce(cardinality(paths), 0) <= 100
+       AND coalesce((SELECT bool_and(coalesce(octet_length(p) <= 1024 AND p ~ '_test\.go$' AND p ~ '^([^/]+/)*[^/]+$' AND p !~ '(^|/)\.{1,2}(/|$)', false))
+                     FROM unnest(paths) AS p), true)
+$$;
+-- +goose StatementEnd
+
 -- One row for each wanted run: a plan on a head, for one binding. The row changes while the job is open and never after.
 CREATE TABLE execution_jobs (
     job_id bigint GENERATED ALWAYS AS IDENTITY,
@@ -189,6 +200,7 @@ CREATE TABLE execution_results (
     body_digest text,
     markers jsonb NOT NULL DEFAULT '[]',
     submodules text[] NOT NULL DEFAULT '{}',
+    unparsed text[] NOT NULL DEFAULT '{}',
     CONSTRAINT execution_results_pkey PRIMARY KEY (job_id),
     CONSTRAINT execution_results_job_fkey FOREIGN KEY (job_id) REFERENCES execution_jobs (job_id),
     CONSTRAINT execution_results_status_check CHECK (status IN ('complete', 'unavailable')),
@@ -208,7 +220,8 @@ CREATE TABLE execution_results (
     CONSTRAINT execution_results_runtime_check CHECK (runtime IS NULL OR (octet_length(runtime) <= 64 AND origin <> 'service')),
     CONSTRAINT execution_results_times_check CHECK (ended_at >= started_at),
     CONSTRAINT execution_results_markers_check CHECK (execution_markers_valid(markers)),
-    CONSTRAINT execution_results_submodules_check CHECK (execution_paths_valid(submodules, 100, 4096))
+    CONSTRAINT execution_results_submodules_check CHECK (execution_paths_valid(submodules, 100, 4096)),
+    CONSTRAINT execution_results_unparsed_check CHECK (execution_unparsed_valid(unparsed))
 );
 
 CREATE TRIGGER execution_results_immutable BEFORE UPDATE OR DELETE ON execution_results

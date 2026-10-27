@@ -177,7 +177,7 @@ func (q *Queries) GetExecutionJob(ctx context.Context, jobID int64) (ExecutionJo
 }
 
 const getExecutionResult = `-- name: GetExecutionResult :one
-SELECT job_id, status, origin, reason, executor_version, executor_sha256, image_digest, toolchain, runtime, started_at, ended_at, received_at, body_digest, markers, submodules
+SELECT job_id, status, origin, reason, executor_version, executor_sha256, image_digest, toolchain, runtime, started_at, ended_at, received_at, body_digest, markers, submodules, unparsed
 FROM execution_results WHERE job_id = $1
 `
 
@@ -200,6 +200,7 @@ func (q *Queries) GetExecutionResult(ctx context.Context, jobID int64) (Executio
 		&i.BodyDigest,
 		&i.Markers,
 		&i.Submodules,
+		&i.Unparsed,
 	)
 	return i, err
 }
@@ -444,9 +445,10 @@ func (q *Queries) InsertExecutionJob(ctx context.Context, arg InsertExecutionJob
 
 const insertExecutionResult = `-- name: InsertExecutionResult :exec
 INSERT INTO execution_results (job_id, status, origin, reason, executor_version, executor_sha256, image_digest, toolchain, runtime, started_at, ended_at, received_at,
-                               body_digest, markers, submodules)
+                               body_digest, markers, submodules, unparsed)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11, $12, $13, $14, $15)
+        $8, $9, $10, $11, $12, $13, $14, $15,
+        $16)
 `
 
 type InsertExecutionResultParams struct {
@@ -465,6 +467,7 @@ type InsertExecutionResultParams struct {
 	BodyDigest      pgtype.Text
 	Markers         []byte
 	Submodules      []string
+	Unparsed        []string
 }
 
 func (q *Queries) InsertExecutionResult(ctx context.Context, arg InsertExecutionResultParams) error {
@@ -484,6 +487,7 @@ func (q *Queries) InsertExecutionResult(ctx context.Context, arg InsertExecution
 		arg.BodyDigest,
 		arg.Markers,
 		arg.Submodules,
+		arg.Unparsed,
 	)
 	return err
 }

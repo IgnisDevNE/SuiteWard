@@ -79,12 +79,13 @@ SELECT state, count(*) AS jobs FROM execution_jobs GROUP BY state;
 
 -- name: InsertExecutionResult :exec
 INSERT INTO execution_results (job_id, status, origin, reason, executor_version, executor_sha256, image_digest, toolchain, runtime, started_at, ended_at, received_at,
-                               body_digest, markers, submodules)
+                               body_digest, markers, submodules, unparsed)
 VALUES (sqlc.arg(job_id), sqlc.arg(status), sqlc.arg(origin), sqlc.narg(reason), sqlc.narg(executor_version), sqlc.narg(executor_sha256), sqlc.narg(image_digest),
-        sqlc.narg(toolchain), sqlc.narg(runtime), sqlc.arg(started_at), sqlc.arg(ended_at), sqlc.arg(received_at), sqlc.narg(body_digest), sqlc.arg(markers), sqlc.arg(submodules));
+        sqlc.narg(toolchain), sqlc.narg(runtime), sqlc.arg(started_at), sqlc.arg(ended_at), sqlc.arg(received_at), sqlc.narg(body_digest), sqlc.arg(markers), sqlc.arg(submodules),
+        sqlc.arg(unparsed));
 
 -- name: GetExecutionResult :one
-SELECT job_id, status, origin, reason, executor_version, executor_sha256, image_digest, toolchain, runtime, started_at, ended_at, received_at, body_digest, markers, submodules
+SELECT job_id, status, origin, reason, executor_version, executor_sha256, image_digest, toolchain, runtime, started_at, ended_at, received_at, body_digest, markers, submodules, unparsed
 FROM execution_results WHERE job_id = sqlc.arg(job_id);
 
 -- name: InsertExecutionTests :copyfrom

@@ -106,3 +106,15 @@ func TestAnInstallThatNamesTheDefaultSettingsFileUsesTheDefaultTokenFile(t *test
 		t.Errorf("the token copy is not at the default place %s", defaultToken)
 	}
 }
+
+// The help of --token-file says what the install and the upgrade do with another settings file: they ask for it.
+func TestTheUsageOfTheTokenFileSaysThatAnotherSettingsFileNeedsIt(t *testing.T) {
+	h := newHarness(t, "linux")
+	if err := Install(context.Background(), []string{"--help"}, h.newEnv()); err == nil {
+		t.Fatal("Install --help must end with the help")
+	}
+	help := strings.Join(strings.Fields(h.out.String()), " ")
+	if !strings.Contains(help, "with the default settings file only") || !strings.Contains(help, "another --settings file needs --token-file") {
+		t.Errorf("the usage of --token-file does not say that another settings file needs it:\n%s", h.out.String())
+	}
+}

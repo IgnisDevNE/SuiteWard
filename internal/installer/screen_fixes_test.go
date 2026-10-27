@@ -136,7 +136,7 @@ func TestHostDnfRunsUnderASpinnerOnAFullScreen(t *testing.T) {
 	h := newHostFake()
 	h.podman = ""
 	scr, br, out := fullScreenOn(t, liveContext(t), strings.NewReader(""))
-	r := newTestResolver(t, map[string]string{"yes": "true", "metadata-rule": "no"}, nil, Terminal{In: br, Out: scr, ReadPassword: func() ([]byte, error) { return nil, nil }})
+	r := newTestResolver(t, withReleaseSums(t, h, map[string]string{"yes": "true", "metadata-rule": "no"}), nil, Terminal{In: br, Out: scr, ReadPassword: func() ([]byte, error) { return nil, nil }})
 	if err := PrepareHost(context.Background(), r, h.deps(), scr); err != nil {
 		t.Fatal(err)
 	}
@@ -184,8 +184,9 @@ func TestCommandsReportAFailedTerminalWithTheirOwnError(t *testing.T) {
 		}
 	})
 	t.Run("install host", func(t *testing.T) {
-		env := Env{Deps: newHostFake().deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, PortFree: func(int) error { return nil }, Sleep: func(time.Duration) {}, OpenScreen: broken}
-		if err := installHost(context.Background(), []string{"--yes", "--metadata-rule", "no"}, env); err == nil || !strings.Contains(err.Error(), lost) {
+		h := newHostFake()
+		env := Env{Deps: h.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, PortFree: func(int) error { return nil }, Sleep: func(time.Duration) {}, OpenScreen: broken}
+		if err := installHost(context.Background(), append([]string{"--yes", "--metadata-rule", "no"}, hostSumsArgs(t, h)...), env); err == nil || !strings.Contains(err.Error(), lost) {
 			t.Errorf("install host returned %v", err)
 		}
 	})

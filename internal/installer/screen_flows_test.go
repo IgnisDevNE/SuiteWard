@@ -295,7 +295,7 @@ func TestInstallHostOnAFullScreenShowsTheSteps(t *testing.T) {
 	h := newHostFake()
 	c := newTermConsole(&bytes.Buffer{})
 	env := Env{Deps: h.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, PortFree: func(int) error { return nil }, Sleep: func(time.Duration) {}, OpenScreen: c.open}
-	if err := installHost(liveContext(t), []string{"--yes", "--metadata-rule", "no"}, env); err != nil {
+	if err := installHost(liveContext(t), append([]string{"--yes", "--metadata-rule", "no"}, hostSumsArgs(t, h)...), env); err != nil {
 		t.Fatal(err)
 	}
 	c.steps(t, "Podman", "Account", "Metadata", "Executor", "Next")

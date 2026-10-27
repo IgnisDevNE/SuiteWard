@@ -31,9 +31,10 @@ var podmanVersionText = regexp.MustCompile(`\d+\.\d+(?:\.\d+)?`)
 
 // host holds what the steps of PrepareHost share. Every command goes through Deps.Exec, so a fake machine tests them.
 type host struct {
-	r   *Resolver
-	d   Deps
-	out io.Writer
+	r       *Resolver
+	d       Deps
+	out     io.Writer
+	release releaseProgram // this program as the release's SHA256SUMS lists it, checked before anything is changed
 }
 
 // PrepareHost is `sudo suiteward install host`, the administrator half of the isolated install (docs/install.md, section 10).
@@ -57,6 +58,9 @@ func PrepareHost(ctx context.Context, r *Resolver, d Deps, out io.Writer) error 
 	}
 	if uid != "0" {
 		return errors.New("install host changes the system and must run as root: run it with sudo, then run the service-account step as the service account")
+	}
+	if h.release, err = h.verifyRelease(ctx); err != nil {
+		return err
 	}
 	for i, step := range []func(context.Context) error{h.podman, h.account, h.metadata, h.executor, h.configDir} { // the last one and next are step 5
 		scr.Step(i + 1)

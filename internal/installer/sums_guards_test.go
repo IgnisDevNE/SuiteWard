@@ -70,12 +70,9 @@ func TestInstallOnWindowsRefusesSumsThatListOnlyAnotherSystemsBinary(t *testing.
 
 func TestInstallReadsSumsWithWindowsLineEndings(t *testing.T) {
 	h := newHarness(t, "linux")
-	sums := writeSums(t, h, sumsAsset)
-	raw, err := os.ReadFile(sums)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(sums, []byte(strings.ReplaceAll(string(raw), "\n", "\r\n")), 0o600); err != nil {
+	sums := filepath.Join(t.TempDir(), "SHA256SUMS")
+	text := strings.Repeat("a", 64) + "  install.sh\r\n" + sha256File(t, h.program()) + "  " + sumsAsset + "\r\n"
+	if err := os.WriteFile(sums, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.podman("--sha256sums", sums); err != nil {

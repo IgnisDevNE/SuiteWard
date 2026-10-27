@@ -100,7 +100,7 @@ func (h *executorAPI) lease(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, execution.ErrGitHubUnavailable):
 		h.fail(w, http.StatusBadGateway, "github")
 	case err != nil:
-		h.internal(w, r, "lease a job", err)
+		h.leaseFailed(w, r, err)
 	case !granted:
 		w.WriteHeader(http.StatusNoContent)
 	case prepared == nil || prepared.JobID != job.ID:
@@ -109,6 +109,16 @@ func (h *executorAPI) lease(w http.ResponseWriter, r *http.Request) {
 		prepared.LeaseExpiresAt, prepared.DeadlineAt = rfc3339(job.LeaseExpiresAt), rfc3339(job.DeadlineAt)
 		h.reply(w, r, http.StatusOK, prepared)
 	}
+}
+
+// leaseFailed answers 500 for a lease that failed on the service's side, and logs it once: with the job, when a job could not be prepared.
+func (h *executorAPI) leaseFailed(w http.ResponseWriter, r *http.Request, err error) {
+	var failed *jobError
+	if errors.As(err, &failed) {
+		h.internal(w, r, "prepare a job for a lease", failed.err, "job", failed.job)
+		return
+	}
+	h.internal(w, r, "lease a job", err)
 }
 
 // noLeaseBody reports whether the request has no body or the empty object: any other body is refused.
@@ -140,8 +150,22 @@ func (h *executorAPI) prepare(ctx context.Context, job execution.Job, leaseID st
 	if errors.Is(err, execution.ErrTooLarge) {
 		h.logger.InfoContext(ctx, "executor API: a job is too large to lease", "job", job.ID, "reason", err)
 	}
-	return answer, err
+	if err != nil {
+		return nil, &jobError{job: job.ID, err: err}
+	}
+	return answer, nil
 }
+
+// jobError says which job a lease could not prepare. It unwraps to the cause, so the store still tells a GitHub failure and a limit from the rest, and
+// the request that ends with the failure can log the job with it: the queue is stuck on a job that cannot be prepared.
+type jobError struct {
+	job int64
+	err error
+}
+
+func (e *jobError) Error() string { return fmt.Sprintf("job %d: %v", e.job, e.err) }
+
+func (e *jobError) Unwrap() error { return e.err }
 
 func (h *executorAPI) build(ctx context.Context, job execution.Job, leaseID string) (*leaseAnswer, error) {
 	repo, err := h.repoName(ctx, job.RepositoryID)

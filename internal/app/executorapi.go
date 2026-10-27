@@ -177,8 +177,8 @@ func (*executorAPI) fail(w http.ResponseWriter, status int, code string) {
 }
 
 // internal answers 500 and logs the cause, which no answer carries.
-func (h *executorAPI) internal(w http.ResponseWriter, r *http.Request, what string, err error) {
-	h.logger.ErrorContext(r.Context(), "executor API: "+what, "path", r.URL.Path, "error", err)
+func (h *executorAPI) internal(w http.ResponseWriter, r *http.Request, what string, err error, attrs ...any) {
+	h.logger.ErrorContext(r.Context(), "executor API: "+what, append([]any{"path", r.URL.Path, "error", err}, attrs...)...)
 	h.fail(w, http.StatusInternalServerError, "internal")
 }
 

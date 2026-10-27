@@ -113,6 +113,7 @@ func TestCommentPublisherRefusesAnExecutionAcknowledgmentThatDoesNotFitItsDispos
 		"a counts object on a mode-set":                 {"disposition": "mode-set", "mode": "fix", "counts": counts},
 		"a mode on an unblocked":                        {"disposition": "unblocked", "plans": []string{"receipt"}, "mode": "fix"},
 		"a mode on a processed acknowledgment":          {"project": "p", "suite": "default", "operation": "op", "mode": "fix"},
+		"a mode on a missing declaration":               {"disposition": "propose-refused", "reason": "declaration-missing", "branch": "feature", "mode": "fix"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newCmtWorld(t)

@@ -8,45 +8,6 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 )
 
-// runRecovering runs the job and reports a panic as an error: before the verbs were routed away, the job panicked in consent on them.
-func (w *cjWorld) runRecovering() (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("the job panicked: %v", r)
-		}
-	}()
-	return w.run()
-}
-
-// The parser reads the mode and the unblock verbs, but the commands job does not run them yet: until it does, they are acknowledged as an unknown
-// verb, as before the parser knew them. They never reach consent, which would ask for a reference they do not carry, and no code is consumed.
-func TestCommandsJobAcknowledgesTheModeAndUnblockVerbsAsUnknownAndNeverConsumesACode(t *testing.T) {
-	created := cjAt(10)
-	for name, body := range map[string]string{
-		"mode":                      cjMarker + "\n/suiteward mode fix",
-		"mode in capitals":          "/SUITEWARD MODE Refactor",
-		"unblock":                   cjMarker + "\n/suiteward unblock " + cjCode(created, 0),
-		"unblock in capitals":       "/SUITEWARD UNBLOCK " + cjCode(created, 0),
-		"unblock with another code": "/suiteward unblock " + cjCode(created, 1),
-	} {
-		t.Run(name, func(t *testing.T) {
-			w := newCjWorld(t)
-			w.syncAll([]cjComment{{pull: cjPull, id: 500, author: cjOwnerID, created: created, updated: created, body: body}})
-
-			if err := w.runRecovering(); err != nil {
-				t.Fatalf("run: %v\nlogs: %s", err, w.logs)
-			}
-
-			w.requireRejected(cjID1, 500, commands.Malformed, commandtext.UnknownVerb, "")
-			if len(w.owners.consumed) != 0 {
-				t.Fatalf("the job consumed %d steps; want none, since the command never reaches consent", len(w.owners.consumed))
-			}
-			w.requireNothingLeaked(cjCode(created, 0), cjCode(created, 1))
-			w.requireNoEntryAfterSecondRun(500)
-		})
-	}
-}
-
 // The two malformed reasons of the mode verb have their codes: the job acknowledges the comment and does not fail on it.
 func TestCommandsJobAcknowledgesAMalformedModeCommand(t *testing.T) {
 	created := cjAt(10)
@@ -63,7 +24,7 @@ func TestCommandsJobAcknowledgesAMalformedModeCommand(t *testing.T) {
 			w := newCjWorld(t)
 			w.syncAll([]cjComment{{pull: cjPull, id: 500, author: cjOwnerID, created: created, updated: created, body: tc.body}})
 
-			if err := w.runRecovering(); err != nil {
+			if err := w.run(); err != nil {
 				t.Fatalf("run: %v\nlogs: %s", err, w.logs)
 			}
 

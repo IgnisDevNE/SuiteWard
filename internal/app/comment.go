@@ -24,6 +24,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // The github_comment publisher (docs/contracts/runtime.md, "Outbox kind github_comment"). The payloads of
@@ -63,11 +64,14 @@ type ackPayload struct {
 	Project       contract.ProjectID   `json:"project,omitempty"`       // processed: the project of the Suite
 	Suite         contract.SuiteID     `json:"suite,omitempty"`         // processed: the Suite whose receipt is read
 	Operation     contract.OperationID `json:"operation,omitempty"`     // processed: the operation of the consent receipt
-	Disposition   string               `json:"disposition,omitempty"`   // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, other-pull, edited-first, proposed, propose-refused, skipped, skip-refused, suggested, suggest-refused or failed
+	Disposition   string               `json:"disposition,omitempty"`   // otherwise: malformed, invalid-code, replayed-code, no-suite, unknown-proposal, other-pull, edited-first, proposed, propose-refused, skipped, skip-refused, suggested, suggest-refused, failed, receipt-refused, mode-set, mode-refused, unblocked or unblock-refused
 	Comment       int64                `json:"comment"`                 // the id of the command comment
 	Owner         string               `json:"owner"`                   // the owner's GitHub login at processing time
-	Reason        string               `json:"reason,omitempty"`        // malformed: the reason code; propose-refused, skip-refused and suggest-refused: the refusal; suggested: declaration-missing, scope-notice or nothing-uncovered
-	Reference     string               `json:"reference,omitempty"`     // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal, other-pull and proposed: P<n>-R<m>
+	Reason        string               `json:"reason,omitempty"`        // malformed: the reason code; propose-refused, skip-refused, suggest-refused, mode-refused and unblock-refused: the refusal; receipt-refused: the reason of the gate; suggested: declaration-missing, scope-notice or nothing-uncovered
+	Reference     string               `json:"reference,omitempty"`     // invalid-code, replayed-code and no-suite of an approve or revoke, unknown-proposal, other-pull, proposed and receipt-refused: P<n>-R<m>
+	Mode          string               `json:"mode,omitempty"`          // mode-set: the mode recorded; receipt-refused: the mode the approve carried, when it carried one
+	Counts        *ackCounts           `json:"counts,omitempty"`        // receipt-refused for mode-not-met, and only for it: the receipt of the head
+	Plans         []string             `json:"plans,omitempty"`         // unblocked: the plans of the lifted jobs, canonical and receipt, each at most once
 	Branch        string               `json:"branch,omitempty"`        // declaration-missing and scope-notice: the pull request's head ref. Also a refusal that asks to fix .suiteward.yml: the branch of the file to edit
 	Suggestion    []string             `json:"suggestion,omitempty"`    // declaration-missing: the include patterns inventory.Suggest found
 	Runner        []string             `json:"runner,omitempty"`        // and the runner patterns,
@@ -81,6 +85,52 @@ type ackPayload struct {
 	AddInclude    []string             `json:"addInclude,omitempty"`    // with a base: the include patterns the base lacks,
 	AddRunner     []string             `json:"addRunner,omitempty"`     // and the runner patterns, at most 20 together
 	DefaultBranch string               `json:"defaultBranch,omitempty"` // scope-notice for the default branch: the branch whose file the reply asks to change, for the editor link
+}
+
+// ackCounts is the receipt of the head in the acknowledgment of a mode that it did not meet: the counts of the Receipt check's payload, every key present.
+type ackCounts struct {
+	Detects  int `json:"detects"`
+	Inert    int `json:"inert"`
+	NewAPI   int `json:"newApi"`
+	Fails    int `json:"fails"`
+	Missing  int `json:"missing"`
+	Flaky    int `json:"flaky"`
+	Skipped  int `json:"skipped"`
+	Excluded int `json:"excluded"`
+	Markers  int `json:"markers"`
+}
+
+// The names of the plans in the payload of an unblock.
+const (
+	planCanonical = "canonical"
+	planReceipt   = "receipt"
+)
+
+// planNames are the names of the plans, canonical first.
+func planNames(p commandtext.Plans) []string {
+	var names []string // nil for none: the payload then omits the list
+	if p.Canonical {
+		names = append(names, planCanonical)
+	}
+	if p.Receipt {
+		names = append(names, planReceipt)
+	}
+	return names
+}
+
+// plansOf reads the plans of an unblocked payload; ok is false for a name that is no plan and for one that is listed twice.
+func plansOf(names []string) (plans commandtext.Plans, ok bool) {
+	for _, name := range names {
+		switch {
+		case name == planCanonical && !plans.Canonical:
+			plans.Canonical = true
+		case name == planReceipt && !plans.Receipt:
+			plans.Receipt = true
+		default:
+			return commandtext.Plans{}, false
+		}
+	}
+	return plans, true
 }
 
 // The codes of the malformed reasons in a payload.
@@ -123,6 +173,7 @@ const (
 	reasonDeclarationMissing = "declaration-missing" // rendered by commandtext.SuggestDeclaration, which is not an Ack
 	reasonScopeNotice        = "scope-notice"        // a suggested reply rendered by commandtext.ScopeNoticeComment, which is not an Ack either
 	reasonNothingUncovered   = "nothing-uncovered"   // a suggested reply that every test-like path of the head is in the scope
+	reasonNotUnavailable     = "not-unavailable"     // an unblock of a head with no unavailable run
 )
 
 var (
@@ -130,6 +181,12 @@ var (
 	skipRefusals    = map[string]commandtext.Refusal{reasonCanonicalPresent: commandtext.CanonicalPresent, reasonFork: commandtext.Fork, reasonCarrier: commandtext.Carrier}
 	// suggestRefusals are the reasons of suggest-refused, worded as the propose refusals of the same name.
 	suggestRefusals = map[string]commandtext.Refusal{reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen, refusalInvalidSource: commandtext.InvalidSource}
+	// modeRefusals and unblockRefusals are the reasons of mode-refused and unblock-refused.
+	modeRefusals    = map[string]commandtext.Refusal{reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen}
+	unblockRefusals = map[string]commandtext.Refusal{reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen, reasonNotUnavailable: commandtext.NotUnavailable}
+	// gateReasons are the reasons of receipt-refused: the names of the domain's gate, which refuse an approve.
+	gateReasons = map[string]domain.Reason{string(domain.ReasonReceiptPending): domain.ReasonReceiptPending, string(domain.ReasonReceiptUnavailable): domain.ReasonReceiptUnavailable,
+		string(domain.ReasonModeRequired): domain.ReasonModeRequired, string(domain.ReasonModeNotMet): domain.ReasonModeNotMet}
 )
 
 // scopeBases are the codes of Base in a scope-notice payload.
@@ -144,6 +201,9 @@ var rejectedOutcomes = map[commands.Disposition]commandtext.Outcome{
 	// A suggest that finds a declaration to suggest is rendered by its own texts, so Suggested here is the one that finds nothing to add.
 	commands.Suggested: commandtext.NothingUncovered, commands.SuggestRefused: commandtext.SuggestRefused,
 	commands.OtherPull: commandtext.OtherPullRequest,
+	// The execution commands (M2.1).
+	commands.ReceiptRefused: commandtext.ReceiptRefused, commands.ModeSet: commandtext.ModeSet, commands.ModeRefused: commandtext.ModeRefused,
+	commands.Unblocked: commandtext.Unblocked, commands.UnblockRefused: commandtext.UnblockRefused,
 }
 
 // reasonFits reports whether reason is one a payload of d may carry.
@@ -163,8 +223,25 @@ func reasonFits(d commands.Disposition, reason string) bool {
 		return known
 	case commands.Suggested:
 		return reason == reasonDeclarationMissing || reason == reasonScopeNotice || reason == reasonNothingUncovered
+	case commands.ModeRefused:
+		_, known := modeRefusals[reason]
+		return known
+	case commands.UnblockRefused:
+		_, known := unblockRefusals[reason]
+		return known
+	case commands.ReceiptRefused:
+		_, known := gateReasons[reason]
+		return known
 	}
 	return reason == ""
+}
+
+// hasExecution is whether the payload holds any field that only the acknowledgments of the execution commands use.
+func (a ackPayload) hasExecution() bool { return a.Mode != "" || a.Counts != nil || a.Plans != nil }
+
+// receiptCounts is the counts the renderer takes for the receipt of a refusal. The payload has no unparsed files, as the Receipt check's counts have none.
+func (c ackCounts) receiptCounts() domain.ReceiptCounts {
+	return domain.ReceiptCounts{Detects: c.Detects, Inert: c.Inert, NewAPI: c.NewAPI, Fails: c.Fails, Missing: c.Missing, Flaky: c.Flaky, Skipped: c.Skipped, Excluded: c.Excluded}
 }
 
 // declarationMissing is whether the payload is the reply for want of a .suiteward.yml: the refusal of a propose, or the answer of a
@@ -209,10 +286,7 @@ func (a ackPayload) validate() error {
 		return errors.New("the comment id or the owner login is invalid")
 	}
 	if a.Disposition == "" {
-		if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || a.suggested() || a.hasNotice() || a.Base != "" {
-			return errors.New("a processed acknowledgment names its project, Suite and operation and nothing else")
-		}
-		return nil
+		return a.validateProcessed()
 	}
 	d := commands.Disposition(a.Disposition)
 	if _, known := rejectedOutcomes[d]; !known || a.Project != "" || a.Suite != "" || a.Operation != "" {
@@ -233,6 +307,14 @@ func (a ackPayload) validate() error {
 	return a.validateRejected()
 }
 
+// validateProcessed reports why the payload of an acknowledgment of a processed command cannot be rendered: it names its Suite and operation and nothing else.
+func (a ackPayload) validateProcessed() error {
+	if a.Project == "" || a.Suite == "" || a.Operation == "" || a.Reason != "" || a.Reference != "" || a.Branch != "" || a.suggested() || a.hasNotice() || a.Base != "" || a.hasExecution() {
+		return errors.New("a processed acknowledgment names its project, Suite and operation and nothing else")
+	}
+	return nil
+}
+
 // validateRejected reports why the payload of an acknowledgment that has no receipt cannot be rendered.
 func (a ackPayload) validateRejected() error {
 	if a.suggested() || a.hasNotice() {
@@ -240,6 +322,15 @@ func (a ackPayload) validateRejected() error {
 	}
 	if _, _, ok := commandtext.ParseReference(a.Reference); a.Reference != "" && !ok { // an unreadable reference would render as none
 		return errors.New("the reference is not P<n>-R<m>")
+	}
+	if _, err := domain.ParseMode(a.Mode); a.Mode != "" && err != nil { // an unreadable mode would render as none
+		return errors.New("the mode is not fix, feature or refactor")
+	}
+	if _, ok := plansOf(a.Plans); !ok {
+		return errors.New("the plans are not canonical and receipt, each at most once")
+	}
+	if gateCounts := a.Disposition == string(commands.ReceiptRefused) && a.Reason == string(domain.ReasonModeNotMet); (a.Counts != nil) != gateCounts {
+		return errors.New("counts fit the refusal of a mode that the receipt did not meet, and only it")
 	}
 	if commandtext.ValidateAck(rejectedAckOf(a)) != nil { // its text quotes the owner and the branch, so only a fixed reason is kept
 		return errors.New("the acknowledgment does not fit its disposition")
@@ -252,8 +343,8 @@ func (a ackPayload) validateMissing() error {
 	switch {
 	case a.Reference != "":
 		return errors.New("a missing declaration names no reference")
-	case a.hasNotice() || a.Base != "":
-		return errors.New("a missing declaration holds no scope notice")
+	case a.hasNotice() || a.Base != "" || a.hasExecution():
+		return errors.New("a missing declaration holds no scope notice and no field of the execution commands")
 	}
 	// SuggestDeclaration panics on what it refuses, which would loop the outbox job: refuse it here.
 	if commandtext.ValidateSuggestion(a.suggestion()) != nil {
@@ -270,8 +361,8 @@ func (a ackPayload) validateMissing() error {
 // validateNotice reports why a scope-notice payload cannot be rendered, without quoting it.
 func (a ackPayload) validateNotice() error {
 	switch {
-	case len(a.Suggestion) != 0 || len(a.Runner) != 0 || a.Reference != "":
-		return errors.New("a scope notice holds no suggestion and no reference")
+	case len(a.Suggestion) != 0 || len(a.Runner) != 0 || a.Reference != "" || a.hasExecution():
+		return errors.New("a scope notice holds no suggestion, no reference and no field of the execution commands")
 	case a.PathsTotal < len(a.Paths):
 		return errors.New("the total is below the listed paths")
 	}
@@ -304,6 +395,27 @@ func newRejectedAck(target commentTarget, comment int64, ownerLogin string, disp
 // ProposeRefused or SkipRefused (with the refusal's code, other than declaration-missing), Skipped, or Failed.
 func newBootstrapAck(target commentTarget, comment int64, ownerLogin string, disposition commands.Disposition, reason, reference string) (governance.OutboxMessage, error) {
 	return newAck(ackPayload{commentTarget: target, Disposition: string(disposition), Comment: comment, Owner: ownerLogin, Reason: reason, Reference: reference})
+}
+
+// newModeSetAck builds the acknowledgment of a mode that was recorded.
+func newModeSetAck(target commentTarget, comment int64, ownerLogin string, mode domain.Mode) (governance.OutboxMessage, error) {
+	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.ModeSet), Comment: comment, Owner: ownerLogin, Mode: mode.String()})
+}
+
+// newUnblockedAck builds the acknowledgment of an unblock that lifted the jobs of these plans.
+func newUnblockedAck(target commentTarget, comment int64, ownerLogin string, plans commandtext.Plans) (governance.OutboxMessage, error) {
+	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.Unblocked), Comment: comment, Owner: ownerLogin, Plans: planNames(plans)})
+}
+
+// newReceiptRefusedAck builds the refusal of an approve of reference (P<n>-R<m>) by the receipt gate, for the reason it gave. mode is the mode the approve
+// carried, if any; the counts and the number of marker lines are the receipt of the head, kept only for a mode that it did not meet.
+func newReceiptRefusedAck(target commentTarget, comment int64, ownerLogin, reference string, reason domain.Reason, mode domain.Mode, counts domain.ReceiptCounts, markers int) (governance.OutboxMessage, error) {
+	p := ackPayload{commentTarget: target, Disposition: string(commands.ReceiptRefused), Comment: comment, Owner: ownerLogin, Reason: string(reason), Reference: reference, Mode: mode.String()}
+	if reason == domain.ReasonModeNotMet {
+		p.Counts = &ackCounts{Detects: counts.Detects, Inert: counts.Inert, NewAPI: counts.NewAPI, Fails: counts.Fails, Missing: counts.Missing, Flaky: counts.Flaky,
+			Skipped: counts.Skipped, Excluded: counts.Excluded, Markers: markers}
+	}
+	return newAck(p)
 }
 
 // newDeclarationMissingAck builds the reply of a propose (disposition ProposeRefused) or of a suggest before the first contract (Suggested) when no declaration is to be proposed: branch is the pull
@@ -633,6 +745,17 @@ func rejectedAckOf(a ackPayload) commandtext.Ack {
 		ack.Refusal = skipRefusals[a.Reason]
 	case commands.SuggestRefused:
 		ack.Refusal = suggestRefusals[a.Reason]
+	case commands.ModeRefused:
+		ack.Refusal = modeRefusals[a.Reason]
+	case commands.UnblockRefused:
+		ack.Refusal = unblockRefusals[a.Reason]
+	case commands.ReceiptRefused:
+		ack.Gate = gateReasons[a.Reason]
+	}
+	ack.Mode, _ = domain.ParseMode(a.Mode) // validated: none for no mode
+	ack.Plans, _ = plansOf(a.Plans)        // validated
+	if a.Counts != nil {
+		ack.Counts, ack.Markers = a.Counts.receiptCounts(), a.Counts.Markers
 	}
 	if a.Reference != "" {
 		ack.Proposal, ack.Revision, _ = commandtext.ParseReference(a.Reference)

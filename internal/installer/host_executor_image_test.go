@@ -18,7 +18,7 @@ func TestPrepareHostPullsTheGoImageIntoTheStorageOfTheExecutor(t *testing.T) {
 	pull := hostCallIndex(h, "systemd-run", "podman pull "+goprofile.Image)
 	exists := hostCallIndex(h, "systemd-run", "podman image exists "+goprofile.Image)
 	start := hostCallIndex(h, "systemctl", "enable --now suiteward-executor.service")
-	if pull < 0 || exists < 0 || start < 0 || !(pull < exists && exists < start) {
+	if pull < 0 || exists < 0 || start < 0 || pull >= exists || exists >= start {
 		t.Fatalf("want a pull, then the check of the image, then the start of the executor; got %d, %d, %d in %v", pull, exists, start, h.lines())
 	}
 	for _, c := range []call{h.calls[pull], h.calls[exists]} {

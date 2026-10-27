@@ -75,15 +75,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	}
 	plan := upgradePlan{oldImage: st.adopted.Image, newImage: image, oldDB: st.adopted.DBImage, newDB: postgres}
 	if _, statErr := os.Stat(host.settingsPath); plan.current() && statErr == nil {
-		if settled, err := executor.settleCurrent(ctx, env, scr, host, s.HTTPPort); err != nil || settled {
-			if err != nil {
-				return err
-			}
-			return holdPage(scr)
-		}
-		say("Nothing to upgrade: already on %s. Check the instance with `%s doctor`.\n", digestOf(image), env.Deps.command())
-		say("%s", executor.currentNote(st.adopted.NoExecutor, installCommand(env.Deps.command(), r, true)))
-		return holdPage(scr)
+		return upgradeCurrent(ctx, env, r, scr, host, executor, st.adopted.NoExecutor, image, s.HTTPPort)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
 	agreed, err := settleRecipient(r, env, &s)

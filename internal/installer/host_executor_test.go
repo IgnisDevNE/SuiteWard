@@ -78,17 +78,6 @@ func (h *hostFake) answerExecutor(c call) (out []byte, handled bool, err error) 
 		return nil, true, fail
 	case c.name == "nft" && line == "list table inet suiteward_exec":
 		return []byte("table inet suiteward_exec { chain output { meta skuid 1002 ip daddr 169.254.169.254 reject meta skuid 1002 ip6 daddr fd00:ec2::254 reject } }"), true, nil
-	case c.name == "systemd-run" && strings.Contains(line, execUserSystemd) && strings.Contains(line, "podman pull "+goprofile.Image):
-		if h.pullFails {
-			return nil, true, fail
-		}
-		h.imagePulled = !h.pullLeavesNothing
-		return nil, true, nil
-	case c.name == "systemd-run" && strings.Contains(line, execUserSystemd) && strings.Contains(line, "podman image exists "+goprofile.Image):
-		if !h.imagePulled {
-			return nil, true, fail
-		}
-		return nil, true, nil
 	case c.name == "sha256sum":
 		if sum, ok := h.hashes[line]; ok {
 			return []byte(sum + "  " + line + "\n"), true, nil
@@ -103,6 +92,25 @@ func (h *hostFake) answerExecutor(c call) (out []byte, handled bool, err error) 
 		}
 		if h.tornCopy {
 			h.hashes[dest] = strings.Repeat("9", 64)
+		}
+		return nil, true, nil
+	}
+	return h.answerExecutorImage(c)
+}
+
+// answerExecutorImage answers the pull of the Go image as the executor's account, and the check that it is there.
+func (h *hostFake) answerExecutorImage(c call) (out []byte, handled bool, err error) {
+	line := c.line()
+	switch {
+	case c.name == "systemd-run" && strings.Contains(line, execUserSystemd) && strings.Contains(line, "podman pull "+goprofile.Image):
+		if h.pullFails {
+			return nil, true, errors.New(c.name + ": exit status 1")
+		}
+		h.imagePulled = !h.pullLeavesNothing
+		return nil, true, nil
+	case c.name == "systemd-run" && strings.Contains(line, execUserSystemd) && strings.Contains(line, "podman image exists "+goprofile.Image):
+		if !h.imagePulled {
+			return nil, true, errors.New(c.name + ": exit status 1")
 		}
 		return nil, true, nil
 	}

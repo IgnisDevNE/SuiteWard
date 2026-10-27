@@ -170,17 +170,17 @@ type machineEntry struct {
 }
 
 type doctor struct {
-	deps    Deps
-	fetch   func(context.Context, string) ([]byte, error) // GET of an address of the local service
-	s       Settings
-	rt      Runtime
-	why     string // the check that failed when rt is nil
-	machine machineInfo
-	viaSSH  bool // co-located Podman off Linux: the instance lives in a Podman machine
+	deps      Deps
+	fetch     func(context.Context, string) ([]byte, error) // GET of an address of the local service
+	s         Settings
+	rt        Runtime
+	why       string // the check that failed when rt is nil
+	machine   machineInfo
+	viaSSH    bool   // co-located Podman off Linux: the instance lives in a Podman machine
 	tokenFile string // --token-file: where the instance keeps the copy of its MCP token, and the executor its files beside it; empty for the default place
-	raw     map[string][]byte
-	units   map[string]map[string]string // isolated: `systemctl show` of each unit
-	results []doctorResult
+	raw       map[string][]byte
+	units     map[string]map[string]string // isolated: `systemctl show` of each unit
+	results   []doctorResult
 }
 
 func (d *doctor) pass(name, detail string) {

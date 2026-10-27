@@ -29,7 +29,7 @@ func copyProgram(src, dst string) error {
 	_, copyErr := io.Copy(tmp, in)
 	var chmodErr, syncErr error
 	if copyErr == nil {
-		chmodErr = tmp.Chmod(0o755) //nolint:gosec // a program: others read and run it
+		chmodErr = tmp.Chmod(0o700) // a program of this user, in a directory of this user
 		syncErr = tmp.Sync()
 	}
 	if err := errors.Join(copyErr, chmodErr, syncErr, tmp.Close()); err != nil {

@@ -1257,6 +1257,7 @@ Insert-only. One row for each job that ended with a result from the executor, `c
 | `received_at` | `timestamptz NOT NULL` | the service's clock |
 | `body_digest` | `text` | `^sha256:[0-9a-f]{64}$`; of the request body, so that the same result sent again is recognized; null exactly when `origin = 'service'` |
 | `markers` | `jsonb NOT NULL DEFAULT '[]'` | an array of at most 200 objects `{kind, path, line}`; an immutable payload |
+| `unparsed` | `text[] NOT NULL DEFAULT '{}'` | at most 100 paths of changed test files that do not parse; a receipt only; each counts as a blocking failure |
 | `submodules` | `text[] NOT NULL DEFAULT '{}'` | at most 100 |
 
 ### Table `execution_tests`

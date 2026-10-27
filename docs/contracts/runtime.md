@@ -703,6 +703,7 @@ A tree entry is `{path, mode, sha}`: `path` is at most 4096 bytes, `mode` is one
 | `tests` | array | `complete` only; at most 10,000 † (below) |
 | `markers` | array | `receipt` only: at most 200 objects `{kind, path, line}`. `kind` is `testing-import`, `testing-testing`, `flag-lookup-test`, `exit-in-init`, `test-file-read`, `env-read` or `forged-event` (a `\x16` byte in a string literal, the framing go test uses for test events) †; `exit-in-init` also covers `syscall.Exit` and exits in package-level initializers; `line` is 1 to 10,000,000 |
 | `submodules` | array | at most 100 paths that were skipped |
+| `unparsed` | array | `receipt` only: at most 100 paths of `_test.go` files that the canonical `include` matches, that the head changed, and that `go` cannot parse (no test of them can be listed). Each counts as a blocking failure of the receipt, like `FAILS`: the receipt is not empty, the Receipt check is `failure`, and no mode summary is met (`blocking-tests`) |
 
 A test is `{package, name, file, kind, head, base, excluded}`:
 - `package` is the directory of the package relative to the repository root (`.` for the root), at most 512 bytes. `name` is `Test` followed by letters, digits and `_`, at most 200 bytes. `file` is the declaring file, a path ending `_test.go`, at most 1024 bytes. A path is clean and relative, with no `..`.

@@ -10,15 +10,23 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 )
 
-// handle runs one leased job and posts its result once. The work has its own context: it outlives the signal that stops the loop, ends at the
-// deadline of the job (past it the service has ended the attempt), and ends when a heartbeat learns that the lease is lost. Work that ended
-// that way posts nothing, and the service sees the job again once its lease expires.
+// handle runs one leased job and posts its result once. The work has its own context: it outlives the signal that stops the loop by the
+// grace (30 s), ends at the deadline of the job (past it the service has ended the attempt), and ends when a heartbeat learns that the
+// lease is lost. Work that ended that way posts nothing, and the service sees the job again once its lease expires. Ending the context of
+// the work stops the sandbox, which kills its container.
 func (e *Executor) handle(ctx context.Context, lease *client.Lease) {
 	log := e.cfg.Log.With("job", lease.JobID, "plan", lease.Plan, "pull", lease.Pull)
 	deadline, stopTimer := context.WithDeadline(context.WithoutCancel(ctx), lease.DeadlineAt)
 	defer stopTimer()
 	work, lost := context.WithCancel(deadline)
 	defer lost()
+	graceCtx, stopGrace := context.WithCancel(work)
+	graced := make(chan struct{})
+	go func() {
+		defer close(graced)
+		e.grace(ctx, graceCtx, lost, log)
+	}()
+	defer func() { stopGrace(); <-graced }()
 	beat, stopBeat := context.WithCancel(work)
 	beating := make(chan struct{})
 	go func() {
@@ -41,6 +49,20 @@ func (e *Executor) handle(ctx context.Context, lease *client.Lease) {
 		log.Warn("the result was not accepted: its lease will expire", "error", err)
 	default:
 		log.Info("the result was posted", "state", state)
+	}
+}
+
+// grace gives the job in flight the time after the signal: when it has passed, and the job is still running (over has not ended), the work
+// is dropped. A job that ends in time ends over, and so ends the wait.
+func (e *Executor) grace(signal, over context.Context, drop context.CancelFunc, log *slog.Logger) {
+	select {
+	case <-signal.Done():
+	case <-over.Done():
+		return
+	}
+	if e.cfg.Sleep(over, e.cfg.Pacing.Grace) == nil {
+		log.Warn("the grace after the signal is over: the job is dropped and its lease will expire", "grace", e.cfg.Pacing.Grace)
+		drop()
 	}
 }
 

@@ -25,8 +25,9 @@ type Pacing struct {
 	Grace      time.Duration // how long a job in flight has after the signal that stops the loop
 }
 
-// DefaultPacing is the contract's: 5 s after a 204, a backoff of 5 s up to 60 s after an error, a heartbeat about every 20 s.
-var DefaultPacing = Pacing{Idle: 5 * time.Second, Backoff: 5 * time.Second, MaxBackoff: 60 * time.Second, Heartbeat: 20 * time.Second}
+// DefaultPacing is the contract's: 5 s after a 204, a backoff of 5 s up to 60 s after an error, a heartbeat about every 20 s, and 30 s for a job
+// in flight after the signal.
+var DefaultPacing = Pacing{Idle: 5 * time.Second, Backoff: 5 * time.Second, MaxBackoff: 60 * time.Second, Heartbeat: 20 * time.Second, Grace: 30 * time.Second}
 
 // Proxy is the module proxy that the dependency prefetch reads, and the client that reads it.
 type Proxy struct {

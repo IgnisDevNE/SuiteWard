@@ -114,7 +114,8 @@ func (h *host) executor(ctx context.Context) error {
 	if err := h.executorRules(ctx, uid); err != nil {
 		return err
 	}
-	if err := h.executorToken(ctx); err != nil {
+	tokenMade, err := h.executorToken(ctx)
+	if err != nil {
 		return err
 	}
 	replaced, err := h.executorBinary(ctx)
@@ -124,7 +125,7 @@ func (h *host) executor(ctx context.Context) error {
 	if err := h.executorImage(ctx, uid); err != nil {
 		return err
 	}
-	return h.executorUnit(ctx, port, replaced)
+	return h.executorUnit(ctx, port, replaced || tokenMade)
 }
 
 // runAsExecutor runs a command as the executor's account, through its own user manager: it comes with the account's HOME and XDG_RUNTIME_DIR, in the cgroup
@@ -177,25 +178,26 @@ func (h *host) executorRules(ctx context.Context, uid string) error {
 
 // executorToken makes the executor's token once: a file that only the executor's account reads. It is written through stdin under a
 // restrictive umask and then given its owner, so it is never wider than it ends up. An existing token is never made again; its owner and
-// mode are put right.
-func (h *host) executorToken(ctx context.Context) error {
+// mode are put right. made says that there is a new token: a running executor reads its token only when it starts, so it is restarted.
+func (h *host) executorToken(ctx context.Context) (made bool, err error) {
 	if !h.exists(ctx, executorAuthEtc) {
 		token, err := NewExecutorToken()
 		if err != nil {
-			return err
+			return false, err
 		}
 		if _, err := h.d.Exec(ctx, "sh", []string{"-c", `umask 077; cat > "$1"`, "sh", executorAuthEtc}, strings.NewReader(token)); err != nil {
-			return fmt.Errorf("write %s: %w", executorAuthEtc, err)
+			return false, fmt.Errorf("write %s: %w", executorAuthEtc, err)
 		}
 		h.check("Made the executor's token, %s, which only %s reads.\n", executorAuthEtc, ExecutorAccount)
+		made = true
 	}
 	if _, err := h.run(ctx, "chown", ExecutorAccount, executorAuthEtc); err != nil {
-		return fmt.Errorf("give %s to %s: %w", executorAuthEtc, ExecutorAccount, err)
+		return false, fmt.Errorf("give %s to %s: %w", executorAuthEtc, ExecutorAccount, err)
 	}
 	if _, err := h.run(ctx, "chmod", "0400", executorAuthEtc); err != nil {
-		return fmt.Errorf("restrict %s: %w", executorAuthEtc, err)
+		return false, fmt.Errorf("restrict %s: %w", executorAuthEtc, err)
 	}
-	return nil
+	return made, nil
 }
 
 // releaseAsset is the name of a Linux binary in the release's SHA256SUMS.
@@ -336,8 +338,8 @@ func (h *host) userctl(ctx context.Context, args ...string) (string, error) {
 
 // executorUnit writes the unit to the directory that every user manager reads (it is root's, so the executor cannot change it; ConditionUser
 // keeps the other accounts from running it), enables it for the executor's manager only and checks that it is active. A running executor
-// that has other files than the ones just installed is restarted: `enable --now` does not restart a unit that is running.
-func (h *host) executorUnit(ctx context.Context, port int, binaryReplaced bool) error {
+// that has other files than the ones just installed (filesChanged: its binary or its token) is restarted: `enable --now` does not restart a unit that is running.
+func (h *host) executorUnit(ctx context.Context, port int, filesChanged bool) error {
 	unit, err := RenderExecutorUnit(port)
 	if err != nil {
 		return err
@@ -354,7 +356,7 @@ func (h *host) executorUnit(ctx context.Context, port int, binaryReplaced bool) 
 	}
 	state, _ := h.userctl(ctx, "show", "--property=ActiveState", "--value", executorUnitName) // an error here is a unit that is not there yet
 	steps := [][]string{{"daemon-reload"}, {"enable", "--now", executorUnitName}}
-	if state == "active" && (unitChanged || binaryReplaced) {
+	if state == "active" && (unitChanged || filesChanged) {
 		steps = append(steps, []string{"restart", executorUnitName})
 	}
 	for _, args := range steps {

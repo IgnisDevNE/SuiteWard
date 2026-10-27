@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func ownHash(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(exe)
+	raw, err := os.ReadFile(filepath.Clean(exe))
 	if err != nil {
 		t.Fatal(err)
 	}

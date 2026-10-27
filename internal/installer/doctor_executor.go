@@ -187,7 +187,7 @@ func (d *doctor) checkExecutorUnit(ctx context.Context) {
 		d.pass("executor.unit", executorUnitPath+" is the unit of the release, pointed at http://127.0.0.1:"+strconv.Itoa(d.s.HTTPPort))
 		return
 	}
-	if m := executorUnitPort.FindStringSubmatch(on); m != nil && m[1] != strconv.Itoa(d.s.HTTPPort) {
+	if m := executorUnitPort.FindStringSubmatch(on); len(m) > 1 && m[1] != strconv.Itoa(d.s.HTTPPort) {
 		if fixed, err := replaceLine(on, lineEdit{old: executorUnitURLLine(mustAtoi(m[1])), new: executorUnitURLLine(d.s.HTTPPort)}); err == nil && fixed == strings.TrimSpace(string(want)) {
 			d.fail("executor.unit", fmt.Sprintf("the unit points the executor at http://127.0.0.1:%s and the service publishes its HTTP listener on port %d", m[1], d.s.HTTPPort),
 				d.hostStep()+fmt.Sprintf(" --http-port %d", d.s.HTTPPort))

@@ -676,7 +676,7 @@ func TestNoInstallerTextSaysThatSuiteWardRunsNoTests(t *testing.T) {
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		raw, err := os.ReadFile(name)
+		raw, err := os.ReadFile(filepath.Clean(name))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -358,20 +358,6 @@ func TestResolveGitHubTestChecks(t *testing.T) {
 			t.Errorf("the contract check was offered:\n%s", text)
 		}
 	})
-	t.Run("never offers the receipt check, which is not a test", func(t *testing.T) {
-		g := newFakeGitHub(t)
-		g.repos[0].checkRuns = []string{"CI / test", "SuiteWard / Contract", "SuiteWard / Receipt", "lint"}
-		flags := existingFlags(t, nil)
-		delete(flags, "test-check")
-		env, out := flowEnv(t, g, flags, strings.NewReader("2\n"), true)
-		res, err := resolve(t, env)
-		if err != nil || res.TestChecks["acme/app"] != "lint" {
-			t.Fatalf("resolveGitHub = %v, %v\n%s", res.TestChecks, err, out.String())
-		}
-		if text := out.String(); strings.Contains(text, "SuiteWard / Receipt") || strings.Contains(text, "3)") {
-			t.Errorf("the receipt check was offered:\n%s", text)
-		}
-	})
 	t.Run("no check runs: type the name, with a warning", func(t *testing.T) {
 		g := newFakeGitHub(t)
 		g.repos[0].checkRuns = nil
@@ -605,5 +591,21 @@ func TestGitHubResultKeyDoesNotSurviveAnEncoder(t *testing.T) {
 		if strings.Contains(encoded, leak) {
 			t.Errorf("%s of a GitHubResult carries the private key:\n%s", name, encoded)
 		}
+	}
+}
+
+// SuiteWard publishes two checks of its own, and neither is a test of the repository.
+func TestTheReceiptCheckIsNeverOfferedAsATestCheck(t *testing.T) {
+	g := newFakeGitHub(t)
+	g.repos[0].checkRuns = []string{"CI / test", "SuiteWard / Contract", "SuiteWard / Receipt", "lint"}
+	flags := existingFlags(t, nil)
+	delete(flags, "test-check")
+	env, out := flowEnv(t, g, flags, strings.NewReader("2\n"), true)
+	res, err := resolve(t, env)
+	if err != nil || res.TestChecks["acme/app"] != "lint" {
+		t.Fatalf("resolveGitHub = %v, %v\n%s", res.TestChecks, err, out.String())
+	}
+	if text := out.String(); strings.Contains(text, "SuiteWard / Receipt") || strings.Contains(text, "3)") {
+		t.Errorf("the receipt check was offered:\n%s", text)
 	}
 }

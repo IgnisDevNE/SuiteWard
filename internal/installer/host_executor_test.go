@@ -21,7 +21,7 @@ const (
 	execControllers  = "/sys/fs/cgroup/user.slice/user-1002.slice/user@1002.service/cgroup.controllers"
 	execRuleFile     = "/etc/suiteward/exec-block.nft"
 	execBlockUnit    = "/etc/systemd/system/suiteward-exec-block.service"
-	execTokenEtc     = "/etc/suiteward/executor-token"
+	execAuthEtc      = "/etc/suiteward/executor-token"
 	execTokenHandOff = "/home/suiteward/.config/suiteward/executor-token"
 	execLibDir       = "/usr/local/libexec/suiteward"
 	execBinaryPath   = execLibDir + "/suiteward-executor"
@@ -39,7 +39,7 @@ var executorPaths = []string{execDropIn, execRuleFile, execBlockUnit, execPinFil
 func writeProgram(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "suiteward")
-	if err := os.WriteFile(path, []byte("the program of this run"), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte("the program of this run"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -47,7 +47,7 @@ func writeProgram(t *testing.T) string {
 
 func sha256File(t *testing.T, path string) string {
 	t.Helper()
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func (h *hostFake) answerExecutor(c call) (out []byte, err error, handled bool) 
 	case c.name == "install" && strings.HasPrefix(line, "-m 0755 -o root -g root "):
 		fields := strings.Fields(line)
 		src, dest := fields[len(fields)-2], fields[len(fields)-1]
-		if raw, readErr := os.ReadFile(src); readErr == nil {
+		if raw, readErr := os.ReadFile(filepath.Clean(src)); readErr == nil {
 			sum := sha256.Sum256(raw)
 			h.hashes[dest] = hex.EncodeToString(sum[:])
 		}
@@ -249,7 +249,7 @@ func TestPrepareHostMakesTheExecutorTokenThatOnlyTheExecutorReads(t *testing.T) 
 	}
 	var token string
 	for _, c := range h.callsTo("sh") {
-		if strings.Contains(c.line(), "umask 077") && strings.Contains(c.line(), execTokenEtc) {
+		if strings.Contains(c.line(), "umask 077") && strings.Contains(c.line(), execAuthEtc) {
 			token = c.stdin
 		}
 	}
@@ -263,23 +263,23 @@ func TestPrepareHostMakesTheExecutorTokenThatOnlyTheExecutorReads(t *testing.T) 
 			}
 		}
 	}
-	if !h.has("chown", "suiteward-exec "+execTokenEtc) || !h.has("chmod", "0400 "+execTokenEtc) {
+	if !h.has("chown", "suiteward-exec "+execAuthEtc) || !h.has("chmod", "0400 "+execAuthEtc) {
 		t.Fatalf("the file belongs to the executor and nobody else reads it: %v", h.lines())
 	}
 }
 
 func TestPrepareHostReusesAnExecutorTokenThatExists(t *testing.T) {
 	h := newHostFake()
-	h.paths[execTokenEtc] = true
+	h.paths[execAuthEtc] = true
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range h.callsTo("sh") {
-		if strings.Contains(c.line(), execTokenEtc) {
+		if strings.Contains(c.line(), execAuthEtc) {
 			t.Fatalf("a token that exists is never made again: %v", h.lines())
 		}
 	}
-	if !h.has("chown", "suiteward-exec "+execTokenEtc) || !h.has("chmod", "0400 "+execTokenEtc) {
+	if !h.has("chown", "suiteward-exec "+execAuthEtc) || !h.has("chmod", "0400 "+execAuthEtc) {
 		t.Errorf("the owner and the mode of an existing token are put right: %v", h.lines())
 	}
 }
@@ -289,7 +289,7 @@ func TestPrepareHostHandsTheTokenToTheServiceAccountAsItHandsTheEnvFile(t *testi
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	if !h.has("install", "-o suiteward -g suiteward -m 0600 "+execTokenEtc+" "+execTokenHandOff) {
+	if !h.has("install", "-o suiteward -g suiteward -m 0600 "+execAuthEtc+" "+execTokenHandOff) {
 		t.Fatalf("the service account gets a copy it owns, made by install and never by a write of root into its directory: %v", h.lines())
 	}
 	if !h.has("test", "-L "+execTokenHandOff) {
@@ -307,7 +307,7 @@ func TestPrepareHostHandsTheTokenToTheServiceAccountAsItHandsTheEnvFile(t *testi
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	if h.has("install", "-m 0600 "+execTokenEtc) {
+	if h.has("install", "-m 0600 "+execAuthEtc) {
 		t.Errorf("an identical copy is left alone: %v", h.lines())
 	}
 }

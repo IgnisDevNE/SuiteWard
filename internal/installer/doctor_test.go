@@ -72,39 +72,47 @@ func readOnlyViolation(c call) string {
 		if len(args) >= 2 && args[0] == "--user" && args[1] == "show" {
 			return ""
 		}
-		if len(args) >= 1 && args[0] == "show" { // a system unit: the rules of the executor
-			return ""
-		}
-	case "cat": // the files of the executor, which are world-readable, and the controllers of its manager
-		if len(args) == 1 && (strings.HasPrefix(args[0], "/etc/") || strings.HasPrefix(args[0], "/usr/local/libexec/suiteward/") || strings.HasPrefix(args[0], "/sys/fs/cgroup/")) {
-			return ""
-		}
-	case "sha256sum":
-		if len(args) == 1 && strings.HasPrefix(args[0], "/usr/local/libexec/suiteward/") {
-			return ""
-		}
-	case "pgrep":
-		return ""
-	case "schtasks": // the scheduled task of the executor on Windows: asked about, never changed
-		if len(args) >= 1 && args[0] == "/Query" {
-			return ""
-		}
-	case "tasklist":
-		return ""
-	case "launchctl":
-		if len(args) >= 1 && args[0] == "print" {
-			return ""
-		}
 	case "loginctl":
 		if len(args) >= 1 && args[0] == "show-user" {
 			return ""
 		}
 	case "id":
-		if slices.Equal(args, []string{"-un"}) || len(args) == 2 && args[0] == "-u" && (args[1] == ServiceAccount || args[1] == ExecutorAccount) || slices.Equal(args, []string{"-u"}) {
+		if slices.Equal(args, []string{"-un"}) {
 			return ""
 		}
 	}
+	if executorProbeAllowed(baseName(c.name), args) {
+		return ""
+	}
 	return "not an allowed command"
+}
+
+// executorProbeAllowed says whether a command is one of the probes of the executor's checks, which only ask: the files of the executor, that are
+// world-readable, and the controllers of its manager; `systemctl show` of a system unit; the operating system's own questions about the executor.
+func executorProbeAllowed(name string, args []string) bool {
+	has := func(prefix ...string) bool {
+		return len(args) >= len(prefix) && slices.Equal(args[:len(prefix)], prefix)
+	}
+	under := func(prefixes ...string) bool {
+		return len(args) == 1 && slices.ContainsFunc(prefixes, func(p string) bool { return strings.HasPrefix(args[0], p) })
+	}
+	switch name {
+	case "systemctl":
+		return has("show")
+	case "cat":
+		return under("/etc/", "/usr/local/libexec/suiteward/", "/sys/fs/cgroup/")
+	case "sha256sum":
+		return under("/usr/local/libexec/suiteward/")
+	case "pgrep", "tasklist":
+		return true
+	case "schtasks":
+		return has("/Query")
+	case "launchctl":
+		return has("print")
+	case "id":
+		return slices.Equal(args, []string{"-u"}) || has("-u", ServiceAccount) && len(args) == 2 || has("-u", ExecutorAccount) && len(args) == 2
+	}
+	return false
 }
 
 func engineViolation(args []string) string {

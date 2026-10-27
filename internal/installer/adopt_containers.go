@@ -131,7 +131,7 @@ func adoptContainers(raw map[string][]byte, refreshDB bool) (Adopted, error) {
 	// A service of an earlier release has no executor token, a known shape that the next install or upgrade completes; one that has only the
 	// variable or only the secret is a diff.
 	serve := parsed[ContainerServe]
-	_, hasToken := envMap(serve.Config.Env)[executorTokenFileEnv]
+	_, hasToken := envMap(serve.Config.Env)[executorAuthFileEnv]
 	hasSecret := slices.ContainsFunc(serve.Config.Secrets, func(s struct {
 		Name string
 		UID  int
@@ -140,7 +140,7 @@ func adoptContainers(raw map[string][]byte, refreshDB bool) (Adopted, error) {
 		return s.Name == SecretExecutorAuth
 	})
 	if !hasToken && !hasSecret {
-		stack.Serve.Env = slices.DeleteFunc(stack.Serve.Env, func(e string) bool { return strings.HasPrefix(e, executorTokenFileEnv+"=") })
+		stack.Serve.Env = slices.DeleteFunc(stack.Serve.Env, func(e string) bool { return strings.HasPrefix(e, executorAuthFileEnv+"=") })
 		stack.Serve.Secrets = slices.DeleteFunc(stack.Serve.Secrets, func(name string) bool { return name == SecretExecutorAuth })
 	}
 	specs := []RunSpec{stack.DB, stack.Migrate}

@@ -34,7 +34,7 @@ func readExecutorHandover(configDir string) (token []byte, found bool, err error
 	}
 	token = bytes.TrimSpace(raw)
 	if len(token) < minExecutorTokenBytes {
-		return nil, false, fmt.Errorf("%s holds a token of fewer than %d bytes, which the service refuses: as the administrator, remove %s and run `sudo suiteward install host` again, which makes a new one", file, minExecutorTokenBytes, executorTokenEtc)
+		return nil, false, fmt.Errorf("%s holds a token of fewer than %d bytes, which the service refuses: as the administrator, remove %s and run `sudo suiteward install host` again, which makes a new one", file, minExecutorTokenBytes, executorAuthEtc)
 	}
 	return token, true, nil
 }
@@ -78,5 +78,5 @@ func executorHostNote() string {
 	return fmt.Sprintf("The executor, when the host step made one, is the administrator's: its account %[1]s, its unit, its binary and its token are not touched here. "+
 		"It keeps asking for jobs of a service that is gone. As the administrator, to stop it: systemctl --user --machine=%[1]s@.host disable --now %[2]s "+
 		"(to remove all of it: also delete %[3]s, %[4]s, %[5]s and %[6]s, the nft unit %[7]s and the account).\n",
-		ExecutorAccount, executorUnitName, executorUnitPath, executorLibDir, executorTokenEtc, executorRuleFile, executorBlockUnit)
+		ExecutorAccount, executorUnitName, executorUnitPath, executorLibDir, executorAuthEtc, executorRuleFile, executorBlockUnit)
 }

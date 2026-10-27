@@ -2,6 +2,7 @@ package installer
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -57,9 +58,9 @@ func engineBinDir(rt Runtime) string {
 	var bin string
 	switch r := rt.(type) {
 	case *Docker:
-		bin = r.cli.bin
+		bin = r.bin
 	case *Podman:
-		bin = r.cli.bin
+		bin = r.bin
 	}
 	i := strings.LastIndexAny(bin, `/\`) // not filepath.Dir: the path of a Windows machine is read on any system
 	if i < 0 {
@@ -79,7 +80,7 @@ func planExecutor(d Deps, tokenFile string, s Settings, engineDir string) (execu
 	p.log = filepath.Join(p.dir, "executor.log")
 	p.env = []envEntry{
 		{executorURLEnv, "http://127.0.0.1:" + fmt.Sprint(s.HTTPPort)},
-		{executorTokenFileEnv, p.tokenFile},
+		{executorAuthFileEnv, p.tokenFile},
 		{executorRuntimeEnv, s.Runtime},
 	}
 	if s.Connection != "" {
@@ -182,7 +183,7 @@ func (p executorPlan) windowsTask(sid string) []byte {
 	units := utf16.Encode([]rune(strings.ReplaceAll(xml, "\n", "\r\n")))
 	out := []byte{0xFF, 0xFE}
 	for _, u := range units {
-		out = append(out, byte(u), byte(u>>8))
+		out = binary.LittleEndian.AppendUint16(out, u)
 	}
 	return out
 }
@@ -270,8 +271,9 @@ func userID(ctx context.Context, d Deps) (string, error) {
 func (p executorPlan) state(ctx context.Context, d Deps) (registered, running bool, err error) {
 	switch p.goos {
 	case "windows":
-		if _, err := d.Exec(ctx, "schtasks", []string{"/Query", "/TN", executorTaskName}, nil); err != nil {
-			return false, false, nil // the task is not there
+		_, queryErr := d.Exec(ctx, "schtasks", []string{"/Query", "/TN", executorTaskName}, nil)
+		if taskThere := queryErr == nil; !taskThere { // a task that is not there is how the query fails
+			return false, false, nil
 		}
 		out, err := d.Exec(ctx, "tasklist", []string{"/FI", "IMAGENAME eq " + executorBinaryName("windows"), "/FO", "CSV", "/NH"}, nil)
 		if err != nil {
@@ -283,9 +285,9 @@ func (p executorPlan) state(ctx context.Context, d Deps) (registered, running bo
 		if err != nil {
 			return false, false, err
 		}
-		out, err := d.Exec(ctx, "launchctl", []string{"print", "gui/" + uid + "/" + executorLabel}, nil)
-		if err != nil {
-			return false, false, nil // the agent is not loaded
+		out, printErr := d.Exec(ctx, "launchctl", []string{"print", "gui/" + uid + "/" + executorLabel}, nil)
+		if agentLoaded := printErr == nil; !agentLoaded { // an agent that is not loaded is how the query fails
+			return false, false, nil
 		}
 		return true, strings.Contains(string(out), "state = running"), nil
 	default:

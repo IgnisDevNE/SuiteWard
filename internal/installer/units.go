@@ -62,7 +62,7 @@ const (
 	keyEnvLine    = "Environment=SUITEWARD_GITHUB_APP_KEY_FILE=/run/secrets/github-app-key"
 
 	executorSecretLine = "Secret=" + SecretExecutorAuth + ",type=mount,target=/run/secrets/executor-token,uid=65532,mode=0400"
-	executorEnvLine    = "Environment=" + executorTokenFileEnv + "=/run/secrets/executor-token"
+	executorEnvLine    = "Environment=" + executorAuthFileEnv + "=/run/secrets/executor-token"
 )
 
 func (p UnitParams) validate() error {

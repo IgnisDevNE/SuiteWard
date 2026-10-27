@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -153,21 +154,21 @@ func (h *host) executorRules(ctx context.Context, uid string) error {
 // restrictive umask and then given its owner, so it is never wider than it ends up. An existing token is never made again; its owner and
 // mode are put right.
 func (h *host) executorToken(ctx context.Context) error {
-	if !h.exists(ctx, executorTokenEtc) {
+	if !h.exists(ctx, executorAuthEtc) {
 		token, err := NewExecutorToken()
 		if err != nil {
 			return err
 		}
-		if _, err := h.d.Exec(ctx, "sh", []string{"-c", `umask 077; cat > "$1"`, "sh", executorTokenEtc}, strings.NewReader(token)); err != nil {
-			return fmt.Errorf("write %s: %w", executorTokenEtc, err)
+		if _, err := h.d.Exec(ctx, "sh", []string{"-c", `umask 077; cat > "$1"`, "sh", executorAuthEtc}, strings.NewReader(token)); err != nil {
+			return fmt.Errorf("write %s: %w", executorAuthEtc, err)
 		}
-		h.check("Made the executor's token, %s, which only %s reads.\n", executorTokenEtc, ExecutorAccount)
+		h.check("Made the executor's token, %s, which only %s reads.\n", executorAuthEtc, ExecutorAccount)
 	}
-	if _, err := h.run(ctx, "chown", ExecutorAccount, executorTokenEtc); err != nil {
-		return fmt.Errorf("give %s to %s: %w", executorTokenEtc, ExecutorAccount, err)
+	if _, err := h.run(ctx, "chown", ExecutorAccount, executorAuthEtc); err != nil {
+		return fmt.Errorf("give %s to %s: %w", executorAuthEtc, ExecutorAccount, err)
 	}
-	if _, err := h.run(ctx, "chmod", "0400", executorTokenEtc); err != nil {
-		return fmt.Errorf("restrict %s: %w", executorTokenEtc, err)
+	if _, err := h.run(ctx, "chmod", "0400", executorAuthEtc); err != nil {
+		return fmt.Errorf("restrict %s: %w", executorAuthEtc, err)
 	}
 	return nil
 }
@@ -194,7 +195,7 @@ func pinFromSums(sums, sum, sumsFile string) (string, error) {
 
 // hashFile is the SHA-256 of a file, as lowercase hex.
 func hashFile(file string) (string, error) {
-	f, err := os.Open(file)
+	f, err := os.Open(filepath.Clean(file))
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", file, err)
 	}
@@ -354,12 +355,12 @@ func (h *host) executorHandover(ctx context.Context, dir string) error {
 		return fmt.Errorf("%s is a symbolic link: root will not copy through it; remove the link and run this again", dest)
 	}
 	if h.exists(ctx, dest) {
-		if _, err := h.run(ctx, "cmp", "-s", executorTokenEtc, dest); err == nil {
+		if _, err := h.run(ctx, "cmp", "-s", executorAuthEtc, dest); err == nil {
 			return nil
 		}
 	}
-	if _, err := h.run(ctx, "install", "-o", ServiceAccount, "-g", ServiceAccount, "-m", "0600", executorTokenEtc, dest); err != nil {
-		return fmt.Errorf("copy %s: %w", executorTokenEtc, err)
+	if _, err := h.run(ctx, "install", "-o", ServiceAccount, "-g", ServiceAccount, "-m", "0600", executorAuthEtc, dest); err != nil {
+		return fmt.Errorf("copy %s: %w", executorAuthEtc, err)
 	}
 	h.check("Gave %s a copy of the executor's token, %s, for the secret of the service.\n", ServiceAccount, dest)
 	return nil

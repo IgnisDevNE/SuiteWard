@@ -259,7 +259,7 @@ func knownUnitFields(serve []string) (p UnitParams, diffs []Diff, imageKnown boo
 	p.NoReportURL = len(values("Environment="+reportBaseURLEnv+"=")) == 0
 	// A unit of an earlier release has neither executor line, a known shape; one line alone is read as "with" so that the comparison names the
 	// other as missing.
-	p.NoExecutor = len(values("Secret="+SecretExecutorAuth+",")) == 0 && len(values("Environment="+executorTokenFileEnv+"=")) == 0
+	p.NoExecutor = len(values("Secret="+SecretExecutorAuth+",")) == 0 && len(values("Environment="+executorAuthFileEnv+"=")) == 0
 	return p, diffs, imageKnown
 }
 

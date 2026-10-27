@@ -82,14 +82,14 @@ func (d *doctor) checkExecutorToken(plan executorPlan) {
 	in, err := parseInspect(ContainerServe, raw)
 	if err != nil {
 		problems = append(problems, err.Error())
-	} else if _, has := envMap(in.Config.Env)[executorTokenFileEnv]; !has {
+	} else if _, has := envMap(in.Config.Env)[executorAuthFileEnv]; !has {
 		problems = append(problems, "the service container has no executor token: it was made by a release before the executor")
 	}
 	if len(problems) > 0 {
 		d.fail("executor.token", strings.Join(problems, "; "), d.installFix())
 		return
 	}
-	d.pass("executor.token", "the executor has its token copy, and the service container reads its token from "+executorTokenFileEnv)
+	d.pass("executor.token", "the executor has its token copy, and the service container reads its token from "+executorAuthFileEnv)
 }
 
 // checkExecutorColocatedBinary checks the executor's copy of the program: there, as installed (its pin), and this program's build. The pin

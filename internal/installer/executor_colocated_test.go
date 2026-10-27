@@ -37,7 +37,7 @@ func (h *harness) executorBinary() string {
 
 func (h *harness) readHome(rel string) string {
 	h.t.Helper()
-	raw, err := os.ReadFile(filepath.Join(h.dir, rel))
+	raw, err := os.ReadFile(filepath.Clean(filepath.Join(h.dir, rel)))
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestInstallStartsTheExecutorAsALaunchAgentOnMacOS(t *testing.T) {
 			t.Errorf("the plist lacks %s:\n%s", want, plist)
 		}
 	}
-	h.assertOrder("bootstrap gui/501 "+filepath.Join(h.dir, "Library/LaunchAgents/io.suiteward.executor.plist"), "kickstart -k gui/501/io.suiteward.executor")
+	h.assertOrder("bootstrap gui/501 "+filepath.Join(h.dir, "Library", "LaunchAgents", "io.suiteward.executor.plist"), "kickstart -k gui/501/io.suiteward.executor")
 }
 
 func utf16le(t *testing.T, raw []byte) string {
@@ -208,7 +208,7 @@ func TestInstallReplacesTheExecutorsProgramAndRestartsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	newer := filepath.Join(t.TempDir(), "suiteward")
-	if err := os.WriteFile(newer, []byte("the next release"), 0o755); err != nil {
+	if err := os.WriteFile(newer, []byte("the next release"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	again := newHarness(t, "linux")
@@ -231,7 +231,7 @@ func TestInstallStopsAScheduledTaskBeforeItReplacesTheProgramItHolds(t *testing.
 		t.Fatal(err)
 	}
 	newer := filepath.Join(t.TempDir(), "suiteward.exe")
-	if err := os.WriteFile(newer, []byte("the next release"), 0o755); err != nil {
+	if err := os.WriteFile(newer, []byte("the next release"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	again := machineHarnessOn(t, "windows")
@@ -349,9 +349,9 @@ func TestUpgradeSetsUpTheExecutorOfAStackThatPredatesIt(t *testing.T) {
 func (h *harness) writeExecutorFiles() {
 	h.t.Helper()
 	for path, content := range map[string]string{
-		filepath.Join(h.executorDir(), "suiteward-executor"):                    "a program",
-		filepath.Join(h.executorDir(), "executor.pin"):                          strings.Repeat("a", 64) + "  suiteward-executor\n",
-		filepath.Join(h.dir, ".config/systemd/user/suiteward-executor.service"): "[Service]\n",
+		filepath.Join(h.executorDir(), "suiteward-executor"):                             "a program",
+		filepath.Join(h.executorDir(), "executor.pin"):                                   strings.Repeat("a", 64) + "  suiteward-executor\n",
+		filepath.Join(h.dir, ".config", "systemd", "user", "suiteward-executor.service"): "[Service]\n",
 		executorTokenPath(h): strings.Repeat("b", 64),
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -377,7 +377,7 @@ func TestUninstallStopsAndRemovesTheExecutorAndKeepsItsTokenWithoutPurge(t *test
 	if _, err := os.Stat(un.executorDir()); !os.IsNotExist(err) {
 		t.Errorf("the executor's directory is still there: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(h.dir, ".config/systemd/user/suiteward-executor.service")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(h.dir, ".config", "systemd", "user", "suiteward-executor.service")); !os.IsNotExist(err) {
 		t.Errorf("the unit is still there: %v", err)
 	}
 	if _, err := os.Stat(executorTokenPath(h)); err != nil {
@@ -430,7 +430,7 @@ func TestInstallBootsOutALoadedLaunchAgentBeforeItLoadsTheNewDefinition(t *testi
 		t.Fatal(err)
 	}
 	newer := filepath.Join(t.TempDir(), "suiteward")
-	if err := os.WriteFile(newer, []byte("the next release"), 0o755); err != nil {
+	if err := os.WriteFile(newer, []byte("the next release"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	again := machineHarnessOn(t, "darwin")

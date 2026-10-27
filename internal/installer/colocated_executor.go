@@ -158,8 +158,7 @@ func removeExecutor(ctx context.Context, d Deps, tokenFile string) (existed bool
 	if err != nil {
 		return false, err
 	}
-	_, statErr := os.Stat(plan.dir)
-	if !registered && statErr != nil {
+	if !registered && !pathExists(plan.dir) {
 		return false, nil
 	}
 	return true, plan.remove(ctx, d, registered)

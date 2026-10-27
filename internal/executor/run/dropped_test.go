@@ -7,25 +7,49 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/client"
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/sandbox"
 )
 
-// nearDeadline gives the executor a margin that leaves the deadline of an hour-long attempt a second away.
-func nearDeadline(cfg *Config, _ *driver) {
-	cfg.Pacing = DefaultPacing
-	cfg.Pacing.Margin = time.Hour - time.Second
+// gate makes the wait of that kind, for the deadline of the attempt or for the grace after the signal, end when ch is closed.
+func gate(kind waitKind, ch chan struct{}) func(*Config, *driver) {
+	return func(_ *Config, d *driver) {
+		if d.sleeps.gates == nil {
+			d.sleeps.gates = map[waitKind]chan struct{}{}
+		}
+		d.sleeps.gates[kind] = ch
+	}
 }
 
-// The only time kill of the executor is at the deadline of the attempt, less the margin (30 s): the context of the work ends, the sandbox
-// kills the container with it, nothing is posted, and the service ends the attempt as timeout.
+func closed() chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
+// The only time kill of the executor is at the deadline of the attempt, less the margin (30 s): the context of the work ends with the
+// deadline as its cause, the sandbox kills the container with it, nothing is posted, and the service ends the attempt as timeout. The
+// executor waits for that time through its Sleep, so the test ends the wait when it wants the drop, and races no clock.
 func TestTheAttemptIsDroppedAtItsDeadlineLessTheMargin(t *testing.T) {
 	sv, rt := aJob(1) // an hour to run
 	rt.gate, rt.entered, rt.stopped = make(chan struct{}), make(chan struct{}, 4), make(chan error, 4)
 	svc := newService(t, sv)
-	d := start(t, svc, rt, nearDeadline, func(_ *Config, d *driver) { d.sleeps.reached, d.patience = make(chan struct{}), 10*time.Second })
+	fire := make(chan struct{})
+	d := start(t, svc, rt, gate(deadlineWait, fire), func(_ *Config, d *driver) { d.sleeps.reached, d.patience = make(chan struct{}), 10*time.Second })
 	wait(d, rt.entered)
-	if err := wait(d, rt.stopped); !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("the container's context ended with %v; want the deadline", err)
+	// The executor waits until the deadline less the margin: an hour from the creation of the job, less 30 s.
+	var until time.Duration
+	for _, w := range d.sleeps.durations() {
+		if waitKindOf(w) == deadlineWait {
+			until = w
+		}
+	}
+	if until < 59*time.Minute || until > time.Hour-30*time.Second {
+		t.Errorf("the executor waited %v for the deadline; want a little under an hour less 30 s", until)
+	}
+	close(fire)
+	if cause := wait(d, rt.stopped); !errors.Is(cause, context.DeadlineExceeded) {
+		t.Errorf("the container's context ended with the cause %v; want the deadline", cause)
 	}
 	wait(d, d.sleeps.reached) // the work was dropped and the executor asked for the next job
 	d.noResult()
@@ -46,17 +70,21 @@ func TestTheMarginBeforeTheDeadlineIsThirtySeconds(t *testing.T) {
 // cause, and output past the bound are resource limits.
 func TestAContainerThatTheExecutorKilledIsNeverAResourceLimit(t *testing.T) {
 	killed137 := func() (sandbox.Outcome, error) { return sandbox.Outcome{ExitCode: 137}, nil }
+	fire := make(chan struct{})
 	for name, tc := range map[string]struct {
 		setup func(*Config, *driver)
 		drive func(*driver) // what ends the context of the work, once the container runs
 		done  func(*driver) // what says that the executor has dropped the attempt
+		cause error         // why the context of the work ended
 	}{
-		"the deadline": {nearDeadline, func(*driver) {}, func(d *driver) { wait(d, d.sleeps.reached) }},
+		"the deadline": {
+			gate(deadlineWait, fire), func(*driver) { close(fire) }, func(d *driver) { wait(d, d.sleeps.reached) }, context.DeadlineExceeded,
+		},
 		"the grace after the signal": {
-			func(_ *Config, d *driver) { d.sleeps.immediate = 1 }, func(d *driver) { d.cancel() }, func(d *driver) { _ = d.stopped() },
+			gate(graceWait, closed()), func(d *driver) { d.cancel() }, func(d *driver) { _ = d.stopped() }, errGraceOver,
 		},
 		"a lease that was lost": {
-			func(*Config, *driver) {}, func(d *driver) { d.tick() }, func(d *driver) { wait(d, d.sleeps.reached) },
+			func(*Config, *driver) {}, func(d *driver) { d.tick() }, func(d *driver) { wait(d, d.sleeps.reached) }, client.ErrLeaseLost,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -66,7 +94,9 @@ func TestAContainerThatTheExecutorKilledIsNeverAResourceLimit(t *testing.T) {
 			d := start(t, newService(t, sv), rt, tc.setup, func(_ *Config, d *driver) { d.sleeps.reached, d.patience = make(chan struct{}), 10*time.Second })
 			wait(d, rt.entered)
 			tc.drive(d)
-			_ = wait(d, rt.stopped) // the runtime saw the context end, and said that its container ended with the status 137
+			if cause := wait(d, rt.stopped); !errors.Is(cause, tc.cause) { // the runtime saw the context end, and said that its container ended with the status 137
+				t.Errorf("the context of the work ended with the cause %v; want %v", cause, tc.cause)
+			}
 			tc.done(d)
 			d.noResult()
 			if n := sv.results.Load(); n != 0 {

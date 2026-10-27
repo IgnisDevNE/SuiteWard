@@ -334,7 +334,7 @@ type fakeRuntime struct {
 	skipStdin bool          // fail at once, without reading the standard input
 	gate      chan struct{} // when set, an invocation of go test waits for a receive, or for its context
 	entered   chan struct{} // when set, an invocation tells that it is running before it waits
-	stopped   chan error    // when set, an invocation whose context ended while it waited tells why
+	stopped   chan error    // when set, an invocation whose context ended while it waited tells the cause of the end
 	// onStop, when set, is what such an invocation returns, as a runtime would that reports the state of a killed container as a result.
 	onStop func() (sandbox.Outcome, error)
 	// test answers an invocation of go test.
@@ -403,7 +403,7 @@ func (f *fakeRuntime) Run(ctx context.Context, spec sandbox.Spec) (sandbox.Outco
 		case <-f.gate:
 		case <-ctx.Done():
 			if f.stopped != nil {
-				f.stopped <- ctx.Err()
+				f.stopped <- context.Cause(ctx)
 			}
 			if f.onStop != nil {
 				return f.onStop()
@@ -492,20 +492,57 @@ func goTest(c call, results func(dir, name string) string) sandbox.Outcome {
 	return sandbox.Outcome{ExitCode: exit, Stdout: out.Bytes()}
 }
 
-// sleeper is the Sleep of an executor under test: the first immediate waits return at once, and the others wait for the context.
+// waitKind says what an executor waits for. The two waits of a job in flight, for the deadline of the attempt and for the grace after the
+// signal, are told from the idle waits of the loop by their length: 30 s is the grace, and the deadline is an hour away in the tests.
+type waitKind int
+
+const (
+	idleWait waitKind = iota
+	deadlineWait
+	graceWait
+)
+
+func waitKindOf(d time.Duration) waitKind {
+	switch {
+	case d == 30*time.Second:
+		return graceWait
+	case d > 30*time.Minute:
+		return deadlineWait
+	}
+	return idleWait
+}
+
+// sleeper is the Sleep of an executor under test. The first immediate idle waits return at once, and the others wait for the context. A wait
+// for the deadline or for the grace ends when the channel that gates it is closed (a test closes it when it wants the drop, so that nothing
+// races a clock), and otherwise when its context does.
 type sleeper struct {
 	mu        sync.Mutex
 	immediate int
+	idle      int
 	waited    []time.Duration
-	reached   chan struct{} // closed when the waits that return at once are all used up
+	gates     map[waitKind]chan struct{}
+	reached   chan struct{} // closed when the idle waits that return at once are all used up
 	once      sync.Once
 }
 
 func (s *sleeper) sleep(ctx context.Context, d time.Duration) error {
+	kind := waitKindOf(d)
 	s.mu.Lock()
 	s.waited = append(s.waited, d)
-	n := len(s.waited)
+	gate := s.gates[kind]
+	if kind == idleWait {
+		s.idle++
+	}
+	n := s.idle
 	s.mu.Unlock()
+	if kind != idleWait {
+		select {
+		case <-gate: // nil when nothing gates it, and then never
+			return ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if n <= s.immediate {
 		return ctx.Err()
 	}

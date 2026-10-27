@@ -143,3 +143,6 @@ func (e *Executor) execute(ctx context.Context, lease *client.Lease) (completion
 func (a *attempt) timeout() time.Duration {
 	return time.Duration(a.lease.Limits.TestTimeoutSeconds) * time.Second
 }
+
+// errGraceOver is the cause of the end of the work that the grace after the signal makes.
+var errGraceOver = errors.New("the grace after the signal is over")

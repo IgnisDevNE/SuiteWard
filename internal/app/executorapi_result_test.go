@@ -554,3 +554,64 @@ func TestResultCommitsEvenWhenTheWakeUpFails(t *testing.T) {
 		t.Errorf("log = %s; want the failed wake-up logged", e.logs.String())
 	}
 }
+
+// The toolchain and the runtime are required for a complete result only: an executor that fails before it asked the image or the runtime still
+// reports its sandbox with what it knows, and a give-back or a final reason with such a sandbox is no 400.
+func TestResultAcceptsAnUnavailableResultWithAnEmptyToolchainAndRuntime(t *testing.T) {
+	for name, sandbox := range map[string]body{
+		"empty fields":     {"imageDigest": execImage, "toolchain": "", "runtime": ""},
+		"omitted fields":   {"imageDigest": execImage},
+		"only the runtime": {"imageDigest": execImage, "toolchain": "", "runtime": "podman 5.5.0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newExecEnv(t)
+			e.canonicalJob(1, defaultFiles)
+			leased := e.grant()
+			final := e.unavailable(leased, "source-mismatch")
+			final["sandbox"] = sandbox
+
+			e.wantState(e.post(leased, leased.LeaseID, final), "unavailable")
+
+			wantRuntime, _ := sandbox["runtime"].(string)
+			row, found, err := e.store.Result(t.Context(), leased.ID)
+			if err != nil || !found || row.ImageDigest.String() != execImage || row.Toolchain != "" || row.Runtime != wantRuntime {
+				t.Errorf("stored result = %+v, %v, %v; want the image digest and the empty toolchain kept", row, found, err)
+			}
+		})
+	}
+	t.Run("a give-back as github-unavailable", func(t *testing.T) {
+		e := newExecEnv(t)
+		e.canonicalJob(1, defaultFiles)
+		leased := e.grant()
+		giveBack := e.unavailable(leased, "github-unavailable")
+		giveBack["sandbox"] = body{"imageDigest": execImage, "toolchain": "", "runtime": ""}
+
+		e.wantState(e.post(leased, leased.LeaseID, giveBack), "pending")
+
+		if stored := e.job(leased.ID); stored.State != execution.StatePending || stored.Failures != 0 || stored.Reason != execution.ReasonGitHubUnavailable {
+			t.Errorf("job = %+v; want it given back with no failure counted, and no lease-expired attempt", stored)
+		}
+	})
+}
+
+// What an unavailable result does say about its sandbox is still bounded printable ASCII.
+func TestResultStillBoundsTheSandboxTextOfAnUnavailableResult(t *testing.T) {
+	e := newExecEnv(t)
+	e.canonicalJob(1, defaultFiles)
+	leased := e.grant()
+	for name, sandbox := range map[string]body{
+		"a toolchain of 65 bytes": {"imageDigest": execImage, "toolchain": strings.Repeat("g", 65)},
+		"a toolchain with a tab":  {"imageDigest": execImage, "toolchain": "go\t1"},
+		"a runtime of 65 bytes":   {"imageDigest": execImage, "runtime": strings.Repeat("r", 65)},
+		"a runtime not in ASCII":  {"imageDigest": execImage, "runtime": "podmán 5"},
+		"no image digest":         {"toolchain": "go1.27.3"},
+		"a bad image digest":      {"imageDigest": "golang:1.27"},
+	} {
+		b := e.unavailable(leased, "source-mismatch")
+		b["sandbox"] = sandbox
+		if got := e.post(leased, leased.LeaseID, b); got.status != http.StatusBadRequest {
+			t.Errorf("%s = %d %s; want 400", name, got.status, got.text())
+		}
+	}
+	e.untouched(leased, leased)
+}

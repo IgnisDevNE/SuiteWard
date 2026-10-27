@@ -471,7 +471,7 @@ func newDockerUpgrade(t *testing.T) (*harness, string) {
 	h.have(KindContainer, ContainerDB, ContainerServe)
 	h.have(KindNetwork, NetworkName)
 	h.have(KindVolume, VolumeData, VolumeDBData, "suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward")
-	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token"} {
+	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token", "executor-token"} {
 		h.haveDockerSecret(file)
 	}
 	h.first("cat /s/database-url", DatabaseURL(appRole, "x"))

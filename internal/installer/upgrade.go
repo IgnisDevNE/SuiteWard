@@ -214,6 +214,9 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if c.secrets, err = c.readSecretState(ctx); err != nil {
 		return err
 	}
+	if err := c.checkExecutorTokenFile(); err != nil {
+		return err
+	}
 	engine, err := engineCommand(rt, env.Deps.GOOS)
 	if err != nil {
 		return err

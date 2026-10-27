@@ -422,7 +422,7 @@ func TestInstallRerunCreatesOnlyWhatIsMissing(t *testing.T) {
 	h := newHarness(t, "linux")
 	h.have(KindNetwork, NetworkName)
 	h.have(KindVolume, VolumeData, VolumeDBData)
-	for _, name := range []string{SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth} {
+	for _, name := range []string{SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth, SecretExecutorAuth} {
 		h.have(kindSecret, name)
 	}
 	h.first("secret inspect --showsecret --format {{.SecretData}} "+SecretDatabaseURL, DatabaseURL(appRole, "x")+"\n")
@@ -645,7 +645,7 @@ func TestInstallAdoptionCarriesTheKnownFields(t *testing.T) {
 	h.existingStack(want, testImage, nil)
 	h.have(KindNetwork, NetworkName)
 	h.have(KindVolume, VolumeData, VolumeDBData)
-	h.have(kindSecret, SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth, SecretGitHubAppKey)
+	h.have(kindSecret, SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth, SecretExecutorAuth, SecretGitHubAppKey)
 	h.first("secret inspect --showsecret --format {{.SecretData}} "+SecretDatabaseURL, DatabaseURL(appRole, "x")+"\n")
 	h.roleExists = true
 	h.busy[18081], h.busy[18091] = true, true // the running service holds its own ports
@@ -948,7 +948,7 @@ func TestInstallWritesTheMCPTokenCopyAndRestrictsItOnWindows(t *testing.T) {
 	}
 	var acl []call
 	for _, c := range h.f.calls {
-		if c.name == "icacls" {
+		if c.name == "icacls" && c.args[0] == h.tokenPath() {
 			acl = append(acl, c)
 		}
 	}
@@ -959,7 +959,7 @@ func TestInstallWritesTheMCPTokenCopyAndRestrictsItOnWindows(t *testing.T) {
 	order := h.f.lines()
 	icacls, create := -1, -1
 	for i, c := range h.f.calls {
-		if c.name == "icacls" {
+		if c.name == "icacls" && c.args[0] == h.tokenPath() {
 			icacls = i
 		}
 		if strings.Contains(order[i], "secret create suiteward-mcp-token") {
@@ -1261,7 +1261,7 @@ func TestInstallDockerDoesNotAdoptAndRerunsFromItsSettings(t *testing.T) {
 	again.have(KindContainer, ContainerDB, ContainerServe)
 	again.have(KindNetwork, NetworkName)
 	again.have(KindVolume, VolumeData, VolumeDBData, "suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward")
-	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token"} {
+	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token", "executor-token"} {
 		again.haveDockerSecret(file)
 	}
 	again.first("cat /s/database-url", DatabaseURL(appRole, "x"))
@@ -1417,7 +1417,7 @@ func TestInstallRemembersTheImageSoADockerRerunNeedsNoFlag(t *testing.T) {
 	again.have(KindContainer, ContainerDB, ContainerServe)
 	again.have(KindNetwork, NetworkName)
 	again.have(KindVolume, VolumeData, VolumeDBData, "suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward")
-	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token"} {
+	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token", "executor-token"} {
 		again.haveDockerSecret(file)
 	}
 	again.first("cat /s/database-url", DatabaseURL(appRole, "x"))

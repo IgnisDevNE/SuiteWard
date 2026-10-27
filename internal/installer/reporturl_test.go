@@ -142,7 +142,7 @@ func TestInstallColocatedOverAnAlpha2StackGivesTheServiceTheReportBaseURL(t *tes
 			h.existingStack(localPS1Settings(), testImage, withoutReportURL)
 			h.have(KindNetwork, NetworkName)
 			h.have(KindVolume, VolumeData, VolumeDBData)
-			h.have(kindSecret, SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth, SecretGitHubAppKey)
+			h.have(kindSecret, SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth, SecretExecutorAuth, SecretGitHubAppKey)
 			h.first("secret inspect --showsecret --format {{.SecretData}} "+SecretDatabaseURL, DatabaseURL(appRole, "x")+"\n")
 			h.roleExists = true
 			h.busy[18081], h.busy[18091] = true, true // the running service holds its own ports

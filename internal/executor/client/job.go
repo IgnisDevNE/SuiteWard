@@ -82,6 +82,8 @@ const (
 	// The largest limits that are believed: bounds that no machine reaches, so that no product of limits overflows.
 	maxBytesLimit = int64(1) << 40
 	maxCountLimit = 1 << 20
+	// maxReruns is 2: a test has at most 3 observations in a result, the first run and two reruns.
+	maxReruns = 2
 )
 
 var (
@@ -157,8 +159,8 @@ func (l Limits) validate() error {
 			return errLimitInvalid
 		}
 	}
-	if l.Reruns < 0 || l.Reruns > maxCountLimit || l.TmpfsMiB > l.MemoryMiB {
-		return errors.New("the reruns are negative, or the tmpfs is larger than the memory it counts in")
+	if l.Reruns < 0 || l.Reruns > maxReruns || l.TmpfsMiB > l.MemoryMiB {
+		return fmt.Errorf("the reruns are not 0 to %d, or the tmpfs is larger than the memory it counts in", maxReruns)
 	}
 	return nil
 }

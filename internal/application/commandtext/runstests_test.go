@@ -52,6 +52,26 @@ func everyBody(t *testing.T) map[string]string {
 			})
 		}
 		add("check bootstrap-ready "+tier, func() string { c := bootstrapReady(); c.Tier = value; _, s := commandtext.CheckSummary(c); return s })
+		for _, tc := range requiredReasons {
+			add("check "+tc.reason+" "+tier, func() string {
+				c := requiredCheck(tc.reason)
+				c.Tier = value
+				_, s := commandtext.CheckSummary(c)
+				return s
+			})
+		}
+		add("check ready with counts "+tier, func() string {
+			c := check(commandtext.CheckSuccess, "ready")
+			c.Tier, c.Execution = value, ran()
+			_, s := commandtext.CheckSummary(c)
+			return s
+		})
+		add("check unchanged unblocked "+tier, func() string {
+			c := check(commandtext.CheckSuccess, "unchanged")
+			c.Tier, c.Unblocked = value, true
+			_, s := commandtext.CheckSummary(c)
+			return s
+		})
 		add("revision "+tier, func() string { return commandtext.RevisionComment(revision(value)) })
 		add("revision that reduces the scope "+tier, func() string {
 			r := revision(value)

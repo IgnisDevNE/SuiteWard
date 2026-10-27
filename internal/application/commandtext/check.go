@@ -29,6 +29,16 @@ type Check struct {
 	Paths      []string
 	PathsTotal int
 	Changes    *Changes
+	// Execution and Unblocked mark the summary of canonical: required (docs/contracts/runtime.md, "The canonical gate"): the counts of a complete canonical run, and the
+	// owner's unblock of an unavailable one. The reasons canonical-pending, canonical-unavailable and canonical-failing mark it too.
+	Execution *CheckExecution
+	Unblocked bool
+}
+
+// CheckExecution are the counts of a complete canonical run: the tests that ran, how many passed, were skipped, failed, were missing or flaky, and how many are
+// excluded and were not run.
+type CheckExecution struct {
+	Tests, Passed, Skipped, Failed, Missing, Flaky, Excluded int
 }
 
 // checkReason is the output of one reason code: its state, a title, what happened and the next action. The text

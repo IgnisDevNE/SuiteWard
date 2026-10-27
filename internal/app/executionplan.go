@@ -217,7 +217,7 @@ func (x *executionRun) baseSpec(s *pullState, plan execution.Plan) execution.Spe
 // execute decides what execution wants of the head of a pull request, whose check was decided as assessed before another rule held it back, and
 // creates the jobs (docs/contracts/runtime.md, "What the checks job does for execution", steps 2 to 5). The canonical plan depends on whether the revision is
 // ready, which a check that another rule decided (a wrong code, an invalid source) does not say: such a head wants no canonical job yet, and its open
-// canonical jobs stay. The receipt plan needs only the revision and the canonical version it expects, so it is decided whenever the check names the revision.
+// canonical jobs stay, unless the canonical level is off, which wants none. The receipt plan needs only the revision and the canonical version it expects, so it is decided whenever the check names the revision.
 func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, assessed checks.Result) (headJobs, error) {
 	if !x.known {
 		return headJobs{}, nil
@@ -227,11 +227,16 @@ func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, 
 	if fork || !x.policy.wants() {
 		return headJobs{receiptDecided: !fork}, j.cancelObsolete(ctx, s, nil, both) // nothing is wanted: a Receipt check that was published is withdrawn
 	}
+	// With the canonical level off no canonical job is wanted, whatever the check says of the head: an open one of an earlier policy is cancelled.
+	var unwanted []execution.Plan
+	if !x.policy.canonicalOn() {
+		unwanted = []execution.Plan{execution.PlanCanonical}
+	}
 	ready, known := executionBasis(assessed)
 	receiptWanted := x.policy.receiptOn() && assessed.Reference != ""
 	if !known && !receiptWanted {
 		if x.policy.receiptOn() { // the receipt may still be wanted once the revision of the head is known
-			return headJobs{}, nil
+			return headJobs{}, j.cancelObsolete(ctx, s, nil, unwanted)
 		}
 		// A receipt level that is off decides the receipt whatever the check says of the head: no receipt job is wanted, so the open ones are cancelled.
 		return headJobs{receiptDecided: true}, j.cancelObsolete(ctx, s, nil, []execution.Plan{execution.PlanReceipt})
@@ -246,7 +251,7 @@ func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, 
 	}
 	var wants []wantedJob
 	jobs := headJobs{reference: assessed.Reference, receiptDecided: true}
-	plans := []execution.Plan{execution.PlanReceipt}
+	plans := append([]execution.Plan{execution.PlanReceipt}, unwanted...)
 	if known {
 		plans = both
 		if x.policy.canonicalOn() {

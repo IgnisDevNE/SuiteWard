@@ -29,7 +29,7 @@ func (d *doctor) out(ctx context.Context, name string, args ...string) (string, 
 
 // hostStep is the command that makes the executor on an isolated host, as the fix of most of its results names it.
 func (d *doctor) hostStep() string {
-	return "as the administrator run `sudo " + d.deps.command() + " install host`"
+	return "as the administrator run `sudo " + d.deps.command() + " install host --sha256sums <the SHA256SUMS of the release>`"
 }
 
 // checkExecutorIsolated runs the checks of the executor on an isolated host.
@@ -213,7 +213,7 @@ func mustAtoi(digits string) int {
 // build, and, when the pin is a line of the release's SHA256SUMS, it is the release's. A pin that no SHA256SUMS gave is a warning: nothing
 // checked it against the release.
 func (d *doctor) checkExecutorBinary(ctx context.Context) {
-	fix := d.hostStep() + " with this program (and --sha256sums of its release)"
+	fix := d.hostStep() + " with this program"
 	listed, err := d.out(ctx, "sha256sum", executorBinary)
 	if err != nil || len(strings.Fields(listed)) == 0 {
 		d.fail("executor.binary", "no executor binary at "+executorBinary+": "+fmt.Sprint(err), fix)
@@ -237,7 +237,7 @@ func (d *doctor) checkExecutorBinary(ctx context.Context) {
 		d.fail("executor.binary", fmt.Sprintf("the executor runs another build than this program (the executor's SHA-256 %s, this program's %s)", sum, own), fix)
 	case !releaseAsset.MatchString(name):
 		d.fail("executor.binary", "the executor's binary (SHA-256 "+sum+") is pinned without a line of a release's SHA256SUMS (the pin names "+name+"), so the release does not list it: on this tier the pin is the signed release's",
-			d.hostStep()+" --sha256sums <the SHA256SUMS of the release> with that release's binary")
+			d.hostStep()+" with that release's binary")
 	default:
 		d.pass("executor.binary", "the executor's binary (SHA-256 "+sum+") is the pinned one, this program's, and the release's line of SHA256SUMS "+name)
 	}

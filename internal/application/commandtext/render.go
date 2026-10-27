@@ -674,6 +674,15 @@ type Revision struct {
 	Changes                                 *Changes
 	ChangesUnavailable                      bool
 	ReportURL                               string
+	// Receipt is the effective receipt level (advisory, before-approval or required) of a revision whose receipt applies, and empty for one with none: the comment then
+	// has the fixed receipt line. ReceiptURL, set only with Receipt, is the link to the receipt page of pull request Pull, which names the line's results; without it the
+	// line sends the reader to the SuiteWard / Receipt check.
+	Receipt    string
+	ReceiptURL string
+	Pull       int
+	// LowersPolicy and ReducesScope say what a reduction whose detail was left out (ReducedOmitted) does, which its entries can no longer say: it lowers the execution
+	// policy, reduces the protected scope, or both. Neither set is a reduction of the scope. They are set only with ReducedOmitted.
+	LowersPolicy, ReducesScope bool
 }
 
 // RevisionComment renders the comment of a new change-proposal revision: the protected files added, modified

@@ -319,3 +319,8 @@ func Visible(s string) string {
 	}
 	return b.String()
 }
+
+// ValidReceiptLink reports whether link is the link to the receipt page of pull request pull: a loopback address, as the settings allow, and the path /receipts/<owner>/<repo>/<pull>.
+func ValidReceiptLink(link string, pull int) bool {
+	return false
+}

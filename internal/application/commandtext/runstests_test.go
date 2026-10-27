@@ -92,6 +92,19 @@ func everyBody(t *testing.T) map[string]string {
 			r.Reduced, r.ReducedRules, r.ReducedPaths, r.ReducedPathsTotal = true, []string{"rule tests/**", "execution canonical: required -> advisory"}, []string{"tests/a.go"}, 1
 			return commandtext.RevisionComment(r)
 		})
+		for _, level := range []string{"advisory", "before-approval", "required"} {
+			add("revision with a "+level+" receipt "+tier, func() string { r := receiptRevision(t, level); r.Tier = value; return commandtext.RevisionComment(r) })
+			add("revision with a "+level+" receipt and no link "+tier, func() string {
+				r := receiptRevision(t, level)
+				r.Tier, r.ReceiptURL = value, ""
+				return commandtext.RevisionComment(r)
+			})
+		}
+		add("revision that lowers the policy, detail omitted "+tier, func() string {
+			r := revision(value)
+			r.Reduced, r.ReducedOmitted, r.LowersPolicy = true, true, true
+			return commandtext.RevisionComment(r)
+		})
 		add("merge promoted "+tier, func() string {
 			return commandtext.MergeComment(commandtext.Merge{Kind: commandtext.MergePromoted, Source: mergeSHA, Version: 2, Proposal: 2, Revision: 1, Tier: value})
 		})

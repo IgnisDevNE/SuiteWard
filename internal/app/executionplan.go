@@ -577,8 +577,8 @@ func (j *checksJob) readUnapproved(ctx context.Context, s *pullState, x *executi
 }
 
 // unapprovedFiles is the files of changed that were not removed, that the head's declaration selects and that the canonical's does not ("not evaluated: pattern
-// not approved yet"), sorted and cut at maxExecutionPaths. The files of a pull request that the head holds are valid paths, so a path that no selection can
-// match is an impossible state, and an error.
+// not approved yet"), sorted and cut at maxExecutionPaths. A path that no selection can match is reachable, since the files of the pull request are read live and
+// the head tree was synchronized earlier, so the two can disagree: it fails closed, as an error and not as a path that is left out.
 func unapprovedFiles(changed []github.PullFile, head, approved domain.Selection) ([]string, error) {
 	var paths []string
 	for _, f := range changed {

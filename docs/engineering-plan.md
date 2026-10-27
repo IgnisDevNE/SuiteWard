@@ -16,7 +16,7 @@ This plan builds on the [project baseline](project-baseline.md) and the [accepte
 - Use standard Go `testing`, structured `log/slog`, explicit errors, and manual dependency composition. See the [development guide](development-guide.md).
 - Test-first for authority, consent, promotion, idempotency, concurrency, and adapter behavior; the `sw-reviewer` subagent checks the order. See [ADR 0025](decisions/0025-test-driven-development.md) and the [TDD rule](tdd.md).
 - Required checks cover Windows/Linux build and tests, formatting and static analysis, Linux race and vulnerability checks, and real PostgreSQL checks for the persistence adapter. Patch coverage is 90% and required; project coverage is informational. See the [CI and coverage guide](ci-and-coverage.md).
-- Preserve the roadmap: M0 proves the domain; M1 delivers integrity governance ("tamper-evident, human-approved test contract"); M2 adds canonical execution (M2.1 the engine, the receipt and the Go profile, then Python and TypeScript); M3 adds justified supply-chain hardening.
+- Preserve the roadmap: M0 proves the domain; M1 delivers integrity governance ("tamper-evident, human-approved test contract"); M2 is canonical execution (M2.1 the engine, the receipt and the Go profile, then Python and TypeScript); M3 adds justified supply-chain hardening.
 
 ## Task design rules
 

@@ -40,13 +40,12 @@ func (h *executorAPI) leasedJob(w http.ResponseWriter, r *http.Request, now time
 	return job, true
 }
 
-// downloadDeadline is the bound of a download: the job's remaining time, ten minutes at most. The listener's own 30 s write bound is moved to it
-// for this request, and the same instant bounds what the request reads. It answers 500 when the response cannot take a deadline of its own.
+// downloadDeadline is the bound of a download: the job's remaining time, ten minutes at most. The remaining time is told by the clock of the service
+// (now), and the deadline is that long from the wall clock: a socket or a context ends at a real instant, which the injected clock does not give. A
+// remaining time of zero or less is a job whose deadline has passed, and the deadline is already behind. The listener's own 30 s write bound is moved
+// to it for this request, and the same instant bounds what the request reads. It answers 500 when the response cannot take a deadline of its own.
 func (h *executorAPI) downloadDeadline(w http.ResponseWriter, r *http.Request, job execution.Job, now time.Time) (time.Time, bool) {
-	deadline := now.Add(maxDownloadTime)
-	if job.DeadlineAt.Before(deadline) {
-		deadline = job.DeadlineAt
-	}
+	deadline := time.Now().Add(min(maxDownloadTime, job.DeadlineAt.Sub(now)))
 	if err := http.NewResponseController(w).SetWriteDeadline(deadline); err != nil {
 		h.internal(w, r, "extend the write deadline of a download", err)
 		return time.Time{}, false

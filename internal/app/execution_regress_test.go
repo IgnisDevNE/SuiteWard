@@ -79,8 +79,10 @@ func (n notStored) Read(ctx context.Context, d artifact.Digest) ([]byte, error) 
 	return n.inner.Read(ctx, d)
 }
 
-// A revision whose manifest was never stored (one from before manifests were kept) leaves no receipt to decide, and never stops the Contract check.
-func TestChecksKeepTheContractCheckFlowingWhenTheManifestOfTheRevisionIsNotStored(t *testing.T) {
+// A manifest that the content store lacks is an impossible state, since nothing is deleted from it: the step of that pull request fails with an error that
+// says nothing of the store, /status says "failed", and the run goes on with the other pull requests (docs/contracts/runtime.md, "What the checks job does for
+// execution", step 6).
+func TestChecksFailTheStepOfAPullRequestWhoseRevisionManifestIsNotStoredAndGoOn(t *testing.T) {
 	decl := execDeclaration("off", "required")
 	w := newExecWorld(t, decl)
 	allowed := map[artifact.Digest]bool{}
@@ -91,15 +93,20 @@ func TestChecksKeepTheContractCheckFlowingWhenTheManifestOfTheRevisionIsNotStore
 	}
 	w.check.contents = notStored{inner: w.content, allowed: allowed}
 	w.tree(cjHead2, execHeadFiles(decl, "v2"))
-	w.sync(map[int]string{5: cjHead2})
+	w.sync(map[int]string{4: bootHead, 5: cjHead2})
+	w.check.liveness.Saw(w.clock.Add(time.Minute))
 
-	w.execRun()
+	err := w.runChecks()
 
-	w.want(5, checks.InProgress, "approval-missing", 1)
-	w.noJobs(5, cjHead2, execution.PlanReceipt)
-	if !strings.Contains(w.logs.String(), "manifest of the revision is not stored") {
-		t.Errorf("logs do not say that the receipt was skipped for a manifest that is not stored: %s", w.logs)
+	if err == nil || !strings.Contains(err.Error(), "pull 5") || strings.Contains(err.Error(), "file does not exist") {
+		t.Fatalf("the run failed with %v, want an opaque failure of pull 5 that says nothing of the store", err)
 	}
+	if got := w.problems.lookup(bootRepo); got != "failed" {
+		t.Errorf("problem %q, want failed", got)
+	}
+	w.want(4, checks.Success, "unchanged", 1) // the run went on with the other pull request
+	w.wantNone(5)                             // and the step that failed published nothing
+	w.noJobs(5, cjHead2, execution.PlanReceipt)
 }
 
 // The clock of a GitHub failure runs for a head until a job is created for it, whatever the job is: creating one ends it, so a later failure for the same

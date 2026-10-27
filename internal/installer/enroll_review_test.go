@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 )
 
@@ -15,7 +16,7 @@ func TestSetupRefusesTheContractCheckAsATestCheck(t *testing.T) {
 
 // `SuiteWard / Receipt` is SuiteWard's own as well, and typed by hand it is refused like the contract check.
 func TestSetupRefusesTheReceiptCheckAsATestCheck(t *testing.T) {
-	setupRefusesItsOwnCheck(t, receiptCheck)
+	setupRefusesItsOwnCheck(t, github.ReceiptCheckName)
 }
 
 func setupRefusesItsOwnCheck(t *testing.T, contract string) {

@@ -878,12 +878,8 @@ func readRepositories(ctx context.Context, a ghAccess, repos []string) ([]repoIn
 	return infos, nil
 }
 
-// receiptCheck is the second check SuiteWard publishes, beside protection.ContractCheck. It is spelled here because no package the installer
-// imports exports its name yet; change both together.
-const receiptCheck = "SuiteWard / Receipt"
-
 // ownCheck is whether a check name is one of the two that SuiteWard publishes: neither is the project's test check.
-func ownCheck(name string) bool { return name == protection.ContractCheck || name == receiptCheck }
+func ownCheck(name string) bool { return name == protection.ContractCheck || name == github.ReceiptCheckName }
 
 // checkRunNames lists the check runs on the head of the default branch, without duplicates and without the two checks SuiteWard publishes.
 // shortcut: the first 100 runs only, and legacy commit statuses do not show as check runs: the user types such a name.
@@ -905,7 +901,7 @@ func checkRunNames(ctx context.Context, client *rest.Client, r repoInfo) ([]stri
 	}
 	var names []string
 	for _, run := range out.CheckRuns {
-		if run.Name != "" && run.Name != protection.ContractCheck && run.Name != receiptCheck && !slices.Contains(names, run.Name) {
+		if run.Name != "" && run.Name != protection.ContractCheck && run.Name != github.ReceiptCheckName && !slices.Contains(names, run.Name) {
 			names = append(names, run.Name)
 		}
 	}
@@ -948,7 +944,7 @@ func chooseTestChecks(ctx context.Context, env githubEnv, a ghAccess, repos []re
 		switch answer {
 		case "":
 			return nil, fmt.Errorf("the test check of %s is empty", r.name)
-		case protection.ContractCheck, receiptCheck:
+		case protection.ContractCheck, github.ReceiptCheckName:
 			return nil, fmt.Errorf("%s is SuiteWard's own check, not the project's test check", answer)
 		}
 		checks[r.name] = answer

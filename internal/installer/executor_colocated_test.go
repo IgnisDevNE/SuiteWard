@@ -276,8 +276,8 @@ func TestTheExecutorOfADockerStackUsesTheEngineTheInstallerChose(t *testing.T) {
 			t.Errorf("the wrapper lacks %s:\n%s", want, wrapper)
 		}
 	}
-	if !strings.Contains(h.out.String(), "Podman") {
-		t.Errorf("the output must say that a docker command that reaches Podman's socket fails closed:\n%s", h.out.String())
+	if !strings.Contains(h.out.String(), "podman-docker") {
+		t.Errorf("the output must say that Docker's CLI on Podman's socket fails closed and that the podman-docker shim works:\n%s", h.out.String())
 	}
 }
 

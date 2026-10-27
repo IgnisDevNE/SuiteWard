@@ -154,7 +154,7 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 		scr.Warn("A console window shows when the executor starts: a task of the logged-on user cannot hide it. Closing the window stops the executor, and the task starts it again within a minute.\n")
 	}
 	if c.s.Runtime == RuntimeDocker {
-		scr.Say("The executor runs its sandboxes through Docker's own engine: a docker command that reaches Podman's socket (its docker shim, for one) fails closed, because it does not know the flags the sandbox needs. Use --runtime podman for Podman.\n")
+		scr.Say("The executor runs its sandboxes through Docker's own engine: Docker's own CLI pointed at Podman's socket fails closed, because it does not know the flags the sandbox needs, while Podman's docker shim (the podman-docker package) works against Podman. Use --runtime podman for Podman.\n")
 	}
 	scr.Say("The executor holds one credential, its own token (%s), and it reaches the service at http://127.0.0.1:%d. It runs as your user, next to your coding agent, so its assurance is lower than on a separate host: what doctor pins catches drift and accident, not a determined agent.\n", plan.tokenFile, c.s.HTTPPort)
 	scr.Say("Keep one executor for each container engine: at start it removes every %s container of its engine, so a second one (the executor started by hand, say) would remove the sandboxes of the first.\n", sandboxNamePrefix)

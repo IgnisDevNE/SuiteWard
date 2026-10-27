@@ -17,6 +17,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
@@ -380,7 +381,7 @@ func TestResolveGitHubTestChecks(t *testing.T) {
 			t.Fatalf("error = %v", err)
 		}
 	})
-	for _, own := range []string{protection.ContractCheck, receiptCheck} {
+	for _, own := range []string{protection.ContractCheck, github.ReceiptCheckName} {
 		t.Run(own+" is not a test check", func(t *testing.T) {
 			g := newFakeGitHub(t)
 			env, _ := flowEnv(t, g, existingFlags(t, map[string]string{"test-check": own}), strings.NewReader(""), false)

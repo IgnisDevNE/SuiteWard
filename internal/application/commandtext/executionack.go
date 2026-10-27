@@ -92,11 +92,16 @@ func modeNeeds(mode execution.Mode) string {
 	panic(fmt.Sprintf("commandtext: unknown mode %d", mode))
 }
 
-// countsLine states the receipt of the head, the counts of each state and the marker lines seen.
+// countsLine states the receipt of the head, the counts of each state, the marker lines seen and, when there are some, the changed test files that do not parse, which
+// block every mode.
 func countsLine(a Ack) string {
 	c := a.Counts
-	return fmt.Sprintf("Receipt of this head: %d DETECTS, %d INERT, %d NEW API, %d FAILS, %d MISSING, %d FLAKY, %d SKIPPED. Excluded tests: %d. Marker lines seen: %d.",
+	line := fmt.Sprintf("Receipt of this head: %d DETECTS, %d INERT, %d NEW API, %d FAILS, %d MISSING, %d FLAKY, %d SKIPPED. Excluded tests: %d. Marker lines seen: %d.",
 		c.Detects, c.Inert, c.NewAPI, c.Fails, c.Missing, c.Flaky, c.Skipped, c.Excluded, a.Markers)
+	if c.Unparsed != 0 {
+		line += fmt.Sprintf(" Changed test files that do not parse: %d.", c.Unparsed)
+	}
+	return line
 }
 
 // modeApproveCommand shows the approve of ref with a mode to copy.

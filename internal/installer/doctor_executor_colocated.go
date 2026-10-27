@@ -141,10 +141,16 @@ func (d *doctor) checkExecutorColocatedBinary(plan executorPlan) {
 		d.fail("executor.binary", fmt.Sprintf("the executor's binary has changed since it was installed (SHA-256 %s, pinned %s)", sum, fields[0]), d.installFix())
 	case sum != own:
 		d.fail("executor.binary", fmt.Sprintf("the executor runs another build than this program (the executor's SHA-256 %s, this program's %s)", sum, own), d.installFix())
+	case len(fields) >= 2 && releaseAssetOf(plan.goos).MatchString(fields[1]):
+		d.pass("executor.binary", "the executor's binary (SHA-256 "+sum+") is the pinned one, this program's, and the release's line of SHA256SUMS "+fields[1]+". "+colocatedAssurance)
 	default:
-		d.pass("executor.binary", "the executor's binary (SHA-256 "+sum+") is the pinned one and this program's. This tier has reduced assurance: it runs as your user, next to your coding agent, so these pins catch drift and accident, not a determined agent")
+		d.warn("executor.binary", "the executor's binary (SHA-256 "+sum+") is the pinned one and this program's, but the pin was not made from a release's SHA256SUMS, so nothing checked it against the release. "+colocatedAssurance,
+			"run `"+d.deps.command()+" install --upgrade --sha256sums <the SHA256SUMS of the release>` with that release's binary")
 	}
 }
+
+// colocatedAssurance is what doctor says of the executor of this tier whether or not its pin is a release's line.
+const colocatedAssurance = "This tier has reduced assurance: it runs as your user, next to your coding agent, so these pins catch drift and accident, not a determined agent"
 
 // checkExecutorLoopback checks that this computer reaches the port that a Podman machine publishes. The executor is a program of this computer,
 // and on Windows and macOS the machine's published loopback port does not always answer from outside it; the service then never sees the

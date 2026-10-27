@@ -435,7 +435,7 @@ func TestChecksRestoreAStoredRunnerBlockWithItsRunnerSetWhenTheFreshAssessmentDo
 	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
 	w.mustCheck()
 	w.want(5, checks.InProgress, "runner-uncovered", 2)
-	w.consent(contract.RevokeConsent, 202, 2, 1, 5)                                // the next assessment says approval-missing
+	w.consent(contract.RevokeConsent, 202, 2, 1, 5)                             // the next assessment says approval-missing
 	if err := w.memory.FailMessage(t.Context(), "check:1001:5:2"); err != nil { // the message of the check is lost, so the next run publishes it again, with its files
 		t.Fatal(err)
 	}

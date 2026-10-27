@@ -19,20 +19,41 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/sandbox"
 )
 
-// These tests join the two packages the way the executor does: the composed tar is the standard input of a real container on
-// Docker. They skip when the engine is not there, and pull the pinned image when it is missing.
+// These tests join the two packages the way the executor does: the composed tar is the standard input of a real container on the engine
+// that SUITEWARD_SANDBOX_TEST_RUNTIME names, docker (the default) or podman. They pull the pinned image when it is missing. The default
+// engine skips them, with the reason, when it is not there. An engine that was asked for fails them instead: a skip would prove nothing
+// about it.
 
-func dockerForTar(t *testing.T) sandbox.Runtime {
+// testEngine is the command of the engine under test, and what reports it unavailable: a skip for the default, a failure for an engine
+// that was asked for.
+func testEngine(t *testing.T) (engine string, unavailable func(format string, args ...any)) {
 	t.Helper()
-	rt := sandbox.NewCLI("docker")
+	switch engine = os.Getenv("SUITEWARD_SANDBOX_TEST_RUNTIME"); engine {
+	case "":
+		return "docker", t.Skipf
+	case "docker", "podman":
+		return engine, t.Fatalf
+	}
+	t.Fatalf("SUITEWARD_SANDBOX_TEST_RUNTIME is %q; want docker or podman", engine)
+	return "", nil
+}
+
+func engineForTar(t *testing.T) sandbox.Runtime {
+	t.Helper()
+	engine, unavailable := testEngine(t)
+	rt := sandbox.NewCLI(engine)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if name, _, err := rt.Info(ctx); err != nil || name != "docker" {
-		t.Skipf("no Docker engine: %q, %v", name, err)
+	name, _, err := rt.Info(ctx)
+	if err != nil {
+		unavailable("the %s engine does not answer: %v", engine, err)
 	}
-	if command("docker", "image", "inspect", pinnedImage(t)).Run() != nil {
-		if out, err := command("docker", "pull", pinnedImage(t)).CombinedOutput(); err != nil {
-			t.Skipf("cannot pull the pinned image: %v: %s", err, out)
+	if name != engine {
+		unavailable("the %s command is %s, not %s", engine, name, engine)
+	}
+	if command(engine, "image", "inspect", pinnedImage(t)).Run() != nil {
+		if out, err := command(engine, "pull", pinnedImage(t)).CombinedOutput(); err != nil {
+			unavailable("cannot pull the pinned image: %v: %s", err, out)
 		}
 	}
 	return rt
@@ -72,7 +93,7 @@ func pipeCompose(c *composition, t *testing.T, modules map[string]string) io.Rea
 }
 
 func TestTheComposedTarIsExtractedByTheSandbox(t *testing.T) {
-	rt := dockerForTar(t)
+	rt := engineForTar(t)
 	long := strings.Repeat("d", 90) + "/" + strings.Repeat("e", 90) + "/" + strings.Repeat("f", 90) + ".txt" // 276 bytes: too long for ustar, so Go writes a pax header
 	files := &manifestFiles{}
 	c := &composition{
@@ -102,7 +123,7 @@ func TestTheComposedTarIsExtractedByTheSandbox(t *testing.T) {
 }
 
 func TestAMismatchStopsTheContainerBeforeArgvStarts(t *testing.T) {
-	rt := dockerForTar(t)
+	rt := engineForTar(t)
 	c := &composition{
 		head: []member{file("a.go", "package evil\n"), file("b.go", "package b\n")},
 		tree: []execution.TreeFile{
@@ -125,7 +146,7 @@ func TestAMismatchStopsTheContainerBeforeArgvStarts(t *testing.T) {
 	}
 }
 
-// command is exec.Command, as the installer takes exec.CommandContext: the tests run Docker on purpose, with constants and the pin of
+// command is exec.Command, as the installer takes exec.CommandContext: the tests run the container engine on purpose, with constants and the pin of
 // the Containerfile, so gosec's G204 (a subprocess launched with a variable) does not apply.
 var command = exec.Command
 
@@ -169,7 +190,7 @@ func wholeTar(t *testing.T, c *composition, moduleName, module string) []byte {
 // A cut stream must never run Argv, wherever the cut falls. busybox tar takes a stream that stops at a block boundary for a finished
 // tar, so what keeps a part of the tree from running is the container's refusal to start Argv without the completion marker.
 func TestACutStreamNeverStartsArgvWhereverTheCutFalls(t *testing.T) {
-	rt := dockerForTar(t)
+	rt := engineForTar(t)
 	c := &composition{
 		head:   []member{file("a.go", "package a\n")},
 		tree:   []execution.TreeFile{treeFile("a.go", "package a\n", execution.FromHead)},

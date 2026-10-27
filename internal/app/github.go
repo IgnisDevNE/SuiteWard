@@ -174,6 +174,7 @@ func lastErrorText(state githubsync.RepositoryState) string {
 type githubSync struct {
 	reconciler *githubsync.Reconciler
 	readers    setupReaders   // shared with the protection check: one budget for every token
+	archive    *github.Reader // reads the archive of a commit, with a token of its own (archivePermissions) and the same budget; nil until composed
 	writer     *github.Writer // posts the comments, with the comment token
 	checkRuns  *github.Checks // posts the check runs, with the checks token
 	bot        *botAccount    // SuiteWard's own account id, shared by the comment publisher and the command job

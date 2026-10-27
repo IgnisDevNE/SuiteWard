@@ -882,6 +882,9 @@ func readRepositories(ctx context.Context, a ghAccess, repos []string) ([]repoIn
 // imports exports its name yet; change both together.
 const receiptCheck = "SuiteWard / Receipt"
 
+// ownCheck is whether a check name is one of the two that SuiteWard publishes: neither is the project's test check.
+func ownCheck(name string) bool { return name == protection.ContractCheck || name == receiptCheck }
+
 // checkRunNames lists the check runs on the head of the default branch, without duplicates and without the two checks SuiteWard publishes.
 // shortcut: the first 100 runs only, and legacy commit statuses do not show as check runs: the user types such a name.
 func checkRunNames(ctx context.Context, client *rest.Client, r repoInfo) ([]string, error) {
@@ -945,8 +948,8 @@ func chooseTestChecks(ctx context.Context, env githubEnv, a ghAccess, repos []re
 		switch answer {
 		case "":
 			return nil, fmt.Errorf("the test check of %s is empty", r.name)
-		case protection.ContractCheck:
-			return nil, fmt.Errorf("%s is SuiteWard's own check, not the project's test check", protection.ContractCheck)
+		case protection.ContractCheck, receiptCheck:
+			return nil, fmt.Errorf("%s is SuiteWard's own check, not the project's test check", answer)
 		}
 		checks[r.name] = answer
 	}
@@ -1379,8 +1382,8 @@ func setupArgv(owner string, checks map[string]string) ([]string, error) {
 		if !repositoryName.MatchString(repo) || strings.TrimSpace(check) == "" {
 			return nil, fmt.Errorf("the test check %q of %q is not a repository (owner/name) with a check name", check, repo)
 		}
-		if strings.TrimSpace(check) == protection.ContractCheck {
-			return nil, fmt.Errorf("the test check of %s is %s, SuiteWard's own check, not the project's test check", repo, protection.ContractCheck)
+		if own := strings.TrimSpace(check); ownCheck(own) {
+			return nil, fmt.Errorf("the test check of %s is %s, SuiteWard's own check, not the project's test check", repo, own)
 		}
 		if len(check) > appowner.MaxTestCheckBytes { // the limit setup enforces, so setup does not refuse after the container is entered
 			return nil, fmt.Errorf("the test check of %s is longer than %d bytes", repo, appowner.MaxTestCheckBytes)

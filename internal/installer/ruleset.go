@@ -46,8 +46,8 @@ func rulesetJSON(appID int64, testCheck string) ([]byte, error) {
 		return nil, errors.New("the ruleset needs the App id")
 	case testCheck == "":
 		return nil, errors.New("the ruleset needs a test check")
-	case testCheck == protection.ContractCheck:
-		return nil, fmt.Errorf("%s cannot be the test check", protection.ContractCheck)
+	case ownCheck(testCheck):
+		return nil, fmt.Errorf("%s cannot be the test check", testCheck)
 	}
 	rs := rulesetFile{Name: "SuiteWard contract", Target: "branch", Enforcement: "active", Rules: []rulesetRule{{Type: "required_status_checks"}}, BypassActors: []struct{}{}}
 	rs.Conditions.RefName.Include = []string{"~DEFAULT_BRANCH"}

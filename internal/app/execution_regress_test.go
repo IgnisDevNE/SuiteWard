@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
@@ -98,5 +99,31 @@ func TestChecksKeepTheContractCheckFlowingWhenTheManifestOfTheRevisionIsNotStore
 	w.noJobs(5, cjHead2, execution.PlanReceipt)
 	if !strings.Contains(w.logs.String(), "manifest of the revision is not stored") {
 		t.Errorf("logs do not say that the receipt was skipped for a manifest that is not stored: %s", w.logs)
+	}
+}
+
+// The clock of a GitHub failure runs for a head until a job is created for it, whatever the job is: creating one ends it, so a later failure for the same
+// head starts a new one (docs/contracts/runtime.md, "What the checks job does for execution", step 5).
+func TestChecksEndTheGitHubClockOfAHeadWhenAJobIsCreatedForIt(t *testing.T) {
+	headDecl := "version: 1\ninclude: [/tests/**, /pkg/**]\nexecution:\n  profile: go\n  canonical: off\n  receipt: required\n"
+	w := newExecWorld(t, execDeclaration("off", "required"))
+	w.reader.filesErr = errors.New("github: 502") // the read of the files that are not evaluated fails: the clock of the head runs
+	w.execPullFive(execHeadFiles(headDecl, "v2"))
+	w.noJobs(5, cjHead2, execution.PlanReceipt)
+
+	w.clock = w.clock.Add(25 * time.Minute)
+	w.check.executorConfigured = false
+	w.execRun() // without a token the job is created at once, and the clock ends
+	first := w.onlyJob(5, cjHead2, execution.PlanReceipt)
+	requireFinal(t, first, execution.ReasonNotConfigured)
+
+	w.clock = w.clock.Add(time.Minute)
+	w.check.executorConfigured = true
+	w.execRun() // the job is replaceable: the read fails again, and a new clock starts
+	w.clock = w.clock.Add(5 * time.Minute)
+	w.execRun() // more than the wait after the first failure of all, but not after the first of the new clock
+
+	if jobs := w.headJobs(5, cjHead2, execution.PlanReceipt); len(jobs) != 1 || jobs[0].ID != first.ID {
+		t.Fatalf("receipt jobs %+v, want only the first: the wait is counted from the failure that followed its creation", jobs)
 	}
 }

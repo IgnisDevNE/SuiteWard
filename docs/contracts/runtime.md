@@ -223,7 +223,7 @@ Both jobs are registered only with the GitHub settings. Both are excluded from t
 - Written by `PromoteMerge` only for `promoted`, `corrected` and `blocked`.
 - Payload: `repositoryId`, `repo`, `pull`, `kind`, `reason` (blocked only), `source`, `version`, `corrects` (corrected only), `reference` (optional), and `tier` (effective).
 - The publisher renders it with the command-text package, like the other `github_comment` keys (marker, idempotent post).
-  - **promoted or corrected:** the new version and the merge commit; for a correction, the version corrected. It says that SuiteWard checked the approval and the integrity of the protected files at that commit and did not run the tests.
+  - **promoted or corrected:** the new version and the merge commit; for a correction, the version corrected. It says that SuiteWard checked the approval and the integrity of the protected files at that commit. Since M2.1 it no longer says that SuiteWard did not run the tests ([What a text says about running tests](#what-a-text-says-about-running-tests)).
   - **blocked:** that the canonical stays at `version`, the reason in plain words, and the recovery. The recovery is a new PR that restores the protected files of `version`, or one that carries the integrated files for a new exact approval. There is no reset command.
 - `splitKey` accepts the `merge` kind. The comment is bounded like the bootstrap summary.
 
@@ -871,6 +871,21 @@ For the head it shows:
 A test name is shown escaped. No output of a test is shown, because none is stored.
 
 Bounds: the page is limited to 8 MiB. A run has at most 10,000 test rows, but a page of two such runs with long names can pass the limit, and then it answers 413 and cuts nothing. A page that cannot be built is 503 with a fixed text, and one page is built at a time, as for the change report.
+
+#### What a text says about running tests
+
+M1 ran no tests, and its texts said so. Since M2.1 SuiteWard runs them where the canonical declaration names a profile. One rule holds for every text (the comments, the check summaries, the acknowledgments, the pages, the installer's screens) and every current document, with no variant by profile, level or tier (owner, 2026-10-27):
+
+- **No text says that SuiteWard does not run tests**, or that it ran none, as a property of SuiteWard, of a command or of an outcome. Such a sentence is removed. Where it gave a reason, the text gives the true one, as listed below. ADRs and the pages of past phases are records and keep their words; an ADR that states the M1 claim as a rule gains a note.
+- **Only a text computed from a run says what ran or did not run:** the Contract check summary under `canonical: required` (its counts, or that the owner unblocked the head and the approved tests did not run on it), the Receipt check, the acknowledgments of `receipt-refused` and `unblocked`, the receipt line of the revision comment and the receipt page. Every other text still never claims that tests ran.
+- The texts that change:
+  - The Contract check summary keeps "This check reports on the protected contract only." and drops "It does not run tests." whenever it is not the counts summary of `canonical: required`. A reason `canonical-pending`, `canonical-unavailable` or `canonical-failing`, an `execution` field or `unblocked` marks the required summary; any other reason under `required` is the usual summary.
+  - The revision comment drops the sentence "SuiteWard compares the protected files only; it does not run tests."
+  - The merge comment of a promotion or a correction says that SuiteWard checked the approval and the integrity of the protected files at that commit, and nothing about tests.
+  - The bootstrap assessment answer says that SuiteWard recorded an integrity assessment of the approved files at the pinned origin commit, without "it did not run any tests".
+  - The scope discovery suggestion, the scope reply, the runner-uncovered notice, the invalid-source notice and the bootstrap answer drop "and SuiteWard does not run tests" (or "and SuiteWard does not run tests." at the end of a sentence) and keep what they say about the approval and the check.
+  - The installer's test-check step (and `docs/install.md`) says "SuiteWard does not replace your CI's tests:" where it said "SuiteWard runs no tests:", and the instructions page it writes says the same.
+- A test renders every comment kind, check summary and acknowledgment and asserts that none contains "does not run tests", "runs no tests", "did not run any tests" or "did not run the tests".
 
 ### Protection verification job (M1.5)
 

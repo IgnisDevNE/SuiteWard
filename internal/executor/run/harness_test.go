@@ -149,6 +149,9 @@ func (s *scenario) job(id int64) client.Job {
 	return job
 }
 
+// dropConnection is the status that an answer of a result gives to close the connection and say nothing.
+const dropConnection = -1
+
 // served is a job that the service grants, and how it answers the calls under it.
 type served struct {
 	job      client.Job
@@ -157,7 +160,7 @@ type served struct {
 	// fileStatus, when it is not 0, is the status that every manifest file answers with instead of its bytes.
 	fileStatus int
 	beat       func(n int) int           // the status of the n-th heartbeat, from 1
-	answer     func(n int) (int, string) // the status and the state of the n-th result
+	answer     func(n int) (int, string) // the status (or dropConnection) and the state of the n-th result
 	beats      atomic.Int32
 	results    atomic.Int32
 }
@@ -284,6 +287,12 @@ func (s *service) result(w http.ResponseWriter, r *http.Request, sv *served) {
 	status, state := http.StatusOK, ""
 	if sv.answer != nil {
 		status, state = sv.answer(n)
+	}
+	if status == dropConnection {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		must(err)
+		_ = conn.Close() // the caller gets no answer, as it would from a service that went down
+		return
 	}
 	if state == "" {
 		var b struct{ Status string }

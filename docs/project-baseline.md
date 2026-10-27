@@ -1,7 +1,7 @@
 # SuiteWard project baseline
 
-- **Updated:** 2026-10-22 (the MVP `v0.2.0` is released; phase M1.12, the installer, is next)
-- **Stage:** the MVP phases through M1.11 are delivered and `v0.2.0` is released (2026-10-22). Phase M1.12, the installer, is next and ships as `v0.3.0-alpha.1`, the first version handed to testers. The [delivery plan](plan/README.md) lists each phase.
+- **Updated:** 2026-10-27 (phase M2.1, canonical execution and the receipt with the Go profile, is in progress; the latest release is the pre-release `v0.4.0-alpha.3`)
+- **Stage:** the MVP `v0.2.0` is released (2026-10-22) and the installer phases M1.12 to M1.15 are released as alphas. [M2.1](plan/phases/M2.1.md) is in progress: SuiteWard runs the approved tests, and the tests a pull request adds or changes, in sandboxes driven by a separate executor, where the canonical declaration names a profile. The [delivery plan](plan/README.md) lists each phase.
 
 ## Product identity and audience
 
@@ -26,9 +26,9 @@ SuiteWard differs from the GitHub-native controls in these ways:
 - **Detection of protected-scope reduction.** A candidate cannot shrink what is protected by editing its own declaration; a reduction needs approval like any other change.
 - **Immutable canonical history.** Every approved version and its artifacts are kept, and the canonical pointer never rewrites an earlier version.
 - **Owner confirmation the agent cannot forge, on an isolated installation.** Approval needs a TOTP code from the verified owner, not only a GitHub account that an agent might control (ADR 0027). Co-located installations are supported but labeled with reduced assurance, because the agent can reach the secret.
-- **Canonical execution in M2.** SuiteWard runs the canonical tests in a controlled environment, so a passing result does not come from candidate-controlled runners.
+- **Canonical execution (M2.1, opt-in).** Where the canonical declaration names a profile (`execution: {profile: go}`), SuiteWard runs the approved tests on each head, and the tests a revision adds or changes on the head and on the code before the change (the receipt), in disposable sandboxes driven by a separate executor. A passing result does not come from candidate-controlled runners.
 
-M1's honest claim is a **tamper-evident, human-approved test contract**. It is not a claim that the tests were faithfully executed; that claim belongs to M2. Assurance is also labeled by installation tier: isolated installations give the full assurance, co-located installations report that the agent can reach the App key and database.
+M1's honest claim is a **tamper-evident, human-approved test contract**, and it stays the core claim. M2.1 adds evidence to it: what an executor observed when it ran the tests on one head. That evidence is never authority and never enters the approval, and it cannot rule out code that behaves differently under test ([ADR 0028](decisions/0028-canonical-execution-and-the-receipt.md)). Assurance is labeled by installation tier: isolated installations give the full assurance, co-located installations report that the agent can reach the App key, the database and the executor.
 
 ## Architecture baseline
 
@@ -46,23 +46,23 @@ The MVP has a human project owner and restricted agents. One eligible human appr
 
 Protected scope uses assisted discovery and a `.suiteward.yml` declaration reviewed in the PR. The default scope includes `.github/workflows/**`, the test runner configuration, and the scripts that run tests. The agent edits the declaration; SuiteWard publishes the exact inventory and approval command; the human approves. Candidate configuration cannot remove existing canonical protection. See [ADR 0013](decisions/0013-protected-scope-and-agent-assisted-review.md) and D-SCOPE in the [decision register](plan/decisions.md).
 
-M1 relies on the project's existing review and CI process for test acceptance. A confirmed PR merge triggers promotion assessment: SuiteWard retains exact human approval, validates the integrated contract, and conditionally promotes it without executing tests. Merge alone cannot authorize an unapproved contract. See [ADR 0014](decisions/0014-merge-triggered-canonical-promotion.md).
+SuiteWard does not replace the project's own review and CI process for test acceptance: the ruleset still requires the project's test check. A confirmed PR merge triggers promotion assessment: SuiteWard retains exact human approval, validates the integrated contract, and conditionally promotes it. Promotion rests on the approval and the integrity of the protected files, not on a test run. Merge alone cannot authorize an unapproved contract. See [ADR 0014](decisions/0014-merge-triggered-canonical-promotion.md), whose note of 2026-10-27 says what M2.1 changes.
 
 The `SuiteWard / Contract` check is a mandatory merge requirement, and setup also verifies that at least one project test check is required. Changes to protected tests or scope remain blocked until an eligible exact approval and integrity assessment establish readiness. GitHub protection must require the check from the expected SuiteWard App; connection alone does not establish enforcement. On private repositories on GitHub Free, branch protection and rulesets are unavailable, and SuiteWard reports "enforcement unavailable". The MVP verifies protection and gives manual instructions; automatic application and repair move post-MVP, while drift detection stays. See [ADR 0015](decisions/0015-required-contract-check.md), [ADR 0016](decisions/0016-integrated-protection-onboarding.md), and [ADR 0017](decisions/0017-protection-change-detection-and-confirmed-repair.md).
 
 Ordinary protected changes are reviewed and accepted in the PR that contains them. Correcting a change that was already promoted uses a corrective PR, fresh exact approval, integration, and a new canonical version. All historical canonical versions, their artifacts, and audit records remain available and immutable. See [ADR 0018](decisions/0018-corrective-pr-rollback-and-audit-history.md).
 
-Artifact bytes are verified when a version is written; periodic integrity verification is a later runtime job. See [ADR 0007](decisions/0007-canonical-contract-authority.md).
+Artifact bytes are verified when a version is written and again every hour. See [ADR 0007](decisions/0007-canonical-contract-authority.md).
 
-The MVP backup is `pg_dump` plus a tarball of the artifact volume, with a runbook that re-bootstraps from the protected main branch. Encrypted archives with a recovery kit, guided `suiteward restore`, Release-asset backups with the 29-day contingency, and the contract-change priority queue (`/suiteward prioritize`) are accepted but deferred to post-MVP. See ADRs [0019](decisions/0019-encrypted-backups-and-instance-recovery-key.md) through [0022](decisions/0022-contract-change-pr-priority.md).
+A backup is `pg_dump` plus a tarball of the artifact volume, encrypted to the owner's recovery key, and `suiteward restore` loads it (M1.13); the runbook still re-bootstraps from the protected main branch when no backup can be used. Release-asset backups with the 29-day contingency, scheduled backups and the contract-change priority queue (`/suiteward prioritize`) are accepted but deferred to post-MVP. See ADRs [0019](decisions/0019-encrypted-backups-and-instance-recovery-key.md) through [0022](decisions/0022-contract-change-pr-priority.md).
 
 The [ADR index](decisions/README.md) is the authoritative map of the decisions and their consequences. Each record distinguishes accepted direction from implementation details that remain open.
 
 ## Delivery and boundaries
 
-M0 proves the domain. M1 delivers integrity governance. M2 adds canonical execution using DockerExecutionBackend. M3 adds justified supply-chain hardening.
+M0 proves the domain. M1 delivers integrity governance. M2 adds canonical execution: M2.1 is the engine, the receipt and the Go profile, and M2.2 and M2.3 add Python and TypeScript. The executor is a separate process that drives a container runtime CLI ([D-EXECUTION](plan/decisions.md#d-execution-first-executable-profile-and-execution-trust-model); it replaces the `DockerExecutionBackend` that ADR 0008 planned). M3 adds justified supply-chain hardening.
 
-Choosing Go for SuiteWard does not select the languages or testing frameworks of the repositories it will protect. The first executable test profile remains open and is deferred to M2.
+Choosing Go for SuiteWard does not select the languages or testing frameworks of the repositories it will protect. The first executable test profile is Go (D-EXECUTION, accepted 2026-10-26), then Python and TypeScript.
 
 SuiteWard's own development environment is settled separately from product deployment: native Windows development, Windows/Linux CI, local PostgreSQL in Podman, and project-local tool installation wherever practical. See [ADR 0023](decisions/0023-development-environment-and-project-local-tooling.md) and the [engineering plan](engineering-plan.md).
 
@@ -73,8 +73,8 @@ Development is test-first for authority, consent, promotion, idempotency, concur
 ## Items still open
 
 - Known limit: strict GitHub gate-to-merge-to-promotion coordination is not proved by database compare-and-set alone.
-- M2's first supported execution ecosystem and RunnerProfile (D-EXECUTION), and the future managed execution location and trust model.
+- The future managed execution location and trust model (D-MANAGED-EXECUTION). D-EXECUTION is decided: the first profile is Go, and what M2.1 defers is listed in the [decision register](plan/decisions.md#open) (D-EXECUTION-LATER).
 - D-HARDENING-CONTROLS ([decision register](plan/decisions.md#open)).
-- Post-MVP: encrypted backups, guided restore, Release backups, the priority queue, and automatic protection setup and repair.
+- Post-MVP: Release backups, scheduled backups, the recovery mode of the restore, the priority queue, and automatic protection setup and repair.
 
 An earlier system-design proposal may discuss candidates for these items. That discussion alone does not make them accepted decisions.

@@ -151,13 +151,40 @@ func TestOnShutdownTheExecutorLeasesNoMoreAndFinishesTheJobInFlight(t *testing.T
 	d := start(t, svc, rt)
 	wait(d, rt.entered)
 	d.cancel()
-	rt.gate <- struct{}{} // the job in flight is still allowed to end
+	rt.gate <- struct{}{} // the job in flight is still allowed to end, within the grace
 	d.result()
 	if err := d.stopped(); err != nil {
 		t.Errorf("Run = %v after a clean stop; want nil", err)
 	}
 	if n := svc.leaseRequests(); n != 1 {
 		t.Errorf("%d lease requests; the executor stops leasing at the signal", n)
+	}
+	if got := d.sleeps.durations(); !slices.Equal(got, []time.Duration{30 * time.Second}) {
+		t.Errorf("the executor waited %v; the one wait is the 30 s grace of the job in flight", got)
+	}
+}
+
+// The grace is 30 s from the signal. When it is over the work is dropped (the sandbox kills the container with its context), nothing is
+// posted, the executor exits 0, and the lease expires, so that the job is leased again. The test's sleeper ends the grace at once.
+func TestAJobInFlightIsAbandonedWhenTheGraceAfterTheSignalIsOver(t *testing.T) {
+	sv, rt := aJob(1)
+	rt.gate, rt.entered = make(chan struct{}), make(chan struct{}, 4) // the gate is never opened: the job would run for ever
+	svc := newService(t, sv, nil, nil)
+	d := start(t, svc, rt, func(_ *Config, d *driver) { d.sleeps.immediate, d.patience = 1, 5*time.Second })
+	wait(d, rt.entered)
+	d.cancel()
+	if err := d.stopped(); err != nil {
+		t.Errorf("Run = %v after the grace; want a clean stop", err)
+	}
+	d.noResult()
+	if n := sv.results.Load(); n != 0 {
+		t.Errorf("%d results were posted by a job that was abandoned", n)
+	}
+	if got := d.sleeps.durations(); !slices.Equal(got, []time.Duration{30 * time.Second}) {
+		t.Errorf("the executor waited %v; the one wait is the 30 s grace", got)
+	}
+	if n := svc.leaseRequests(); n != 1 {
+		t.Errorf("%d lease requests; the executor leases nothing after the signal", n)
 	}
 }
 
@@ -248,7 +275,7 @@ func TestTheDefaultsReadNoProxySettingAndFollowTheContract(t *testing.T) {
 	if !ok || transport.Proxy != nil {
 		t.Errorf("the prefetch client is %T and has a proxy function: the egress goes direct, and no environment variable moves it", e.cfg.Proxy.Client.Transport)
 	}
-	if DefaultPacing != (Pacing{Idle: 5 * time.Second, Backoff: 5 * time.Second, MaxBackoff: time.Minute, Heartbeat: 20 * time.Second}) {
+	if DefaultPacing != (Pacing{Idle: 5 * time.Second, Backoff: 5 * time.Second, MaxBackoff: time.Minute, Heartbeat: 20 * time.Second, Grace: 30 * time.Second}) {
 		t.Errorf("DefaultPacing = %+v", DefaultPacing)
 	}
 }

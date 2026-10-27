@@ -1,0 +1,62 @@
+package run
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/client"
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/sandbox"
+)
+
+// A result that the service would refuse is found before anything runs, and it says why: the executor never posts what comes back as a 400.
+func TestAResultTheServiceWouldRefuseIsFoundBeforeAnythingRunsAndSaysWhy(t *testing.T) {
+	deep := strings.Repeat(strings.Repeat("d", 100)+"/", 6) + "x" // a package of 606 bytes: over the bound of 512
+	for name, tc := range map[string]struct {
+		file   string
+		reason string
+	}{
+		"a package over its bound":            {deep + "/x_test.go", reasonTooLarge},
+		"a test file with a bidi override":    {"lib‮_test.go", reasonSourceMismatch},
+		"a test file with a line separator":   {"lib _test.go", reasonSourceMismatch},
+		"a test file with a zero-width space": {"lib​_test.go", reasonSourceMismatch},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := withTests()
+			s.manifest = repo{".suiteward.yml": declaration, tc.file: libTests}
+			rt := newRuntime(passing)
+			d := start(t, newService(t, s.serve(1)), rt)
+			assertBody(t, d.result().body, unavailable(tc.reason, commonSandbox))
+			if n := len(rt.invocations()); n != 0 {
+				t.Errorf("%d containers ran go test for a result that could not be posted", n)
+			}
+		})
+	}
+}
+
+func TestAMarkedFileOrASubmoduleWithAFormatCharacterIsASourceMismatch(t *testing.T) {
+	for name, change := range map[string]func(*scenario){
+		"a marker's file": func(s *scenario) {
+			s.head["a​b.go"] = "package m\n\nimport \"os\"\n\nvar _ = os.Getenv(\"CI\")\n"
+		},
+		"a submodule": func(s *scenario) { s.headExtra = append(s.headExtra, treeSubmodule("sub mod")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := aReceipt()
+			change(s)
+			rt := newRuntime(func(c call) (sandbox.Outcome, error) { return detects(c) })
+			d := start(t, newService(t, s.serve(3)), rt)
+			body := decode(t, d.result().body)
+			if body["status"] != "unavailable" || body["reason"] != reasonSourceMismatch {
+				t.Errorf("the result is %v; want unavailable for source-mismatch", body)
+			}
+			if n := len(rt.invocations()); n != 0 {
+				t.Errorf("%d containers ran go test for a result that could not be posted", n)
+			}
+		})
+	}
+}
+
+// treeSubmodule is a submodule entry of a tree: no archive holds it, and the executor skips it and lists it.
+func treeSubmodule(path string) client.TreeEntry {
+	return client.TreeEntry{Path: path, Mode: "160000", SHA: headSHA}
+}

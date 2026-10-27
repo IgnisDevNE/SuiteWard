@@ -146,14 +146,19 @@ func TestAnOutOfBandKillIsAResourceLimitWhateverTheReportSays(t *testing.T) {
 	}
 }
 
-func TestATruncatedReportIsNeverReadAndIsAnExecutorError(t *testing.T) {
+// Output past the executor's bound (64 MiB) is never parsed, and it is a resource limit: a candidate causes it, with a test that writes
+// without end, and another run would give the same answer.
+func TestOutputPastTheBoundIsNeverReadAndIsAResourceLimit(t *testing.T) {
 	rt := newRuntime(func(c call) (sandbox.Outcome, error) {
-		out := goTest(c, pass)
+		out := goTest(c, pass) // the report that was kept says pass: a cut report says nothing
 		out.Truncated = true
 		return out, nil
 	})
 	d := start(t, newService(t, withTests().serve(1)), rt)
-	assertBody(t, d.result().body, unavailable(reasonExecutorError, commonSandbox))
+	assertBody(t, d.result().body, unavailable(reasonResourceLimit, commonSandbox))
+	if n := len(rt.invocations()); n != 1 {
+		t.Errorf("%d invocations; a resource limit is final and nothing is run again", n)
+	}
 }
 
 func TestAContainerThatFailedBeforeTheProgramIsASandboxFailureNotATestResult(t *testing.T) {

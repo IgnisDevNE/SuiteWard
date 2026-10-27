@@ -438,3 +438,20 @@ func TestChecksFailARunnerBlockOnAFreshWrongCodeWhenTheStepFails(t *testing.T) {
 
 	w.want(5, checks.Failure, "owner-command-rejected", 2)
 }
+
+// A policy that was read and has the receipt off decides the receipt whatever the Contract check says of the head: a Receipt check that was published is
+// withdrawn also for a head whose source is invalid.
+func TestChecksWithdrawThePublishedReceiptWhenTheLevelIsOffWhateverTheContractCheckSays(t *testing.T) {
+	decl := execDeclaration("advisory", "off")
+	w := newExecWorld(t, decl)
+	files := execHeadFiles(decl, "v2")
+	files[".suiteward.yml"] = "version: 1\ninclude: [\n" // the head's declaration does not parse: the check is invalid-source
+	w.tree(cjHead2, files)
+	w.sync(map[int]string{5: cjHead2})
+	w.publishedReceipt()
+
+	w.execRun()
+
+	w.want(5, checks.Failure, "invalid-source", 1)
+	w.wantReceipt(execution.CheckNeutral, "receipt-not-applicable", 2)
+}

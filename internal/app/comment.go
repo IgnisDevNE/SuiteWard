@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -1044,9 +1045,13 @@ func (p revisionPayload) revision() (commandtext.Revision, error) {
 	if p.ReducedOmitted && (len(p.ReducedRules) > 0 || len(p.ReducedPaths) > 0) {
 		return commandtext.Revision{}, errors.New("reduction detail that is also omitted")
 	}
+	if (p.ReducedPolicy || p.ReducedScope) && !p.ReducedOmitted {
+		return commandtext.Revision{}, errors.New("what a reduction lowers, stated for one whose detail was not omitted")
+	}
 	return commandtext.Revision{Proposal: proposal, Revision: revision, Previous: p.Previous, Canonical: canonical, Added: p.Added, Modified: p.Modified, Removed: p.Removed,
 		AddedTotal: p.AddedTotal, ModifiedTotal: p.ModifiedTotal, RemovedTotal: p.RemovedTotal, Reduced: p.Reduced, Tier: tier,
-		ReducedRules: p.ReducedRules, ReducedPaths: p.ReducedPaths, ReducedPathsTotal: p.ReducedPathsTotal, ReducedOmitted: p.ReducedOmitted}, nil
+		ReducedRules: p.ReducedRules, ReducedPaths: p.ReducedPaths, ReducedPathsTotal: p.ReducedPathsTotal, ReducedOmitted: p.ReducedOmitted,
+		LowersPolicy: p.ReducedPolicy, ReducesScope: p.ReducedScope, Receipt: p.Receipt, Pull: p.Pull}, nil
 }
 
 // text renders the comment of the payload stored under key, without quoting the payload in an error.
@@ -1072,7 +1077,7 @@ func newRevisionMessage(target commentTarget, notice governance.RevisionNotice, 
 func newRevisionMessageOf(target commentTarget, notice governance.RevisionNotice, tier, receipt string) (governance.OutboxMessage, error) {
 	p := revisionPayload{commentTarget: target, Reference: referenceText(notice.Reference), Canonical: string(notice.Canonical),
 		Added: boundedText(notice.Added), Modified: boundedText(notice.Modified), Removed: boundedText(notice.Removed),
-		AddedTotal: len(notice.Added), ModifiedTotal: len(notice.Modified), RemovedTotal: len(notice.Removed), Reduced: notice.Reduced, Tier: tier}
+		AddedTotal: len(notice.Added), ModifiedTotal: len(notice.Modified), RemovedTotal: len(notice.Removed), Reduced: notice.Reduced, Tier: tier, Receipt: receipt}
 	p.ReducedRules, p.ReducedPaths, p.ReducedPathsTotal = boundedText(notice.ReducedRules), boundedText(notice.ReducedPaths), len(notice.ReducedPaths)
 	if notice.Previous != nil {
 		p.Previous = referenceText(*notice.Previous)
@@ -1085,7 +1090,9 @@ func newRevisionMessageOf(target commentTarget, notice governance.RevisionNotice
 	if err != nil && p.Reduced {
 		// The revision must exist, or the owner cannot approve it, so what gives way is the detail of the reduction: evidence for the owner, not the
 		// change itself. The three lists of files hold at most 20 entries of 150 bytes, 54000 bytes when every byte is escaped, so without the
-		// detail the payload always fits and no further cut exists.
+		// detail the payload always fits and no further cut exists. What the reduction lowers is kept, since the entries that said it are gone: a head that only
+		// lowers the execution policy must not read as one that reduces the scope.
+		p.ReducedPolicy, p.ReducedScope = reductionKinds(notice)
 		p.ReducedRules, p.ReducedPaths, p.ReducedOmitted = nil, nil, true
 		payload, err = marshalPayload(p)
 	}
@@ -1093,6 +1100,29 @@ func newRevisionMessageOf(target commentTarget, notice governance.RevisionNotice
 		return governance.OutboxMessage{}, fmt.Errorf("encode the revision message: %w", err)
 	}
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
+}
+
+// reductionKinds says what the reduction of notice does: it lowers the execution policy when an entry of scope.Reductions says so, and reduces the scope when a path
+// or another entry says so.
+func reductionKinds(notice governance.RevisionNotice) (policy, scope bool) {
+	scope = len(notice.ReducedPaths) > 0
+	for _, rule := range notice.ReducedRules {
+		if strings.HasPrefix(rule, "execution ") {
+			policy = true
+		} else {
+			scope = true
+		}
+	}
+	return policy, scope
+}
+
+// receiptPageURL is the link to the receipt page of pull request pull of repo (owner/name) on the instance at base, or "" without a base.
+func receiptPageURL(base, repo string, pull int) string {
+	if base == "" {
+		return ""
+	}
+	account, name, _ := strings.Cut(repo, "/")
+	return base + "/receipts/" + url.PathEscape(account) + "/" + url.PathEscape(name) + "/" + strconv.Itoa(pull)
 }
 
 // revision renders the comment of a revision and, when it can, states the numbers of its change report and links it: the report is rebuilt now, from
@@ -1109,6 +1139,13 @@ func (p *commentPublisher) revision(ctx context.Context, key, tail string, paylo
 	plain, err := r.revision()
 	if err != nil {
 		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload cannot be rendered")
+	}
+	if plain.Receipt != "" && p.reportBase != "" { // a link that the renderer refuses drops the link and never the line
+		if link := receiptPageURL(p.reportBase, r.Repo, r.Pull); commandtext.ValidReceiptLink(link, r.Pull) {
+			plain.ReceiptURL = link
+		} else {
+			p.logger.WarnContext(ctx, "github_comment: the receipt line is posted without its link, which the renderer refuses", "key", key)
+		}
 	}
 	changes, found, err := summarize(ctx, p.reports, p.logger, githubCommentKind+" "+key, revisionReference(r.RepositoryID, plain.Proposal, plain.Revision))
 	if err != nil {

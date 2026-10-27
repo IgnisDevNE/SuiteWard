@@ -71,6 +71,7 @@ type api struct {
 	owners         ownerReader
 	github         *githubStatus   // nil when the GitHub settings are not set
 	executorStatus *executorStatus // nil only where an api is built without execution; serve always sets it
+	executor       http.Handler    // the executor API under /executor/v1; nil without EXECUTOR_TOKEN: not served
 	reports        reportSource    // rebuilds the change report of a revision for the report page
 	stopping       atomic.Bool     // set when shutdown begins: readiness turns 503 first
 }

@@ -215,9 +215,6 @@ func (h *executorAPI) side(ctx context.Context, job execution.Job, repo, sha str
 	case slices.ContainsFunc(entries, func(e treeEntry) bool { return len(e.Path) > maxTreePath }):
 		return leaseSide{}, fmt.Errorf("%w: a tree entry has a path over %d bytes", execution.ErrTooLarge, maxTreePath)
 	}
-	if entries == nil { // the reader is a boundary: an empty tree is a list in the answer, not null
-		entries = []treeEntry{}
-	}
 	return leaseSide{SHA: sha, Tree: entries}, nil
 }
 

@@ -67,3 +67,52 @@ func TestDoctorOfASecondInstanceSaysThatTheExecutorIsRegisteredForAnotherInstanc
 		})
 	}
 }
+
+// The files of an executor are beside the token file, and the default token file is the main instance's. Doctor with another settings file and no
+// --token-file would read the main instance's folder and report its executor as this instance's: it asks for the token file, as the install does,
+// and checks no other row of the executor.
+func TestDoctorOfAnotherSettingsFileWithoutATokenFileAsksForIt(t *testing.T) {
+	f, s := colocated{}.build(t) // the main instance's executor, healthy, at the default place
+	defaultFile, err := defaultTokenFile(f.deps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := SaveSettings(path, s); err != nil {
+		t.Fatal(err)
+	}
+	res := map[string]doctorResult{}
+	for _, r := range doctorChecks(context.Background(), f.deps(), httpGet, path, "") {
+		res[r.Name] = r
+	}
+	wantFail(t, res, "executor.token", "--token-file", "second instance")
+	if fix := res["executor.token"].Fix; !strings.Contains(fix, "--token-file") || !strings.Contains(fix, "the only instance on this computer") || !strings.Contains(fix, defaultFile) {
+		t.Errorf("the fix %q must name --token-file, the default token file %s for a sole instance, and say so", fix, defaultFile)
+	}
+	for _, name := range []string{"executor.binary", "executor.lifecycle", "executor.running", "executor.image"} {
+		if _, checked := res[name]; checked {
+			t.Errorf("%s is checked, and it read the main instance's folder: %+v", name, res[name])
+		}
+	}
+}
+
+// The default settings file, named by its own path or left out, is the main instance's: its executor is the one beside the default token file.
+func TestDoctorOfTheDefaultSettingsFileChecksTheExecutorBesideTheDefaultTokenFile(t *testing.T) {
+	f, s := colocated{}.build(t)
+	path, err := DefaultSettingsPath() // inside the test's configuration directory (build redirected it)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(path, s); err != nil {
+		t.Fatal(err)
+	}
+	for name, settings := range map[string]string{"left out": "", "named by its path": path} {
+		t.Run(name, func(t *testing.T) {
+			res := map[string]doctorResult{}
+			for _, r := range doctorChecks(context.Background(), f.deps(), httpGet, settings, "") {
+				res[r.Name] = r
+			}
+			wantOK(t, res, "executor.token", "executor.binary", "executor.lifecycle", "executor.running")
+		})
+	}
+}

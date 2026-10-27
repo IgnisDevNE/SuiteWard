@@ -415,9 +415,12 @@ func (j *checksJob) receiptJob(ctx context.Context, s *pullState, x *executionRu
 	if err != nil || read.wait {
 		return true, err
 	}
-	delete(j.mergeFailures, checkPull{s.p.RepositoryID, s.pull.Number}) // a job is created for the head, whatever it is, and that ends the clock of its failures
 	spec.UnapprovedPaths, spec.BaseSHA = read.unapproved, read.base
-	return true, j.enqueue(ctx, spec, read.final)
+	if err := j.enqueue(ctx, spec, read.final); err != nil {
+		return true, err // the clock stays: no job was created
+	}
+	delete(j.mergeFailures, checkPull{s.p.RepositoryID, s.pull.Number}) // a job is created for the head, whatever it is, and that ends the clock of its failures
+	return true, nil
 }
 
 // revisionChanges lists the files that the receipt evaluates (docs/contracts/runtime.md, "Applicable and not applicable"): the files of the revision that the

@@ -10,7 +10,7 @@ import (
 func TestACompletionAtTheBoundsOfTheWireIsAccepted(t *testing.T) {
 	c := completion{
 		tests:      make([]testRow, maxTests),
-		markers:    make([]markerRow, maxMarkers),
+		markers:    markerRows(maxMarkers),
 		submodules: make([]string, maxSubmodules),
 		unparsed:   make([]string, maxUnparsed),
 	}
@@ -45,4 +45,13 @@ func TestMarkersAreCutToTheirBoundNotRefused(t *testing.T) {
 	if few := capMarkers(rows[:3]); len(few) != 3 {
 		t.Errorf("capMarkers cut a short list to %d", len(few))
 	}
+}
+
+// markerRows are n markers of the first line of a file.
+func markerRows(n int) []markerRow {
+	rows := make([]markerRow, n)
+	for i := range rows {
+		rows[i] = markerRow{Kind: "env-read", Path: "a.go", Line: 1}
+	}
+	return rows
 }

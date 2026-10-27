@@ -40,12 +40,12 @@ func TestAResultIsCheckedAgainstTheFieldBoundsOfThePostBeforeItIsPosted(t *testi
 		"text and a space that are fine":      {test("pkg/ünï cöde", "TestÄ_1", "pkg/ünï cöde/ä_test.go"), ""},
 		"a package with a NUL":                {test("a\x00b", "TestA", "a_test.go"), reasonSourceMismatch},
 		"a test file with a newline":          {test(".", "TestA", "a\nb_test.go"), reasonSourceMismatch},
-		"a test file with a bidi override":    {test(".", "TestA", "a‮b_test.go"), reasonSourceMismatch},
-		"a package with a line separator":     {test("a b", "TestA", "a_test.go"), reasonSourceMismatch},
-		"a marker's file with a format char":  {marker("a​b.go", 1), reasonSourceMismatch},
+		"a test file with a bidi override":    {test(".", "TestA", "a"+bidiOverride+"b_test.go"), reasonSourceMismatch},
+		"a package with a line separator":     {test("a"+lineSeparator+"b", "TestA", "a_test.go"), reasonSourceMismatch},
+		"a marker's file with a format char":  {marker("a"+zeroWidthSpace+"b.go", 1), reasonSourceMismatch},
 		"a marker's file with a tab":          {marker("a\tb.go", 1), reasonSourceMismatch},
-		"a submodule with a paragraph break":  {completion{submodules: []string{"sub mod"}}, reasonSourceMismatch},
-		"an unparsed file with a zero-width":  {completion{unparsed: []string{"a‍b_test.go"}}, reasonSourceMismatch},
+		"a submodule with a paragraph break":  {completion{submodules: []string{"sub" + paragraphSeparator + "mod"}}, reasonSourceMismatch},
+		"an unparsed file with a zero-width":  {completion{unparsed: []string{"a" + zeroWidthJoiner + "b_test.go"}}, reasonSourceMismatch},
 		"a path both too long and with a NUL": {test(long(600)+"\x00", "TestA", "a_test.go"), reasonTooLarge},
 	} {
 		err := tc.done.check()
@@ -63,8 +63,17 @@ func TestAResultIsCheckedAgainstTheFieldBoundsOfThePostBeforeItIsPosted(t *testi
 }
 
 func TestACheckNamesTheFieldAndNeverTheText(t *testing.T) {
-	err := completion{tests: []testRow{{Package: ".", Name: "TestA", File: "secret‮_test.go", Kind: "declared"}}}.check()
+	err := completion{tests: []testRow{{Package: ".", Name: "TestA", File: "secret" + bidiOverride + "_test.go", Kind: "declared"}}}.check()
 	if err == nil || strings.Contains(err.Error(), "secret") {
 		t.Errorf("check = %v; the candidate's text is not echoed", err)
 	}
 }
+
+// The characters that a result cannot carry in a path, built from their code points so that no file holds them as text.
+var (
+	bidiOverride       = string(rune(0x202e)) // Cf
+	zeroWidthSpace     = string(rune(0x200b)) // Cf
+	zeroWidthJoiner    = string(rune(0x200d)) // Cf
+	lineSeparator      = string(rune(0x2028)) // Zl
+	paragraphSeparator = string(rune(0x2029)) // Zp
+)

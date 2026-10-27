@@ -16,9 +16,9 @@ func TestAResultTheServiceWouldRefuseIsFoundBeforeAnythingRunsAndSaysWhy(t *test
 		reason string
 	}{
 		"a package over its bound":            {deep + "/x_test.go", reasonTooLarge},
-		"a test file with a bidi override":    {"lib‮_test.go", reasonSourceMismatch},
-		"a test file with a line separator":   {"lib _test.go", reasonSourceMismatch},
-		"a test file with a zero-width space": {"lib​_test.go", reasonSourceMismatch},
+		"a test file with a bidi override":    {"lib" + bidiOverride + "_test.go", reasonSourceMismatch},
+		"a test file with a line separator":   {"lib" + lineSeparator + "_test.go", reasonSourceMismatch},
+		"a test file with a zero-width space": {"lib" + zeroWidthSpace + "_test.go", reasonSourceMismatch},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := withTests()
@@ -36,9 +36,9 @@ func TestAResultTheServiceWouldRefuseIsFoundBeforeAnythingRunsAndSaysWhy(t *test
 func TestAMarkedFileOrASubmoduleWithAFormatCharacterIsASourceMismatch(t *testing.T) {
 	for name, change := range map[string]func(*scenario){
 		"a marker's file": func(s *scenario) {
-			s.head["a​b.go"] = "package m\n\nimport \"os\"\n\nvar _ = os.Getenv(\"CI\")\n"
+			s.head["a"+zeroWidthSpace+"b.go"] = "package m\n\nimport \"os\"\n\nvar _ = os.Getenv(\"CI\")\n"
 		},
-		"a submodule": func(s *scenario) { s.headExtra = append(s.headExtra, treeSubmodule("sub mod")) },
+		"a submodule": func(s *scenario) { s.headExtra = append(s.headExtra, treeSubmodule("sub"+paragraphSeparator+"mod")) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := aReceipt()

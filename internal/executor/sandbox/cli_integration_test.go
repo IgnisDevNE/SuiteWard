@@ -81,7 +81,7 @@ func dockerSpec(t *testing.T, stdin []byte, argv ...string) Spec {
 		Env:         []string{"PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
 		Argv:        argv,
 		Workdir:     ".",
-		Limits:      Limits{MemoryMiB: 256, CPUs: 1, Pids: 128, TmpfsMiB: 64, KillAfter: time.Minute},
+		Limits:      Limits{MemoryMiB: 256, CPUs: 1, Pids: 128, TmpfsMiB: 64},
 		Stdin:       bytes.NewReader(stdin),
 		StdoutLimit: 1 << 20,
 	}
@@ -148,7 +148,7 @@ func TestTheStdinTarIsExtractedUnderWorkAndTheExitStatusIsThatOfArgv(t *testing.
 	if got, want := string(out.Stdout), "/work/pkg/x\nhello\ntop\n"; got != want {
 		t.Errorf("the container printed %q, want %q", got, want)
 	}
-	if out.ExitCode != 7 || out.OOMKilled || out.Killed {
+	if out.ExitCode != 7 || out.OOMKilled {
 		t.Errorf("the exit status must pass through exec: %+v", out)
 	}
 }
@@ -184,20 +184,6 @@ func TestAMemoryHogIsSeenAsOOMKilled(t *testing.T) {
 	out := runOnDocker(t, rt, s)
 	if !out.OOMKilled {
 		t.Errorf("the memory limit killed the hog, and the runtime must say so: %+v", out)
-	}
-}
-
-func TestKillAfterKillsARunawayContainer(t *testing.T) {
-	rt := dockerRuntime(t)
-	s := dockerSpec(t, tarOf(t, nil), "sleep", "300")
-	s.Limits.KillAfter = 2 * time.Second
-	start := time.Now()
-	out := runOnDocker(t, rt, s)
-	if !out.Killed || out.ExitCode != 137 {
-		t.Errorf("want the executor's kill with the status 137: %+v", out)
-	}
-	if took := time.Since(start); took > time.Minute {
-		t.Errorf("the kill took %s", took)
 	}
 }
 
@@ -244,7 +230,7 @@ func TestABrokenStdinStopsTheContainerBeforeArgvStarts(t *testing.T) {
 	if _, err := rt.Run(ctx, s); !errors.Is(err, boom) {
 		t.Fatalf("want the error of the standard input, got %v", err)
 	}
-	// Had tar taken the stream for a whole tar, `sleep 300` would have run until KillAfter.
+	// Had tar taken the stream for a whole tar, `sleep 300` would have started.
 	if took := time.Since(start); took > 30*time.Second {
 		t.Errorf("Argv ran on a part of the tree: the run took %s", took)
 	}
@@ -302,10 +288,9 @@ func TestAFailureBeforeArgvIsASetupFailureAndArgvNeverStarts(t *testing.T) {
 		"a work directory that is not in it":    {tarOf(t, nil), "no/such/dir"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			s := dockerSpec(t, tc.stdin, "sleep", "300") // Argv would run until the kill if it started, and then it is no setup failure
+			s := dockerSpec(t, tc.stdin, "sleep", "300") // Argv would run until the context ends if it started, and then it is no setup failure
 			s.Workdir = tc.workdir
-			s.Limits.KillAfter = 20 * time.Second
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if _, err := rt.Run(ctx, s); !errors.Is(err, ErrSetupFailed) {
 				t.Errorf("want ErrSetupFailed, got %v", err)

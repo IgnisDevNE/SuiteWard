@@ -38,10 +38,6 @@ type reasonError struct {
 func (e *reasonError) Error() string { return e.reason + ": " + e.err.Error() }
 func (e *reasonError) Unwrap() error { return e.err }
 
-// errDropped says that the executor killed the container itself: the attempt is dropped and nothing is posted, whatever status the
-// killed container ended with. It is never a resource limit.
-var errDropped = errors.New("the executor killed the container")
-
 // refuse is a failure with the reason that the executor decided.
 func refuse(reason, format string, args ...any) error {
 	return &reasonError{reason: reason, err: fmt.Errorf(format, args...)}
@@ -57,7 +53,7 @@ func refuse(reason, format string, args ...any) error {
 func classify(ctx context.Context, err error) (reason string, abandon bool) {
 	var decided *reasonError
 	switch {
-	case errors.Is(err, client.ErrLeaseLost), errors.Is(err, errDropped):
+	case errors.Is(err, client.ErrLeaseLost):
 		return "", true
 	case errors.Is(err, prefetch.ErrFetchFailed):
 		return reasonFetchFailed, false

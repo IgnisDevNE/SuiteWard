@@ -64,9 +64,9 @@ func TestTheMarginBeforeTheDeadlineIsThirtySeconds(t *testing.T) {
 	}
 }
 
-// A container that the executor killed (its deadline, the grace after the signal, a lease that was lost, or its own report of a kill) is
-// never read as a resource limit, whatever status the runtime says the killed container ended with: the attempt is dropped and nothing is
-// posted, so that the service ends it as timeout, or the lease expires. Only an out-of-memory kill, a status 137 that the executor did not
+// A container that the executor killed (its deadline, the grace after the signal, or a lease that was lost) is never read as a resource
+// limit, whatever status the runtime says the killed container ended with: the attempt is dropped and nothing is posted, so that the
+// service ends it as timeout, or the lease expires. Only an out-of-memory kill, a status 137 that the executor did not
 // cause, and output past the bound are resource limits.
 func TestAContainerThatTheExecutorKilledIsNeverAResourceLimit(t *testing.T) {
 	killed137 := func() (sandbox.Outcome, error) { return sandbox.Outcome{ExitCode: 137}, nil }
@@ -103,20 +103,5 @@ func TestAContainerThatTheExecutorKilledIsNeverAResourceLimit(t *testing.T) {
 				t.Errorf("%d results were posted for a container that the executor killed", n)
 			}
 		})
-	}
-}
-
-func TestAContainerThatTheSandboxSaysTheExecutorKilledIsDroppedNotPosted(t *testing.T) {
-	sv, _ := aJob(1)
-	rt := newRuntime(func(c call) (sandbox.Outcome, error) {
-		out := goTest(c, pass)
-		out.Killed, out.ExitCode = true, 137
-		return out, nil
-	})
-	d := start(t, newService(t, sv), rt, func(_ *Config, d *driver) { d.sleeps.reached = make(chan struct{}) })
-	wait(d, d.sleeps.reached)
-	d.noResult()
-	if n := sv.results.Load(); n != 0 {
-		t.Errorf("%d results were posted for a container that the executor killed", n)
 	}
 }

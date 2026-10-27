@@ -45,7 +45,7 @@ func sandboxSpec(t *testing.T, stdin io.Reader, argv ...string) sandbox.Spec {
 		Env:         []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
 		Argv:        argv,
 		Workdir:     "src", // where Compose puts the tree
-		Limits:      sandbox.Limits{MemoryMiB: 256, CPUs: 1, Pids: 128, TmpfsMiB: 64, KillAfter: time.Minute},
+		Limits:      sandbox.Limits{MemoryMiB: 256, CPUs: 1, Pids: 128, TmpfsMiB: 64},
 		Stdin:       stdin,
 		StdoutLimit: 1 << 20,
 	}
@@ -194,9 +194,8 @@ func TestACutStreamNeverStartsArgvWhereverTheCutFalls(t *testing.T) {
 			"the stream breaks": func() io.Reader { return io.MultiReader(bytes.NewReader(whole[:cut]), iotest.ErrReader(boom)) },
 		} {
 			t.Run(name+", "+variant, func(t *testing.T) {
-				s := sandboxSpec(t, reader(), "sleep", "300") // Argv would run until the kill if it started
-				s.Limits.KillAfter = 20 * time.Second
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				s := sandboxSpec(t, reader(), "sleep", "300") // Argv would run until the context ends if it started
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				_, err := rt.Run(ctx, s)
 				switch {

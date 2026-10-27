@@ -118,7 +118,7 @@ func validSpec() Spec {
 		Env:         []string{"HOME=/work/home", "GOFLAGS="},
 		Argv:        []string{"go", "test", "./..."},
 		Workdir:     "pkg/x",
-		Limits:      Limits{MemoryMiB: 3072, CPUs: 4, Pids: 512, TmpfsMiB: 1024, KillAfter: time.Hour},
+		Limits:      Limits{MemoryMiB: 3072, CPUs: 4, Pids: 512, TmpfsMiB: 1024},
 		Stdin:       strings.NewReader("a tar"),
 		StdoutLimit: 1 << 20,
 	}
@@ -223,7 +223,7 @@ func TestRunReadsTheStateThenRemovesTheContainer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if out.ExitCode != 3 || !out.OOMKilled || out.Killed || out.Truncated {
+	if out.ExitCode != 3 || !out.OOMKilled || out.Truncated {
 		t.Errorf("the outcome must be the runtime's state: %+v", out)
 	}
 	if got, want := f.verbs(), []string{"version", "run", "inspect", "rm"}; !slices.Equal(got, want) {
@@ -247,35 +247,6 @@ func TestRunReportsALegitimateExitStatusThatLooksLikeARuntimeError(t *testing.T)
 	}
 }
 
-func TestRunKillsTheContainerAfterKillAfter(t *testing.T) {
-	f := newFake()
-	f.onRun = func(ctx context.Context, _ io.Reader, _ io.Writer) (int, string, error) {
-		select {
-		case <-f.killed:
-			return 137, "", nil
-		case <-ctx.Done():
-			return -1, "", ctx.Err()
-		}
-	}
-	f.state = `{"Status":"exited","OOMKilled":false,"ExitCode":137,"Error":"","StartedAt":"2026-10-26T21:58:19Z"}`
-	s := validSpec()
-	s.Limits.KillAfter = 10 * time.Millisecond
-	out, err := run(t, f, "docker", s)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if !out.Killed || out.ExitCode != 137 {
-		t.Errorf("want the executor's own kill reported with the status 137: %+v", out)
-	}
-	name := f.commands("run")[0].args[2]
-	if kills := f.commands("kill"); len(kills) == 0 || !slices.Equal(kills[0].args, []string{"kill", name}) {
-		t.Errorf("the container must be killed by name: %+v", kills)
-	}
-	if len(f.commands("rm")) != 1 {
-		t.Errorf("the killed container must still be removed: %q", f.verbs())
-	}
-}
-
 func TestRunKeepsKillingUntilTheContainerExists(t *testing.T) {
 	f := newFake()
 	var mu sync.Mutex
@@ -289,7 +260,8 @@ func TestRunKeepsKillingUntilTheContainerExists(t *testing.T) {
 		}
 		return 0
 	}
-	f.onRun = func(ctx context.Context, _ io.Reader, _ io.Writer) (int, string, error) {
+	f.onRun = func(ctx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
+		_, _ = io.ReadAll(stdin) // the stream breaks, which is what makes the runner kill the container
 		select {
 		case <-f.killed:
 			return 137, "", nil
@@ -297,61 +269,14 @@ func TestRunKeepsKillingUntilTheContainerExists(t *testing.T) {
 			return -1, "", ctx.Err()
 		}
 	}
+	boom := errors.New("the archive stream broke")
 	s := validSpec()
-	s.Limits.KillAfter = time.Millisecond
-	out, err := run(t, f, "docker", s)
-	if err != nil || !out.Killed {
-		t.Fatalf("a kill that failed once must be tried again: %+v, %v", out, err)
+	s.Stdin = io.MultiReader(strings.NewReader("abc"), iotest.ErrReader(boom))
+	if _, err := run(t, f, "docker", s); !errors.Is(err, boom) {
+		t.Fatalf("a kill that failed once must be tried again, and the run ends with the error of the stream: %v", err)
 	}
 	if n := len(f.commands("kill")); n != 3 {
 		t.Errorf("want 3 kill attempts, got %d", n)
-	}
-}
-
-// KillAfter runs from the start of the container, as it did before the executor stopped using it: the container is killed KillAfter after it
-// starts, whether or not its standard input has ended.
-func TestRunKillsTheContainerKillAfterItStartsEvenWhileItsStandardInputIsOpen(t *testing.T) {
-	f := newFake()
-	f.onRun = func(ctx context.Context, _ io.Reader, _ io.Writer) (int, string, error) {
-		select {
-		case <-f.killed:
-			return 137, "", nil
-		case <-ctx.Done():
-			return -1, "", ctx.Err()
-		case <-time.After(3 * time.Second):
-			return -1, "", errors.New("the container was never killed")
-		}
-	}
-	open, _ := io.Pipe() // never written and never closed
-	s := validSpec()
-	s.Stdin, s.Limits.KillAfter = open, 20*time.Millisecond
-	if out, err := run(t, f, "docker", s); err != nil || !out.Killed {
-		t.Fatalf("Run = %+v, %v; want the container killed KillAfter after it started", out, err)
-	}
-}
-
-// A caller that has a deadline of its own, the executor's, passes none: the clock is optional, and a Spec with no KillAfter has no clock.
-func TestRunWithNoKillAfterHasNoClock(t *testing.T) {
-	f := newFake()
-	f.onRun = func(ctx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
-		_, _ = io.Copy(io.Discard, stdin)
-		select {
-		case <-f.killed:
-			return 137, "", nil
-		case <-time.After(150 * time.Millisecond): // long after a clock of any size would have fired
-			return 0, "", nil
-		case <-ctx.Done():
-			return -1, "", ctx.Err()
-		}
-	}
-	s := validSpec()
-	s.Limits.KillAfter = 0
-	out, err := run(t, f, "docker", s)
-	if err != nil || out.Killed || out.ExitCode != 0 {
-		t.Fatalf("Run = %+v, %v; want the container to end by itself", out, err)
-	}
-	if kills := f.commands("kill"); len(kills) != 0 {
-		t.Errorf("no clock, so no kill: %+v", kills)
 	}
 }
 
@@ -368,7 +293,7 @@ func TestRunKillsTheContainerByNameWhenItsContextEnds(t *testing.T) {
 	// reported as that status, which a caller would read as a resource limit. It is the context's error.
 	f.state = `{"Status":"exited","OOMKilled":false,"ExitCode":137,"Error":"","StartedAt":"2026-10-26T21:58:19Z"}`
 	out, err := newCLI("docker", f.exec).Run(ctx, validSpec())
-	if !errors.Is(err, context.Canceled) || out.ExitCode != 0 || out.Killed {
+	if !errors.Is(err, context.Canceled) || out.ExitCode != 0 {
 		t.Fatalf("Run = %+v, %v; want the context's error and no outcome", out, err)
 	}
 	name := f.commands("run")[0].args[2]
@@ -387,11 +312,11 @@ func TestRunKillsTheContainerByNameWhenItsContextEnds(t *testing.T) {
 func TestRunDoesNotKillAContainerThatEndsFirst(t *testing.T) {
 	f := newFake()
 	out, err := run(t, f, "docker", validSpec())
-	if err != nil || out.Killed {
+	if err != nil {
 		t.Fatalf("Run: %+v, %v", out, err)
 	}
 	if kills := f.commands("kill"); len(kills) != 0 {
-		t.Errorf("no kill before KillAfter: %+v", kills)
+		t.Errorf("the container ended by itself, so nothing kills it: %+v", kills)
 	}
 }
 
@@ -463,7 +388,6 @@ func TestRunRefusesAWeakerSpecBeforeAnyCommand(t *testing.T) {
 		"no cpu limit":                          func(s *Spec) { s.Limits.CPUs = 0 },
 		"no pids limit":                         func(s *Spec) { s.Limits.Pids = 0 },
 		"no tmpfs size":                         func(s *Spec) { s.Limits.TmpfsMiB = 0 },
-		"a negative kill deadline":              func(s *Spec) { s.Limits.KillAfter = -time.Second },
 		"a negative memory limit":               func(s *Spec) { s.Limits.MemoryMiB = -1 },
 		"no stdout limit":                       func(s *Spec) { s.StdoutLimit = 0 },
 		"no stdin":                              func(s *Spec) { s.Stdin = nil },
@@ -543,11 +467,11 @@ func TestRunStopsTheContainerAtOnceWhenItsStandardInputBreaks(t *testing.T) {
 			return 137, "", nil
 		case <-ctx.Done():
 			return -1, "", ctx.Err()
-		case <-time.After(10 * time.Second): // the run would wait for the clock, which is an hour away
+		case <-time.After(10 * time.Second): // the run would wait for its context, which never ends
 			return -1, "", errors.New("the container was never killed")
 		}
 	}
-	s := validSpec() // KillAfter is an hour: only the broken stream can have caused the kill
+	s := validSpec()
 	s.Stdin = io.MultiReader(strings.NewReader("abc"), iotest.ErrReader(boom))
 	_, err := run(t, f, "docker", s)
 	if !errors.Is(err, boom) {

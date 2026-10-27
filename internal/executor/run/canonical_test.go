@@ -97,10 +97,10 @@ func assertSpec(t *testing.T, i int, c call) {
 	if spec.Image != goprofile.Image || spec.Workdir != goprofile.TreeDir {
 		t.Errorf("run %d: image %q workdir %q", i, spec.Image, spec.Workdir)
 	}
-	if l := spec.Limits; l.MemoryMiB != 3072 || l.CPUs != 4 || l.Pids != 512 || l.TmpfsMiB != 1024 || l.KillAfter != 0 {
+	if l := spec.Limits; l.MemoryMiB != 3072 || l.CPUs != 4 || l.Pids != 512 || l.TmpfsMiB != 1024 {
 		// No wall clock bounds an invocation: it holds a cold build and many packages, and go test kills a test binary itself, a minute after
 		// its -timeout. The only time kill is at the deadline of the attempt, which ends the context of the work.
-		t.Errorf("run %d: the limits are %+v; want the job's, and no clock of the executor's own per invocation", i, l)
+		t.Errorf("run %d: the limits are %+v; want the job's", i, l)
 	}
 	if !slices.ContainsFunc(spec.Env, func(e string) bool { return strings.HasPrefix(e, "PATH=") }) {
 		t.Errorf("run %d: no PATH in the environment, which env -i clears", i)

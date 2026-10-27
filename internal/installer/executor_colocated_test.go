@@ -459,3 +459,36 @@ func TestInstallSaysThatTheUserIDIsMissingWhenIdPrintsNothing(t *testing.T) {
 		t.Errorf("the output prints a nil error:\n%s", out)
 	}
 }
+
+// A shell with no systemd user manager (WSL without systemd, a sudo or an ssh session) cannot answer for the unit. With no executor made here there
+// is nothing to ask it; with one, the uninstall goes on with the stack and says what is left to do.
+func TestUninstallWithNoUserManagerAndNoExecutorRemovesTheStack(t *testing.T) {
+	un := newHarness(t, "linux")
+	podmanStackExists(un)
+	un.writeFiles()
+	un.f.fail("--user show -p LoadState", errors.New("Failed to connect to bus: No medium found"))
+	if err := un.uninstall("--runtime", "podman", "--connection", "pm", "--yes"); err != nil {
+		t.Fatalf("an uninstall must not fail for a user manager that is not there: %v", err)
+	}
+	if len(un.f.find("rm --force --ignore --time 45 suiteward")) == 0 {
+		t.Errorf("the stack was not removed: %v", un.f.calls)
+	}
+}
+
+func TestUninstallWarnsAndGoesOnWhenTheUserManagerCannotBeAskedAboutAnExecutorThatIsThere(t *testing.T) {
+	un := newHarness(t, "linux")
+	podmanStackExists(un)
+	un.writeFiles()
+	un.writeExecutorFiles()
+	un.f.fail("--user show -p LoadState", errors.New("Failed to connect to bus: No medium found"))
+	if err := un.uninstall("--runtime", "podman", "--connection", "pm", "--yes"); err != nil {
+		t.Fatalf("an uninstall must go on with the stack: %v", err)
+	}
+	if len(un.f.find("rm --force --ignore --time 45 suiteward")) == 0 {
+		t.Errorf("the stack was not removed: %v", un.f.calls)
+	}
+	out := un.out.String()
+	if !strings.Contains(out, "executor was not removed") || !strings.Contains(out, un.executorDir()) || !strings.Contains(out, "disable --now suiteward-executor.service") {
+		t.Errorf("the output must say that the executor is still there, where, and how to remove it:\n%s", out)
+	}
+}

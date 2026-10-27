@@ -192,7 +192,7 @@ func (l *listFlag) Set(v string) error { *l = append(*l, v); return nil }
 var installFlags = []struct{ name, usage string }{
 	{"answers", "read answers from this YAML file (a flag wins over it)"},
 	{"settings", "the installer settings file (default: the per-user configuration directory)"},
-	{"token-file", "where the copy of the MCP token for a client is written (default: the per-user directory)"},
+	{"token-file", "where the copy of the MCP token for a client is written, and the executor's files beside it (default: the per-user directory, with the default settings file only: another --settings file needs --token-file)"},
 	{"tier", "co-located (this computer) or isolated"},
 	{"runtime", "podman (recommended) or docker"},
 	{"connection", "the Podman connection, or the Docker context (default: the rootless Podman machine, or Docker Desktop's)"},

@@ -21,6 +21,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
@@ -93,11 +94,11 @@ type checksJob struct {
 	logger    *slog.Logger
 	now       func() time.Time
 
-	executions         execution.Store      // the execution ledger (M2.1)
+	executions         execution.Store         // the execution ledger (M2.1)
 	receipts           execution.ReceiptLedger // the ledger of the SuiteWard / Receipt check, which this job alone writes
-	liveness           *execution.Liveness  // when an executor was last seen
-	executor           config.ExecutorTimes // the durations of the executor settings
-	executorConfigured bool                 // EXECUTOR_TOKEN is set; unset, every execution job is created unavailable
+	liveness           *execution.Liveness     // when an executor was last seen
+	executor           config.ExecutorTimes    // the durations of the executor settings
+	executorConfigured bool                    // EXECUTOR_TOKEN is set; unset, every execution job is created unavailable
 
 	// unchanged remembers, in memory, the heads found unchanged against a canonical: a later Suite write for another
 	// pull request does not make such a head read its tree again (consent cannot change an unchanged result).
@@ -111,12 +112,16 @@ type checksJob struct {
 	announced map[string]bool
 	// runners remembers, in memory, the runner files found for the head and canonical of a pull request, so a head is read for them once (docs/contracts/runtime.md, "Check reason runner-uncovered").
 	runners map[checkPull]*runnerSet
+	// mergeFailures remembers, in memory, the first failed read of the receipt of the head of each pull request, which EXECUTOR_GITHUB_WAIT is counted
+	// from: a restart starts the clock again.
+	mergeFailures map[checkPull]mergeFailure
 }
 
-// run decides the checks of every enrolled, configured project. A GitHub read failure keeps the stored check; any other
-// failure fails the run after every project and pull request was tried.
+// run decides the checks of every enrolled, configured project, after it swept the execution jobs. A GitHub read failure keeps the stored
+// check; any other failure fails the run after every project and pull request was tried.
 func (j *checksJob) run(ctx context.Context) error {
-	return forEachConfiguredProject(ctx, j.owners, j.repos, "checks", j.project)
+	swept := j.sweep(ctx)
+	return errors.Join(swept, forEachConfiguredProject(ctx, j.owners, j.repos, "checks", j.project))
 }
 
 // project decides the check of every open pull request of one project and returns the failures that fail the run.
@@ -145,11 +150,15 @@ func (j *checksJob) pullRequests(ctx context.Context, enrollment owner.State, p 
 	}
 	slices.SortFunc(pulls, func(a, b githubsync.PullState) int { return a.Number - b.Number })
 	var failures []error
+	x, err := j.executionRunOf(ctx, p, suite) // a policy that cannot be read fails the run, and decides nothing about execution
+	if err != nil {
+		failures = append(failures, fmt.Errorf("read the execution policy: %w", err))
+	}
 	for _, pull := range pulls {
 		if !pull.NotOpenSince.IsZero() {
 			continue
 		}
-		pullProblem, err := j.pull(ctx, enrollment, p, suite, pull)
+		pullProblem, err := j.pull(ctx, enrollment, p, suite, pull, x)
 		if err != nil {
 			if cancelled := ctx.Err(); cancelled != nil {
 				return "", cancelled
@@ -160,6 +169,12 @@ func (j *checksJob) pullRequests(ctx context.Context, enrollment owner.State, p 
 			problem = pullProblem
 		}
 	}
+	if err := j.cancelStale(ctx, p.RepositoryID, pulls); err != nil {
+		if cancelled := ctx.Err(); cancelled != nil {
+			return "", cancelled
+		}
+		failures = append(failures, err)
+	}
 	return problem, errors.Join(failures...)
 }
 
@@ -169,6 +184,7 @@ type suiteView struct {
 	exists          bool // the bootstrap job created the Suite
 	revision        int64
 	canonical       contract.SuiteVersionID
+	manifest        artifact.Digest  // the digest of the canonical's manifest: what a canonical job runs against until a revision is approved
 	integrityFailed bool             // the stored bytes of the canonical failed their verification
 	carrier         bootstrapCarrier // without a canonical: the Suite's latest bootstrap proposal
 }
@@ -194,6 +210,7 @@ func (j *checksJob) suite(ctx context.Context, p owner.ProjectPolicy) (suiteView
 		view.revision = int64(state.Canonical.Suite().Revision())
 		view.canonical, _ = state.Canonical.Suite().CurrentVersionID()
 		if view.canonical != "" {
+			view.manifest = state.Canonical.Contract().Manifest().Digest()
 			return nil
 		}
 		id, found, err := tx.LatestBootstrapProposal(ctx)
@@ -259,7 +276,7 @@ type pullDecision struct {
 // pull decides and publishes the check of one open pull request, in the order of docs/contracts/runtime.md, "Check job and publisher (M1.6b)": the
 // state of the Suite and the head, the wait, a wrong code, the runner block, the comments that come before the check, the check, and the comments that
 // come after it. problem is a code for /status when the decision had to wait for the next run.
-func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState) (problem string, err error) {
+func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState, x *executionRun) (problem string, err error) {
 	s, err := j.pullState(ctx, enrollment, p, suite, pull)
 	if err != nil {
 		return "", err
@@ -271,12 +288,18 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if d.wait {
 		j.overrideWait(s, &d)
 	}
+	assessed := d.result // what execution plans from: the check before a wrong code or the runner block holds it back
 	if err := j.applyWrongCode(ctx, s, &d); err != nil {
 		return "", err
 	}
 	var runners *runnerSet
 	if d.runnerBlockApplies(s) {
 		if runners, err = j.applyRunnerBlock(ctx, s, &d); err != nil {
+			return "", err
+		}
+	}
+	if !d.wait { // a head that could not be assessed is planned for once it is
+		if err := j.execute(ctx, s, x, assessed); err != nil {
 			return "", err
 		}
 	}
@@ -757,6 +780,7 @@ func (j *checksJob) forget(repositoryID int64, pulls []githubsync.PullState) {
 	maps.DeleteFunc(j.unchanged, func(k checkPull, _ unchangedAt) bool { return closed(k) })
 	maps.DeleteFunc(j.scoped, func(k checkPull, _ unchangedAt) bool { return closed(k) })
 	maps.DeleteFunc(j.runners, func(k checkPull, _ *runnerSet) bool { return closed(k) })
+	maps.DeleteFunc(j.mergeFailures, func(k checkPull, _ mergeFailure) bool { return closed(k) })
 	maps.DeleteFunc(j.announced, func(key string, _ bool) bool {
 		parts := strings.Split(key, ":")
 		if len(parts) < 3 {

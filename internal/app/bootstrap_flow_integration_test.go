@@ -148,8 +148,8 @@ func TestBootstrapFlowAcrossTheJobsOnPostgreSQL(t *testing.T) {
 			t.Fatalf("commands run: %v", err)
 		}
 	}
-	checksJob := &checksJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(),
-		commands: store, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
+	checksJob := (&checksJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(),
+		commands: store, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}).withExecution(store.Execution(), store.ReceiptChecks(), time.Now())
 	runChecks := func() {
 		t.Helper()
 		clock = clock.Add(time.Minute)

@@ -340,15 +340,18 @@ func TestChecksWaitForTheMergeBaseThenCreateTheReceiptJobUnavailableForGitHub(t 
 	w.noJobs(5, cjHead2, execution.PlanReceipt) // not yet a whole wait since the first failure
 
 	w.tree(cjHead3, execHeadFiles(execDecl, "v2"))
-	w.sync(map[int]string{4: bootHead, 5: cjHead3}) // another head starts its own clock
+	w.sync(map[int]string{4: bootHead, 5: cjHead3}) // another head starts its own clock, though the pull request has waited longer
+	w.execRun()
 	w.clock = w.clock.Add(10 * time.Minute)
 	w.execRun()
 	w.noJobs(5, cjHead3, execution.PlanReceipt)
 
-	w.sync(map[int]string{4: bootHead, 5: cjHead2})
-	w.clock = w.clock.Add(10 * time.Minute)
+	w.clock = w.clock.Add(25 * time.Minute)
 	w.execRun()
-	requireFinal(t, w.onlyJob(5, cjHead2, execution.PlanReceipt), execution.ReasonGitHubUnavailable)
+	requireFinal(t, w.onlyJob(5, cjHead3, execution.PlanReceipt), execution.ReasonGitHubUnavailable)
+	if got := w.onlyJob(5, cjHead3, execution.PlanReceipt); got.BaseSHA != "" {
+		t.Errorf("the job created for the GitHub bound has the base %q, want none", got.BaseSHA)
+	}
 }
 
 func TestChecksSweepNoExecutorFromTheTimeAnExecutorWasLastSeenAndNeverFromTheAgeOfAJob(t *testing.T) {

@@ -47,6 +47,19 @@ func (c *execClock) Now() time.Time {
 	return c.now
 }
 
+// Set moves the clock to an instant, which may be far from the wall clock: the sockets and contexts of a request are real, and none of them may come from it.
+func (c *execClock) Set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = t
+}
+
+// execClockOrigins are the instants the injected clock is set to in the tests of the real-time sinks: far before and far after the wall clock.
+var execClockOrigins = map[string]time.Time{
+	"far in the past":   time.Date(2001, 9, 9, 1, 46, 40, 0, time.UTC),
+	"far in the future": time.Date(2090, 1, 1, 0, 0, 0, 0, time.UTC),
+}
+
 func (c *execClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

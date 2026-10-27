@@ -116,7 +116,8 @@ func (d *doctor) checkExecutorToken(plan executorPlan) {
 }
 
 // checkExecutorColocatedBinary checks the executor's copy of the program: there, as installed (its pin), and this program's build. The pin
-// is the hash of the program that the install copied: no SHA256SUMS comes into it on this tier.
+// is the release's line of SHA256SUMS when the install was given them (--sha256sums), else the hash of the program that the install copied, which is a
+// warning: nothing checked it against a release.
 func (d *doctor) checkExecutorColocatedBinary(plan executorPlan) {
 	sum, err := hashFile(plan.binary)
 	if errors.Is(err, fs.ErrNotExist) {

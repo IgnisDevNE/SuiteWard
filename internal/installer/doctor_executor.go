@@ -211,8 +211,8 @@ func mustAtoi(digits string) int {
 }
 
 // checkExecutorBinary checks the executor's binary: it is there, it is the one that was installed (the pin beside it), it is this program's
-// build, and, when the pin is a line of the release's SHA256SUMS, it is the release's. A pin that no SHA256SUMS gave is a warning: nothing
-// checked it against the release.
+// build, and the pin is a line of the release's SHA256SUMS, which the host step requires. A pin that no SHA256SUMS gave (one that was made by hand) fails: on
+// this tier the pin is the signed release's.
 func (d *doctor) checkExecutorBinary(ctx context.Context) {
 	fix := d.hostStep() + " with this program"
 	listed, err := d.out(ctx, "sha256sum", executorBinary)

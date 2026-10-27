@@ -88,7 +88,7 @@ func TestChecksWaitWithAConflictWhenTheCanonicalMovedBeforeTheRevisionIsWritten(
 	if err != nil {
 		t.Fatal(err)
 	}
-	x, err := w.check.executionRunOf(ctx, p, view)
+	x, err := w.check.executionRunOf(ctx, view)
 	if err != nil {
 		t.Fatal(err)
 	}

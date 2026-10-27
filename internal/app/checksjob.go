@@ -156,7 +156,7 @@ func (j *checksJob) pullRequests(ctx context.Context, enrollment owner.State, p 
 	}
 	slices.SortFunc(pulls, func(a, b githubsync.PullState) int { return a.Number - b.Number })
 	var failures []error
-	x, err := j.executionRunOf(ctx, p, suite) // a policy that cannot be read fails the run, and decides nothing about execution
+	x, err := j.executionRunOf(ctx, suite) // a policy that cannot be read fails the run, and decides nothing about execution
 	if err != nil {
 		failures = append(failures, fmt.Errorf("read the execution policy: %w", err))
 	}
@@ -190,10 +190,11 @@ type suiteView struct {
 	exists          bool // the bootstrap job created the Suite
 	revision        int64
 	canonical       contract.SuiteVersionID
-	base            artifact.Manifest // the canonical's manifest, which the receipt of a revision is decided against
-	manifest        artifact.Digest   // the digest of the canonical's manifest: what a canonical job runs against until a revision is approved
-	integrityFailed bool              // the stored bytes of the canonical failed their verification
-	carrier         bootstrapCarrier  // without a canonical: the Suite's latest bootstrap proposal
+	base            artifact.Manifest          // the canonical's manifest, which the receipt of a revision is decided against
+	manifest        artifact.Digest            // the digest of the canonical's manifest: what a canonical job runs against until a revision is approved
+	integrityFailed bool                       // the stored bytes of the canonical failed their verification
+	carrier         bootstrapCarrier           // without a canonical: the Suite's latest bootstrap proposal
+	snapshot        contract.CanonicalSnapshot // the canonical as this view read it, which the execution policy of the run is read from
 }
 
 // bootstrapCarrier is the Suite's latest bootstrap proposal and the pull request that carries it; found is false when no
@@ -213,7 +214,7 @@ func (j *checksJob) suite(ctx context.Context, p owner.ProjectPolicy) (suiteView
 		if err != nil {
 			return fmt.Errorf("load suite: %w", err)
 		}
-		view.exists = true
+		view.exists, view.snapshot = true, state.Canonical
 		view.revision = int64(state.Canonical.Suite().Revision())
 		view.canonical, _ = state.Canonical.Suite().CurrentVersionID()
 		if view.canonical != "" {

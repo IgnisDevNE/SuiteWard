@@ -15,7 +15,6 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
-	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
@@ -47,16 +46,16 @@ func (p executionPolicy) selection() domain.Selection {
 }
 
 // policy reads the execution policy from the declaration of the canonical (docs/contracts/runtime.md, "The effective policy"). The canonical
-// declaration governs every pull request, the one that changes it included.
-func (j *checksJob) policy(ctx context.Context, p owner.ProjectPolicy) (executionPolicy, error) {
-	raw, canonical, err := canonicalDeclaration(ctx, j.suites, j.contents, owner.ProjectID(p.RepositoryID))
+// declaration governs every pull request, the one that changes it included. It is the canonical of the Suite view, read in the same unit of work as its manifest, so that
+// a promotion between two reads cannot key a job with the manifest of one version and the levels of another.
+func (j *checksJob) policy(ctx context.Context, suite suiteView) (executionPolicy, error) {
+	raw, declaration, err := governance.CanonicalDeclaration(ctx, j.contents, suite.snapshot)
 	if errors.Is(err, governance.ErrNoCanonicalDeclaration) {
 		return executionPolicy{}, nil
 	}
 	if err != nil {
 		return executionPolicy{}, fmt.Errorf("read the canonical declaration: %w", err)
 	}
-	declaration := canonical.Declaration()
 	execution, found := declaration.Execution()
 	if !found {
 		return executionPolicy{}, nil
@@ -92,12 +91,12 @@ type executionRun struct {
 
 // executionRunOf reads the policy of the project, once for the run. Before the first canonical, and for a canonical that failed its integrity
 // verification, nothing is planned. A policy that cannot be read is the error, and the run decides nothing.
-func (j *checksJob) executionRunOf(ctx context.Context, p owner.ProjectPolicy, suite suiteView) (*executionRun, error) {
+func (j *checksJob) executionRunOf(ctx context.Context, suite suiteView) (*executionRun, error) {
 	x := &executionRun{}
 	if suite.canonical == "" || suite.integrityFailed {
 		return x, nil
 	}
-	policy, err := j.policy(ctx, p)
+	policy, err := j.policy(ctx, suite)
 	if err != nil {
 		x.failed = true
 		return x, err

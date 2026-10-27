@@ -563,7 +563,7 @@ func TestChecksPlanFromThePolicyOfTheCanonicalOfTheSuiteTheyRead(t *testing.T) {
 		t.Fatalf("canonical %s, want V2", version)
 	}
 
-	x, err := w.check.executionRunOf(t.Context(), p, view)
+	x, err := w.check.executionRunOf(t.Context(), view)
 
 	if err != nil || !x.known || x.policy.canonical != domain.CanonicalLevelRequired || x.policy.declaration != artifact.Hash([]byte(gateDecl)) {
 		t.Fatalf("executionRunOf = %+v, %v; want the policy of V1, which the view holds: canonical required, the declaration of V1", x.policy, err)

@@ -781,7 +781,7 @@ const canonicalBehind = "The restored canonical may be behind the default branch
 
 func (x *restoreRun) finish() {
 	x.scr.Say("Restored the backup of the instance %s (%s) into this instance.\n", x.doc.Instance, x.info.SuitewardVersion)
-	x.scr.Keep("The credentials of this installation are not in a backup, so they are as they were: the database passwords and the MCP token. The owner's TOTP enrollment is the backup's.\n")
+	x.scr.Keep("The credentials of this installation are not in a backup, so they are as they were: the database passwords, the MCP token and the executor token (the executor, which is not part of a backup either, keeps working). The owner's TOTP enrollment is the backup's.\n")
 	if !x.scr.FullScreen() && x.mayHaveRepositories() { // a full screen has it on the summary page, which Close keeps
 		x.scr.Keep("%s\n", canonicalBehind)
 	}

@@ -72,12 +72,25 @@ func readOnlyViolation(c call) string {
 		if len(args) >= 2 && args[0] == "--user" && args[1] == "show" {
 			return ""
 		}
+		if len(args) >= 1 && args[0] == "show" { // a system unit: the rules of the executor
+			return ""
+		}
+	case "cat": // the files of the executor, which are world-readable, and the controllers of its manager
+		if len(args) == 1 && (strings.HasPrefix(args[0], "/etc/") || strings.HasPrefix(args[0], "/usr/local/libexec/suiteward/") || strings.HasPrefix(args[0], "/sys/fs/cgroup/")) {
+			return ""
+		}
+	case "sha256sum":
+		if len(args) == 1 && strings.HasPrefix(args[0], "/usr/local/libexec/suiteward/") {
+			return ""
+		}
+	case "pgrep":
+		return ""
 	case "loginctl":
 		if len(args) >= 1 && args[0] == "show-user" {
 			return ""
 		}
 	case "id":
-		if slices.Equal(args, []string{"-un"}) {
+		if slices.Equal(args, []string{"-un"}) || len(args) == 2 && args[0] == "-u" && (args[1] == ServiceAccount || args[1] == ExecutorAccount) {
 			return ""
 		}
 	}
@@ -638,6 +651,11 @@ type isolatedRig struct {
 	noHome     bool
 	serveImage string // what the running service container reports as its image
 	dbImage    string // and the database container
+
+	// The executor (doctor_executor_test.go): by default a healthy one, which the service saw 5 seconds ago.
+	lastSeen     time.Duration // how long ago the service saw an executor
+	executionOff bool          // the service has no executor token
+	noExecution  bool          // /status has no execution object: the service is older than M2.1
 }
 
 // taglessPostgres is the pinned database image as Podman reports it: repository and digest, the tag dropped.
@@ -659,7 +677,14 @@ func (r isolatedRig) build(t *testing.T) (*fakeEngine, Settings) {
 	t.Helper()
 	s := DefaultSettings()
 	s.Tier = config.TierIsolated
-	s.HTTPPort, s.MCPPort = serveHTTP(t, http.StatusOK, strings.Replace(okStatus, "co-located", "isolated", 1), `{"status":"ok"}`), DefaultMCPPort
+	status := isolatedStatus(cmp.Or(r.lastSeen, 5*time.Second))
+	switch {
+	case r.noExecution:
+		status = strings.Replace(okStatus, "co-located", "isolated", 1)
+	case r.executionOff:
+		status = isolatedStatusWith(`{"enabled":false,"jobs":{"pending":0},"lastSeenAt":"2026-10-27T00:00:00Z"}`)
+	}
+	s.HTTPPort, s.MCPPort = serveHTTP(t, http.StatusOK, status, `{"status":"ok"}`), DefaultMCPPort
 	if s.HTTPPort == s.MCPPort {
 		s.MCPPort++
 	}
@@ -689,6 +714,7 @@ func (r isolatedRig) build(t *testing.T) (*fakeEngine, Settings) {
 	f.on("inspect --type container "+ContainerDB, fmt.Sprintf(`[{"Config":{"Image":%q},"HostConfig":{"Memory":402653184}}]`, cmp.Or(r.dbImage, taglessPostgres(t))))
 	f.on("inspect --type container "+ContainerServe, fmt.Sprintf(`[{"Config":{"Image":%q}}]`, cmp.Or(r.serveImage, testImage)))
 	f.on("info --format", "true\n")
+	f.rules = append(f.rules, healthyIsolatedExecutor(t, s)...)
 	return f, s
 }
 
@@ -698,7 +724,7 @@ func TestDoctorHealthyIsolated(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit %d, results %+v", code, res)
 	}
-	wantOK(t, res, "runtime", "units", "linger", "restart", "pins", "ports", "healthz", "status", "metadata", "network", "memory", "github.app")
+	wantOK(t, res, "runtime", "units", "linger", "restart", "pins", "ports", "healthz", "status", "metadata", "network", "memory", "github.app", "executor.account", "executor.running")
 	if d := res["pins"].Detail; !strings.Contains(d, "consistent with the units") || strings.Contains(d, "equals this release") {
 		t.Errorf("the pins detail overstates what was compared: %q", d)
 	}

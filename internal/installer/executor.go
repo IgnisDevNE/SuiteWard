@@ -29,7 +29,7 @@ const (
 	ExecutorAccount  = "suiteward-exec"
 	executorLibDir   = "/usr/local/libexec/suiteward"
 	executorBinary   = executorLibDir + "/suiteward-executor"
-	executorPin      = executorBinary + ".pin"
+	executorPin      = executorLibDir + "/executor.pin"
 	executorUnitName = "suiteward-executor.service"
 	executorUnitPath = "/etc/systemd/user/" + executorUnitName
 	executorTokenEtc = "/etc/suiteward/executor-token"

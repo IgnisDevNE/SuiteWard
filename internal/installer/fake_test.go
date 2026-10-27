@@ -3,6 +3,7 @@ package installer
 import (
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -39,6 +40,14 @@ type fakeEngine struct {
 
 func newFake(goos string) *fakeEngine { return &fakeEngine{goos: goos, env: map[string]string{}} }
 
+// matches says whether an argument line is the one a rule is for: the text is part of the line, or, with a leading "=", it is the line.
+func matches(line, match string) bool {
+	if exact, ok := strings.CutPrefix(match, "="); ok {
+		return line == exact
+	}
+	return strings.Contains(line, match)
+}
+
 func (f *fakeEngine) on(match, out string) *fakeEngine {
 	f.rules = append(f.rules, rule{match: match, out: out})
 	return f
@@ -54,6 +63,8 @@ func (f *fakeEngine) deps() Deps {
 		GOOS:    f.goos,
 		Getenv:  func(k string) string { return f.env[k] },
 		UserSID: func() (string, error) { return testSID, nil },
+		// The test binary: a file that exists, for the commands that hash this program (doctor, the executor's copy).
+		Executable: os.Executable,
 		Exec: func(_ context.Context, name string, args []string, stdin io.Reader) ([]byte, error) {
 			c := call{name: name, args: append([]string(nil), args...)}
 			if stdin != nil {
@@ -65,7 +76,7 @@ func (f *fakeEngine) deps() Deps {
 			}
 			f.calls = append(f.calls, c)
 			for _, r := range f.rules {
-				if strings.Contains(c.line(), r.match) {
+				if matches(c.line(), r.match) {
 					return []byte(r.out), r.err
 				}
 			}

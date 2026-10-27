@@ -25,7 +25,7 @@ const (
 	execTokenHandOff = "/home/suiteward/.config/suiteward/executor-token"
 	execLibDir       = "/usr/local/libexec/suiteward"
 	execBinaryPath   = execLibDir + "/suiteward-executor"
-	execPinFile      = execBinaryPath + ".pin"
+	execPinFile      = execLibDir + "/executor.pin"
 	execUnitFile     = "/etc/systemd/user/suiteward-executor.service"
 	execUserSystemd  = "--user --machine=suiteward-exec@.host"
 )

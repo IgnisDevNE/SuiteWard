@@ -19,11 +19,9 @@ import (
 )
 
 const (
-	// killGrace is how long after its -timeout the executor kills the container: the contract's 60 s.
+	// killGrace is how long after its -timeout the executor kills the container: the contract's 60 s. The sandbox starts that clock when
+	// the standard input, which streams the tree and the module files in, has ended.
 	killGrace = 60 * time.Second
-	// streamAllowance is added to the kill clock, which the runtime starts when the container does, and the tree and the module files
-	// stream into the container while it runs: a download is bounded by ten minutes and is usually a few seconds.
-	streamAllowance = 5 * time.Minute
 	// stdoutLimit is the most of the report of one invocation that is kept. More than that is never read.
 	stdoutLimit = 64 << 20
 )
@@ -94,7 +92,7 @@ func (a *attempt) invoke(ctx context.Context, s *side, tests []goprofile.TestID)
 	stdin, finish := a.stream(ctx, s)
 	out, err := a.e.cfg.Runtime.Run(ctx, sandbox.Spec{
 		Image: goprofile.Image, Env: env, Argv: argv, Workdir: goprofile.TreeDir, Stdin: stdin, StdoutLimit: stdoutLimit,
-		Limits: sandbox.Limits{MemoryMiB: l.MemoryMiB, CPUs: l.CPUs, Pids: l.Pids, TmpfsMiB: l.TmpfsMiB, KillAfter: a.timeout() + killGrace + streamAllowance},
+		Limits: sandbox.Limits{MemoryMiB: l.MemoryMiB, CPUs: l.CPUs, Pids: l.Pids, TmpfsMiB: l.TmpfsMiB, KillAfter: a.timeout() + killGrace},
 	})
 	finish() // the composition is over, or the runner never read it: either way nothing is left writing
 	switch {

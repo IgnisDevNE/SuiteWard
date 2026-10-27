@@ -34,7 +34,7 @@ type Limits struct {
 	CPUs      int
 	Pids      int
 	TmpfsMiB  int           // the size of /work
-	KillAfter time.Duration // the executor kills the container this long after it starts
+	KillAfter time.Duration // the executor kills the container this long after its standard input has ended
 }
 
 // Spec describes one run.
@@ -52,7 +52,7 @@ type Spec struct {
 type Outcome struct {
 	ExitCode  int
 	OOMKilled bool // the runtime's .State.OOMKilled: the memory limit killed a process of the container
-	Killed    bool // the executor's own kill, KillAfter after the start
+	Killed    bool // the executor's own kill, KillAfter after the standard input ended
 	Truncated bool // the output passed StdoutLimit
 	Stdout    []byte
 }

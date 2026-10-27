@@ -227,30 +227,51 @@ func verdict(ctx context.Context, stdinErr, runErr error, stderr string, state c
 	return nil
 }
 
-// execute runs the container and watches it. The container is killed by name when the clock runs out, and as soon as the standard
-// input breaks; it returns whether the clock killed it.
+// execute runs the container and watches it. The container is killed by name when the clock runs out (it starts when the standard input
+// has ended), as soon as the standard input breaks, and when the context ends; it returns whether the clock killed it.
 func (c *cli) execute(ctx context.Context, name string, args []string, after time.Duration, stdin *guardedStdin, stdout io.Writer) (killed bool, stderr string, err error) {
 	done := make(chan struct{})
 	watched := make(chan bool, 1)
-	go func() { watched <- c.killWhen(ctx, name, after, stdin.broken, done) }()
+	go func() { watched <- c.killWhen(ctx, name, after, stdin.ended, stdin.broken, done) }()
 	_, stderr, err = c.run(ctx, c.binary, args, stdin, stdout)
 	close(done)
 	return <-watched, stderr, err
 }
 
-// killWhen kills the container by name when the time is up or the broken channel closes, because killing the `run` client leaves
-// the container running (spike S0). The container may not exist yet, so a kill that fails is tried again until the run ends. It reports
-// whether the clock was the cause of a kill that landed.
-func (c *cli) killWhen(ctx context.Context, name string, after time.Duration, broken, done <-chan struct{}) bool {
-	timer := time.NewTimer(after)
-	defer timer.Stop()
-	clock := false
+// awaitKill waits for a reason to kill the container: the clock, which runs from the end of the standard input (the tree and the module
+// files stream in while the container runs, and the program cannot start before they have), a standard input that broke, or the end of
+// the context. It reports false when the run ended first.
+func awaitKill(ctx context.Context, after time.Duration, ended, broken, done <-chan struct{}) (kill, clock bool) {
 	select {
 	case <-done:
-		return false
-	case <-timer.C:
-		clock = true
+		return ctx.Err() != nil, false // a context that ended with the run may have left its container behind
+	case <-ctx.Done():
+		return true, false
 	case <-broken:
+		return true, false
+	case <-ended:
+	}
+	timer := time.NewTimer(after)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return ctx.Err() != nil, false
+	case <-ctx.Done():
+		return true, false
+	case <-broken:
+		return true, false
+	case <-timer.C:
+		return true, true
+	}
+}
+
+// killWhen kills the container by name when awaitKill says so, because killing the `run` client leaves the container running (spike S0).
+// The container may not exist yet, so a kill that fails is tried again until the run ends. It reports whether the clock was the cause of
+// a kill that landed.
+func (c *cli) killWhen(ctx context.Context, name string, after time.Duration, ended, broken, done <-chan struct{}) bool {
+	kill, clock := awaitKill(ctx, after, ended, broken, done)
+	if !kill {
+		return false
 	}
 	for {
 		if _, err := c.output(context.WithoutCancel(ctx), "kill", name); err == nil {
@@ -302,19 +323,24 @@ func (c *capped) truncated() bool {
 // boundary that busybox tar takes for the end of an archive, and then the container's own refusal to start Argv without the completion
 // marker is what keeps a part of the tree from running.
 type guardedStdin struct {
-	r      io.Reader
-	broken chan struct{} // closed at the first error of r
-	mu     sync.Mutex
-	err    error
+	r       io.Reader
+	broken  chan struct{} // closed at the first error of r
+	ended   chan struct{} // closed when r has ended: the tar has been written, and the kill clock starts
+	mu      sync.Mutex
+	err     error
+	endOnce sync.Once
 }
 
 func newGuardedStdin(r io.Reader) *guardedStdin {
-	return &guardedStdin{r: r, broken: make(chan struct{})}
+	return &guardedStdin{r: r, broken: make(chan struct{}), ended: make(chan struct{})}
 }
 
 func (g *guardedStdin) Read(p []byte) (int, error) {
 	n, err := g.r.Read(p)
-	if err != nil && !errors.Is(err, io.EOF) {
+	switch {
+	case errors.Is(err, io.EOF):
+		g.endOnce.Do(func() { close(g.ended) })
+	case err != nil:
 		g.mu.Lock()
 		if g.err == nil {
 			g.err = err

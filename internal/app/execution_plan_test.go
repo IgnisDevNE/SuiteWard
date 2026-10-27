@@ -540,3 +540,32 @@ func TestChecksCancelTheOpenCanonicalJobOfAHeadWhoseCheckDoesNotSettleReadinessW
 		}
 	})
 }
+
+// The Suite a run reads and the policy it plans from are one canonical: a promotion between the two reads must not key a job with the manifest of V1 and the levels of
+// V2, which the evidence binding of the job would then record as levels that held.
+func TestChecksPlanFromThePolicyOfTheCanonicalOfTheSuiteTheyRead(t *testing.T) {
+	w := newMgWorldOf(t, newExecWorld(t, gateDecl)) // V1 requires the canonical run
+	enrollment, _, err := w.owners.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := enrollment.Projects[0]
+	view, err := w.check.suite(t.Context(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.approved(5, cjHead2, "v2", 2, 201)
+	w.leave(5)
+	w.merged(5, cjHead2, mgSHA5, "v2", time.Minute)
+	w.advance(time.Minute)
+	w.mustMerge() // V2 is promoted from a tree whose declaration has no execution block
+	if version, _ := w.canonical(); version != "V2" {
+		t.Fatalf("canonical %s, want V2", version)
+	}
+
+	x, err := w.check.executionRunOf(t.Context(), p, view)
+
+	if err != nil || !x.known || x.policy.canonical != domain.CanonicalLevelRequired || x.policy.declaration != artifact.Hash([]byte(gateDecl)) {
+		t.Fatalf("executionRunOf = %+v, %v; want the policy of V1, which the view holds: canonical required, the declaration of V1", x.policy, err)
+	}
+}

@@ -16,6 +16,8 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 )
 
 // The executor's part of `suiteward install host` (ADR 0028, section 10; spike S4, sections 4.1, 4.5 and 4.6). Every command goes through
@@ -119,7 +121,30 @@ func (h *host) executor(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := h.executorImage(ctx, uid); err != nil {
+		return err
+	}
 	return h.executorUnit(ctx, port, replaced)
+}
+
+// runAsExecutor runs a command as the executor's account, through its own user manager: it comes with the account's HOME and XDG_RUNTIME_DIR, in the cgroup
+// the drop-in delegates, which `runuser` from root's session does not give. --wait is for the end of the command and carries its exit status.
+func (h *host) runAsExecutor(ctx context.Context, argv ...string) (string, error) {
+	return h.run(ctx, "systemd-run", append([]string{"--user", "--machine=" + ExecutorAccount + "@.host", "--wait", "--collect", "--unit=" + executorPullUnit}, argv...)...)
+}
+
+// executorImage pulls the Go image of the sandboxes into the rootless storage of the executor's account and checks that it is there under its
+// digest. The executor starts every sandbox with --pull=never, so an account without the image ends every job as unavailable; no other account can
+// read that storage, which is why this step does it and the service account's doctor cannot. It runs at every host step: a new release names a new digest.
+func (h *host) executorImage(ctx context.Context, uid string) error {
+	if _, err := h.runAsExecutor(ctx, "podman", "pull", goprofile.Image); err != nil {
+		return fmt.Errorf("pull %s as %s: %w (read `journalctl _SYSTEMD_USER_UNIT=%s.service _UID=%s -n 50 --no-pager`)", goprofile.Image, ExecutorAccount, err, executorPullUnit, uid)
+	}
+	if _, err := h.runAsExecutor(ctx, "podman", "image", "exists", goprofile.Image); err != nil { // a reference with a digest exists only when an image has that digest
+		return fmt.Errorf("the image %s is not in the storage of %s under that digest after the pull: %w", goprofile.Image, ExecutorAccount, err)
+	}
+	h.check("The Go image of the sandboxes is in the storage of %s, under its digest.\n", ExecutorAccount)
+	return nil
 }
 
 // executorRulesText is the nft file that refuses both metadata addresses, by destination and with no port, for every connection of the uid:

@@ -74,5 +74,8 @@ func executorDirOf(tokenFile string) string {
 	return filepath.Join(filepath.Dir(tokenFile), "executor")
 }
 
+// executorPullUnit names the transient unit in which the host step pulls the sandbox image as the executor's account, so a failure can be read in the journal.
+const executorPullUnit = "suiteward-pull-image"
+
 // sandboxNamePrefix starts the name of every sandbox container (internal/executor/sandbox): the executor removes the ones of its engine when it starts.
 const sandboxNamePrefix = "suiteward-sandbox-"

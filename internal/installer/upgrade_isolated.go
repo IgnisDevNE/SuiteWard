@@ -69,21 +69,14 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	// change whether the service has GitHub.
 	params := UnitParamsFrom(s, digest)
 	params.NoGitHub = st.adopted.NoGitHub
-	executorToken, executorFound, err := readExecutorHandover(host.configDir)
+	executor, err := readExecutorSetup(host.configDir)
 	if err != nil {
 		return err
 	}
-	haveExecutor, err := host.rt.Secrets().Exists(ctx, SecretExecutorAuth)
-	if err != nil {
-		return err
-	}
-	params.NoExecutor = !haveExecutor && !executorFound
 	plan := upgradePlan{oldImage: st.adopted.Image, newImage: image, oldDB: st.adopted.DBImage, newDB: postgres}
 	if _, statErr := os.Stat(host.settingsPath); plan.current() && statErr == nil {
 		say("Nothing to upgrade: already on %s. Check the instance with `%s doctor`.\n", digestOf(image), env.Deps.command())
-		if st.adopted.NoExecutor && executorFound {
-			say("The host step made an executor token that the service does not have yet: run `%s` to give it, which restarts the service.\n", installCommand(env.Deps.command(), r, true))
-		}
+		say("%s", executor.currentNote(st.adopted.NoExecutor, installCommand(env.Deps.command(), r, true)))
 		return holdPage(scr)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
@@ -123,11 +116,8 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	scr.Step(4)
-	if _, _, err := settleExecutorSecret(ctx, host.rt.Secrets(), executorToken, executorFound); err != nil {
+	if _, err := executor.settle(ctx, host.rt.Secrets(), scr, &params, "`"+installCommand(env.Deps.command(), r, true)+"`", false); err != nil {
 		return withBackup(env.Deps.command(), err, dir, host.unitsDir, scope)
-	}
-	if params.NoExecutor {
-		scr.Warn("%s", noExecutorNote("`"+installCommand(env.Deps.command(), r, true)+"`"))
 	}
 	if err := replaceUnits(ctx, host, d, scr, params, plan.dbChanges()); err != nil {
 		return withBackup(env.Deps.command(), err, dir, host.unitsDir, scope)

@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // The service account's half of the executor on the isolated tier. The host step (`sudo suiteward install host`) makes the executor, its
@@ -79,4 +81,40 @@ func executorHostNote() string {
 		"It keeps asking for jobs of a service that is gone. As the administrator, to stop it: systemctl --user --machine=%[1]s@.host disable --now %[2]s "+
 		"(to remove all of it: also delete %[3]s, %[4]s, %[5]s and %[6]s, the nft unit %[7]s and the account).\n",
 		ExecutorAccount, executorUnitName, executorUnitPath, executorLibDir, executorAuthEtc, executorRuleFile, executorBlockUnit)
+}
+
+// executorSetup is what the host step left for this account: the copy of the executor's token, when there is one.
+type executorSetup struct {
+	token []byte
+	found bool
+}
+
+// readExecutorSetup reads what the host step left, before anything is changed.
+func readExecutorSetup(configDir string) (executorSetup, error) {
+	token, found, err := readExecutorHandover(configDir)
+	return executorSetup{token: token, found: found}, err
+}
+
+// settle makes the service's executor token the host step's, and has the service unit mount it only when it exists (params.NoExecutor), saying so
+// when it does not. again names what to run after the host step. restart is whether a running service has to be restarted to read what changed:
+// it is the restart that was asked for already (secretChanged), or a token that was written now.
+func (e executorSetup) settle(ctx context.Context, store SecretStore, scr *ui.Screen, params *UnitParams, again string, secretChanged bool) (restart bool, err error) {
+	have, written, err := settleExecutorSecret(ctx, store, e.token, e.found)
+	if err != nil {
+		return false, err
+	}
+	params.NoExecutor = !have
+	if !have {
+		scr.Warn("%s", noExecutorNote(again))
+	}
+	return secretChanged || written, nil
+}
+
+// currentNote is what an upgrade of an instance that is current already says of the executor: the host step made a token that a service whose
+// unit has no executor lines does not have yet. It is empty when there is nothing to say.
+func (e executorSetup) currentNote(serviceWithout bool, install string) string {
+	if !serviceWithout || !e.found {
+		return ""
+	}
+	return fmt.Sprintf("The host step made an executor token that the service does not have yet: run `%s` to give it, which restarts the service.\n", install)
 }

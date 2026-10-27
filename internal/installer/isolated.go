@@ -198,7 +198,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := g.checkAppKey(ctx, host.envPath); err != nil {
 		return err
 	}
-	executorToken, executorFound, err := readExecutorHandover(configDir)
+	executor, err := readExecutorSetup(configDir)
 	if err != nil {
 		return err
 	}
@@ -219,14 +219,10 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := ensureSecrets(ctx, rt.Secrets(), g.githubKey); err != nil {
 		return err
 	}
-	haveExecutor, executorStored, err := settleExecutorSecret(ctx, rt.Secrets(), executorToken, executorFound)
+	params := UnitParamsFrom(g.s, digest)
+	restart, err := executor.settle(ctx, rt.Secrets(), scr, &params, "this install again", keyStored)
 	if err != nil {
 		return err
-	}
-	params := UnitParamsFrom(g.s, digest)
-	params.NoExecutor = !haveExecutor
-	if !haveExecutor {
-		scr.Warn("%s", noExecutorNote("this install again"))
 	}
 	units, err := prepareUnits(ctx, host, d, scr, params, false)
 	if err != nil {
@@ -236,7 +232,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	// A running service reads its unit, its env file and its key secret when it starts: it is restarted when this run changed
 	// one of them, and before setup enrolls the owner, which must not happen on a service that cannot reach GitHub yet.
 	scr.Step(5)
-	leftRunning, err := startStack(ctx, rt, d, scr, installed.mustRestart(units, envChanged, keyStored || executorStored))
+	leftRunning, err := startStack(ctx, rt, d, scr, installed.mustRestart(units, envChanged, restart))
 	if err != nil {
 		return err
 	}

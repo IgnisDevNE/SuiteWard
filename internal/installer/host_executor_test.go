@@ -412,6 +412,11 @@ func TestPrepareHostRefusesABinaryThatTheSumsDoNotList(t *testing.T) {
 	if h.has("install", "-m 0755 -o root -g root") || h.has("systemctl", "suiteward-executor.service") {
 		t.Errorf("nothing of the executor is installed or started: %v", h.lines())
 	}
+	for _, c := range h.calls { // the refusal comes before every step: podman, the accounts, the rules, the token
+		if c.name != "id" && c.name != "cat" {
+			t.Errorf("a step ran before the refusal: %v", h.lines())
+		}
+	}
 }
 
 func TestPrepareHostRefusesWithoutTheReleasesSHA256SUMSBeforeChangingAnything(t *testing.T) {

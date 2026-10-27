@@ -78,6 +78,9 @@ func (h *hostFake) answerExecutor(c call) (out []byte, handled bool, err error) 
 		return nil, true, fail
 	case c.name == "nft" && line == "list table inet suiteward_exec":
 		return []byte("table inet suiteward_exec { chain output { meta skuid 1002 ip daddr 169.254.169.254 reject meta skuid 1002 ip6 daddr fd00:ec2::254 reject } }"), true, nil
+	case c.name == "sh" && strings.Contains(line, "cat >") && strings.HasSuffix(line, execAuthEtc):
+		h.paths[execAuthEtc] = true // the token is made
+		return nil, true, nil
 	case c.name == "sha256sum":
 		if sum, ok := h.hashes[line]; ok {
 			return []byte(sum + "  " + line + "\n"), true, nil

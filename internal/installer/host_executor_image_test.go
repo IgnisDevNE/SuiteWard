@@ -67,3 +67,41 @@ func TestPrepareHostStopsWhenThePulledGoImageIsNotThereUnderItsDigest(t *testing
 		t.Error("the executor was started without the image of its sandboxes")
 	}
 }
+
+// A pull that fails stops the step, and what the step changed before it is not seen again by the next run: the binary then matches and the unit is
+// unchanged, so a running executor would never be restarted. The pull comes first, and a run that stops there has changed nothing.
+func TestPrepareHostThatCannotPullStillRestartsTheExecutorOnTheNextRun(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(h *hostFake)
+	}{
+		{"a replaced binary", func(h *hostFake) { h.hashes[execBinaryPath] = strings.Repeat("0", 64) }},
+		{"a new token", func(h *hostFake) { h.hashes[execBinaryPath] = sha256File(t, h.exe) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHostFake()
+			h.exe = writeProgram(t)
+			unit, err := RenderExecutorUnit(DefaultHTTPPort)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.files[execUnitFile] = string(unit) // the unit is the release's already
+			h.execRunning = true
+			tc.setup(h)
+			if tc.name == "a replaced binary" {
+				h.paths[execAuthEtc] = true // the token is there, so only the binary changes
+			}
+			h.pullFails = true
+			if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil {
+				t.Fatal("the pull failed and the step went on")
+			}
+			h.pullFails = false
+			if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
+				t.Fatal(err)
+			}
+			if !h.has("systemctl", execUserSystemd+" restart suiteward-executor.service") {
+				t.Errorf("the executor still runs the old binary or token after the second run: %v", h.lines())
+			}
+		})
+	}
+}

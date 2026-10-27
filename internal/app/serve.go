@@ -110,13 +110,15 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 	a := &api{store: store, owners: store, logger: logger, tier: tier, reports: reports,
 		executorStatus: &executorStatus{enabled: executorConfigured, jobs: executions, liveness: liveness}}
 	backend := &mcpBackend{store: store, owners: store, instance: store.Instance, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
-	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
+	trees, archives := treeReader(noTrees), archiveReader(noArchives) // the executor API reads GitHub through these: without the settings they fail
+	if cfg.GitHub != nil {                                            // the GitHub settings are optional: unset, nothing GitHub-related is composed
 		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger}, time.Now, logger)
 		if err != nil {
 			pool.Close()
 			return err
 		}
 		riverConfig.SyncTick, riverConfig.SyncRepo = gh.tick, gh.syncRepo
+		trees, archives = githubTrees(gh.readers.read), gh.archive.Archive
 		ids := &repositoryIDs{}
 		check := &protectionCheck{repos: gh.repos, appID: gh.appID, readers: gh.readers, store: store, ids: ids, logger: logger, now: time.Now, within: tickDeadline(cfg.JobTimeout)}
 		riverConfig.ProtectionCheck = check.run
@@ -156,6 +158,18 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		return fmt.Errorf("start the job runtime: %w", err)
 	}
 	backend.inserter = runtime
+	if executorConfigured { // the executor API is served exactly when the token is set, with or without GitHub
+		wake := func(context.Context) error { return nil } // there is no checks job to wake without the GitHub settings
+		if cfg.GitHub != nil {
+			wake = func(ctx context.Context) error { return runtime.Wake(ctx, river.Wake{river.ChecksKind}) }
+		}
+		executorAPI, err := newExecutorAPI(executorDeps{token: []byte(cfg.ExecutorToken.Reveal()), store: executions, liveness: liveness, times: cfg.Executor, content: artifacts,
+			owners: store, trees: trees, archives: archives, wake: wake, stopping: a.stopping.Load, logger: logger, now: time.Now})
+		if err != nil {
+			return errors.Join(err, shutdown(logger, a, newHTTPServer(nil), runtime, pool, cfg.ShutdownTimeout))
+		}
+		a.executor = executorAPI
+	}
 	srv := newHTTPServer(newRouter(a))
 	var (
 		mcpServers []*http.Server

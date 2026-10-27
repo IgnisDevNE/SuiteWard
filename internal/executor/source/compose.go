@@ -3,6 +3,7 @@ package source
 import (
 	"archive/tar"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/sandbox"
 )
 
 // Modes of the files in the composed tar. The sandbox extracts it as nobody, and the tree records only whether a file is executable.
@@ -218,7 +220,7 @@ func (c *composer) fromManifest(ctx context.Context, files FileOpener, f executi
 	}
 	rc, err := files.Open(ctx, f.Content)
 	if err != nil {
-		return fmt.Errorf("%w: open the manifest file %q: %w", ErrArchiveUnreadable, f.Path, err)
+		return fmt.Errorf("open the manifest file %q: %w", f.Path, err)
 	}
 	defer func() { _ = rc.Close() }()
 	data, err := io.ReadAll(io.LimitReader(rc, c.limits.FileBytes+1))
@@ -278,12 +280,13 @@ func (c *composer) checkLinks() error {
 	return nil
 }
 
-// Appender adds extra regular files, the module files of the dependency prefetch, to the tar that Compose started. They count
-// against the same budget as the tree. An Appender is for one goroutine.
+// Appender adds extra regular files, the module files of the dependency prefetch, to the tar that Compose started, and ends the tar.
+// They count against the same budget as the tree. An Appender is for one goroutine.
 type Appender struct {
 	c      *composer
 	paths  map[string]bool // the files added so far
 	dirs   map[string]bool // and their directories
+	failed error           // the error of an Add that left a damaged file in the tar
 	closed bool
 }
 
@@ -297,10 +300,12 @@ func (a *Appender) markDirs(name string) {
 	}
 }
 
-// conflicts reports a name that is the tree directory or lies in it, or that is a file or a directory of the files added already, or
-// lies below one of them. The files of the tree are all below TreeDir, so no other name can meet them.
+// conflicts reports a name that is the tree directory or lies in it, that is the completion marker or lies below it, that is a file
+// or a directory of the files added already, or that lies below one of them. The files of the tree are all below TreeDir, so no other
+// name can meet them.
 func (a *Appender) conflicts(name string) bool {
-	if name == TreeDir || strings.HasPrefix(name, TreeDir+"/") || a.paths[name] || a.dirs[name] {
+	if name == TreeDir || strings.HasPrefix(name, TreeDir+"/") || name == sandbox.CompleteMarker || strings.HasPrefix(name, sandbox.CompleteMarker+"/") ||
+		a.paths[name] || a.dirs[name] {
 		return true
 	}
 	for dir := path.Dir(name); dir != "."; dir = path.Dir(dir) {
@@ -312,18 +317,37 @@ func (a *Appender) conflicts(name string) bool {
 }
 
 // Add writes the file name of exactly size bytes, read from r. The name is a clean relative path to /work that is not TreeDir or
-// below it, and that no file added before has, is below or is the directory of. A file that would pass the budget is ErrTooLarge and is not written, and a name or a size that
-// cannot be written is ErrInvalidPlan, also before anything is written. After any other error the tar is not to be used.
+// below it, is not sandbox.CompleteMarker or below it, and that no file added before has, is below or is the directory of. A name or a
+// size that cannot be written is ErrInvalidPlan, and a file that would pass the budget is ErrTooLarge; both are refused before
+// anything is written, and the Appender can go on.
+//
+// Whatever else goes wrong happens after the header is written: r fails, ends before size bytes, or has more. Those errors are
+// returned as they are (more bytes than declared is ErrInvalidPlan), the file is not recorded and takes no budget, and the tar holds
+// a damaged file: Add and Close then fail, so the tar never gets its completion marker.
 func (a *Appender) Add(name string, size int64, r io.Reader) error {
 	switch {
 	case a.closed:
 		return fmt.Errorf("%w: the tar is closed", ErrInvalidPlan)
+	case a.failed != nil:
+		return fmt.Errorf("%w: an earlier file was damaged: %w", ErrInvalidPlan, a.failed)
 	case !artifact.ValidPath(name) || size < 0 || a.conflicts(name):
 		return fmt.Errorf("%w: %q cannot be added with %d bytes: it is not a new clean path", ErrInvalidPlan, name, size)
 	}
 	if err := a.c.reserve(name, size); err != nil {
 		return err
 	}
+	if err := a.write(name, size, r); err != nil {
+		a.failed = err
+		return err
+	}
+	a.paths[name] = true
+	a.c.total += size
+	a.markDirs(name)
+	return nil
+}
+
+// write writes the header of a file and its declared bytes, and checks that r has no more.
+func (a *Appender) write(name string, size int64, r io.Reader) error {
 	if err := a.c.tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: regularMode, Size: size}); err != nil {
 		return err
 	}
@@ -334,19 +358,13 @@ func (a *Appender) Add(name string, size int64, r io.Reader) error {
 	case n < size:
 		return fmt.Errorf("%q has %d of the %d bytes it declared: %w", name, n, size, io.ErrUnexpectedEOF)
 	}
-	if _, err := io.CopyN(io.Discard, r, 1); err == nil {
+	switch _, err := io.CopyN(io.Discard, r, 1); {
+	case err == nil:
 		return fmt.Errorf("%w: %q has more than the %d bytes it declared", ErrInvalidPlan, name, size)
+	case !errors.Is(err, io.EOF):
+		return fmt.Errorf("read %q after its %d bytes: %w", name, size, err)
 	}
-	a.paths[name] = true
-	a.c.total += size
-	a.markDirs(name)
 	return nil
-}
-
-// Close ends the tar with its footer. Nothing can be added after it.
-func (a *Appender) Close() error {
-	a.closed = true
-	return a.c.tw.Close()
 }
 
 // Spend charges n bytes against the budget without writing anything, for what the tar will hold once it is unpacked and does not
@@ -361,4 +379,21 @@ func (a *Appender) Spend(n int64) error {
 	}
 	a.c.total += n
 	return nil
+}
+
+// Close ends the tar: the completion marker, sandbox.CompleteMarker, is its last entry, and the footer follows. The sandbox refuses to
+// start the program unless tar extracted the marker, so a stream that was cut short is never run. An Appender that left a damaged
+// file in the tar writes neither and returns the error of that file. Closing twice writes nothing more.
+func (a *Appender) Close() error {
+	switch {
+	case a.closed:
+		return nil
+	case a.failed != nil:
+		return fmt.Errorf("the tar holds a damaged file and is not complete: %w", a.failed)
+	}
+	a.closed = true
+	if err := a.c.tw.WriteHeader(&tar.Header{Name: sandbox.CompleteMarker, Typeflag: tar.TypeReg, Mode: regularMode}); err != nil {
+		return err
+	}
+	return a.c.tw.Close()
 }

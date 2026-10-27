@@ -4,7 +4,9 @@
 // filesystem, where Windows or macOS would alias names.
 //
 // The errors are the shared vocabulary of the failure reasons of the runtime contract. An opener that cannot supply a stream wraps
-// the one that says why (a 502 of the service is ErrGitHubUnavailable), and the package passes it on.
+// the one that says why (a 502 of the service is ErrGitHubUnavailable); the package returns the error of an opener with the side or
+// the file named, and adds no sentinel of its own to it, so that an error is one reason. The tar that Compose starts and the Appender ends
+// carries the completion marker (sandbox.CompleteMarker) as its last entry, which the sandbox requires before it starts the program.
 package source
 
 import (

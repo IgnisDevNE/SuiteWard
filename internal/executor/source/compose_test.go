@@ -159,11 +159,12 @@ func TestComposeWritesExactlyTheFilesOfThePlan(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	want := map[string]tarFile{
-		"src/a.go":           {tar.TypeReg, 0o644, "package a\n", ""},
-		"src/bin/run.sh":     {tar.TypeReg, 0o755, "#!/bin/sh\n", ""},
-		"src/lnk":            {tar.TypeSymlink, 0o777, "", "a.go"},
-		"src/b.go":           {tar.TypeReg, 0o644, "package b\n", ""},
-		"src/.suiteward.yml": {tar.TypeReg, 0o644, declaration, ""},
+		"src/a.go":             {tar.TypeReg, 0o644, "package a\n", ""},
+		"src/bin/run.sh":       {tar.TypeReg, 0o755, "#!/bin/sh\n", ""},
+		"src/lnk":              {tar.TypeSymlink, 0o777, "", "a.go"},
+		"src/b.go":             {tar.TypeReg, 0o644, "package b\n", ""},
+		"src/.suiteward.yml":   {tar.TypeReg, 0o644, declaration, ""},
+		sandbox.CompleteMarker: {tar.TypeReg, 0o644, "", ""}, // Close ends the tar with it
 	}
 	// Close ends the tar with the footer: two blocks of zeros.
 	if !bytes.HasSuffix(out.Bytes(), make([]byte, 1024)) {
@@ -176,7 +177,7 @@ func TestComposeWritesExactlyTheFilesOfThePlan(t *testing.T) {
 		}
 	}
 	if len(found) != len(want) {
-		t.Errorf("the tar holds %d files, want exactly the %d of the plan: %v", len(found), len(want), keys(found))
+		t.Errorf("the tar holds %d files, want exactly the %d of the plan and the marker: %v", len(found), len(want), keys(found))
 	}
 }
 

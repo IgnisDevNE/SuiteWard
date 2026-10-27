@@ -1,6 +1,6 @@
 //go:build sandbox
 
-package sandbox_test
+package sandbox
 
 import (
 	"archive/tar"
@@ -13,21 +13,21 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"testing/iotest"
 	"time"
-
-	"github.com/IgnisDevNE/SuiteWard/internal/executor/sandbox"
 )
 
 // These tests run real containers on Docker. They skip when the engine is not there, and pull the pinned image when it is missing.
 
-func docker(t *testing.T) sandbox.Runtime {
+func dockerRuntime(t *testing.T) *cli {
 	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("no docker command")
 	}
-	rt := sandbox.NewCLI("docker")
+	recorded := &recorder{}
+	rt := newCLI("docker", recorded.exec)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	name, _, err := rt.Info(ctx)
@@ -42,10 +42,9 @@ func docker(t *testing.T) sandbox.Runtime {
 			t.Skipf("cannot pull the pinned image: %v: %s", err, out)
 		}
 	}
-	before := sandboxContainers(t)
 	t.Cleanup(func() {
-		for name := range sandboxContainers(t) {
-			if !before[name] {
+		for _, name := range recorded.created() {
+			if command("docker", "inspect", "--type", "container", name).Run() == nil {
 				t.Errorf("the sandbox container %s was left behind", name)
 			}
 		}
@@ -53,28 +52,36 @@ func docker(t *testing.T) sandbox.Runtime {
 	return rt
 }
 
-// sandboxContainers are the names of the sandbox containers that exist now, so that a test looks only at the ones it created.
-func sandboxContainers(t *testing.T) map[string]bool {
-	t.Helper()
-	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=suiteward-sandbox-", "--format", "{{.Names}}").Output()
-	if err != nil {
-		t.Fatalf("list the sandbox containers: %v", err)
-	}
-	names := map[string]bool{}
-	for _, name := range strings.Fields(string(out)) {
-		names[name] = true
-	}
-	return names
+// recorder runs the commands of the CLI for real and notes the name of each container that a run creates, so that a test looks only at
+// the containers it created: other runs of these tests may share the engine.
+type recorder struct {
+	mu    sync.Mutex
+	names []string
 }
 
-func spec(t *testing.T, stdin []byte, argv ...string) sandbox.Spec {
+func (r *recorder) exec(ctx context.Context, name string, args []string, stdin io.Reader, stdout io.Writer) (int, string, error) {
+	if i := slices.Index(args, "--name"); args[0] == "run" && i >= 0 {
+		r.mu.Lock()
+		r.names = append(r.names, args[i+1])
+		r.mu.Unlock()
+	}
+	return osExec(ctx, name, args, stdin, stdout)
+}
+
+func (r *recorder) created() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.names)
+}
+
+func dockerSpec(t *testing.T, stdin []byte, argv ...string) Spec {
 	t.Helper()
-	return sandbox.Spec{
+	return Spec{
 		Image:       pinnedImage(t),
 		Env:         []string{"PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
 		Argv:        argv,
 		Workdir:     ".",
-		Limits:      sandbox.Limits{MemoryMiB: 256, CPUs: 1, Pids: 128, TmpfsMiB: 64, KillAfter: time.Minute},
+		Limits:      Limits{MemoryMiB: 256, CPUs: 1, Pids: 128, TmpfsMiB: 64, KillAfter: time.Minute},
 		Stdin:       bytes.NewReader(stdin),
 		StdoutLimit: 1 << 20,
 	}
@@ -103,7 +110,7 @@ func tarOf(t *testing.T, files map[string]string) []byte {
 		}
 	}
 	// The completion marker is the last entry: the container refuses to start Argv without it.
-	if err := w.WriteHeader(&tar.Header{Name: sandbox.CompleteMarker, Mode: 0o644, Typeflag: tar.TypeReg}); err != nil {
+	if err := w.WriteHeader(&tar.Header{Name: CompleteMarker, Mode: 0o644, Typeflag: tar.TypeReg}); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {
@@ -112,7 +119,7 @@ func tarOf(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-func run(t *testing.T, rt sandbox.Runtime, s sandbox.Spec) sandbox.Outcome {
+func runOnDocker(t *testing.T, rt Runtime, s Spec) Outcome {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -124,20 +131,20 @@ func run(t *testing.T, rt sandbox.Runtime, s sandbox.Spec) sandbox.Outcome {
 }
 
 func TestTheSandboxHasNoNetworkAndAReadOnlyRoot(t *testing.T) {
-	rt := docker(t)
+	rt := dockerRuntime(t)
 	probe := `ls /sys/class/net; touch /tmp/x 2>/dev/null && echo root-writable; echo ok > /work/w && echo work-writable; id -u`
-	out := run(t, rt, spec(t, tarOf(t, nil), "sh", "-c", probe))
+	out := runOnDocker(t, rt, dockerSpec(t, tarOf(t, nil), "sh", "-c", probe))
 	if got, want := string(out.Stdout), "lo\nwork-writable\n65534\n"; got != want || out.ExitCode != 0 {
 		t.Errorf("the container saw %q (exit %d), want %q: only the loopback, a writable /work, a read-only root, uid 65534", got, out.ExitCode, want)
 	}
 }
 
 func TestTheStdinTarIsExtractedUnderWorkAndTheExitStatusIsThatOfArgv(t *testing.T) {
-	rt := docker(t)
+	rt := dockerRuntime(t)
 	files := map[string]string{"pkg/x/f.txt": "hello", "top.txt": "top", "link": "top.txt"}
-	s := spec(t, tarOf(t, files), "sh", "-c", "pwd; cat f.txt; echo; cat /work/link; echo; exit 7")
+	s := dockerSpec(t, tarOf(t, files), "sh", "-c", "pwd; cat f.txt; echo; cat /work/link; echo; exit 7")
 	s.Workdir = "pkg/x"
-	out := run(t, rt, s)
+	out := runOnDocker(t, rt, s)
 	if got, want := string(out.Stdout), "/work/pkg/x\nhello\ntop\n"; got != want {
 		t.Errorf("the container printed %q, want %q", got, want)
 	}
@@ -147,11 +154,11 @@ func TestTheStdinTarIsExtractedUnderWorkAndTheExitStatusIsThatOfArgv(t *testing.
 }
 
 func TestTheEnvironmentOfArgvIsExactlyTheGivenOne(t *testing.T) {
-	rt := docker(t)
+	rt := dockerRuntime(t)
 	t.Setenv("SUITEWARD_SANDBOX_LEAK", "leaked")
-	s := spec(t, tarOf(t, nil), "env")
+	s := dockerSpec(t, tarOf(t, nil), "env")
 	s.Env = append(s.Env, "ONLY=this", "EMPTY=")
-	out := run(t, rt, s)
+	out := runOnDocker(t, rt, s)
 	got := strings.Fields(string(out.Stdout))
 	want := slices.Clone(s.Env)
 	slices.Sort(got)
@@ -170,22 +177,22 @@ func TestTheEnvironmentOfArgvIsExactlyTheGivenOne(t *testing.T) {
 }
 
 func TestAMemoryHogIsSeenAsOOMKilled(t *testing.T) {
-	rt := docker(t)
-	s := spec(t, tarOf(t, nil), "tail", "/dev/zero")
+	rt := dockerRuntime(t)
+	s := dockerSpec(t, tarOf(t, nil), "tail", "/dev/zero")
 	s.Limits.MemoryMiB = 64
 	s.Limits.TmpfsMiB = 16
-	out := run(t, rt, s)
+	out := runOnDocker(t, rt, s)
 	if !out.OOMKilled {
 		t.Errorf("the memory limit killed the hog, and the runtime must say so: %+v", out)
 	}
 }
 
 func TestKillAfterKillsARunawayContainer(t *testing.T) {
-	rt := docker(t)
-	s := spec(t, tarOf(t, nil), "sleep", "300")
+	rt := dockerRuntime(t)
+	s := dockerSpec(t, tarOf(t, nil), "sleep", "300")
 	s.Limits.KillAfter = 2 * time.Second
 	start := time.Now()
-	out := run(t, rt, s)
+	out := runOnDocker(t, rt, s)
 	if !out.Killed || out.ExitCode != 137 {
 		t.Errorf("want the executor's kill with the status 137: %+v", out)
 	}
@@ -195,28 +202,28 @@ func TestKillAfterKillsARunawayContainer(t *testing.T) {
 }
 
 func TestTheStdoutIsCapped(t *testing.T) {
-	rt := docker(t)
-	s := spec(t, tarOf(t, nil), "sh", "-c", "yes | head -c 100000")
+	rt := dockerRuntime(t)
+	s := dockerSpec(t, tarOf(t, nil), "sh", "-c", "yes | head -c 100000")
 	s.StdoutLimit = 1000
-	out := run(t, rt, s)
+	out := runOnDocker(t, rt, s)
 	if len(out.Stdout) != 1000 || !out.Truncated || out.ExitCode != 0 {
 		t.Errorf("want 1000 bytes, truncated: %d bytes, %+v", len(out.Stdout), out.Truncated)
 	}
 }
 
 func TestAnImageTheRuntimeLacksIsUnavailableAndNothingIsPulled(t *testing.T) {
-	rt := docker(t)
-	s := spec(t, tarOf(t, nil), "true")
+	rt := dockerRuntime(t)
+	s := dockerSpec(t, tarOf(t, nil), "true")
 	s.Image = "docker.io/library/suiteward-no-such-image@sha256:" + strings.Repeat("0", 64)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if _, err := rt.Run(ctx, s); !errors.Is(err, sandbox.ErrUnavailable) {
+	if _, err := rt.Run(ctx, s); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("want ErrUnavailable, got %v", err)
 	}
 }
 
 func TestABrokenStdinStopsTheContainerBeforeArgvStarts(t *testing.T) {
-	rt := docker(t)
+	rt := dockerRuntime(t)
 	var buf bytes.Buffer
 	w := tar.NewWriter(&buf)
 	if err := w.WriteHeader(&tar.Header{Name: "top.txt", Mode: 0o644, Size: 3, Typeflag: tar.TypeReg}); err != nil {
@@ -229,7 +236,7 @@ func TestABrokenStdinStopsTheContainerBeforeArgvStarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	boom := errors.New("the archive stream broke")
-	s := spec(t, nil, "sleep", "300")
+	s := dockerSpec(t, nil, "sleep", "300")
 	s.Stdin = io.MultiReader(&buf, iotest.ErrReader(boom))
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -285,7 +292,7 @@ func unmarkedTar(t *testing.T) []byte {
 
 // A failure before Argv starts is not the status of Argv: tar, the test for the marker and cd exit with the reserved status.
 func TestAFailureBeforeArgvIsASetupFailureAndArgvNeverStarts(t *testing.T) {
-	rt := docker(t)
+	rt := dockerRuntime(t)
 	for name, tc := range map[string]struct {
 		stdin   []byte
 		workdir string
@@ -295,12 +302,12 @@ func TestAFailureBeforeArgvIsASetupFailureAndArgvNeverStarts(t *testing.T) {
 		"a work directory that is not in it":    {tarOf(t, nil), "no/such/dir"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			s := spec(t, tc.stdin, "sleep", "300") // Argv would run until the kill if it started, and then it is no setup failure
+			s := dockerSpec(t, tc.stdin, "sleep", "300") // Argv would run until the kill if it started, and then it is no setup failure
 			s.Workdir = tc.workdir
 			s.Limits.KillAfter = 20 * time.Second
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			if _, err := rt.Run(ctx, s); !errors.Is(err, sandbox.ErrSetupFailed) {
+			if _, err := rt.Run(ctx, s); !errors.Is(err, ErrSetupFailed) {
 				t.Errorf("want ErrSetupFailed, got %v", err)
 			}
 		})

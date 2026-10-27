@@ -54,6 +54,7 @@ var changeCodes = map[inventory.Change]string{inventory.Unchanged: "unchanged", 
 type checkReader interface {
 	Tree(ctx context.Context, repo, commitSHA string) (inventory.Tree, error)
 	PullFiles(ctx context.Context, repo string, number int) ([]github.PullFile, error)
+	MergeBase(ctx context.Context, repo, baseSHA, headSHA string) (string, error)
 }
 
 // ownerCommands is the part of the command ledger the check job reads.
@@ -93,6 +94,7 @@ type checksJob struct {
 	now       func() time.Time
 
 	executions         execution.Store      // the execution ledger (M2.1)
+	receipts           execution.ReceiptLedger // the ledger of the SuiteWard / Receipt check, which this job alone writes
 	liveness           *execution.Liveness  // when an executor was last seen
 	executor           config.ExecutorTimes // the durations of the executor settings
 	executorConfigured bool                 // EXECUTOR_TOKEN is set; unset, every execution job is created unavailable

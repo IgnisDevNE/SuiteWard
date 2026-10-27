@@ -588,3 +588,18 @@ func TestUpgradeAtTheInstalledReleaseRefreshesTheExecutor(t *testing.T) {
 		t.Errorf("the output must say that there is nothing to upgrade and what became of the executor:\n%s", out)
 	}
 }
+
+// The executor reads its token from the copy that the install made: without it the executor is not started, and the output says what to run.
+func TestUpgradeAtTheInstalledReleaseDoesNotStartAnExecutorWithoutItsTokenCopy(t *testing.T) {
+	u := newUpgradeHarness(t, nil)
+	u.have(kindSecret, SecretExecutorAuth)
+	if err := u.upgradeAt(false, "", "--yes", "--image", oldImage); err != nil {
+		t.Fatalf("the executor is not the stack: %v", err)
+	}
+	if len(u.f.find("--user enable --now suiteward-executor.service")) != 0 {
+		t.Errorf("an executor with no token was started: %v", u.f.calls)
+	}
+	if out := u.out.String(); !strings.Contains(out, "token copy") || !strings.Contains(out, "install") {
+		t.Errorf("the output must say that the token copy is missing and what to run:\n%s", out)
+	}
+}

@@ -10,6 +10,9 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // A wait that keeps the stored check of a head sends it again when the lost-publication rule advances its generation (a quarter of an hour after its message failed), and
@@ -128,5 +131,44 @@ func TestChecksSayAssessmentPendingForACanonicalFailingCheckWhoseCountsCannotBeR
 	w.want(4, checks.InProgress, "assessment-pending", lost.Generation+1)
 	if _, found := w.lastCheckPayload(4)["execution"]; found {
 		t.Error("an assessment-pending check carries counts")
+	}
+}
+
+// A required success that is restored while the policy cannot be read goes out as it was stored: the policy cannot say that the check carries counts, so it has none, and the
+// lost message is sent again under the next generation all the same.
+func TestChecksSendAgainARequiredSuccessTheyRestoreWhileThePolicyCannotBeRead(t *testing.T) {
+	w := completedGate(t, "pass", "skipped", "excluded")
+	w.want(4, checks.Success, "unchanged", 2)
+	restorePaths[0].arm(w)
+	lost := w.loseCheck(4)
+
+	w.runRestored(restorePaths[0].failure)
+
+	w.want(4, checks.Success, "unchanged", lost.Generation+1)
+	if _, found := w.lastCheckPayload(4)["execution"]; found {
+		t.Errorf("payload %v carries counts that a policy that was not read cannot vouch for", w.lastCheckPayload(4))
+	}
+}
+
+// A run that is stopping while the counts are read does not restore a canonical-failing check as undecided: the read fails because of the stop, which says nothing of the
+// counts, so the check keeps its reason and the stop is what the job returns.
+func TestChecksKeepACanonicalFailingCheckWhenTheRunIsStoppedWhileItsCountsAreRead(t *testing.T) {
+	w := completedGate(t, "pass", "fail")
+	record, _ := w.record(4)
+	w.check.executions = headJobsFail{w.jobs}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	s := &pullState{p: owner.ProjectPolicy{RepositoryID: bootRepoID}, pull: githubsync.PullState{Number: 4, HeadSHA: bootHead}}
+	x := &executionRun{known: true, policy: executionPolicy{canonical: domain.CanonicalLevelRequired}}
+	d := pullDecision{wait: true, result: record.Result}
+	var executed executionOutcome
+
+	err := w.check.restoreCounts(ctx, s, x, &d, &executed)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("restoreCounts = %v, want the stop of the run", err)
+	}
+	if d.result.Reason != reasonCanonicalFailing {
+		t.Errorf("the check reads %s/%s, want canonical-failing kept", d.result.State, d.result.Reason)
 	}
 }

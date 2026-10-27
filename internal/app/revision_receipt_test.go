@@ -18,9 +18,9 @@ import (
 
 func receiptMessage(t *testing.T, receipt string) governance.OutboxMessage {
 	t.Helper()
-	message, err := newRevisionMessageOf(cmtTarget(), cmtNotice(), "isolated", receipt)
+	message, err := newRevisionMessage(cmtTarget(), cmtNotice(), "isolated", receipt)
 	if err != nil {
-		t.Fatalf("newRevisionMessageOf: %v", err)
+		t.Fatalf("newRevisionMessage: %v", err)
 	}
 	return message
 }
@@ -46,7 +46,7 @@ func TestRevisionMessageCarriesTheReceiptLevelItIsGiven(t *testing.T) {
 
 func TestRevisionMessageRefusesAReceiptLevelNobodyCanRender(t *testing.T) {
 	for _, level := range []string{"off", "mandatory", "REQUIRED", " required"} {
-		if m, err := newRevisionMessageOf(cmtTarget(), cmtNotice(), "isolated", level); err == nil {
+		if m, err := newRevisionMessage(cmtTarget(), cmtNotice(), "isolated", level); err == nil {
 			t.Errorf("level %q: built %s", level, m.Payload)
 		}
 	}

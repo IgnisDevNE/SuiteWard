@@ -1067,14 +1067,9 @@ func referenceText(r contract.ProposalReference) string {
 	return string(r.ProposalID) + "-" + string(r.RevisionID)
 }
 
-// newRevisionMessage builds the revision comment of a revision AssessHead committed, for HeadRequest.Revision. A
-// payload the publisher could not render is an error, so the revision is not committed with a message nobody can post.
-func newRevisionMessage(target commentTarget, notice governance.RevisionNotice, tier string) (governance.OutboxMessage, error) {
-	return newRevisionMessageOf(target, notice, tier, "")
-}
-
-// newRevisionMessageOf is newRevisionMessage for a revision whose receipt applies at the level receipt (empty for none).
-func newRevisionMessageOf(target commentTarget, notice governance.RevisionNotice, tier, receipt string) (governance.OutboxMessage, error) {
+// newRevisionMessage builds the revision comment of a revision AssessHead committed, for HeadRequest.Revision. receipt is the level at which the receipt of the revision applies
+// (empty for none). A payload the publisher could not render is an error, so the revision is not committed with a message nobody can post.
+func newRevisionMessage(target commentTarget, notice governance.RevisionNotice, tier, receipt string) (governance.OutboxMessage, error) {
 	p := revisionPayload{commentTarget: target, Reference: referenceText(notice.Reference), Canonical: string(notice.Canonical),
 		Added: boundedText(notice.Added), Modified: boundedText(notice.Modified), Removed: boundedText(notice.Removed),
 		AddedTotal: len(notice.Added), ModifiedTotal: len(notice.Modified), RemovedTotal: len(notice.Removed), Reduced: notice.Reduced, Tier: tier, Receipt: receipt}
@@ -1107,7 +1102,7 @@ func newRevisionMessageOf(target commentTarget, notice governance.RevisionNotice
 func reductionKinds(notice governance.RevisionNotice) (policy, scope bool) {
 	scope = len(notice.ReducedPaths) > 0
 	for _, rule := range notice.ReducedRules {
-		if strings.HasPrefix(rule, "execution ") {
+		if commandtext.ExecutionEntry(rule) {
 			policy = true
 		} else {
 			scope = true

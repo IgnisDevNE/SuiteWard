@@ -605,7 +605,7 @@ func (j *checksJob) assess(ctx context.Context, p owner.ProjectPolicy, suite sui
 				if err != nil {
 					return governance.OutboxMessage{}, false, err
 				}
-				message, err := newRevisionMessageOf(target, n, tier, receipt)
+				message, err := newRevisionMessage(target, n, tier, receipt)
 				return message, err == nil, err
 			}})
 	}

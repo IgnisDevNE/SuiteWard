@@ -38,16 +38,16 @@ type pageList struct {
 
 // receiptPageData is what the page states of one pull request.
 type receiptPageData struct {
-	Repo      string
-	Pull      int
-	Head      string
-	Base      string
-	Open      bool
-	Tier      string
-	CoLocated bool
-	Preview   string   // what the page says of the preview mode
-	Empty     []string // the sentences of a pull request with no results
-	Runs      []pageRun
+	Repo    string
+	Pull    int
+	Head    string
+	Base    string
+	Open    bool
+	Tier    string
+	Notice  string   // the sentence of the reduced assurance of the co-located tier, empty on the isolated one
+	Preview string   // what the page says of the preview mode
+	Empty   []string // the sentences of a pull request with no results
+	Runs    []pageRun
 }
 
 // page builds the page of a pull request of project, waiting for its turn until ctx ends. A page over its limit is errPageTooLarge, and nothing of it is cut.
@@ -82,7 +82,10 @@ func (p *receiptPages) read(ctx context.Context, state owner.State, project owne
 	}
 	pull := pulls[i]
 	tier, _ := effectiveTier(p.tier, state, true)
-	data := receiptPageData{Repo: commandtext.Visible(project.Repo), Pull: number, Head: pull.HeadSHA, Base: pull.BaseSHA, Open: pull.NotOpenSince.IsZero(), Tier: tier, CoLocated: tier == owner.TierCoLocated}
+	data := receiptPageData{Repo: commandtext.Visible(project.Repo), Pull: number, Head: pull.HeadSHA, Base: pull.BaseSHA, Open: pull.NotOpenSince.IsZero(), Tier: tier}
+	if tier == owner.TierCoLocated {
+		data.Notice = commandtext.CoLocatedNotice
+	}
 	reader := executionReader{executions: p.executions, contents: p.contents, suites: p.suites, report: wrapRead}
 	view, err := reader.receiptView(ctx, project.RepositoryID, carrierProposal(project.RepositoryID, number))
 	if err != nil {

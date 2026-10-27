@@ -756,7 +756,7 @@ func validateRevision(r Revision) error {
 	case !r.Reduced && (len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0 || r.ReducedPathsTotal != 0):
 		return errors.New("commandtext: reduction detail on a revision that does not reduce the scope")
 	case slices.ContainsFunc(r.ReducedRules, func(e string) bool {
-		return !strings.HasPrefix(e, "rule ") && !strings.HasPrefix(e, "exclude ") && !executionEntry(e)
+		return !strings.HasPrefix(e, "rule ") && !strings.HasPrefix(e, "exclude ") && !ExecutionEntry(e)
 	}):
 		return errors.New("commandtext: a reduced rule that is none of a \"rule \", an \"exclude \", an \"execution canonical: \" and an \"execution receipt: \" entry")
 	case r.ReducedOmitted && (!r.Reduced || len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0):
@@ -795,8 +795,9 @@ func validatePrevious(r Revision) error {
 // executionPrefixes start the entries that scope.Reductions writes for a level of the execution policy that gets weaker.
 var executionPrefixes = []string{"execution canonical: ", "execution receipt: "}
 
-// executionEntry reports whether entry lowers a level of the execution policy.
-func executionEntry(entry string) bool {
+// ExecutionEntry reports whether entry is one that scope.Reductions writes for a level of the execution policy that gets weaker: it begins with "execution canonical: " or
+// "execution receipt: ". The checks job tells the lowering of the policy from the removal of the scope by it.
+func ExecutionEntry(entry string) bool {
 	return slices.ContainsFunc(executionPrefixes, func(p string) bool { return strings.HasPrefix(entry, p) })
 }
 
@@ -807,7 +808,7 @@ func (r Revision) lowersPolicyOnly() bool {
 		return r.Reduced && r.LowersPolicy && !r.ReducesScope
 	}
 	return r.Reduced && len(r.ReducedRules) > 0 && len(r.ReducedPaths) == 0 && r.ReducedPathsTotal == 0 && !r.ReducedOmitted &&
-		!slices.ContainsFunc(r.ReducedRules, func(e string) bool { return !executionEntry(e) })
+		!slices.ContainsFunc(r.ReducedRules, func(e string) bool { return !ExecutionEntry(e) })
 }
 
 // reductionParts are the paragraphs that say a revision reduces the protected scope or lowers the execution policy, with what it removes.
@@ -817,7 +818,7 @@ func reductionParts(r Revision) []string {
 		switch p, isExclude := strings.CutPrefix(entry, "exclude "); {
 		case isExclude:
 			excludes = append(excludes, p)
-		case executionEntry(entry):
+		case ExecutionEntry(entry):
 			levels = append(levels, strings.TrimPrefix(entry, "execution "))
 		default:
 			rules = append(rules, strings.TrimPrefix(entry, "rule "))

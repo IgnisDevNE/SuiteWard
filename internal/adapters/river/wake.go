@@ -3,6 +3,7 @@ package river
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -54,7 +55,20 @@ func (w *waker) insert(ctx context.Context, kind string, args riverqueue.JobArgs
 	return err
 }
 
-// Wake queues one job of each kind, as the wake-up of a run does, for a caller that is not a job.
-func (r *Runtime) Wake(_ context.Context, _ Wake) error {
-	return errors.New("not implemented")
+// Wake queues one job of each kind, as the wake-up of a run does, for a caller that is not a job (a request that committed work): the same
+// insert, on the queue of the kind and not while one is waiting, with each failure returned to the caller instead of logged. A kind that a run may
+// not wake is an error that names it, and the other kinds are still woken.
+func (r *Runtime) Wake(ctx context.Context, kinds Wake) error {
+	var errs []error
+	for _, kind := range kinds {
+		args, ok := wakeable[kind]
+		if !ok {
+			errs = append(errs, fmt.Errorf("job kind %q cannot be woken", kind))
+			continue
+		}
+		if err := r.waker.insert(ctx, kind, args); err != nil {
+			errs = append(errs, fmt.Errorf("wake %s: %w", kind, err))
+		}
+	}
+	return errors.Join(errs...)
 }

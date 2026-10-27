@@ -17,10 +17,6 @@ import (
 // that the host step leaves world-readable, `id`, `loginctl`, `systemctl show` of a system unit and `pgrep`, and from what /status says the
 // service saw.
 
-func (d *doctor) warn(name, detail, fix string) {
-	d.results = append(d.results, doctorResult{Name: name, OK: true, Detail: oneLine(detail), Fix: fix, Warning: true})
-}
-
 // out runs a command and returns its trimmed output.
 func (d *doctor) out(ctx context.Context, name string, args ...string) (string, error) {
 	out, err := d.deps.Exec(ctx, name, args, nil)

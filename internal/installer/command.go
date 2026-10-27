@@ -450,7 +450,7 @@ func installHost(ctx context.Context, args []string, env Env) (err error) {
 func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 	fs := newFlagSet("doctor")
 	fs.String("settings", "", "the installer settings file (default: the per-user configuration directory)")
-	fs.String("token-file", "", "where the instance keeps the copy of its MCP token, which the files of its executor are beside (default: the per-user directory)")
+	fs.String("token-file", "", "where the instance keeps the copy of its MCP token, which the files of its executor are beside (default: the per-user directory, with the default settings file only: another --settings file needs --token-file)")
 	fs.Bool("json", false, "print the results as JSON")
 	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)

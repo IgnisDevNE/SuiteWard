@@ -242,8 +242,7 @@ func TestRunReportsALegitimateExitStatusThatLooksLikeARuntimeError(t *testing.T)
 
 func TestRunKillsTheContainerAfterKillAfter(t *testing.T) {
 	f := newFake()
-	f.onRun = func(ctx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
-		_, _ = io.Copy(io.Discard, stdin) // the CLI copies the standard input to the container; the clock runs from its end
+	f.onRun = func(ctx context.Context, _ io.Reader, _ io.Writer) (int, string, error) {
 		select {
 		case <-f.killed:
 			return 137, "", nil
@@ -283,8 +282,7 @@ func TestRunKeepsKillingUntilTheContainerExists(t *testing.T) {
 		}
 		return 0
 	}
-	f.onRun = func(ctx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
-		_, _ = io.Copy(io.Discard, stdin)
+	f.onRun = func(ctx context.Context, _ io.Reader, _ io.Writer) (int, string, error) {
 		select {
 		case <-f.killed:
 			return 137, "", nil
@@ -322,53 +320,6 @@ func TestRunKillsTheContainerKillAfterItStartsEvenWhileItsStandardInputIsOpen(t 
 	s.Stdin, s.Limits.KillAfter = open, 20*time.Millisecond
 	if out, err := run(t, f, "docker", s); err != nil || !out.Killed {
 		t.Fatalf("Run = %+v, %v; want the container killed KillAfter after it started", out, err)
-	}
-}
-
-// The kill clock is the bound of the program, so it starts when the program can start: when the tar has been written to the standard
-// input, and not when the container does, because the tree and the module files stream in while it runs.
-func TestRunStartsTheKillClockWhenItsStandardInputHasEnded(t *testing.T) {
-	f := newFake()
-	f.onRun = func(ctx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
-		_, _ = io.Copy(io.Discard, stdin)
-		select {
-		case <-f.killed:
-			return 137, "", nil
-		case <-ctx.Done():
-			return -1, "", ctx.Err()
-		}
-	}
-	input, write := io.Pipe()
-	s := validSpec()
-	s.Stdin, s.Limits.KillAfter = input, 20*time.Millisecond
-	type result struct {
-		out Outcome
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		out, err := run(t, f, "docker", s)
-		done <- result{out, err}
-	}()
-	// The tar is still being written, for ten times as long as KillAfter: nothing is killed.
-	select {
-	case <-f.killed:
-		t.Fatal("the container was killed while its standard input was still being written")
-	case <-time.After(200 * time.Millisecond):
-	}
-	if _, err := write.Write([]byte("a tar")); err != nil {
-		t.Fatal(err)
-	}
-	if err := write.Close(); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-f.killed:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the container was not killed KillAfter after its standard input ended")
-	}
-	if r := <-done; r.err != nil || !r.out.Killed {
-		t.Errorf("Run = %+v, %v; want the executor's own kill reported", r.out, r.err)
 	}
 }
 

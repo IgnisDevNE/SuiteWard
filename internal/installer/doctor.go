@@ -257,6 +257,7 @@ func (d *doctor) run(ctx context.Context, settingsPath string) {
 	if isolated {
 		d.checkHost(ctx)
 		d.checkMetadata(ctx)
+		d.checkExecutorIsolated(ctx)
 	}
 	d.checkInstance(ctx)
 }
@@ -835,6 +836,7 @@ func (d *doctor) checkPorts(ctx context.Context) {
 		d.fail("status", "/status reports "+strings.Join(problems, ", "), "read the service log, and `suiteward probe` shows whether the worker still completes jobs")
 		return
 	}
+	d.raw["status"] = body // the executor's results read the execution object
 	d.pass("status", fmt.Sprintf("version %s, schema version %d, no failed or discarded", status.Version, *status.SchemaVersion))
 }
 

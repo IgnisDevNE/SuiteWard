@@ -688,7 +688,7 @@ type Revision struct {
 // RevisionComment renders the comment of a new change-proposal revision: the protected files added, modified
 // and removed against the canonical (as numbers when Changes is set), the approve command for this exact revision and the
 // revision it supersedes.
-// It never says that tests ran. The paths come from the repository, so they are shown only inside code, bounded
+// It never says that tests ran; the fixed receipt line, which only says what the receipt is, is all it says of tests. The paths come from the repository, so they are shown only inside code, bounded
 // and with control characters escaped, like the bootstrap summary.
 func RevisionComment(r Revision) string {
 	must(validateRevision(r))
@@ -705,14 +705,41 @@ func RevisionComment(r Revision) string {
 	if r.Tier == CoLocated {
 		parts = append(parts, coLocatedNotice)
 	}
-	parts = append(parts,
-		"This comment is a record, not an approval. To approve this exact revision, comment:",
-		codeCommand("approve", ref),
-	)
+	parts = append(parts, approvalParts(r, ref)...)
 	if r.Previous != "" {
 		parts = append(parts, "This supersedes `"+r.Previous+"`.")
 	}
 	return paragraphs(parts...)
+}
+
+// receiptLevels are the effective receipt levels of a revision whose receipt applies.
+var receiptLevels = []string{"advisory", "before-approval", "required"}
+
+// receiptLine is the fixed line about the receipt (docs/contracts/runtime.md, "The revision comment"): what the receipt is, where its results are and where its counts are.
+func receiptLine(r Revision) string {
+	results := "Results: see the `SuiteWard / Receipt` check."
+	if r.ReceiptURL != "" {
+		results = "Results: " + r.ReceiptURL + "."
+	}
+	return "Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. " +
+		"It is evidence, not a verdict. " + results + " The `SuiteWard / Receipt` check carries the counts."
+}
+
+// approvalParts are the paragraphs that end the comment before the superseded revision: the receipt line and what the level adds, when the revision has a receipt, and the
+// approve command. Under a required receipt the approve needs a mode, and the copyable command has its placeholder.
+func approvalParts(r Revision, ref string) []string {
+	var parts []string
+	lead, command := "This comment is a record, not an approval. To approve this exact revision, comment:", codeCommand("approve", ref)
+	if r.Receipt != "" {
+		parts = append(parts, receiptLine(r))
+		switch r.Receipt {
+		case "before-approval":
+			parts = append(parts, "Approving waits until the receipt is complete.")
+		case "required":
+			lead, command = "This comment is a record, not an approval. Approving needs a mode and a receipt that meets it:", modeApproveCommand(ref)
+		}
+	}
+	return append(parts, lead, command)
 }
 
 // validateRevision reports why RevisionComment would panic on r.
@@ -734,6 +761,12 @@ func validateRevision(r Revision) error {
 		return errors.New("commandtext: a reduced rule that is none of a \"rule \", an \"exclude \", an \"execution canonical: \" and an \"execution receipt: \" entry")
 	case r.ReducedOmitted && (!r.Reduced || len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0):
 		return errors.New("commandtext: reduction detail omitted on a revision that does not reduce the scope or that lists it")
+	case (r.LowersPolicy || r.ReducesScope) && !r.ReducedOmitted:
+		return errors.New("commandtext: what a reduction lowers is stated only for one whose detail was left out: otherwise its entries say it")
+	case r.Receipt != "" && !slices.Contains(receiptLevels, r.Receipt):
+		return fmt.Errorf("commandtext: receipt level %q is none of %q", r.Receipt, receiptLevels)
+	case r.ReceiptURL != "" && (r.Receipt == "" || !ValidReceiptLink(r.ReceiptURL, r.Pull)):
+		return errors.New("commandtext: the receipt link is not the link of the loopback receipt page of this pull request, or the revision has no receipt")
 	}
 	if _, err := reference(r.Proposal, r.Revision); err != nil {
 		return err
@@ -761,6 +794,9 @@ func executionEntry(entry string) bool {
 // lowersPolicyOnly reports whether the reduction of r lowers the execution policy and removes nothing from the scope: every entry
 // it lists is an execution entry, and it has no path, no total of paths and no detail that was left out.
 func (r Revision) lowersPolicyOnly() bool {
+	if r.ReducedOmitted { // its entries are gone: the revision says what it lowers
+		return r.Reduced && r.LowersPolicy && !r.ReducesScope
+	}
 	return r.Reduced && len(r.ReducedRules) > 0 && len(r.ReducedPaths) == 0 && r.ReducedPathsTotal == 0 && !r.ReducedOmitted &&
 		!slices.ContainsFunc(r.ReducedRules, func(e string) bool { return !executionEntry(e) })
 }
@@ -782,7 +818,7 @@ func reductionParts(r Revision) []string {
 	switch {
 	case r.lowersPolicyOnly():
 		lead = "This revision lowers the execution policy."
-	case len(levels) > 0:
+	case len(levels) > 0 || (r.ReducedOmitted && r.LowersPolicy):
 		lead = "This revision reduces the protected scope and lowers the execution policy."
 	}
 	parts := []string{"**" + lead + "** Review it carefully before approving."}

@@ -65,7 +65,8 @@ func TestAResultTheServiceRefusesUntilTheMarginIsGivenUp(t *testing.T) {
 		d.result()
 	}
 	close(fire) // the deadline less the margin has come
-	for rec := wait(d, logs.records); rec.msg != "the result was not accepted: its lease will expire"; rec = wait(d, logs.records) {
+	for gaveUp := false; !gaveUp; {
+		gaveUp = wait(d, logs.records).msg == "the result was not accepted: its lease will expire"
 	}
 	d.noResult()
 	if n := sv.results.Load(); n != 3 {

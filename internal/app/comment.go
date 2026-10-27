@@ -87,7 +87,8 @@ type ackPayload struct {
 	DefaultBranch string               `json:"defaultBranch,omitempty"` // scope-notice for the default branch: the branch whose file the reply asks to change, for the editor link
 }
 
-// ackCounts is the receipt of the head in the acknowledgment of a mode that it did not meet: the counts of the Receipt check's payload, every key present.
+// ackCounts is the receipt of the head in the acknowledgment of a mode that it did not meet: the ten counts of the Receipt check's payload, every key present.
+// Unparsed is the number of changed test files that go cannot parse, which block every mode.
 type ackCounts struct {
 	Detects  int `json:"detects"`
 	Inert    int `json:"inert"`
@@ -98,6 +99,12 @@ type ackCounts struct {
 	Skipped  int `json:"skipped"`
 	Excluded int `json:"excluded"`
 	Markers  int `json:"markers"`
+	Unparsed int `json:"unparsed"`
+}
+
+// negative reports whether any count is below zero.
+func (c ackCounts) negative() bool {
+	return min(c.Detects, c.Inert, c.NewAPI, c.Fails, c.Missing, c.Flaky, c.Skipped, c.Excluded, c.Markers, c.Unparsed) < 0
 }
 
 // The names of the plans in the payload of an unblock.
@@ -239,9 +246,10 @@ func reasonFits(d commands.Disposition, reason string) bool {
 // hasExecution is whether the payload holds any field that only the acknowledgments of the execution commands use.
 func (a ackPayload) hasExecution() bool { return a.Mode != "" || a.Counts != nil || a.Plans != nil }
 
-// receiptCounts is the counts the renderer takes for the receipt of a refusal. The payload has no unparsed files, as the Receipt check's counts have none.
+// receiptCounts is the counts the renderer takes for the receipt of a refusal.
 func (c ackCounts) receiptCounts() domain.ReceiptCounts {
-	return domain.ReceiptCounts{Detects: c.Detects, Inert: c.Inert, NewAPI: c.NewAPI, Fails: c.Fails, Missing: c.Missing, Flaky: c.Flaky, Skipped: c.Skipped, Excluded: c.Excluded}
+	return domain.ReceiptCounts{Detects: c.Detects, Inert: c.Inert, NewAPI: c.NewAPI, Fails: c.Fails, Missing: c.Missing, Flaky: c.Flaky, Skipped: c.Skipped, Excluded: c.Excluded,
+		Unparsed: c.Unparsed}
 }
 
 // declarationMissing is whether the payload is the reply for want of a .suiteward.yml: the refusal of a propose, or the answer of a
@@ -332,6 +340,9 @@ func (a ackPayload) validateRejected() error {
 	if gateCounts := a.Disposition == string(commands.ReceiptRefused) && a.Reason == string(domain.ReasonModeNotMet); (a.Counts != nil) != gateCounts {
 		return errors.New("counts fit the refusal of a mode that the receipt did not meet, and only it")
 	}
+	if a.Counts != nil && a.Counts.negative() {
+		return errors.New("a count is below zero")
+	}
 	if commandtext.ValidateAck(rejectedAckOf(a)) != nil { // its text quotes the owner and the branch, so only a fixed reason is kept
 		return errors.New("the acknowledgment does not fit its disposition")
 	}
@@ -413,7 +424,7 @@ func newReceiptRefusedAck(target commentTarget, comment int64, ownerLogin, refer
 	p := ackPayload{commentTarget: target, Disposition: string(commands.ReceiptRefused), Comment: comment, Owner: ownerLogin, Reason: string(reason), Reference: reference, Mode: mode.String()}
 	if reason == domain.ReasonModeNotMet {
 		p.Counts = &ackCounts{Detects: counts.Detects, Inert: counts.Inert, NewAPI: counts.NewAPI, Fails: counts.Fails, Missing: counts.Missing, Flaky: counts.Flaky,
-			Skipped: counts.Skipped, Excluded: counts.Excluded, Markers: markers}
+			Skipped: counts.Skipped, Excluded: counts.Excluded, Markers: markers, Unparsed: counts.Unparsed}
 	}
 	return newAck(p)
 }

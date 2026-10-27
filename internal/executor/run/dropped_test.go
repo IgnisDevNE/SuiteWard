@@ -66,7 +66,7 @@ func TestAContainerThatTheExecutorKilledIsNeverAResourceLimit(t *testing.T) {
 			d := start(t, newService(t, sv), rt, tc.setup, func(_ *Config, d *driver) { d.sleeps.reached, d.patience = make(chan struct{}), 10*time.Second })
 			wait(d, rt.entered)
 			tc.drive(d)
-			wait(d, rt.stopped)
+			_ = wait(d, rt.stopped) // the runtime saw the context end, and said that its container ended with the status 137
 			tc.done(d)
 			d.noResult()
 			if n := sv.results.Load(); n != 0 {

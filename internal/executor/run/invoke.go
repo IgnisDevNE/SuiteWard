@@ -7,7 +7,6 @@ import (
 	"io"
 	"maps"
 	"strings"
-	"time"
 
 	"golang.org/x/mod/modfile"
 
@@ -19,9 +18,6 @@ import (
 )
 
 const (
-	// killGrace is how long after its -timeout the executor kills the container: the contract's 60 s. The sandbox starts that clock when
-	// the standard input, which streams the tree and the module files in, has ended.
-	killGrace = 60 * time.Second
 	// stdoutLimit is the most of the report of one invocation that is kept. More than that is never read.
 	stdoutLimit = 64 << 20
 )
@@ -92,15 +88,23 @@ func (a *attempt) invoke(ctx context.Context, s *side, tests []goprofile.TestID)
 	stdin, finish := a.stream(ctx, s)
 	out, err := a.e.cfg.Runtime.Run(ctx, sandbox.Spec{
 		Image: goprofile.Image, Env: env, Argv: argv, Workdir: goprofile.TreeDir, Stdin: stdin, StdoutLimit: stdoutLimit,
-		Limits: sandbox.Limits{MemoryMiB: l.MemoryMiB, CPUs: l.CPUs, Pids: l.Pids, TmpfsMiB: l.TmpfsMiB, KillAfter: a.timeout() + killGrace},
+		// There is no clock of the executor's own: an invocation holds a cold build and many packages, and go test kills a test binary itself, a
+		// minute after its -timeout. The one time kill is the end of the context of the work, at the deadline of the attempt.
+		Limits: sandbox.Limits{MemoryMiB: l.MemoryMiB, CPUs: l.CPUs, Pids: l.Pids, TmpfsMiB: l.TmpfsMiB},
 	})
 	finish() // the composition is over, or the runner never read it: either way nothing is left writing
 	switch {
 	case err != nil:
 		return nil, err
-	case out.OOMKilled || out.ExitCode == 137 || out.Killed:
+	case ctx.Err() != nil:
+		// The work was dropped (its deadline, the grace after the signal, a lost lease): the status of the container that was killed for it
+		// is the executor's own doing, and says nothing of the tests.
+		return nil, fmt.Errorf("the work was dropped: %w", ctx.Err())
+	case out.Killed:
+		return nil, errDropped
+	case out.OOMKilled || out.ExitCode == 137:
 		// Only the out-of-band signals count, and before the report is read: a report of a killed container says nothing.
-		return nil, refuse(reasonResourceLimit, "the container was killed (out of memory %t, status %d, by the executor %t)", out.OOMKilled, out.ExitCode, out.Killed)
+		return nil, refuse(reasonResourceLimit, "the container was killed (out of memory %t, status %d)", out.OOMKilled, out.ExitCode)
 	case out.Truncated:
 		return nil, refuse(reasonResourceLimit, "the output of go test passed %d bytes, and output that was cut is never read", stdoutLimit)
 	}

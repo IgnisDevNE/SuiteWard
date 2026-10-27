@@ -101,8 +101,9 @@ func writeResult(body resultBody) ([]byte, error) {
 // stamp is a time as the contract has it: RFC 3339 in UTC.
 func stamp(t time.Time) string { return t.UTC().Truncate(time.Second).Format(time.RFC3339) }
 
-// probeLimits are the limits of the one container that asks the image for its Go.
-var probeLimits = sandbox.Limits{MemoryMiB: 256, CPUs: 1, Pids: 64, TmpfsMiB: 16, KillAfter: time.Minute}
+// probeLimits are the limits of the one container that asks the image for its Go. Like every container it has no clock of its own: the
+// deadline of the attempt bounds it.
+var probeLimits = sandbox.Limits{MemoryMiB: 256, CPUs: 1, Pids: 64, TmpfsMiB: 16}
 
 // goVersion is what the pinned image says its Go is (`go env GOVERSION`), asked once for the life of the executor: the toolchain that a
 // result reports, and the Go that a go.mod is compared with. It is the image that answers and not a constant, so that the evidence can not

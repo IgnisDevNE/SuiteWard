@@ -11,12 +11,13 @@ import (
 )
 
 // handle runs one leased job and posts its result once. The work has its own context: it outlives the signal that stops the loop by the
-// grace (30 s), ends at the deadline of the job (past it the service has ended the attempt), and ends when a heartbeat learns that the
-// lease is lost. Work that ended that way posts nothing, and the service sees the job again once its lease expires. Ending the context of
-// the work stops the sandbox, which kills its container.
+// grace (30 s), ends 30 s before the deadline of the job (the only time kill: the service then ends the attempt as timeout), and ends when a
+// heartbeat learns that the lease is lost. Work that ended that way posts nothing, and the service sees the job again once its lease expires
+// or its deadline passes. Ending the context of the work stops the sandbox, which kills its container, and a container that was killed so is
+// never read as a resource limit.
 func (e *Executor) handle(ctx context.Context, lease *client.Lease) {
 	log := e.cfg.Log.With("job", lease.JobID, "plan", lease.Plan, "pull", lease.Pull)
-	deadline, stopTimer := context.WithDeadline(context.WithoutCancel(ctx), lease.DeadlineAt)
+	deadline, stopTimer := context.WithDeadline(context.WithoutCancel(ctx), lease.DeadlineAt.Add(-e.cfg.Pacing.Margin))
 	defer stopTimer()
 	work, lost := context.WithCancel(deadline)
 	defer lost()

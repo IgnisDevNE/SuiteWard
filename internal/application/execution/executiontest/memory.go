@@ -352,6 +352,11 @@ func (m *Memory) HeadJobs(ctx context.Context, repositoryID int64, pull int, hea
 	return jobs, nil
 }
 
+// OpenJobs implements execution.Store.
+func (m *Memory) OpenJobs(ctx context.Context, repositoryID int64) ([]execution.Job, error) {
+	return nil, errors.New("executiontest: OpenJobs is not implemented")
+}
+
 // Result implements execution.Store.
 func (m *Memory) Result(ctx context.Context, jobID int64) (execution.StoredResult, bool, error) {
 	if err := ctx.Err(); err != nil {

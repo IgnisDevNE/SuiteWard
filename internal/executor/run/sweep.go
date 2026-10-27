@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/sandbox"
 )
 
 const (
@@ -33,7 +36,9 @@ type commandRunner func(ctx context.Context, name string, args ...string) ([]byt
 func osRun(ctx context.Context, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, sweepTimeout)
 	defer cancel()
-	out, err := commandContext(ctx, name, args...).Output()
+	cmd := commandContext(ctx, name, args...)
+	cmd.Env = sandbox.CLIEnv(os.Environ())
+	out, err := cmd.Output()
 	var failed *exec.ExitError
 	if errors.As(err, &failed) {
 		return nil, fmt.Errorf("%s %s: %w: %.200s", name, args[0], err, failed.Stderr)

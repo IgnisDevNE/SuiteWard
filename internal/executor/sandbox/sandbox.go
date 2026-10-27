@@ -119,5 +119,12 @@ const CompleteMarker = ".suiteward/complete"
 // and its config, and the proxy variables, which a rootless engine may need to pull an image (the no-proxy rule is for the executor's own
 // HTTP clients).
 func CLIEnv(environ []string) []string {
-	return environ
+	kept := make([]string, 0, len(environ))
+	for _, entry := range environ {
+		// The names are compared in any case: the environment of Windows has no case.
+		if name, _, _ := strings.Cut(entry, "="); !strings.HasPrefix(strings.ToUpper(name), "SUITEWARD_") {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
 }

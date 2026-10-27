@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -60,6 +61,7 @@ type execFunc func(ctx context.Context, name string, args []string, stdin io.Rea
 
 func osExec(ctx context.Context, name string, args []string, stdin io.Reader, stdout io.Writer) (int, string, error) {
 	cmd := commandContext(ctx, name, args...)
+	cmd.Env = CLIEnv(os.Environ())
 	cmd.Stdin, cmd.Stdout = stdin, stdout
 	stderr := &capped{limit: stderrBytes}
 	cmd.Stderr = stderr
@@ -147,7 +149,9 @@ func (c *cli) engineName(ctx context.Context) (string, error) {
 func runArgs(engine, name string, s Spec) []string {
 	l := s.Limits
 	memory := strconv.Itoa(l.MemoryMiB) + "m"
-	args := []string{"run", "--name", name, "-i", "--pull=never", "--network=none", "--read-only"}
+	// --sig-proxy=false: a signal to the attached CLI (systemd stopping the executor's unit) is not forwarded to the container's first process, go
+	// test, which would end with 143 and make every expected test read fail. The executor's grace and its kill by name end a container.
+	args := []string{"run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only"}
 	if engine == enginePodman {
 		// Under --read-only Podman still mounts a writable tmpfs on /tmp, /var/tmp, /run and /dev/shm unless it is told not to.
 		args = append(args, "--read-only-tmpfs=false")

@@ -108,7 +108,7 @@ func TestTheSweepStartsTheRuntimeCLIWithoutTheExecutorsSettings(t *testing.T) {
 	t.Setenv("DOCKER_HOST", "unix:///run/test-docker.sock")
 	previous := commandContext
 	commandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperPrintEnv$", "--", "print-env")
+		return startHelper(ctx, os.Args[0], "-test.run=^TestHelperPrintEnv$", "--", "print-env")
 	}
 	t.Cleanup(func() { commandContext = previous })
 	out, err := osRun(context.Background(), "docker", "ps")
@@ -127,3 +127,7 @@ func TestTheSweepStartsTheRuntimeCLIWithoutTheExecutorsSettings(t *testing.T) {
 		}
 	}
 }
+
+// startHelper is exec.CommandContext. These tests start their own binary with arguments of their own, so gosec's G204 (a subprocess launched
+// with a variable) does not apply.
+var startHelper = exec.CommandContext

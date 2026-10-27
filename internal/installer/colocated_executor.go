@@ -77,8 +77,11 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 		if d.UserSID == nil {
 			return plan, errors.New("the installer has no way to find the SID of this user, which the scheduled task of the executor names")
 		}
-		if sid, err = d.UserSID(); err != nil || !strings.HasPrefix(sid, "S-1-") {
-			return plan, fmt.Errorf("find the SID of this user: %v", err)
+		if sid, err = d.UserSID(); err != nil {
+			return plan, fmt.Errorf("find the SID of this user: %w", err)
+		}
+		if !strings.HasPrefix(sid, "S-1-") {
+			return plan, fmt.Errorf("find the SID of this user: %q is not a SID", sid)
 		}
 	}
 	sum, err := hashFile(exe)

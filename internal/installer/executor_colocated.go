@@ -263,8 +263,11 @@ func (p executorPlan) definitionFiles(sid string) map[string][]byte {
 func userID(ctx context.Context, d Deps) (string, error) {
 	out, err := d.Exec(ctx, "id", []string{"-u"}, nil)
 	uid := strings.TrimSpace(string(out))
-	if err != nil || uid == "" {
-		return "", fmt.Errorf("find the id of this user: %v", err)
+	if err != nil {
+		return "", fmt.Errorf("find the id of this user: %w", err)
+	}
+	if uid == "" {
+		return "", errors.New("find the id of this user: `id -u` printed nothing")
 	}
 	return uid, nil
 }

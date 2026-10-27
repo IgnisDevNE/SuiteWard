@@ -36,7 +36,13 @@ func TestExecutionMigrationKeepsTheCheckAndCommandLedgers(t *testing.T) {
 	if err := migrations.Up(t.Context(), database.url); err != nil {
 		t.Fatal(err)
 	}
+	requireMigratedRows(t, database)
+	requireTriggersStand(t, database)
+	requireStoresReadThem(t, database)
+}
 
+func requireMigratedRows(t *testing.T, database schemaDatabase) {
+	t.Helper()
 	var unblocked bool
 	var state, reason string
 	if err := database.conn.QueryRow(t.Context(), "SELECT unblocked, state, reason FROM pr_checks").Scan(&unblocked, &state, &reason); err != nil || unblocked || state != "in_progress" || reason != "approval-missing" {
@@ -50,8 +56,11 @@ func TestExecutionMigrationKeepsTheCheckAndCommandLedgers(t *testing.T) {
 	if commands != len(dispositionsAtVersion20) || withMode != 0 || !slices.Equal(kept, dispositionsAtVersion20) {
 		t.Fatalf("migrated commands: %d rows, %d with a mode, dispositions %v; want %d rows, none with a mode, each disposition as it was", commands, withMode, kept, len(dispositionsAtVersion20))
 	}
+}
 
-	// The triggers still stand: pr_commands refuses an update and a delete, pr_checks a delete and a truncate, and pr_checks is still updated in place.
+// requireTriggersStand: pr_commands refuses an update and a delete, pr_checks a delete and a truncate, and pr_checks is still updated in place.
+func requireTriggersStand(t *testing.T, database schemaDatabase) {
+	t.Helper()
 	for _, statement := range []string{"UPDATE pr_commands SET disposition = 'processed', operation_id = 'x'", "DELETE FROM pr_commands", "DELETE FROM pr_checks", "TRUNCATE pr_checks"} {
 		_, err := database.conn.Exec(t.Context(), statement)
 		schemaRequireError(t, err, "23514", "immutable_history")
@@ -59,8 +68,11 @@ func TestExecutionMigrationKeepsTheCheckAndCommandLedgers(t *testing.T) {
 	if _, err := database.conn.Exec(t.Context(), "UPDATE pr_checks SET state = 'success', reason = 'ready'"); err != nil {
 		t.Fatalf("an update of the check in place: %v", err)
 	}
+}
 
-	// The stores read what the old version wrote, as the application role.
+// requireStoresReadThem: the stores read what the old version wrote, as the application role.
+func requireStoresReadThem(t *testing.T, database schemaDatabase) {
+	t.Helper()
 	content, err := filesystem.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

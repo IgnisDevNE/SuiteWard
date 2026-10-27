@@ -196,8 +196,9 @@ func runDoctorRaw(t *testing.T, f *fakeEngine, s Settings, jsonOut bool) (int, s
 	if err := SaveSettings(path, s); err != nil {
 		t.Fatal(err)
 	}
+	tokenFile, _ := defaultTokenFile(f.deps()) // the tier of s may be the isolated one, which has no use for it
 	var out bytes.Buffer
-	code := Doctor(context.Background(), f.deps(), path, "", &out, jsonOut)
+	code := Doctor(context.Background(), f.deps(), path, tokenFile, &out, jsonOut)
 	assertReadOnly(t, f)
 	return code, out.String()
 }

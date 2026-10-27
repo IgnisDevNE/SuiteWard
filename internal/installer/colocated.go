@@ -64,6 +64,10 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err := guardDefaultSettings(t, rt.Name(), connection); err != nil {
 		return err
 	}
+	tokenFile, err := instanceTokenFile(r, env, t) // before any change: a second instance names its own
+	if err != nil {
+		return err
+	}
 	base, previous, err := existingStack(ctx, rt, t.saved, t.haveSaved)
 	if err != nil {
 		return err
@@ -91,12 +95,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err != nil {
 		return err
 	}
-	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(env.Deps.command(), r, false)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous, executorPin: pin}
-	if c.tokenFile == "" {
-		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
-			return err
-		}
-	}
+	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(env.Deps.command(), r, false)}, image: image, tokenFile: tokenFile, previous: previous, executorPin: pin}
 	scr.Step(2)
 	if err := c.preflight(ctx); err != nil {
 		return err
@@ -924,7 +923,7 @@ func (c *colocatedInstall) finish(ctx context.Context, scr *ui.Screen, t install
 			return err
 		}
 		c.say("Read the status of the service: %s\n", c.statusHint(ctx)) // after the enrollment, which waited for the service to answer
-		c.say("Then check the instance with `%s`.\n", doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
+		c.say("Then check the instance with `%s`.\n", c.doctorAgain(t))
 	}
 	scr.Step(6)
 	c.installSelf(ctx)

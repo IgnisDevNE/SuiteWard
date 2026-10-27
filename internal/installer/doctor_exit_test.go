@@ -27,7 +27,7 @@ func doctorOn(t *testing.T, in io.Reader, open func(ctx context.Context, in io.R
 	}
 	env := Env{Deps: f.deps(), Term: Terminal{In: in, Out: &bytes.Buffer{}}, OpenScreen: open}
 	var stderr bytes.Buffer
-	return Main(liveContext(t), append([]string{"doctor", "--settings", path}, args...), env, &stderr), stderr.String()
+	return Main(liveContext(t), append([]string{"doctor", "--settings", path, "--token-file", coloTokenFile(t, f)}, args...), env, &stderr), stderr.String()
 }
 
 // openScreenOn is the console of a test on a terminal of 100x30, over out: plain when the command asks for it, full screen otherwise.

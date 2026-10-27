@@ -178,7 +178,7 @@ func TestAPlainInstallDoesNotRunDoctor(t *testing.T) {
 		t.Errorf("a plain install ran doctor: %v", calls)
 	}
 	out := h.out.String()
-	if !strings.Contains(out, "Then check the instance with `suiteward doctor --settings "+quoteArg(h.settingsPath())+"`.") || doctorSummaryRow.MatchString(out) {
+	if !strings.Contains(out, "Then check the instance with `suiteward doctor --settings "+quoteArg(h.settingsPath())+" --token-file "+quoteArg(h.tokenPath())+"`.") || doctorSummaryRow.MatchString(out) {
 		t.Errorf("the plain output changed:\n%s", out)
 	}
 }
@@ -214,7 +214,7 @@ func TestTheDoctorRowOfAHealthyInstanceHasNoWarningsAndNothingToCheckAgain(t *te
 	}
 	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}}
 	var rows summaryRows
-	rows.addDoctor(context.Background(), env, path, "", "suiteward doctor")
+	rows.addDoctor(context.Background(), env, path, coloTokenFile(t, f), "suiteward doctor")
 	assertReadOnly(t, f)
 	if len(rows) != 1 || rows[0].Key != "Doctor" || !regexp.MustCompile(`^\d+ ok, 0 warnings, 0 failures$`).MatchString(rows[0].Value) {
 		t.Errorf("the rows of a healthy instance are %+v, want the Doctor row alone", rows)
@@ -244,7 +244,7 @@ func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 		rows.add(kv[0], kv[1])
 	}
 	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}}
-	rows.addDoctor(context.Background(), env, path, "", doctorHint("suiteward", path, true))
+	rows.addDoctor(context.Background(), env, path, coloTokenFile(t, f), doctorHint("suiteward", path, true))
 
 	c := sizedConsole{termConsole: newTermConsole(&bytes.Buffer{}), w: 80, h: 24}
 	scr, err := c.open(liveContext(t), strings.NewReader("\n"), "v0", false)

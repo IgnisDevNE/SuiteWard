@@ -276,8 +276,8 @@ func TestTheExecutorOfADockerStackUsesTheEngineTheInstallerChose(t *testing.T) {
 			t.Errorf("the wrapper lacks %s:\n%s", want, wrapper)
 		}
 	}
-	if !strings.Contains(h.out.String(), "Podman") {
-		t.Errorf("the output must say that a docker command that reaches Podman's socket fails closed:\n%s", h.out.String())
+	if !strings.Contains(h.out.String(), "podman-docker") {
+		t.Errorf("the output must say that Docker's CLI on Podman's socket fails closed and that the podman-docker shim works:\n%s", h.out.String())
 	}
 }
 
@@ -602,5 +602,61 @@ func TestUpgradeAtTheInstalledReleaseDoesNotStartAnExecutorWithoutItsTokenCopy(t
 	}
 	if out := u.out.String(); !strings.Contains(out, "token copy") || !strings.Contains(out, "install") {
 		t.Errorf("the output must say that the token copy is missing and what to run:\n%s", out)
+	}
+}
+
+// A batch file reads a percent sign: `%` in the folder of the executor (a profile or a token file under a name with one) has to be doubled in the
+// line that starts the program and in the one that names its log, as it is in the `set` lines.
+func TestTheWrapperOfTheWindowsTaskDoublesAPercentSignInItsProgramAndLogPaths(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	h.dir = filepath.Join(h.dir, "50%off")
+	if err := os.MkdirAll(h.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	doubled := func(path string) string { return strings.ReplaceAll(path, "%", "%%") }
+	want := `"` + doubled(h.executorBinary()) + `" execute >> "` + doubled(filepath.Join(h.executorDir(), "executor.log")) + `" 2>&1`
+	if wrapper := h.readHome("executor/run.cmd"); !strings.Contains(wrapper, want) {
+		t.Errorf("the wrapper lacks the line that starts the program with its percent signs doubled, %s:\n%s", want, wrapper)
+	}
+}
+
+// An uninstall that could not remove the executor says how to, with the commands of the operating system that keeps it running.
+func TestTheUninstallWarningNamesTheCommandsOfTheOperatingSystemThatKeepsTheExecutor(t *testing.T) {
+	cases := []struct {
+		goos string
+		set  func(un *harness)
+		want []string
+	}{
+		{"windows", func(un *harness) {
+			un.first("/Query /TN SuiteWard Executor", "") // the task is registered, and this instance made its two files
+			writeFile(un.t, filepath.Join(un.executorDir(), executorWrapperName), "the wrapper")
+			writeFile(un.t, filepath.Join(un.executorDir(), "task.xml"), "the task")
+			un.f.fail("IMAGENAME eq suiteward-executor.exe", errors.New("tasklist: access denied"))
+		}, []string{`schtasks /End /TN "SuiteWard Executor"`, "`taskkill /IM suiteward-executor.exe /F`", `schtasks /Delete /TN "SuiteWard Executor" /F`}},
+		{"darwin", func(un *harness) { un.f.fail("=-u", errors.New("id: not found")) }, []string{"launchctl bootout gui/$(id -u)/" + executorLabel}},
+	}
+	for _, c := range cases {
+		t.Run(c.goos, func(t *testing.T) {
+			un := machineHarnessOn(t, c.goos)
+			podmanStackExists(un)
+			un.writeFiles()
+			un.writeExecutorFiles()
+			c.set(un)
+			if err := un.uninstall("--runtime", "podman", "--connection", "pm", "--yes"); err != nil {
+				t.Fatalf("an uninstall must go on with the stack: %v", err)
+			}
+			out := un.out.String()
+			if !strings.Contains(out, "executor was not removed") || strings.Contains(out, "systemctl") {
+				t.Errorf("the output must say that the executor is still there, and not give the command of Linux:\n%s", out)
+			}
+			for _, want := range c.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("the output lacks %s:\n%s", want, out)
+				}
+			}
+		})
 	}
 }

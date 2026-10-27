@@ -127,7 +127,7 @@ func TestEveryCommandEndsOnAPageThatWaitsForEnter(t *testing.T) {
 				return err
 			}
 			env := Env{Deps: f.deps(), Term: Terminal{In: in, Out: &bytes.Buffer{}}, OpenScreen: c.open}
-			Main(ctx, []string{"doctor", "--settings", path}, env, io.Discard)
+			Main(ctx, []string{"doctor", "--settings", path, "--token-file", coloTokenFile(t, f)}, env, io.Discard)
 			return nil
 		}},
 	}
@@ -166,7 +166,7 @@ func TestDoctorOnAFullScreenKeepsItsExitCodeWhenTheWaitEnds(t *testing.T) {
 			c := newTermConsole(&bytes.Buffer{})
 			env := Env{Deps: f.deps(), Term: Terminal{In: tc.in, Out: &bytes.Buffer{}}, OpenScreen: c.open}
 			var stderr bytes.Buffer
-			if code := Main(liveContext(t), []string{"doctor", "--settings", path}, env, &stderr); code != tc.wantCode {
+			if code := Main(liveContext(t), []string{"doctor", "--settings", path, "--token-file", coloTokenFile(t, f)}, env, &stderr); code != tc.wantCode {
 				t.Errorf("exit %d, want %d (stderr %q)", code, tc.wantCode, stderr.String())
 			}
 			if !strings.Contains(stderr.String(), tc.wantErr) || (tc.wantErr == "" && stderr.Len() != 0) {
@@ -223,7 +223,7 @@ func TestCtrlCDuringDoctorExits130AndCtrlCAtItsWaitKeepsItsCode(t *testing.T) {
 				env.OpenScreen = newTermConsole(&bytes.Buffer{}).open
 			}
 			var errOut bytes.Buffer
-			code = Main(ctx, []string{"doctor", "--settings", path}, env, &errOut)
+			code = Main(ctx, []string{"doctor", "--settings", path, "--token-file", coloTokenFile(t, f)}, env, &errOut)
 			return code, errOut.String()
 		}
 		t.Run(tc.name+", Ctrl-C during the checks", func(t *testing.T) {

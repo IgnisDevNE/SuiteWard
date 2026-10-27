@@ -161,6 +161,10 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err := guardDefaultSettings(t, rt.Name(), connection); err != nil {
 		return err
 	}
+	tokenFile, err := instanceTokenFile(r, env, t) // before any change: a second instance names its own, or the executor of the main one is touched
+	if err != nil {
+		return err
+	}
 	base, previous, err := existingStackFor(ctx, rt, t.saved, t.haveSaved, true)
 	if err != nil {
 		return err
@@ -200,14 +204,10 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	plan := upgradePlan{oldImage: previous.Image, newImage: image, oldDB: dbImage, newDB: postgres}
 	// A stack without a settings file (made by local.ps1) is converted even when it runs this release: the settings are saved.
 	if plan.current() && t.haveSaved {
-		return upgradeColocatedCurrent(ctx, r, env, rt, s, t, image, pin)
+		return upgradeColocatedCurrent(ctx, r, env, rt, s, t, tokenFile, image, pin)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
 	agreed, err := settleRecipient(r, env, &s)
-	if err != nil {
-		return err
-	}
-	tokenFile, err := instanceTokenFile(r, env.Deps)
 	if err != nil {
 		return err
 	}
@@ -254,7 +254,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	c.env.Deps = refreshCopy(ctx, c.env) // before the hints below, which name the program as the refreshed copy answers
 	c.setUpExecutor(ctx)                 // after it: what it says names the program as the refreshed copy answers
 	cmd := c.env.Deps.command()
-	upgraded(scr, image, dir, goBackColocated(cmd, engine, previous.Image, dir, scopeFlags(r, false)), doctorHint(cmd, t.settingsPath, t.defaultPath))
+	upgraded(scr, image, dir, goBackColocated(cmd, engine, previous.Image, dir, scopeFlags(r, false)), c.doctorAgain(t))
 	c.installSelf(ctx)
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }

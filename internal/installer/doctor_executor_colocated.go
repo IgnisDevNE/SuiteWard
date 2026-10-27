@@ -21,28 +21,65 @@ func (d *doctor) installFix() string {
 	return fmt.Sprintf("run `%[1]s install --upgrade` with this program when the service is of an earlier release, or `%[1]s install` again: either copies this program as the executor, makes its token and starts it", cmd)
 }
 
-// checkExecutorColocated runs the checks of the executor on this computer. Doctor finds its files beside the token file that --token-file names, else
-// beside the default place of this user's token file.
+// anotherInstanceFix is the fix of an executor that is registered for another instance: an install of this one skips it, so it is that instance's removal that frees the place.
+func (d *doctor) anotherInstanceFix() string {
+	cmd := d.deps.command()
+	return "a computer has one executor, and it is registered for another instance: remove that instance (`" + cmd + " uninstall`, with that instance's --settings and --token-file (none for the default instance)), then run `" + cmd + " install` again for this one; until then the install leaves the registered executor as it is"
+}
+
+// executorTokenFile is the token file that the files of the executor are beside: the one --token-file names, else the default place of this user's
+// token file, which is this instance's only with the default settings file (the rule of the install). When there is none it says why, as the one result
+// of the executor: no other row is checked, because it would read the main instance's folder.
+func (d *doctor) executorTokenFile() (string, bool) {
+	if d.tokenFile != "" {
+		return d.tokenFile, true
+	}
+	file, err := defaultTokenFile(d.deps)
+	if err != nil {
+		d.fail("executor.token", err.Error(), "this is where doctor looks for the files of the executor: set the variable it names, or pass --token-file")
+		return "", false
+	}
+	isDefault, err := isDefaultSettings(d.deps.GOOS, d.settingsPath, !d.settingsNamed)
+	if err != nil {
+		d.fail("executor.token", err.Error(), "pass --token-file with the token file of this instance")
+		return "", false
+	}
+	if !isDefault {
+		d.fail("executor.token", "--settings names "+d.settingsPath+", which is not the default settings file, so this is a second instance, and without --token-file the files of its executor are not known: the default token file "+file+" is the main instance's, and its executor is not checked as this one's",
+			"pass --token-file with the token file of this instance (the one its install was given); if this is the only instance on this computer and "+file+" is its token file, pass --token-file "+quoteArg(file))
+		return "", false
+	}
+	return file, true
+}
+
+// checkExecutorColocated runs the checks of the executor on this computer, beside the token file that executorTokenFile finds.
 func (d *doctor) checkExecutorColocated(ctx context.Context) {
-	tokenFile := d.tokenFile
-	if tokenFile == "" {
-		var err error
-		if tokenFile, err = defaultTokenFile(d.deps); err != nil {
-			d.fail("executor.token", err.Error(), "this is where doctor looks for the files of the executor: set the variable it names, or pass --token-file")
-			return
-		}
+	tokenFile, ok := d.executorTokenFile()
+	if !ok {
+		return
 	}
 	plan, err := planExecutor(d.deps, tokenFile, d.s, engineBinDir(d.rt))
 	if err != nil {
 		d.fail("executor.lifecycle", err.Error(), "set the variable it names, then run doctor again")
 		return
 	}
-	d.checkExecutorToken(plan)
-	d.checkExecutorColocatedBinary(plan)
 	registered, running, stateErr := plan.state(ctx, d.deps)
+	other := false // what is registered is another instance's executor: a computer has one, and the install skips it
+	if stateErr == nil {
+		other, stateErr = plan.foreign(registered)
+	}
+	fix, notRunning := d.installFix(), plan.startHint()
+	if other { // no install makes this instance an executor of its own while that one is registered
+		fix = d.anotherInstanceFix()
+		notRunning = fix
+	}
+	d.checkExecutorToken(plan) // the install makes the token copy and the service's token whatever becomes of the executor, so its fix stays the install's
+	d.checkExecutorColocatedBinary(plan, fix)
 	switch {
 	case stateErr != nil:
 		d.fail("executor.lifecycle", "ask the operating system about the executor: "+stateErr.Error(), d.installFix())
+	case other:
+		d.fail("executor.lifecycle", "the executor of this user is registered for another instance, not for the token file "+tokenFile+": a computer has one executor", fix)
 	case !registered:
 		d.fail("executor.lifecycle", "the executor is not registered with the operating system: it should be "+executorMechanism(plan.goos), d.installFix())
 	default:
@@ -52,13 +89,15 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 		switch {
 		case stateErr != nil:
 			return fmt.Errorf("it is not known whether the executor runs: %w", stateErr)
+		case other:
+			return errors.New("the executor that is registered is another instance's, so none runs for this one")
 		case !running:
 			return errors.New("the executor is not running")
 		}
 		return nil
 	}, runningFixes{
 		noToken:    d.installFix(),
-		notRunning: plan.startHint(),
+		notRunning: notRunning,
 		notSeen:    "read the executor's log (" + plan.logWhere() + "), then " + d.installFix() + ", so that the service and the executor hold one token and one port",
 	})
 	d.checkExecutorImage(ctx)
@@ -118,20 +157,20 @@ func (d *doctor) checkExecutorToken(plan executorPlan) {
 // checkExecutorColocatedBinary checks the executor's copy of the program: there, as installed (its pin), and this program's build. The pin
 // is the release's line of SHA256SUMS when the install was given them (--sha256sums), else the hash of the program that the install copied, which is a
 // warning: nothing checked it against a release.
-func (d *doctor) checkExecutorColocatedBinary(plan executorPlan) {
+func (d *doctor) checkExecutorColocatedBinary(plan executorPlan, fix string) {
 	sum, err := hashFile(plan.binary)
 	if errors.Is(err, fs.ErrNotExist) {
-		d.fail("executor.binary", "no executor binary at "+plan.binary, d.installFix())
+		d.fail("executor.binary", "no executor binary at "+plan.binary, fix)
 		return
 	}
 	if err != nil {
-		d.fail("executor.binary", err.Error(), d.installFix())
+		d.fail("executor.binary", err.Error(), fix)
 		return
 	}
 	pin, err := os.ReadFile(plan.pin)
 	fields := strings.Fields(string(pin))
 	if err != nil || len(fields) == 0 {
-		d.fail("executor.binary", "no pin of the executor's binary at "+plan.pin, d.installFix())
+		d.fail("executor.binary", "no pin of the executor's binary at "+plan.pin, fix)
 		return
 	}
 	own, err := d.ownHash()
@@ -139,9 +178,9 @@ func (d *doctor) checkExecutorColocatedBinary(plan executorPlan) {
 	case err != nil:
 		d.fail("executor.binary", "hash this program: "+err.Error(), "this is a bug of the installer: report it")
 	case sum != fields[0]:
-		d.fail("executor.binary", fmt.Sprintf("the executor's binary has changed since it was installed (SHA-256 %s, pinned %s)", sum, fields[0]), d.installFix())
+		d.fail("executor.binary", fmt.Sprintf("the executor's binary has changed since it was installed (SHA-256 %s, pinned %s)", sum, fields[0]), fix)
 	case sum != own:
-		d.fail("executor.binary", fmt.Sprintf("the executor runs another build than this program (the executor's SHA-256 %s, this program's %s)", sum, own), d.installFix())
+		d.fail("executor.binary", fmt.Sprintf("the executor runs another build than this program (the executor's SHA-256 %s, this program's %s)", sum, own), fix)
 	case len(fields) >= 2 && releaseAssetOf(plan.goos).MatchString(fields[1]):
 		d.pass("executor.binary", "the executor's binary (SHA-256 "+sum+") is the pinned one, this program's, and the release's line of SHA256SUMS "+fields[1]+". "+colocatedAssurance)
 	default:

@@ -154,7 +154,7 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 		scr.Warn("A console window shows when the executor starts: a task of the logged-on user cannot hide it. Closing the window stops the executor, and the task starts it again within a minute.\n")
 	}
 	if c.s.Runtime == RuntimeDocker {
-		scr.Say("The executor runs its sandboxes through Docker's own engine: a docker command that reaches Podman's socket (its docker shim, for one) fails closed, because it does not know the flags the sandbox needs. Use --runtime podman for Podman.\n")
+		scr.Say("The executor runs its sandboxes through Docker's own engine: Docker's own CLI pointed at Podman's socket fails closed, because it does not know the flags the sandbox needs, while Podman's docker shim (the podman-docker package) works against Podman. Use --runtime podman for Podman.\n")
 	}
 	scr.Say("The executor holds one credential, its own token (%s), and it reaches the service at http://127.0.0.1:%d. It runs as your user, next to your coding agent, so its assurance is lower than on a separate host: what doctor pins catches drift and accident, not a determined agent.\n", plan.tokenFile, c.s.HTTPPort)
 	scr.Say("Keep one executor for each container engine: at start it removes every %s container of its engine, so a second one (the executor started by hand, say) would remove the sandboxes of the first.\n", sandboxNamePrefix)
@@ -186,30 +186,51 @@ func removeExecutor(ctx context.Context, d Deps, tokenFile string) (existed, for
 	return true, false, plan.remove(ctx, d, registered)
 }
 
+// removeByHand is how a person stops the executor and removes it where the operating system keeps it, for an uninstall that could not: the
+// commands of each system, then the executor's directory.
+func removeByHand(goos string) string {
+	switch goos {
+	case "windows":
+		return fmt.Sprintf("end the scheduled task with `schtasks /End /TN \"%[1]s\"`, end the process with `taskkill /IM %[2]s /F` if it still runs, delete the task with `schtasks /Delete /TN \"%[1]s\" /F`, and delete that directory", executorTaskName, executorBinaryName(goos))
+	case "darwin":
+		return fmt.Sprintf("`launchctl bootout gui/$(id -u)/%[1]s` stops it and unloads it, and deleting that directory and ~/Library/LaunchAgents/%[1]s.plist removes it", executorLabel)
+	default:
+		return fmt.Sprintf("where the user manager of this user runs, `systemctl --user disable --now %s` stops it, and deleting that directory and its unit file removes it", executorUnitName)
+	}
+}
+
 // pathExists says whether something is at the path.
 func pathExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
 
-// instanceTokenFile is the token file of the instance a command works on: --token-file, else the per-user default.
-func instanceTokenFile(r *Resolver, d Deps) (string, error) {
+// instanceTokenFile is the token file of the instance an install or an upgrade works on: --token-file, else the per-user default, which is this
+// instance's only with the default settings file (the rule of tokenFileOf). The executor's files, its unit and its start are beside the token file,
+// so another settings file with no --token-file would plan in, stop and restart the main instance's executor. It refuses before anything is changed.
+func instanceTokenFile(r *Resolver, env Env, t installTarget) (string, error) {
 	if file := r.preset("token-file", ""); file != "" {
 		return file, nil
 	}
-	return defaultTokenFile(d)
+	file, err := defaultTokenFile(env.Deps)
+	if err != nil {
+		return "", err
+	}
+	isDefault, err := isDefaultSettings(env.Deps.GOOS, t.settingsPath, t.defaultPath)
+	if err != nil {
+		return "", err
+	}
+	if !isDefault {
+		return "", fmt.Errorf("--settings names %[1]s, which is not the default settings file, so this is a second instance, and without --token-file this command would use the default token file %[2]s, which is the main instance's (its executor and its token copy are beside it): pass --token-file with a file of this instance's own; if this is the only instance on this computer and %[2]s is its token file, pass --token-file %[3]s; nothing was changed", t.settingsPath, file, quoteArg(file))
+	}
+	return file, nil
 }
 
 // refreshExecutor is what an upgrade at the installed release does about the executor: the same as an install, so that a program that was
 // replaced since reaches the executor's copy, and an executor that stopped is started. It needs the token copy that the install made.
-func refreshExecutor(ctx context.Context, r *Resolver, env Env, rt Runtime, s Settings, pin string) error {
-	tokenFile, err := instanceTokenFile(r, env.Deps)
-	if err != nil {
-		return err
-	}
+func refreshExecutor(ctx context.Context, env Env, rt Runtime, s Settings, tokenFile, pin string) {
 	c := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, tokenFile: tokenFile, executorPin: pin}
 	c.setUpExecutor(ctx)
-	return nil
 }
 
 // releasePin is the pin that --sha256sums gives the executor: the line of the release's SHA256SUMS that lists this program for this system, checked
@@ -242,12 +263,10 @@ func releasePin(r *Resolver, d Deps) (string, error) {
 
 // upgradeColocatedCurrent is an upgrade of a stack that runs the release already: it says so, and sets the executor up as an install does, so that a
 // program that was replaced since, or a pin of the release's sums that was given now, reaches the executor.
-func upgradeColocatedCurrent(ctx context.Context, r *Resolver, env Env, rt Runtime, s Settings, t installTarget, image, pin string) error {
+func upgradeColocatedCurrent(ctx context.Context, r *Resolver, env Env, rt Runtime, s Settings, t installTarget, tokenFile, image, pin string) error {
 	d := refreshCopy(ctx, env) // first: the hint names the program as the refreshed copy answers
-	r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctorHint(d.command(), t.settingsPath, t.defaultPath))
+	r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), colocatedDoctorHint(d, t, tokenFile))
 	env.Deps = d
-	if err := refreshExecutor(ctx, r, env, rt, s, pin); err != nil {
-		return err
-	}
+	refreshExecutor(ctx, env, rt, s, tokenFile, pin)
 	return holdPage(r.screen)
 }

@@ -192,7 +192,7 @@ func (l *listFlag) Set(v string) error { *l = append(*l, v); return nil }
 var installFlags = []struct{ name, usage string }{
 	{"answers", "read answers from this YAML file (a flag wins over it)"},
 	{"settings", "the installer settings file (default: the per-user configuration directory)"},
-	{"token-file", "where the copy of the MCP token for a client is written (default: the per-user directory)"},
+	{"token-file", "where the copy of the MCP token for a client is written, and the executor's files beside it (default: the per-user directory, with the default settings file only: another --settings file needs --token-file)"},
 	{"tier", "co-located (this computer) or isolated"},
 	{"runtime", "podman (recommended) or docker"},
 	{"connection", "the Podman connection, or the Docker context (default: the rootless Podman machine, or Docker Desktop's)"},
@@ -450,7 +450,7 @@ func installHost(ctx context.Context, args []string, env Env) (err error) {
 func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 	fs := newFlagSet("doctor")
 	fs.String("settings", "", "the installer settings file (default: the per-user configuration directory)")
-	fs.String("token-file", "", "where the instance keeps the copy of its MCP token, which the files of its executor are beside (default: the per-user directory)")
+	fs.String("token-file", "", "where the instance keeps the copy of its MCP token, which the files of its executor are beside (default: the per-user directory, with the default settings file only: another --settings file needs --token-file)")
 	fs.Bool("json", false, "print the results as JSON")
 	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)

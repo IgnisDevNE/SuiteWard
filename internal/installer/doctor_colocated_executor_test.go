@@ -29,6 +29,18 @@ func coloStatus(sinceLastSeen time.Duration) string {
 // coloExecFiles are the files of the executor of the fake's operating system, in the directories of the test.
 type coloExecFiles struct{ token, dir, binary, pin string }
 
+// coloTokenFile is the default token file of the fake computer, beside which colocated.build puts down the files of a healthy executor. The settings
+// files of these tests are temporary ones, which doctor takes for another instance's, so a test that checks the executor names this token file as
+// --token-file.
+func coloTokenFile(t *testing.T, f *fakeEngine) string {
+	t.Helper()
+	file, err := defaultTokenFile(f.deps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
 func coloExecFilesOf(t *testing.T, f *fakeEngine) coloExecFiles {
 	t.Helper()
 	tokenFile, err := defaultTokenFile(f.deps())
@@ -55,11 +67,15 @@ func healthyColocatedExecutor(t *testing.T, f *fakeEngine) {
 	f.exe = program
 	files := coloExecFilesOf(t, f)
 	sum := sha256.Sum256([]byte(coloProgramText))
-	for path, content := range map[string]string{
+	made := map[string]string{
 		files.token:  strings.Repeat("c", 64),
 		files.binary: coloProgramText,
 		files.pin:    hex.EncodeToString(sum[:]) + "  " + testReleaseAsset(f.goos) + "\n", // made from a release's sums
-	} {
+	}
+	if f.goos == "windows" { // a registered task is this instance's when this instance made the two files of it
+		made[filepath.Join(files.dir, executorWrapperName)], made[filepath.Join(files.dir, "task.xml")] = "the wrapper", "the task"
+	}
+	for path, content := range made {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -197,7 +213,7 @@ func TestDoctorColocatedLoopbackOfAPodmanMachineThatDoesNotAnswerFromThisCompute
 				t.Fatal(err)
 			}
 			unreachable := func(context.Context, string) ([]byte, error) { return nil, errors.New("connection refused") }
-			results := doctorChecks(context.Background(), f.deps(), unreachable, path, "")
+			results := doctorChecks(context.Background(), f.deps(), unreachable, path, coloTokenFile(t, f))
 			var got doctorResult
 			for _, r := range results {
 				if r.Name == "executor.loopback" {

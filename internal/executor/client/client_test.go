@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -109,17 +110,21 @@ func TestLeaseReadsTheJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lease: %v", err)
 	}
-	if lease.JobID != 7 || lease.LeaseID != leaseID || lease.Plan != PlanReceipt || lease.Pull != 12 || lease.Profile.ID != "go" || lease.Profile.Image != image {
-		t.Errorf("the job is %+v", lease.Job)
+	want := Job{
+		JobID: 7, LeaseID: leaseID, Plan: PlanReceipt, Pull: 12,
+		LeaseExpiresAt: time.Date(2026, 10, 27, 10, 1, 0, 0, time.UTC), DeadlineAt: time.Date(2026, 10, 27, 10, 30, 0, 0, time.UTC),
+		Profile:     Profile{ID: "go", Image: image},
+		Head:        Commit{SHA: headSHA, Tree: []TreeEntry{{Path: "go.mod", Mode: "100644", SHA: headSHA}}},
+		Base:        &Commit{SHA: baseSHA, Tree: []TreeEntry{}},
+		Manifest:    Manifest{Source: "V1", Digest: digest, Files: []ManifestFile{{Path: ".suiteward.yml", Digest: digest}}},
+		Declaration: []byte("version: 1\n"),
+		Limits: Limits{
+			ArchiveBytes: 268435456, FileBytes: 8388608, TestTimeoutSeconds: 600, MemoryMiB: 3072, CPUs: 4, Pids: 512, TmpfsMiB: 1024,
+			PrefetchModules: 2000, PrefetchBytes: 536870912, Reruns: 2,
+		},
 	}
-	if lease.Head.SHA != headSHA || lease.Base == nil || lease.Base.SHA != baseSHA || len(lease.Head.Tree) != 1 || lease.Head.Tree[0] != (TreeEntry{Path: "go.mod", Mode: "100644", SHA: headSHA}) {
-		t.Errorf("the commits are %+v and %+v", lease.Head, lease.Base)
-	}
-	if lease.Manifest.Source != "V1" || lease.Manifest.Digest != digest || len(lease.Manifest.Files) != 1 || string(lease.Declaration) != "version: 1\n" {
-		t.Errorf("the manifest is %+v and the declaration %q", lease.Manifest, lease.Declaration)
-	}
-	if lease.Limits.TmpfsMiB != 1024 || lease.Limits.PrefetchBytes != 536870912 || lease.Limits.Reruns != 2 || lease.DeadlineAt != time.Date(2026, 10, 27, 10, 30, 0, 0, time.UTC) {
-		t.Errorf("the limits are %+v, the deadline %v", lease.Limits, lease.DeadlineAt)
+	if !reflect.DeepEqual(lease.Job, want) {
+		t.Errorf("the job is %+v; want %+v", lease.Job, want)
 	}
 	got := s.requests()
 	if len(got) != 1 || got[0].Method != http.MethodPost || got[0].URL.Path != "/executor/v1/lease" {

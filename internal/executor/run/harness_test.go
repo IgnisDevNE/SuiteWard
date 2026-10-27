@@ -218,12 +218,6 @@ func newService(t *testing.T, steps ...any) *service {
 	return s
 }
 
-func (s *service) enqueue(steps ...any) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.steps = append(s.steps, steps...)
-}
-
 func (s *service) leaseRequests() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

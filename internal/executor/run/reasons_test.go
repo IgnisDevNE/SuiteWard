@@ -224,6 +224,7 @@ func TestAStreamThatBreaksShortOfItsLimitIsAGitHubFailureAndOneCutAtItsLimitIsTo
 	}{
 		"broken": {func(w http.ResponseWriter) {
 			_, _ = w.Write(archive[:len(archive)/2])
+			w.(http.Flusher).Flush() // the 200 is sent: from here the status cannot change, and an abort is a broken stream
 			panic(http.ErrAbortHandler)
 		}, 256 << 20, reasonGitHubUnavailable},
 		"cut at the limit": {bytesAnswer(archive), 100, reasonTooLarge},

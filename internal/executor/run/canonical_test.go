@@ -58,37 +58,50 @@ func TestACanonicalJobRunsTheDeclaredTestsOnTheHeadWithTheManifestLaidOver(t *te
 		t.Errorf("the runs selected %v and %v; want both tests, then TestB alone", runs[0].Names, runs[1].Names)
 	}
 	for i, c := range runs {
-		for _, want := range []string{"src/go.mod", "src/lib.go", "src/lib_test.go", "src/.suiteward.yml"} {
-			if _, ok := c.Files[want]; !ok {
-				t.Errorf("run %d: the tar lacks %s: %v", i, want, c.Entries)
-			}
+		assertTree(t, i, c)
+		assertSpec(t, i, c)
+	}
+}
+
+// assertTree checks the tar that a container of the canonical job extracted: the head with the manifest laid over it, and the files that
+// go needs of its own.
+func assertTree(t *testing.T, i int, c call) {
+	t.Helper()
+	for _, want := range []string{"src/go.mod", "src/lib.go", "src/lib_test.go", "src/.suiteward.yml"} {
+		if _, ok := c.Files[want]; !ok {
+			t.Errorf("run %d: the tar lacks %s: %v", i, want, c.Entries)
 		}
-		if _, ok := c.Files["src/extra_test.go"]; ok {
-			t.Errorf("run %d: the tar holds a test of the head that the governing scope covers and the manifest lacks", i)
-		}
-		if got := string(c.Files["src/lib_test.go"]); got != libTests {
-			t.Errorf("run %d: lib_test.go is %q, not the manifest's", i, got)
-		}
-		if !hasPrefixEntry(c.Entries, goprofile.HomeDir+"/") || !hasPrefixEntry(c.Entries, goprofile.TmpDir+"/") {
-			t.Errorf("run %d: go's HOME and TMPDIR have no placeholder file in the tar: %v", i, c.Entries)
-		}
-		if c.Entries[len(c.Entries)-1] != sandbox.CompleteMarker {
-			t.Errorf("run %d: the completion marker is not the last entry", i)
-		}
-		argv, env := goprofile.Command(testIDs(c.Names, c.Dirs), 600*time.Second, false)
-		spec := c.Spec
-		if !slices.Equal(spec.Argv, argv) || !slices.Equal(spec.Env, env) {
-			t.Errorf("run %d: argv %q env %q; want what goprofile.Command writes: %q %q", i, spec.Argv, spec.Env, argv, env)
-		}
-		if spec.Image != goprofile.Image || spec.Workdir != goprofile.TreeDir {
-			t.Errorf("run %d: image %q workdir %q", i, spec.Image, spec.Workdir)
-		}
-		if l := spec.Limits; l.MemoryMiB != 3072 || l.CPUs != 4 || l.Pids != 512 || l.TmpfsMiB != 1024 || l.KillAfter < 660*time.Second {
-			t.Errorf("run %d: the limits are %+v; want the job's, and a kill no sooner than 60 s after the test timeout", i, l)
-		}
-		if !slices.ContainsFunc(spec.Env, func(e string) bool { return strings.HasPrefix(e, "PATH=") }) {
-			t.Errorf("run %d: no PATH in the environment, which env -i clears", i)
-		}
+	}
+	if _, ok := c.Files["src/extra_test.go"]; ok {
+		t.Errorf("run %d: the tar holds a test of the head that the governing scope covers and the manifest lacks", i)
+	}
+	if got := string(c.Files["src/lib_test.go"]); got != libTests {
+		t.Errorf("run %d: lib_test.go is %q, not the manifest's", i, got)
+	}
+	if !hasPrefixEntry(c.Entries, goprofile.HomeDir+"/") || !hasPrefixEntry(c.Entries, goprofile.TmpDir+"/") {
+		t.Errorf("run %d: go's HOME and TMPDIR have no placeholder file in the tar: %v", i, c.Entries)
+	}
+	if c.Entries[len(c.Entries)-1] != sandbox.CompleteMarker {
+		t.Errorf("run %d: the completion marker is not the last entry", i)
+	}
+}
+
+// assertSpec checks what the container was asked to run, and with what.
+func assertSpec(t *testing.T, i int, c call) {
+	t.Helper()
+	argv, env := goprofile.Command(testIDs(c.Names, c.Dirs), 600*time.Second, false)
+	spec := c.Spec
+	if !slices.Equal(spec.Argv, argv) || !slices.Equal(spec.Env, env) {
+		t.Errorf("run %d: argv %q env %q; want what goprofile.Command writes: %q %q", i, spec.Argv, spec.Env, argv, env)
+	}
+	if spec.Image != goprofile.Image || spec.Workdir != goprofile.TreeDir {
+		t.Errorf("run %d: image %q workdir %q", i, spec.Image, spec.Workdir)
+	}
+	if l := spec.Limits; l.MemoryMiB != 3072 || l.CPUs != 4 || l.Pids != 512 || l.TmpfsMiB != 1024 || l.KillAfter < 660*time.Second {
+		t.Errorf("run %d: the limits are %+v; want the job's, and a kill no sooner than 60 s after the test timeout", i, l)
+	}
+	if !slices.ContainsFunc(spec.Env, func(e string) bool { return strings.HasPrefix(e, "PATH=") }) {
+		t.Errorf("run %d: no PATH in the environment, which env -i clears", i)
 	}
 }
 

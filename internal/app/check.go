@@ -67,9 +67,6 @@ type checkExecution struct {
 	Excluded int `json:"excluded"`
 }
 
-// canonicalGateReasons are the reasons of a check that the canonical gate holds, whose summary is the one of canonical: required (the texts are those of the publisher).
-var canonicalGateReasons = []string{reasonCanonicalPending, reasonCanonicalUnavailable, reasonCanonicalFailing}
-
 // output validates the payload and renders the title and the summary of its check run; key only names the
 // message in an error, which never quotes the payload.
 func (p checkPayload) output(key string) (title, summary string, err error) {
@@ -97,7 +94,11 @@ func (p checkPayload) check(key string) (commandtext.Check, error) {
 	case slices.ContainsFunc(p.Paths, func(path string) bool { return len(path) > maxSummaryText }):
 		return commandtext.Check{}, keyError(githubCheckKind, key, "a path is too long")
 	}
-	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal}
+	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal, Unblocked: p.Unblocked}
+	if p.Execution != nil {
+		c.Execution = &commandtext.CheckExecution{Tests: p.Execution.Tests, Passed: p.Execution.Passed, Skipped: p.Execution.Skipped, Failed: p.Execution.Failed,
+			Missing: p.Execution.Missing, Flaky: p.Execution.Flaky, Excluded: p.Execution.Excluded}
+	}
 	if p.Reference != "" {
 		var ok bool
 		if c.Proposal, c.Revision, ok = commandtext.ParseReference(p.Reference); !ok {
@@ -139,8 +140,7 @@ func newCheckMessageWithPaths(repo string, r checks.Result, tier, version string
 	return newCheckMessageOf(repo, r, tier, version, generation, paths, total, nil)
 }
 
-// newCheckMessageOf is newCheckMessageWithPaths for a result that the canonical gate decided: counts are those of a complete canonical run, nil for none. The
-// payload of such a check is validated and not rendered here: its text is the publisher's (the summary of canonical: required).
+// newCheckMessageOf is newCheckMessageWithPaths for a result that the canonical gate decided: counts are those of a complete canonical run, nil for none.
 func newCheckMessageOf(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int, counts *checkExecution) (governance.OutboxMessage, error) {
 	p := checkPayload{commentTarget: commentTarget{RepositoryID: r.RepositoryID, Repo: repo, Pull: r.PullNumber}, HeadSHA: r.HeadSHA, Generation: generation,
 		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version, PathsTotal: total, Execution: counts, Unblocked: r.Unblocked}
@@ -148,13 +148,7 @@ func newCheckMessageOf(repo string, r checks.Result, tier, version string, gener
 		p.Paths = boundedText(paths)
 	}
 	key := fmt.Sprintf("%s:%d:%d:%d", checkKey, r.RepositoryID, r.PullNumber, generation)
-	var err error
-	if slices.Contains(canonicalGateReasons, p.Reason) || p.Execution != nil || p.Unblocked {
-		_, err = p.check(key)
-	} else {
-		_, _, err = p.output(key)
-	}
-	if err != nil {
+	if _, _, err := p.output(key); err != nil {
 		return governance.OutboxMessage{}, err
 	}
 	payload, err := json.Marshal(p)

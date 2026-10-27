@@ -16,6 +16,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/mcp"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
@@ -105,6 +106,9 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 	reports := newChangeReports(store, artifacts) // one source for the report page, the revision comment and the check summary: one build at a time
 	a := &api{store: store, owners: store, logger: logger, tier: tier, reports: reports}
 	backend := &mcpBackend{store: store, owners: store, instance: store.Instance, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
+	executions := store.Execution()
+	liveness := execution.NewLiveness(time.Now()) // one record for the whole process: the executor API (M2.1-T4) writes it, the jobs read it
+	executorConfigured := cfg.ExecutorToken != ""
 	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
 		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger}, time.Now, logger)
 		if err != nil {
@@ -118,13 +122,15 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		problems := &bootstrapProblems{}
 		bootstrap := &bootstrapJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, problems: problems, logger: logger, now: time.Now}
 		riverConfig.Bootstrap = bootstrap.run
-		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: gh.repos, bot: gh.bot, reader: gh.readers.read, content: artifacts, contents: artifacts, pulls: store, tier: tier, logger: logger, now: time.Now}
+		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: gh.repos, bot: gh.bot, reader: gh.readers.read, content: artifacts, contents: artifacts, pulls: store, tier: tier, logger: logger, now: time.Now,
+			executions: executions, liveness: liveness, executor: cfg.Executor, executorConfigured: executorConfigured}
 		riverConfig.Commands = commandJob.run
 		comments := &commentPublisher{writer: gh.writer, bot: gh.bot, instance: newLazy(store.Instance), owners: store, suites: store, logger: logger, reports: reports, reportBase: cfg.ReportBaseURL}
 		checkPoster := &checkPublisher{runs: gh.checkRuns, ledger: store.Checks(), instance: newLazy(store.Instance), appID: gh.appID, logger: logger, reports: reports}
 		checkProblems := &bootstrapProblems{}
 		checkJob := &checksJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(), commands: store,
-			pulls: store, tier: tier, problems: checkProblems, logger: logger, now: time.Now}
+			pulls: store, tier: tier, problems: checkProblems, logger: logger, now: time.Now,
+			executions: executions, liveness: liveness, executor: cfg.Executor, executorConfigured: executorConfigured}
 		riverConfig.Checks = checkJob.run
 		mergeProblems := &bootstrapProblems{}
 		mergeJob := &mergesJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, content: artifacts, store: store, integrity: store.Integrity(), tier: tier,

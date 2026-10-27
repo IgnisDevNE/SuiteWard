@@ -58,7 +58,7 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, env Env
 		_, _ = fmt.Fprintf(out, "Stopped %s: an earlier uninstall left them without their unit files.\n", strings.Join(stopped, ", "))
 	}
 	if purge {
-		if err := purgeState(ctx, host.rt, host.envPath, host.settingsPath); err != nil {
+		if err := purgeState(ctx, host.rt, []string{host.envPath}, host.settingsPath); err != nil {
 			return err
 		}
 		if err := os.Remove(executorHandoverFile(host.configDir)); err != nil && !errors.Is(err, fs.ErrNotExist) {

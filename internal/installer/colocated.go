@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
@@ -117,6 +118,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err := c.bringUp(ctx, save); err != nil {
 		return err
 	}
+	c.setUpExecutor(ctx)
 	c.restartAfterReboot(ctx)
 	scr.Step(5)
 	return c.finish(ctx, scr, t)
@@ -264,7 +266,7 @@ func (c *colocatedInstall) pullImages(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return pullMissing(ctx, screenOn(c.out), c.rt, c.image, postgres)
+	return pullMissing(ctx, screenOn(c.out), c.rt, c.image, postgres, goprofile.Image) // the sandboxes of the executor run from the last
 }
 
 // pullMissing pulls the images the engine does not have yet, each under a spinner on a full screen.
@@ -391,6 +393,8 @@ type colocatedInstall struct {
 	machineUser string // the rootless user of the Podman machine, once it has been looked up
 
 	copyRows summaryRows // what the offer of the copy of the program says in the summary (installSelf)
+
+	executorRow string // what the summary says of the executor: how it is kept running, or why it is not
 }
 
 // secretState is what the stack already has of its database secrets, read before anything is changed.

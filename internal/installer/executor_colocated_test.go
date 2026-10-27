@@ -20,6 +20,11 @@ import (
 // launch agent on macOS, a systemd user unit on Linux. It runs a copy of this program that lives beside the token files, so that a program
 // that the user moves or deletes does not take the executor with it.
 
+// isOSCall says whether a command is one that keeps the executor running, which the operating system answers and no container engine does.
+func isOSCall(c call) bool {
+	return slices.Contains([]string{"systemctl", "schtasks", "tasklist", "launchctl", "id"}, c.name)
+}
+
 func (h *harness) executorDir() string { return filepath.Join(h.dir, "executor") }
 
 func (h *harness) executorBinary() string {
@@ -74,6 +79,9 @@ func TestInstallCopiesTheProgramAsTheExecutorAndRecordsItsPin(t *testing.T) {
 	}
 }
 
+// unitPath is a path as a systemd unit spells it inside quotes: the test machine may be a Windows one, whose separators are escaped there.
+func unitPath(p string) string { return strings.ReplaceAll(p, "\\", "\\\\") }
+
 func TestInstallStartsTheExecutorAsASystemdUserUnitOnLinux(t *testing.T) {
 	h := newHarness(t, "linux")
 	h.f.env["PATH"] = "/opt/podman/bin:/usr/bin"
@@ -83,9 +91,9 @@ func TestInstallStartsTheExecutorAsASystemdUserUnitOnLinux(t *testing.T) {
 	unit := h.readHome(".config/systemd/user/suiteward-executor.service")
 	lines := configLines([]byte(unit))
 	for _, want := range []string{
-		`ExecStart="` + h.executorBinary() + `" execute`,
+		`ExecStart="` + unitPath(h.executorBinary()) + `" execute`,
 		`Environment="SUITEWARD_EXECUTOR_URL=http://127.0.0.1:18081"`,
-		`Environment="SUITEWARD_EXECUTOR_TOKEN_FILE=` + executorTokenPath(h) + `"`,
+		`Environment="SUITEWARD_EXECUTOR_TOKEN_FILE=` + unitPath(executorTokenPath(h)) + `"`,
 		`Environment="SUITEWARD_EXECUTOR_RUNTIME=podman"`,
 		`Environment="CONTAINER_CONNECTION=pm"`, // the executor must reach the engine the installer chose, and its CLI inherits this
 		`Environment="PATH=/opt/podman/bin:/usr/bin"`,
@@ -115,7 +123,7 @@ func TestInstallStartsTheExecutorAsALaunchAgentOnMacOS(t *testing.T) {
 		"<string>" + h.executorBinary() + "</string><string>execute</string>",
 		"<key>SUITEWARD_EXECUTOR_URL</key><string>http://127.0.0.1:18081</string>",
 		"<key>SUITEWARD_EXECUTOR_RUNTIME</key><string>podman</string>",
-		"<key>CONTAINER_CONNECTION</key><string>podman-machine-default</string>",
+		"<key>CONTAINER_CONNECTION</key><string>pm</string>",
 		"<key>RunAtLoad</key><true/>", "<key>KeepAlive</key><true/>",
 	} {
 		if !strings.Contains(plist, want) {
@@ -147,7 +155,7 @@ func TestInstallStartsTheExecutorAsAScheduledTaskAtLogonOnWindows(t *testing.T) 
 		`set "SUITEWARD_EXECUTOR_URL=http://127.0.0.1:18081"`,
 		`set "SUITEWARD_EXECUTOR_TOKEN_FILE=` + executorTokenPath(h) + `"`,
 		`set "SUITEWARD_EXECUTOR_RUNTIME=podman"`,
-		`set "CONTAINER_CONNECTION=podman-machine-default"`,
+		`set "CONTAINER_CONNECTION=pm"`,
 		`"` + h.executorBinary() + `" execute`,
 	} {
 		if !strings.Contains(wrapper, want) {
@@ -230,7 +238,7 @@ func TestInstallStopsAScheduledTaskBeforeItReplacesTheProgramItHolds(t *testing.
 	again.dir = h.dir
 	again.exe = newer
 	again.have(kindSecret, SecretMCPAuth, SecretExecutorAuth)
-	again.f.on("tasklist", `"suiteward-executor.exe","4242","Console","1","20,000 K"`)
+	again.f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`)
 	if err := again.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +373,7 @@ func TestUninstallStopsAndRemovesTheExecutorAndKeepsItsTokenWithoutPurge(t *test
 	if err := un.uninstall("--runtime", "podman", "--connection", "pm", "--yes"); err != nil {
 		t.Fatal(err)
 	}
-	un.assertOrder("--user disable --now suiteward-executor.service", "stop --time 45 suiteward")
+	un.assertOrder("--user disable --now suiteward-executor.service", "rm --force --ignore --time 45 suiteward")
 	if _, err := os.Stat(un.executorDir()); !os.IsNotExist(err) {
 		t.Errorf("the executor's directory is still there: %v", err)
 	}

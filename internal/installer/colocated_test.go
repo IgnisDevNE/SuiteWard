@@ -319,6 +319,9 @@ func TestInstallPodmanBringsTheStackUpInOrder(t *testing.T) {
 		"run --detach --replace --name suiteward --network",
 	)
 	for _, c := range h.f.calls {
+		if isOSCall(c) {
+			continue // the executor is kept by the operating system, not by the engine
+		}
 		if c.args[0] != "--connection" || c.args[1] != "pm" {
 			t.Errorf("a call does not use the selected connection: %v", c.args)
 		}
@@ -1238,7 +1241,7 @@ func TestInstallDockerBringsTheStackUpWithSecretVolumes(t *testing.T) {
 		"run --detach --name suiteward --network",
 	)
 	for _, c := range h.f.calls {
-		if c.name == "icacls" {
+		if c.name == "icacls" || isOSCall(c) {
 			continue
 		}
 		if c.name != dockerDesktopCLI || c.args[0] != "--context" || c.args[1] != "desktop-linux" {

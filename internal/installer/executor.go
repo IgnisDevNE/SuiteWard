@@ -68,3 +68,8 @@ func RenderExecutorUnit(httpPort int) ([]byte, error) {
 	}
 	return []byte(text), nil
 }
+
+// executorDirOf is the directory of the executor of the co-located tier: beside the copy of the MCP token.
+func executorDirOf(tokenFile string) string {
+	return filepath.Join(filepath.Dir(tokenFile), "executor")
+}

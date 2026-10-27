@@ -254,6 +254,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	scr.Step(5)
 	c.restartAfterReboot(ctx)
 	c.env.Deps = refreshCopy(ctx, c.env) // before the hints below, which name the program as the refreshed copy answers
+	c.setUpExecutor(ctx)                 // after it: what it says names the program as the refreshed copy answers
 	cmd := c.env.Deps.command()
 	upgraded(scr, image, dir, goBackColocated(cmd, engine, previous.Image, dir, scopeFlags(r, false)), doctorHint(cmd, t.settingsPath, t.defaultPath))
 	c.installSelf(ctx)

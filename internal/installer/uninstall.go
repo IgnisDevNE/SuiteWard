@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
@@ -104,12 +105,14 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 		if token, question, listing, err = purgePlan(r, env.Deps, settingsPath, isDefault); err != nil {
 			return err
 		}
+	} else if token, err = tokenFileOf(r, env.Deps, isDefault); err != nil { // the executor is beside it, and is removed with the stack
+		return err
 	}
 	inst := instance{rt: rt, settingsPath: settingsPath, haveSettings: haveSaved, status: service.readStatus}
 	if err := inst.confirmRemoval(ctx, r, purge, question, listing...); err != nil {
 		return err
 	}
-	if err := removeStack(ctx, r, rt, purge, token, settingsPath); err != nil {
+	if err := removeStack(ctx, r, env.Deps, rt, purge, token, settingsPath); err != nil {
 		return err
 	}
 	if purge {
@@ -120,8 +123,20 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 
 // removeStack removes the three containers and, with purge, what they leave behind. The instance has been named and confirmed. A token file
 // that is not this instance's is kept and named.
-func removeStack(ctx context.Context, r *Resolver, rt Runtime, purge bool, token tokenCopy, settingsPath string) error {
+func removeStack(ctx context.Context, r *Resolver, d Deps, rt Runtime, purge bool, token tokenCopy, settingsPath string) error {
 	r.screen.Step(2) // Uninstall set the steps on this screen
+	// The executor first: it asks the service for jobs, and it is stopped before the service goes. It is this instance's only when the token file is.
+	if token.mine {
+		existed, err := removeExecutor(ctx, d, token.path)
+		if err != nil {
+			return err
+		}
+		if existed {
+			r.say("Stopped the executor and removed its program and its definition.\n")
+		}
+	} else if dir := executorDirOf(token.path); exists(dir) {
+		r.say("Kept the executor in %s: it is beside a token file that may belong to another instance.\n", dir)
+	}
 	for _, name := range []string{ContainerServe, ContainerMigrate, ContainerDB} {
 		if err := working(r.screen, "Stopping "+name, func() error { return rt.Remove(ctx, name) }); err != nil {
 			return err
@@ -132,10 +147,10 @@ func removeStack(ctx context.Context, r *Resolver, rt Runtime, purge bool, token
 		r.say("The volumes, the secrets and the settings are kept: run the install again to start the stack, or use --purge to remove them too.\n")
 		return nil
 	}
-	remove := ""
+	var remove []string
 	removed := "the network and " + settingsPath
 	if token.mine {
-		remove, removed = token.path, "the network, "+token.path+" and "+settingsPath
+		remove, removed = []string{token.path, executorTokenFile(token.path)}, "the network, "+token.path+", "+executorTokenFile(token.path)+" and "+settingsPath
 	}
 	if err := purgeState(ctx, rt, remove, settingsPath); err != nil {
 		return err
@@ -215,7 +230,7 @@ func purgeLines(settingsPath string, token tokenCopy) []string {
 	}
 	lines = append(lines, "This purge deletes:")
 	if token.mine {
-		lines = append(lines, "  the MCP token file "+token.path)
+		lines = append(lines, "  the MCP token file "+token.path, "  the executor's token copy "+executorTokenFile(token.path))
 	}
 	lines = append(lines,
 		"  the volumes "+VolumeData+" and "+VolumeDBData,
@@ -329,9 +344,9 @@ func (i instance) refuseUnnamed(ctx context.Context, r *Resolver, id string) err
 		"Type the id on a terminal (the word %s), or pass --settings with the settings file of the instance; nothing was removed", unknownValue, VolumeDBData, unknownValue)
 }
 
-// purgeState removes what the containers leave behind: the volumes, the secrets, the network, one more file (the MCP token copy, or the GitHub env file;
-// "" when it is not this instance's to remove) and the settings file. The containers are gone by now.
-func purgeState(ctx context.Context, rt Runtime, file, settingsPath string) error {
+// purgeState removes what the containers leave behind: the volumes, the secrets, the network, more files (the token copies, or the GitHub env file;
+// none when they are not this instance's to remove) and the settings file. The containers are gone by now.
+func purgeState(ctx context.Context, rt Runtime, files []string, settingsPath string) error {
 	for _, volume := range []string{VolumeData, VolumeDBData} {
 		if err := rt.Delete(ctx, KindVolume, volume); err != nil {
 			return err
@@ -343,7 +358,7 @@ func purgeState(ctx context.Context, rt Runtime, file, settingsPath string) erro
 	if err := rt.Delete(ctx, KindNetwork, NetworkName); err != nil {
 		return err
 	}
-	for _, path := range []string{file, settingsPath, pendingAppPath(settingsPath)} {
+	for _, path := range append(slices.Clone(files), settingsPath, pendingAppPath(settingsPath)) {
 		if path == "" {
 			continue
 		}

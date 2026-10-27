@@ -1,8 +1,8 @@
 # Architecture decision records
 
-- **Updated:** 2026-10-26
+- **Updated:** 2026-10-27
 - **Product:** SuiteWard
-- **State:** Accepted decisions. M1.2 to M1.11 are implemented and released (`v0.2.0` is current); the security hardening phase SH amended several records for it. [ADR 0028](0028-canonical-execution-and-the-receipt.md) records the design of phase M2.1 (canonical execution, the receipt and the Go profile), which is not implemented yet.
+- **State:** Accepted decisions. M1.2 to M1.11 are implemented and released (`v0.2.0` is current); the security hardening phase SH amended several records for it. [ADR 0028](0028-canonical-execution-and-the-receipt.md) records the design of phase M2.1 (canonical execution, the receipt and the Go profile), which is being implemented on the phase branch and is not released yet.
 
 ## Accepted records
 
@@ -35,7 +35,7 @@
 | [0025](0025-test-driven-development.md) | Mandatory task-level test-driven development | Test-first for authority, consent, promotion, idempotency, concurrency and adapter behavior; reviewed by `sw-reviewer`; amended (R1): no evidence JSON or ancestry validator. |
 | [0026](0026-versioned-postgresql-migrations.md) | Versioned PostgreSQL migrations | Embedded Goose Provider, pinned dependencies, sequential forward-only SQL, session locking and real upgrade evidence. Amended (R1): single normalized migration `00001`; amended (M1.2): River's schema vendored into goose; amended (SH): the least-privilege role and `suiteward migrate`. |
 | [0027](0027-agent-human-trust-separation.md) | Agent/human trust separation | TOTP code on every approve and revoke command, isolated and co-located installation tiers, and separate agent identity. Amended (SH): the code is consumed by its comment; commands apply to their own pull request. |
-| [0028](0028-canonical-execution-and-the-receipt.md) | Canonical execution and the receipt | Opt-in execution policy in `.suiteward.yml`, the canonical plan and the receipt, the receipt and canonical gates, the `SuiteWard / Receipt` check, the `mode` and `unblock` commands, the separate executor and its API, the sandbox and the Go profile, the trust layers and the evidence binding. Accepted for phase M2.1; not implemented yet. |
+| [0028](0028-canonical-execution-and-the-receipt.md) | Canonical execution and the receipt | Opt-in execution policy in `.suiteward.yml`, the canonical plan and the receipt, the receipt and canonical gates, the `SuiteWard / Receipt` check, the `mode` and `unblock` commands, the separate executor and its API, the sandbox and the Go profile, the trust layers and the evidence binding. Accepted for phase M2.1; being implemented on the phase branch, not released yet. |
 
 Naming, English as the project language, initial audience, and product positioning are recorded in the [project baseline](../project-baseline.md). They do not each need an architecture decision record.
 

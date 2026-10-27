@@ -132,6 +132,7 @@ func newExecutorAPI(d executorDeps) (http.Handler, error) {
 		r.Get("/archive/{side}", h.archive)
 		r.Get("/files/{digest}", h.file)
 		r.Post("/heartbeat", h.heartbeat)
+		r.Post("/result", h.result)
 	})
 	return r, nil
 }

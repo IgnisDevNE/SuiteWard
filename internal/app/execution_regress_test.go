@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
@@ -132,5 +134,38 @@ func TestChecksEndTheGitHubClockOfAHeadWhenAJobIsCreatedForIt(t *testing.T) {
 
 	if jobs := w.headJobs(5, cjHead2, execution.PlanReceipt); len(jobs) != 1 || jobs[0].ID != first.ID {
 		t.Fatalf("receipt jobs %+v, want only the first: the wait is counted from the failure that followed its creation", jobs)
+	}
+}
+
+// The files "not evaluated: pattern not approved yet" are the added or changed files that the head's declaration selects (its include less its exclude) and
+// the canonical's does not (docs/contracts/runtime.md, "What the checks job does for execution", step 2).
+func TestChecksListAsNotEvaluatedTheFilesTheHeadSelectsAndTheCanonicalDoesNot(t *testing.T) {
+	const tail = "execution:\n  profile: go\n  canonical: off\n  receipt: required\n"
+	cases := []struct {
+		name, canonical, head string
+		want                  []string
+	}{
+		{"a file that the head's own exclude leaves out is not listed", "version: 1\ninclude: [/tests/**]\n" + tail,
+			"version: 1\ninclude: [/tests/**, /pkg/**]\nexclude: [/pkg/gen/**]\n" + tail, []string{"pkg/a_test.go"}},
+		{"a file that the canonical's exclude leaves out is not selected by it", "version: 1\ninclude: [/tests/**]\nexclude: [/tests/gen/**]\n" + tail,
+			"version: 1\ninclude: [/tests/**]\n" + tail, []string{"tests/gen/x_test.go"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := newExecWorld(t, c.canonical)
+			files := execHeadFiles(c.head, "v2") // tests/a_test.go changes under the canonical include, which makes the receipt apply
+			diff := []github.PullFile{{Path: ".suiteward.yml", Status: "modified"}, {Path: "tests/a_test.go", Status: "modified"}}
+			for _, path := range []string{"pkg/a_test.go", "pkg/gen/b_test.go", "tests/gen/x_test.go"} {
+				files[path] = "package x\n"
+				diff = append(diff, github.PullFile{Path: path, Status: "added"})
+			}
+			w.reader.files = map[int][]github.PullFile{5: diff}
+
+			w.execPullFive(files)
+
+			if got := w.onlyJob(5, cjHead2, execution.PlanReceipt); !slices.Equal(got.UnapprovedPaths, c.want) {
+				t.Errorf("not evaluated paths %q, want %q", got.UnapprovedPaths, c.want)
+			}
+		})
 	}
 }

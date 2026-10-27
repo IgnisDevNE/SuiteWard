@@ -33,7 +33,7 @@ type receiptReason struct {
 
 var receiptReasons = map[string]receiptReason{
 	"receipt-running": {CheckInProgress, "Receipt pending",
-		"SuiteWard is running the tests that this revision adds or changes, on the head and on the code before the change. The check has no result yet."},
+		"The receipt of this head has not finished: it is waiting for an executor, or it is running. The check has no result yet."},
 	"receipt-failing": {CheckFailure, "Receipt: failing or missing tests",
 		"At least one test that this revision adds or changes FAILS or is MISSING on the head, or a changed test file does not parse. The counts below are what SuiteWard saw."},
 	"receipt-complete": {CheckSuccess, "Receipt ready",
@@ -67,15 +67,22 @@ var unavailableWords = map[string]string{
 const (
 	evidenceSentence         = "Observed by this instance's executor. Evidence, not a verdict."
 	receiptUnblockedSentence = "The owner unblocked this head: its receipt was unavailable, so the tests did not run."
+	// emptyReceiptText is the text of receipt-complete when no test was evaluated: "SuiteWard ran the tests" would say something the run did not do.
+	emptyReceiptText = "This revision adds or changes no test that SuiteWard can run, so the receipt is empty. The counts below are what it saw."
 )
 
 // ReceiptCheckSummary renders the output title and summary of the Receipt check run: the state and what it means, the revision, the tier, the count of each state, the
-// excluded tests, the marker lines and the changed test files that do not parse, that the results are evidence, for a receipt that was not run why, and the owner's
-// unblock. The reason, the state and the counts come from storage, so a value that does not fit is an impossible state and panics.
+// excluded tests, the marker lines and the changed test files that do not parse, that the results are evidence (unless nothing was observed: receipt-not-applicable),
+// for a receipt that was not run why, and the owner's unblock. The reason, the state and the counts come from storage, so a value that does not fit is an impossible
+// state and panics.
 func ReceiptCheckSummary(c ReceiptCheck) (title, summary string) {
 	reason, err := validateReceiptCheck(c)
 	must(err)
-	parts := []string{reason.text}
+	text := reason.text
+	if c.Reason == "receipt-complete" && c.Counts.Empty() {
+		text = emptyReceiptText
+	}
+	parts := []string{text}
 	if c.Unavailable != "" {
 		parts = append(parts, "Why: "+unavailableWords[c.Unavailable]+".")
 	}
@@ -87,7 +94,10 @@ func ReceiptCheckSummary(c ReceiptCheck) (title, summary string) {
 	for _, fact := range ReceiptFacts(c.Counts, c.Markers) {
 		facts = append(facts, "- "+fact)
 	}
-	parts = append(parts, strings.Join(facts, "\n"), evidenceSentence)
+	parts = append(parts, strings.Join(facts, "\n"))
+	if c.Reason != "receipt-not-applicable" {
+		parts = append(parts, evidenceSentence)
+	}
 	if c.Unblocked {
 		parts = append(parts, receiptUnblockedSentence)
 	}

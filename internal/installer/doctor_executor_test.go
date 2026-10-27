@@ -124,6 +124,9 @@ func TestDoctorIsolatedExecutorFailures(t *testing.T) {
 			if !strings.Contains(res[c.check].Fix, c.fix) {
 				t.Errorf("fix %q does not mention %q", res[c.check].Fix, c.fix)
 			}
+			if fix := res[c.check].Fix; strings.Contains(fix, "install host") && !strings.Contains(fix, "--sha256sums") {
+				t.Errorf("fix %q sends the administrator to a host step that refuses to run without --sha256sums", fix)
+			}
 		})
 	}
 }

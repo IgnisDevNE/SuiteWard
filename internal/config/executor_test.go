@@ -102,7 +102,7 @@ func TestLoadExecutorDurationRanges(t *testing.T) {
 	for _, test := range []struct {
 		name, lo, hi, below, above string
 	}{
-		{"EXECUTOR_JOB_TIMEOUT", "12m", "6h", "11m59s", "6h0m1s"},
+		{"EXECUTOR_JOB_TIMEOUT", "12m30s", "6h", "12m29s", "6h0m1s"},
 		{"EXECUTOR_LEASE_WAIT", "2m", "1h", "1m59s", "1h0m1s"},
 		{"EXECUTOR_GITHUB_WAIT", "1m", "6h", "59s", "6h0m1s"},
 	} {
@@ -127,13 +127,13 @@ func TestLoadExecutorDurationRanges(t *testing.T) {
 }
 
 // The floor leaves a hung test to go test's own kill (a failure), not to the executor's drop of the attempt (a timeout): the test bound, go test's
-// kill a minute later, the executor's 30 s margin and 30 s for the build.
+// kill a minute later, the executor's 30 s margin and 60 s for everything around the test binary.
 func TestLoadExecutorJobTimeoutRefusalStatesTheFloor(t *testing.T) {
 	vars := executorVars(t)
-	vars["SUITEWARD_EXECUTOR_JOB_TIMEOUT"] = "11m59s"
+	vars["SUITEWARD_EXECUTOR_JOB_TIMEOUT"] = "12m29s"
 	_, _, err := fakeEnv{vars: vars}.load()
-	if err == nil || !strings.Contains(err.Error(), "12m0s") {
-		t.Fatalf("Load = %v, want a refusal that states the 12m0s floor", err)
+	if err == nil || !strings.Contains(err.Error(), "12m30s") {
+		t.Fatalf("Load = %v, want a refusal that states the 12m30s floor", err)
 	}
 }
 

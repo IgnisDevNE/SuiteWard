@@ -74,18 +74,24 @@ func decodeReceiptCheck(key string, payload json.RawMessage) (receiptCheckPayloa
 	if err != nil {
 		return p, err
 	}
+	return p, requireCountKeys(receiptCheckKind, key, payload)
+}
+
+// requireCountKeys reports, as an error of the message key, that the `counts` object of payload lacks a key of the receipt counts. decodePayload read the payload
+// before: only the shape of the counts is left to see, which strict decoding cannot tell from a count of zero.
+func requireCountKeys(kind, key string, payload json.RawMessage) error {
 	var raw struct {
 		Counts map[string]json.RawMessage `json:"counts"`
 	}
-	if err := json.Unmarshal(payload, &raw); err != nil { // decodePayload read it: only the shape of the counts is left to see
-		return p, keyError(receiptCheckKind, key, "the payload does not decode")
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return keyError(kind, key, "the payload does not decode")
 	}
 	for _, name := range receiptCountKeys {
 		if _, present := raw.Counts[name]; !present {
-			return p, keyError(receiptCheckKind, key, "a count of the receipt is missing")
+			return keyError(kind, key, "a count of the receipt is missing")
 		}
 	}
-	return p, nil
+	return nil
 }
 
 // receiptLedger is the part of the ledger of the Receipt check that the publisher reads.

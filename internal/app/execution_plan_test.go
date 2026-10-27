@@ -11,6 +11,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github/rest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
@@ -499,4 +500,72 @@ func (w *cjJobWorld) seedJob(spec execution.Spec) execution.Job {
 		w.t.Fatal(err)
 	}
 	return job
+}
+
+// A policy whose canonical level is off wants no canonical job, whatever the check says of the head: an open canonical job of an earlier policy is cancelled as obsolete,
+// so that no executor leases it, also when the check does not settle whether the revision is ready (an invalid source, or the failure of a wrong code that the head
+// keeps while its receipt is still wanted).
+func TestChecksCancelTheOpenCanonicalJobOfAHeadWhoseCheckDoesNotSettleReadinessWhenTheCanonicalLevelIsOff(t *testing.T) {
+	t.Run("a head with an invalid source", func(t *testing.T) {
+		decl := execDeclaration("off", "required")
+		w := newExecWorld(t, decl)
+		files := execHeadFiles(decl, "v2")
+		files[".suiteward.yml"] = "version: 1\ninclude: [\n" // the head's declaration does not parse: the check says nothing of a revision
+		w.tree(cjHead2, files)
+		w.sync(map[int]string{5: cjHead2})
+		canonical := w.seedJob(execSpec(w, execution.PlanCanonical, cjHead2, 5)) // of the policy that had the level on
+
+		w.execRun()
+
+		w.want(5, checks.Failure, "invalid-source", 1)
+		if got := w.jobByID(canonical.ID); got.State != execution.StateCancelled || got.Reason != execution.ReasonObsolete {
+			t.Errorf("the canonical job is %s/%q, want cancelled/obsolete", got.State, got.Reason)
+		}
+	})
+	t.Run("a head with a revision whose stored check is a wrong code", func(t *testing.T) {
+		w := receiptWorld(t, "required")
+		w.entry(5, 302, bootOwnerID, commands.InvalidCode, "") // a wrong code
+		w.execRun()
+		w.want(5, checks.Failure, "owner-command-rejected", 2)
+		canonical := w.seedJob(execSpec(w, execution.PlanCanonical, cjHead2, 5)) // of the policy that had the level on
+
+		w.execRun() // nothing moved: the stored check is the failure, which names the revision and not whether it is ready
+
+		w.want(5, checks.Failure, "owner-command-rejected", 2)
+		if got := w.jobByID(canonical.ID); got.State != execution.StateCancelled || got.Reason != execution.ReasonObsolete {
+			t.Errorf("the canonical job is %s/%q, want cancelled/obsolete", got.State, got.Reason)
+		}
+		if jobs := w.headJobs(5, cjHead2, execution.PlanReceipt); len(jobs) != 1 || jobs[0].State != execution.StatePending {
+			t.Errorf("receipt jobs %+v, want the pending one: the receipt is still wanted", jobs)
+		}
+	})
+}
+
+// The Suite a run reads and the policy it plans from are one canonical: a promotion between the two reads must not key a job with the manifest of V1 and the levels of
+// V2, which the evidence binding of the job would then record as levels that held.
+func TestChecksPlanFromThePolicyOfTheCanonicalOfTheSuiteTheyRead(t *testing.T) {
+	w := newMgWorldOf(t, newExecWorld(t, gateDecl)) // V1 requires the canonical run
+	enrollment, _, err := w.owners.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := enrollment.Projects[0]
+	view, err := w.check.suite(t.Context(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.approved(5, cjHead2, "v2", 2, 201)
+	w.leave(5)
+	w.merged(5, cjHead2, mgSHA5, "v2", time.Minute)
+	w.advance(time.Minute)
+	w.mustMerge() // V2 is promoted from a tree whose declaration has no execution block
+	if version, _ := w.canonical(); version != "V2" {
+		t.Fatalf("canonical %s, want V2", version)
+	}
+
+	x, err := w.check.executionRunOf(t.Context(), view)
+
+	if err != nil || !x.known || x.policy.canonical != domain.CanonicalLevelRequired || x.policy.declaration != artifact.Hash([]byte(gateDecl)) {
+		t.Fatalf("executionRunOf = %+v, %v; want the policy of V1, which the view holds: canonical required, the declaration of V1", x.policy, err)
+	}
 }

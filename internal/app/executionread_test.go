@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
@@ -291,5 +293,34 @@ func TestTheReceiptJobAGateReadsNeedsTheManifestTheRevisionExpects(t *testing.T)
 				t.Fatalf("gateJob = job %d, found %v, error %v; want an error and no job", got.ID, found, err)
 			}
 		})
+	}
+}
+
+// A project with no Suite has nothing to read: the view is empty, and no error. That is all a not found means to the view; a revision that the Suite names and the
+// unit of work cannot read is a failure, never an empty view that the callers read as "no Suite" (the unblock refused as "not unavailable", an approve that is not gated).
+func TestTheReceiptViewOfAProjectWithNoSuiteIsEmpty(t *testing.T) {
+	w := newExecWorld(t, gateDecl)
+
+	view, err := w.check.reads().receiptView(t.Context(), bootRepoID+1, func(context.Context, governance.Tx) (contract.Proposal, bool, error) {
+		t.Error("find was called for a project with no Suite")
+		return contract.Proposal{}, false, nil
+	})
+
+	if err != nil || view.revised || !view.expected.IsZero() {
+		t.Fatalf("receiptView revised %v, expected manifest zero %v, error %v; want the empty view and no error", view.revised, view.expected.IsZero(), err)
+	}
+}
+
+func TestTheReceiptViewFailsWhenTheRevisionTheSuiteNamesCannotBeRead(t *testing.T) {
+	w := newExecWorld(t, gateDecl)
+
+	view, err := w.check.reads().receiptView(t.Context(), bootRepoID, func(ctx context.Context, tx governance.Tx) (contract.Proposal, bool, error) {
+		proposal, _, err := tx.Proposal(ctx, proposalID(99)) // the carrier names it, and the Suite does not hold it
+		return proposal, err == nil, err
+	})
+
+	var failure *opaque
+	if !errors.As(err, &failure) || view.revised {
+		t.Fatalf("receiptView revised %v, error %v; want an opaque error and no view", view.revised, err)
 	}
 }

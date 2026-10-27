@@ -15,7 +15,6 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
-	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
@@ -47,16 +46,16 @@ func (p executionPolicy) selection() domain.Selection {
 }
 
 // policy reads the execution policy from the declaration of the canonical (docs/contracts/runtime.md, "The effective policy"). The canonical
-// declaration governs every pull request, the one that changes it included.
-func (j *checksJob) policy(ctx context.Context, p owner.ProjectPolicy) (executionPolicy, error) {
-	raw, canonical, err := canonicalDeclaration(ctx, j.suites, j.contents, owner.ProjectID(p.RepositoryID))
+// declaration governs every pull request, the one that changes it included. It is the canonical of the Suite view, read in the same unit of work as its manifest, so that
+// a promotion between two reads cannot key a job with the manifest of one version and the levels of another.
+func (j *checksJob) policy(ctx context.Context, suite suiteView) (executionPolicy, error) {
+	raw, declaration, err := governance.CanonicalDeclaration(ctx, j.contents, suite.snapshot)
 	if errors.Is(err, governance.ErrNoCanonicalDeclaration) {
 		return executionPolicy{}, nil
 	}
 	if err != nil {
 		return executionPolicy{}, fmt.Errorf("read the canonical declaration: %w", err)
 	}
-	declaration := canonical.Declaration()
 	execution, found := declaration.Execution()
 	if !found {
 		return executionPolicy{}, nil
@@ -92,12 +91,12 @@ type executionRun struct {
 
 // executionRunOf reads the policy of the project, once for the run. Before the first canonical, and for a canonical that failed its integrity
 // verification, nothing is planned. A policy that cannot be read is the error, and the run decides nothing.
-func (j *checksJob) executionRunOf(ctx context.Context, p owner.ProjectPolicy, suite suiteView) (*executionRun, error) {
+func (j *checksJob) executionRunOf(ctx context.Context, suite suiteView) (*executionRun, error) {
 	x := &executionRun{}
 	if suite.canonical == "" || suite.integrityFailed {
 		return x, nil
 	}
-	policy, err := j.policy(ctx, p)
+	policy, err := j.policy(ctx, suite)
 	if err != nil {
 		x.failed = true
 		return x, err
@@ -217,7 +216,7 @@ func (x *executionRun) baseSpec(s *pullState, plan execution.Plan) execution.Spe
 // execute decides what execution wants of the head of a pull request, whose check was decided as assessed before another rule held it back, and
 // creates the jobs (docs/contracts/runtime.md, "What the checks job does for execution", steps 2 to 5). The canonical plan depends on whether the revision is
 // ready, which a check that another rule decided (a wrong code, an invalid source) does not say: such a head wants no canonical job yet, and its open
-// canonical jobs stay. The receipt plan needs only the revision and the canonical version it expects, so it is decided whenever the check names the revision.
+// canonical jobs stay, unless the canonical level is off, which wants none. The receipt plan needs only the revision and the canonical version it expects, so it is decided whenever the check names the revision.
 func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, assessed checks.Result) (headJobs, error) {
 	if !x.known {
 		return headJobs{}, nil
@@ -227,11 +226,16 @@ func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, 
 	if fork || !x.policy.wants() {
 		return headJobs{receiptDecided: !fork}, j.cancelObsolete(ctx, s, nil, both) // nothing is wanted: a Receipt check that was published is withdrawn
 	}
+	// With the canonical level off no canonical job is wanted, whatever the check says of the head: an open one of an earlier policy is cancelled.
+	var unwanted []execution.Plan
+	if !x.policy.canonicalOn() {
+		unwanted = []execution.Plan{execution.PlanCanonical}
+	}
 	ready, known := executionBasis(assessed)
 	receiptWanted := x.policy.receiptOn() && assessed.Reference != ""
 	if !known && !receiptWanted {
 		if x.policy.receiptOn() { // the receipt may still be wanted once the revision of the head is known
-			return headJobs{}, nil
+			return headJobs{}, j.cancelObsolete(ctx, s, nil, unwanted)
 		}
 		// A receipt level that is off decides the receipt whatever the check says of the head: no receipt job is wanted, so the open ones are cancelled.
 		return headJobs{receiptDecided: true}, j.cancelObsolete(ctx, s, nil, []execution.Plan{execution.PlanReceipt})
@@ -246,7 +250,7 @@ func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, 
 	}
 	var wants []wantedJob
 	jobs := headJobs{reference: assessed.Reference, receiptDecided: true}
-	plans := []execution.Plan{execution.PlanReceipt}
+	plans := append([]execution.Plan{execution.PlanReceipt}, unwanted...)
 	if known {
 		plans = both
 		if x.policy.canonicalOn() {

@@ -675,8 +675,17 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 	return nil
 }
 
-func (p *commentPublisher) acknowledgment(ctx context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+// decodeAck reads the payload of an acknowledgment strictly. Every key of its counts is always present, as in the Receipt check's payload.
+func decodeAck(key string, payload json.RawMessage) (ackPayload, error) {
 	a, err := decodePayload[ackPayload](githubCommentKind, key, payload)
+	if err != nil || a.Counts == nil {
+		return a, err
+	}
+	return a, requireCountKeys(githubCommentKind, key, payload)
+}
+
+func (p *commentPublisher) acknowledgment(ctx context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+	a, err := decodeAck(key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
 	}

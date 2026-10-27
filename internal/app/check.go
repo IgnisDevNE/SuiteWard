@@ -17,6 +17,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // The github_check publisher (docs/contracts/runtime.md, "Outbox kind github_check"). The check job decides the
@@ -67,6 +68,12 @@ type checkExecution struct {
 	Excluded int `json:"excluded"`
 }
 
+// checkCountsOf is the counts of a complete canonical run as a check states them: the tests that ran are every declared test but the excluded ones. The receipt page states
+// the same counts, as the commandtext type of the same fields.
+func checkCountsOf(c domain.CanonicalCounts) *checkExecution {
+	return &checkExecution{Tests: c.Pass + c.Fail + c.Skipped + c.Missing + c.Flaky, Passed: c.Pass, Skipped: c.Skipped, Failed: c.Fail, Missing: c.Missing, Flaky: c.Flaky, Excluded: c.Excluded}
+}
+
 // output validates the payload and renders the title and the summary of its check run; key only names the
 // message in an error, which never quotes the payload.
 func (p checkPayload) output(key string) (title, summary string, err error) {
@@ -96,8 +103,8 @@ func (p checkPayload) check(key string) (commandtext.Check, error) {
 	}
 	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal, Unblocked: p.Unblocked}
 	if p.Execution != nil {
-		c.Execution = &commandtext.CheckExecution{Tests: p.Execution.Tests, Passed: p.Execution.Passed, Skipped: p.Execution.Skipped, Failed: p.Execution.Failed,
-			Missing: p.Execution.Missing, Flaky: p.Execution.Flaky, Excluded: p.Execution.Excluded}
+		counts := commandtext.CheckExecution(*p.Execution)
+		c.Execution = &counts
 	}
 	if p.Reference != "" {
 		var ok bool

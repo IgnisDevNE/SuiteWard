@@ -630,3 +630,49 @@ func TestChecksNeverTakeAWaitedRecordForTheCarrierEvenAtTheCurrentRevision(t *te
 		t.Fatalf("record %+v, want the assessment of P1-R1", record)
 	}
 }
+
+// ghostBootstrapSuites runs the work of a unit of work over a transaction whose latest bootstrap proposal is one that Proposal cannot read.
+type ghostBootstrapSuites struct{ governance.UnitOfWork }
+
+func (s ghostBootstrapSuites) Do(ctx context.Context, project contract.ProjectID, suite contract.SuiteID, fn func(context.Context, governance.Tx) error) error {
+	return s.UnitOfWork.Do(ctx, project, suite, func(ctx context.Context, tx governance.Tx) error { return fn(ctx, ghostBootstrapTx{tx}) })
+}
+
+type ghostBootstrapTx struct{ governance.Tx }
+
+func (ghostBootstrapTx) LatestBootstrapProposal(context.Context) (contract.ProposalID, bool, error) {
+	return "P1", true, nil
+}
+
+func (ghostBootstrapTx) Proposal(context.Context, contract.ProposalID) (contract.Proposal, contract.Consent, error) {
+	return contract.Proposal{}, contract.Consent{}, governance.ErrNotFound
+}
+
+// A project with no Suite has no view yet, which the bootstrap job creates: the view is empty, and no error. Only that is "no Suite": a proposal that the Suite names as its
+// latest and that cannot be read is a failure, never the same empty view, which the pull requests would read as bootstrap-awaiting.
+func TestTheSuiteViewOfAProjectWithNoSuiteIsEmpty(t *testing.T) {
+	w := newCJWorld(t, false)
+	enrollment, _, err := w.owners.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	view, err := w.check.suite(t.Context(), enrollment.Projects[0])
+
+	if err != nil || view.exists {
+		t.Fatalf("suite = exists %v, error %v; want the empty view and no error", view.exists, err)
+	}
+}
+
+func TestTheSuiteViewFailsWhenTheLatestBootstrapProposalCannotBeRead(t *testing.T) {
+	w := newCJBootWorld(t)
+	w.check.suites = ghostBootstrapSuites{w.suites}
+	enrollment, _, err := w.owners.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := w.check.suite(t.Context(), enrollment.Projects[0]); err == nil {
+		t.Fatal("suite = no error; want the failure of the read, not an empty view")
+	}
+}

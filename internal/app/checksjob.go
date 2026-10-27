@@ -156,7 +156,7 @@ func (j *checksJob) pullRequests(ctx context.Context, enrollment owner.State, p 
 	}
 	slices.SortFunc(pulls, func(a, b githubsync.PullState) int { return a.Number - b.Number })
 	var failures []error
-	x, err := j.executionRunOf(ctx, p, suite) // a policy that cannot be read fails the run, and decides nothing about execution
+	x, err := j.executionRunOf(ctx, suite) // a policy that cannot be read fails the run, and decides nothing about execution
 	if err != nil {
 		failures = append(failures, fmt.Errorf("read the execution policy: %w", err))
 	}
@@ -190,10 +190,11 @@ type suiteView struct {
 	exists          bool // the bootstrap job created the Suite
 	revision        int64
 	canonical       contract.SuiteVersionID
-	base            artifact.Manifest // the canonical's manifest, which the receipt of a revision is decided against
-	manifest        artifact.Digest   // the digest of the canonical's manifest: what a canonical job runs against until a revision is approved
-	integrityFailed bool              // the stored bytes of the canonical failed their verification
-	carrier         bootstrapCarrier  // without a canonical: the Suite's latest bootstrap proposal
+	base            artifact.Manifest          // the canonical's manifest, which the receipt of a revision is decided against
+	manifest        artifact.Digest            // the digest of the canonical's manifest: what a canonical job runs against until a revision is approved
+	integrityFailed bool                       // the stored bytes of the canonical failed their verification
+	carrier         bootstrapCarrier           // without a canonical: the Suite's latest bootstrap proposal
+	snapshot        contract.CanonicalSnapshot // the canonical as this view read it, which the execution policy of the run is read from
 }
 
 // bootstrapCarrier is the Suite's latest bootstrap proposal and the pull request that carries it; found is false when no
@@ -208,12 +209,14 @@ type bootstrapCarrier struct {
 func (j *checksJob) suite(ctx context.Context, p owner.ProjectPolicy) (suiteView, error) {
 	project := owner.ProjectID(p.RepositoryID)
 	var view suiteView
+	entered := false // Do answers ErrNotFound before it runs the work when the Suite does not exist: one that comes later is a read that failed
 	err := j.suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		entered = true
 		state, err := tx.Suite(ctx)
 		if err != nil {
 			return fmt.Errorf("load suite: %w", err)
 		}
-		view.exists = true
+		view.exists, view.snapshot = true, state.Canonical
 		view.revision = int64(state.Canonical.Suite().Revision())
 		view.canonical, _ = state.Canonical.Suite().CurrentVersionID()
 		if view.canonical != "" {
@@ -237,7 +240,7 @@ func (j *checksJob) suite(ctx context.Context, p owner.ProjectPolicy) (suiteView
 		view.carrier = bootstrapCarrier{found: true, pull: pull, branch: current.OriginKind() == contract.OriginBranch, reference: current.Binding().Reference()}
 		return nil
 	})
-	if errors.Is(err, governance.ErrNotFound) { // no Suite yet: the bootstrap creates it
+	if errors.Is(err, governance.ErrNotFound) && !entered { // no Suite yet: the bootstrap creates it
 		return suiteView{}, nil
 	}
 	if err != nil || view.canonical == "" {
@@ -323,6 +326,10 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			}
 		}
 	}
+	countsErr := j.restoreCounts(ctx, s, x, &d, &executed)
+	if cancelled := ctx.Err(); cancelled != nil { // restoreCounts left the check as it was; a stopping run publishes nothing
+		return "", cancelled
+	}
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
 		return "", err
 	}
@@ -335,7 +342,38 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err := j.commentAfterCheck(ctx, s, d.result, d.runners); err != nil {
 		return "", err
 	}
-	return d.problem, stepErr
+	return d.problem, errors.Join(stepErr, countsErr)
+}
+
+// restoreCounts gives a check that a wait restored the counts of the canonical run it was decided with. The stored result of the head goes out again when the ledger
+// sends a lost publication, and the builder refuses a canonical-failing check without its counts, which failed the step of every run until the wait ended; a required
+// success carries them too, and went out without. They are read again from the job the gate reads, and the gate is not decided again: a wait decides nothing new. A
+// success is restored with them only under a policy that was read, which says that the check carries counts. A canonical-failing check whose counts cannot be read, or no
+// longer show a blocking test, says assessment-pending, as a head with no decision does. The failure of the read is returned, once the check is published.
+func (j *checksJob) restoreCounts(ctx context.Context, s *pullState, x *executionRun, d *pullDecision, executed *executionOutcome) error {
+	failing := d.result.Reason == reasonCanonicalFailing
+	success := d.result.State == checks.Success && !d.result.Unblocked && x.known && x.policy.canonical == domain.CanonicalLevelRequired
+	if !d.wait || (!failing && !success) {
+		return nil
+	}
+	job, found, err := j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical, artifact.Digest{})
+	var run canonicalRun
+	if err == nil {
+		run, err = j.reads().canonical(ctx, job, found)
+	}
+	if cancelled := ctx.Err(); cancelled != nil { // the run is stopping, and the read failed because of it: that says nothing of the counts
+		return cancelled
+	}
+	c := run.counts // zero unless the run is complete
+	blocking := c.Fail+c.Missing+c.Flaky > 0
+	switch {
+	case err == nil && run.status == domain.RunComplete && failing == blocking: // the counts fit the reason, which is what the builder requires
+		executed.counts = checkCountsOf(c)
+	case failing:
+		d.result = s.base
+		d.result.State, d.result.Reason = checks.InProgress, reasonAssessmentPending
+	}
+	return err
 }
 
 func (j *checksJob) pullState(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState) (*pullState, error) {

@@ -226,6 +226,7 @@ func TestAcknowledgePanicsOnAnExecutionFieldThatDoesNotFit(t *testing.T) {
 		"an unknown mode":                                      withMode(notMet(), 99),
 		"a negative count":                                     counts(func(c *execution.ReceiptCounts) { c.Fails = -1 }),
 		"a negative excluded count":                            counts(func(c *execution.ReceiptCounts) { c.Excluded = -1 }),
+		"a negative count of files that do not parse":          counts(func(c *execution.ReceiptCounts) { c.Unparsed = -1 }),
 		"a negative marker count":                              func() commandtext.Ack { a := notMet(); a.Markers = -1; return a }(),
 		"counts on a pending receipt": func() commandtext.Ack {
 			a := refused(execution.ReasonReceiptPending, 0)
@@ -265,5 +266,23 @@ func TestAcknowledgePanicsOnAnExecutionFieldThatDoesNotFit(t *testing.T) {
 				t.Error("ValidateAck accepts it")
 			}
 		})
+	}
+}
+
+// A changed test file that go cannot parse blocks every mode, so the acknowledgment of an unmet mode says how many there are when there are some, and nothing of the
+// subject when there are none.
+func TestAcknowledgeAnUnmetModeStatesTheChangedTestFilesThatDoNotParseOnlyWhenThereAreSome(t *testing.T) {
+	const unparsed = "Changed test files that do not parse: 3."
+	a := refused(execution.ReasonModeNotMet, execution.ModeFix)
+	a.Counts = execution.ReceiptCounts{Detects: 1, Unparsed: 3}
+	body := render(t, func() string { return commandtext.Acknowledge(a) })
+	if !strings.Contains(body, unparsed) {
+		t.Errorf("body lacks %q:\n%s", unparsed, body)
+	}
+
+	a.Counts.Unparsed = 0
+	body = render(t, func() string { return commandtext.Acknowledge(a) })
+	if strings.Contains(body, "do not parse") {
+		t.Errorf("body speaks of files that do not parse though there are none:\n%s", body)
 	}
 }

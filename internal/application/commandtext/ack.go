@@ -192,7 +192,7 @@ func checkGate(a Ack) error {
 		}
 	case execution.ReasonModeNotMet:
 		c := a.Counts
-		if a.Mode == execution.ModeNone || min(c.Detects, c.Inert, c.NewAPI, c.Fails, c.Missing, c.Flaky, c.Skipped, c.Excluded, a.Markers) < 0 {
+		if a.Mode == execution.ModeNone || min(c.Detects, c.Inert, c.NewAPI, c.Fails, c.Missing, c.Flaky, c.Skipped, c.Excluded, c.Unparsed, a.Markers) < 0 {
 			return fmt.Errorf("commandtext: the gate reason %q needs a mode and counts that are not negative", a.Gate)
 		}
 	default:

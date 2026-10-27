@@ -95,7 +95,7 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	if err != nil {
 		return plan, err
 	}
-	if other, err := plan.foreign(ctx, d, registered); err != nil {
+	if other, err := plan.foreign(registered); err != nil {
 		return plan, err
 	} else if other {
 		return plan, errors.New("a computer has one executor, and the one of this user is registered for another instance's token file: this instance did not change it; remove that instance (`uninstall`), then install again")
@@ -172,7 +172,7 @@ func removeExecutor(ctx context.Context, d Deps, tokenFile string) (existed, for
 		}
 		return false, false, err
 	}
-	if foreign, err = plan.foreign(ctx, d, registered); err != nil || foreign {
+	if foreign, err = plan.foreign(registered); err != nil || foreign {
 		return false, foreign, err // the executor of another instance is not this one's to remove
 	}
 	if !registered && !pathExists(plan.dir) {

@@ -554,7 +554,6 @@ func TestUninstallKeepsTheExecutorThatIsRegisteredForAnotherInstance(t *testing.
 func TestInstallDoesNotRepointAScheduledTaskOfAnotherInstance(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
 	h.first("/Query /TN SuiteWard Executor", "") // a task is registered, and this instance has no executor files: it is another instance's
-	h.first("/Query /TN SuiteWard Executor /XML", `<Actions><Exec><Command>D:/elsewhere/executor/run.cmd</Command></Exec></Actions>`)
 	if err := h.podman(); err != nil {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
 	}

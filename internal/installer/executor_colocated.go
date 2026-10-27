@@ -392,19 +392,12 @@ func (p executorPlan) remove(ctx context.Context, d Deps, registered bool) error
 
 // foreign says whether the executor that this user has registered belongs to another instance. The unit, the launch agent and the task have one
 // name for each user, so an executor of another token file is registered under the same one: its definition names a program in another directory.
-// registered is what state said; a definition that cannot be read as another's (no file, a task that is not there, an answer that names no wrapper)
-// is not taken for one.
-func (p executorPlan) foreign(ctx context.Context, d Deps, registered bool) (bool, error) {
+// registered is what state said. On Windows the task is read from no answer of schtasks, which comes in the console code page and not in UTF-8
+// (a profile path with a letter outside ASCII would not match): a registered task is this instance's when this instance made its two files.
+func (p executorPlan) foreign(registered bool) (bool, error) {
 	switch p.goos {
 	case "windows":
-		if !registered {
-			return false, nil
-		}
-		out, err := d.Exec(ctx, "schtasks", []string{"/Query", "/TN", executorTaskName, "/XML"}, nil)
-		if err != nil {
-			return false, fmt.Errorf("read the scheduled task: %w", err)
-		}
-		return strings.Contains(string(out), executorWrapperName) && !strings.Contains(string(out), xmlEscaper.Replace(p.wrapper)), nil
+		return registered && (!pathExists(p.wrapper) || !pathExists(p.taskXML)), nil
 	case "darwin":
 		return definitionNames(p.definition, xmlEscaper.Replace(p.binary))
 	default:

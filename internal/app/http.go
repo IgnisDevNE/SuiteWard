@@ -81,11 +81,21 @@ func newRouter(a *api) http.Handler {
 	r.Get("/healthz", a.healthz)
 	r.Get("/readyz", a.readyz)
 	r.Get("/status", a.status)
+	r.Mount("/executor/v1", a.executorHandler())
 	r.Route("/reports", func(r chi.Router) {
 		r.Use(reportGuard)
 		r.Get("/{owner}/{repo}/{revision}", a.report)
 	})
 	return r
+}
+
+// executorHandler is the executor API, or, without EXECUTOR_TOKEN, a handler that serves nothing: 404 with an empty body, as for a path that
+// was never served.
+func (a *api) executorHandler() http.Handler {
+	if a.executor != nil {
+		return a.executor
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
 }
 
 func (a *api) healthz(w http.ResponseWriter, r *http.Request) {

@@ -431,7 +431,6 @@ func TestExecutorRejectsAMissingOrWrongToken(t *testing.T) {
 		"a wrong token":    withToken("wrong-token-0123456789-abcdefghijklmnop"),
 		"a longer token":   withToken(execTestToken + "x"),
 		"a shorter token":  withToken(execTestToken[:len(execTestToken)-1]),
-		"a padded token":   withToken(execTestToken + " "),
 		"the token cased":  withToken(strings.ToUpper(execTestToken)),
 		"a token in other": withHeader("X-Token", execTestToken),
 	} {

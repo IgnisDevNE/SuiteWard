@@ -130,8 +130,8 @@ func tickEvery(d time.Duration) (<-chan time.Time, func()) {
 }
 
 // Run checks the runtime, sweeps the leftover containers and leases jobs until ctx ends. A clean stop is nil; an error is fatal. The
-// signal that ends ctx stops the leasing at once, and the job in flight is let to finish (the supervisor's stop timeout decides how long: a
-// job that it kills leaves a lease that expires, and the job is leased again).
+// signal that ends ctx stops the leasing at once; the job in flight has the grace (30 s) to finish and post, and is then dropped, with its
+// container killed and nothing posted, so that its lease expires and the job is leased again. The supervisor's stop timeout must exceed the grace.
 func (e *Executor) Run(ctx context.Context) error {
 	name, version, err := e.cfg.Runtime.Info(ctx)
 	if err != nil {

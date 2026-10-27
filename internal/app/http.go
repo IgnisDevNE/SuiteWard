@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 )
 
 // storeTimeout bounds what a probing request asks of the database.
@@ -31,16 +32,30 @@ type store interface {
 	Instance(ctx context.Context) (string, error)
 }
 
+// executionCounter is the part of the execution store /status reads.
+type executionCounter interface {
+	Counts(ctx context.Context) (map[execution.State]int, error)
+}
+
+// executionStatus is what /status reports of execution: whether an executor token is configured, how many jobs are in each state, and when
+// an executor was last seen (docs/contracts/runtime.md, "HTTP surface").
+type executionStatus struct {
+	enabled  bool
+	jobs     executionCounter
+	liveness *execution.Liveness
+}
+
 // api serves /healthz, /readyz, /status and the change report pages. Only fixed reasons reach a
 // response; the cause of a failure is logged.
 type api struct {
-	store    store
-	logger   *slog.Logger
-	tier     string // the configured installation tier
-	owners   ownerReader
-	github   *githubStatus // nil when the GitHub settings are not set
-	reports  reportSource  // rebuilds the change report of a revision for the report page
-	stopping atomic.Bool   // set when shutdown begins: readiness turns 503 first
+	store     store
+	logger    *slog.Logger
+	tier      string // the configured installation tier
+	owners    ownerReader
+	github    *githubStatus    // nil when the GitHub settings are not set
+	execution *executionStatus // nil only where an api is built without execution; serve always sets it
+	reports   reportSource     // rebuilds the change report of a revision for the report page
+	stopping  atomic.Bool      // set when shutdown begins: readiness turns 503 first
 }
 
 func newRouter(a *api) http.Handler {

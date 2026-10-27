@@ -673,7 +673,7 @@ func TestInstallIsolatedRefusesAnotherUserOrAnUnexpectedHome(t *testing.T) {
 func TestInstallIsolatedSaysWhenTheOldEnvFileMayGoAccordingToTheServiceState(t *testing.T) {
 	for running, want := range map[bool]string{true: "on its next start", false: "now reads"} {
 		home := t.TempDir()
-		installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: DefaultHTTPPort, MCPPort: DefaultMCPPort, EnvFile: "/etc/suiteward/github.env"})
+		installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: DefaultHTTPPort, MCPPort: DefaultMCPPort, EnvFile: "/etc/suiteward/github.env", NoExecutor: true}) // a stack of a release before the executor
 		if err := os.MkdirAll(filepath.Dir(envFile(home)), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -1135,7 +1135,7 @@ func TestInstallIsolatedRefusesAPortSomethingElseListensOn(t *testing.T) {
 // installedStackUnits installs the stack the next tests re-run over: ports 18081 and 18091, a job timeout of 3m.
 func installedStackUnits(t *testing.T, home string) {
 	t.Helper()
-	installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: 18081, MCPPort: 18091, JobTimeout: "3m", EnvFile: DefaultEnvFile})
+	installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: 18081, MCPPort: 18091, JobTimeout: "3m", EnvFile: DefaultEnvFile, NoExecutor: true}) // a stack of a release before the executor, which the host has no token for
 }
 
 func TestInstallIsolatedChecksEveryPortButTheOnesOfTheRunningStack(t *testing.T) {
@@ -1290,7 +1290,7 @@ func TestInstallIsolatedRerunRestartsARunningServiceWhenWhatItReadsChanges(t *te
 		t.Run(name, func(t *testing.T) {
 			terminalForSetup(t)
 			home := t.TempDir()
-			installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: DefaultHTTPPort, MCPPort: DefaultMCPPort, EnvFile: DefaultEnvFile, NoGitHub: tc.noGitHub})
+			installedUnits(t, home, UnitParams{Digest: testDigest, Tier: config.TierIsolated, HTTPPort: DefaultHTTPPort, MCPPort: DefaultMCPPort, EnvFile: DefaultEnvFile, NoGitHub: tc.noGitHub, NoExecutor: true})
 			writeAccountEnvFile(t, home, tc.env)
 			f := newIsoFake(home)
 			f.serviceRunning, f.everActive = true, true

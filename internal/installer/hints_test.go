@@ -65,7 +65,7 @@ func doctorAs(t *testing.T, f *fakeEngine, cmd, path string) map[string]doctorRe
 	deps := f.deps()
 	deps.Command = cmd
 	var out bytes.Buffer
-	Doctor(context.Background(), deps, path, &out, true)
+	Doctor(context.Background(), deps, path, "", &out, true)
 	var list []doctorResult
 	if err := json.Unmarshal(out.Bytes(), &list); err != nil {
 		t.Fatalf("doctor --json printed %q: %v", out.String(), err)

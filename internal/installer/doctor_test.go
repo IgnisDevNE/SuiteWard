@@ -81,7 +81,38 @@ func readOnlyViolation(c call) string {
 			return ""
 		}
 	}
+	if executorProbeAllowed(baseName(c.name), args) {
+		return ""
+	}
 	return "not an allowed command"
+}
+
+// executorProbeAllowed says whether a command is one of the probes of the executor's checks, which only ask: the files of the executor, that are
+// world-readable, and the controllers of its manager; `systemctl show` of a system unit; the operating system's own questions about the executor.
+func executorProbeAllowed(name string, args []string) bool {
+	has := func(prefix ...string) bool {
+		return len(args) >= len(prefix) && slices.Equal(args[:len(prefix)], prefix)
+	}
+	under := func(prefixes ...string) bool {
+		return len(args) == 1 && slices.ContainsFunc(prefixes, func(p string) bool { return strings.HasPrefix(args[0], p) })
+	}
+	switch name {
+	case "systemctl":
+		return has("show")
+	case "cat":
+		return under("/etc/", "/usr/local/libexec/suiteward/", "/sys/fs/cgroup/")
+	case "sha256sum":
+		return under("/usr/local/libexec/suiteward/")
+	case "pgrep", "tasklist":
+		return true
+	case "schtasks":
+		return has("/Query")
+	case "launchctl":
+		return has("print")
+	case "id":
+		return slices.Equal(args, []string{"-u"}) || has("-u", ServiceAccount) && len(args) == 2 || has("-u", ExecutorAccount) && len(args) == 2
+	}
+	return false
 }
 
 func engineViolation(args []string) string {
@@ -89,7 +120,7 @@ func engineViolation(args []string) string {
 		return len(args) >= len(prefix) && slices.Equal(args[:len(prefix)], prefix)
 	}
 	switch {
-	case has("inspect"), has("info"), has("version"), has("container", "ls"), has("system", "connection", "list"), has("machine", "list"):
+	case has("inspect"), has("image", "inspect"), has("info"), has("version"), has("container", "ls"), has("system", "connection", "list"), has("machine", "list"):
 		return ""
 	case has("machine", "ssh"): // the last argument is the command run in the machine
 		remote := args[len(args)-1]
@@ -166,7 +197,7 @@ func runDoctorRaw(t *testing.T, f *fakeEngine, s Settings, jsonOut bool) (int, s
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	code := Doctor(context.Background(), f.deps(), path, &out, jsonOut)
+	code := Doctor(context.Background(), f.deps(), path, "", &out, jsonOut)
 	assertReadOnly(t, f)
 	return code, out.String()
 }
@@ -232,7 +263,7 @@ func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 		c.health = `{"status":"ok"}`
 	}
 	if c.status == "" {
-		c.status = okStatus
+		c.status = coloStatus(5 * time.Second)
 	}
 	if c.checkOut == "" {
 		c.checkOut = okCheck
@@ -282,6 +313,7 @@ func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 		f.on("machine list", machineList)
 		f.on("/healthz", c.health).on("/readyz", `{"status":"ready"}`).on("/status", c.status)
 	}
+	healthyColocatedExecutor(t, f)
 	return f, s
 }
 
@@ -488,7 +520,7 @@ func TestDoctorStopsAtMissingOrInvalidSettings(t *testing.T) {
 	f := newFake("linux")
 	var out bytes.Buffer
 	path := filepath.Join(t.TempDir(), "settings.yaml")
-	if code := Doctor(context.Background(), f.deps(), path, &out, true); code != 1 {
+	if code := Doctor(context.Background(), f.deps(), path, "", &out, true); code != 1 {
 		t.Errorf("exit %d for a missing file", code)
 	}
 	var list []doctorResult
@@ -499,7 +531,7 @@ func TestDoctorStopsAtMissingOrInvalidSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if code := Doctor(context.Background(), f.deps(), path, &out, true); code != 1 || !strings.Contains(out.String(), "tier") {
+	if code := Doctor(context.Background(), f.deps(), path, "", &out, true); code != 1 || !strings.Contains(out.String(), "tier") {
 		t.Errorf("exit %d for invalid settings: %s", code, out.String())
 	}
 	if len(f.calls) != 0 {
@@ -638,6 +670,11 @@ type isolatedRig struct {
 	noHome     bool
 	serveImage string // what the running service container reports as its image
 	dbImage    string // and the database container
+
+	// The executor (doctor_executor_test.go): by default a healthy one, which the service saw 5 seconds ago.
+	lastSeen     time.Duration // how long ago the service saw an executor
+	executionOff bool          // the service has no executor token
+	noExecution  bool          // /status has no execution object: the service is older than M2.1
 }
 
 // taglessPostgres is the pinned database image as Podman reports it: repository and digest, the tag dropped.
@@ -659,7 +696,14 @@ func (r isolatedRig) build(t *testing.T) (*fakeEngine, Settings) {
 	t.Helper()
 	s := DefaultSettings()
 	s.Tier = config.TierIsolated
-	s.HTTPPort, s.MCPPort = serveHTTP(t, http.StatusOK, strings.Replace(okStatus, "co-located", "isolated", 1), `{"status":"ok"}`), DefaultMCPPort
+	status := isolatedStatus(cmp.Or(r.lastSeen, 5*time.Second))
+	switch {
+	case r.noExecution:
+		status = strings.Replace(okStatus, "co-located", "isolated", 1)
+	case r.executionOff:
+		status = isolatedStatusWith(`{"enabled":false,"jobs":{"pending":0},"lastSeenAt":"2026-10-27T00:00:00Z"}`)
+	}
+	s.HTTPPort, s.MCPPort = serveHTTP(t, http.StatusOK, status, `{"status":"ok"}`), DefaultMCPPort
 	if s.HTTPPort == s.MCPPort {
 		s.MCPPort++
 	}
@@ -689,6 +733,7 @@ func (r isolatedRig) build(t *testing.T) (*fakeEngine, Settings) {
 	f.on("inspect --type container "+ContainerDB, fmt.Sprintf(`[{"Config":{"Image":%q},"HostConfig":{"Memory":402653184}}]`, cmp.Or(r.dbImage, taglessPostgres(t))))
 	f.on("inspect --type container "+ContainerServe, fmt.Sprintf(`[{"Config":{"Image":%q}}]`, cmp.Or(r.serveImage, testImage)))
 	f.on("info --format", "true\n")
+	f.rules = append(f.rules, healthyIsolatedExecutor(t, s)...)
 	return f, s
 }
 
@@ -698,7 +743,7 @@ func TestDoctorHealthyIsolated(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit %d, results %+v", code, res)
 	}
-	wantOK(t, res, "runtime", "units", "linger", "restart", "pins", "ports", "healthz", "status", "metadata", "network", "memory", "github.app")
+	wantOK(t, res, "runtime", "units", "linger", "restart", "pins", "ports", "healthz", "status", "metadata", "network", "memory", "github.app", "executor.account", "executor.running")
 	if d := res["pins"].Detail; !strings.Contains(d, "consistent with the units") || strings.Contains(d, "equals this release") {
 		t.Errorf("the pins detail overstates what was compared: %q", d)
 	}
@@ -844,7 +889,7 @@ func TestDoctorBoundsEveryQuery(t *testing.T) {
 	done := make(chan string)
 	go func() {
 		var out bytes.Buffer
-		Doctor(context.Background(), deps, path, &out, true)
+		Doctor(context.Background(), deps, path, "", &out, true)
 		done <- out.String()
 	}()
 	select {

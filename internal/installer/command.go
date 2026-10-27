@@ -412,6 +412,8 @@ func installHost(ctx context.Context, args []string, env Env) (err error) {
 	fs.String("answers", "", "read answers from this YAML file (a flag wins over it)")
 	fs.Bool("yes", false, "answer yes to installing Podman (dnf)")
 	fs.String("metadata-rule", "", "yes or no: refuse the cloud metadata address for the service account")
+	fs.String("http-port", "", "the loopback port of the service's HTTP listener, which the executor is pointed at (default: the port of the installed stack, else 27081)")
+	fs.String("sha256sums", "", "the verified SHA256SUMS of the release: this program must be listed in it to be installed as the executor")
 	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)
 	if err != nil {
@@ -439,11 +441,12 @@ func installHost(ctx context.Context, args []string, env Env) (err error) {
 	return PrepareHost(ctx, r, env.Deps, env.Term.Out)
 }
 
-// doctorCommand is `suiteward doctor [--json] [--settings PATH]`. It reads the settings before any configuration is loaded: the
+// doctorCommand is `suiteward doctor [--json] [--settings PATH] [--token-file PATH]`. It reads the settings before any configuration is loaded: the
 // machine that checks the instance has no SUITEWARD_* environment.
 func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer) int {
 	fs := newFlagSet("doctor")
 	fs.String("settings", "", "the installer settings file (default: the per-user configuration directory)")
+	fs.String("token-file", "", "where the instance keeps the copy of its MCP token, which the files of its executor are beside (default: the per-user directory)")
 	fs.Bool("json", false, "print the results as JSON")
 	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)
@@ -456,7 +459,7 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 		return 2
 	}
 	if flags["json"] == "true" { // JSON is for a program: it is never drawn on a screen that vanishes
-		return Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, true)
+		return Doctor(ctx, env.Deps, flags["settings"], flags["token-file"], env.Term.Out, true)
 	}
 	plain, err := wantsPlain(flags, nil)
 	var scr *ui.Screen
@@ -469,7 +472,7 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 	}
 	var closed error
 	defer endConsole(scr, &closed) // a panic must not leave the terminal on the alternate screen; the exit code below reads the error of Close
-	code := Doctor(ctx, env.Deps, flags["settings"], env.Term.Out, false)
+	code := Doctor(ctx, env.Deps, flags["settings"], flags["token-file"], env.Term.Out, false)
 	interrupted := ctx.Err() != nil // Ctrl-C ended the checks; one at the final wait comes after them and keeps their code
 	waitErr := holdPage(scr)        // the results stay on the screen until Enter
 	closeErr := scr.Close()

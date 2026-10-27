@@ -58,16 +58,20 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, env Env
 		_, _ = fmt.Fprintf(out, "Stopped %s: an earlier uninstall left them without their unit files.\n", strings.Join(stopped, ", "))
 	}
 	if purge {
-		if err := purgeState(ctx, host.rt, host.envPath, host.settingsPath); err != nil {
+		if err := purgeState(ctx, host.rt, []string{host.envPath}, host.settingsPath); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(out, "Removed the volumes, the secrets, the network, %s and %s. Backups under %s are kept.\n", host.envPath, host.settingsPath, filepath.Join(host.configDir, "backups"))
+		if err := os.Remove(executorHandoverFile(host.configDir)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove %s: %w", executorHandoverFile(host.configDir), err)
+		}
+		_, _ = fmt.Fprintf(out, "Removed the volumes, the secrets, the network, the copy of the executor's token, %s and %s. Backups under %s are kept.\n", host.envPath, host.settingsPath, filepath.Join(host.configDir, "backups"))
 	} else {
 		_, _ = fmt.Fprintf(out, "The volumes, the secrets and the settings are kept: install again to start the stack, or use --purge to remove them too.\n")
 	}
 	if st.oldEnv != "" {
 		_, _ = fmt.Fprintf(out, "The installed units read %s, which an administrator owns and this command never touches. To remove it: sudo rm %s\n", st.oldEnv, st.oldEnv)
 	}
+	_, _ = fmt.Fprint(out, executorHostNote())
 	return nil
 }
 

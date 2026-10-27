@@ -198,6 +198,10 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if plan.current() && t.haveSaved {
 		d := refreshCopy(ctx, env) // first: the hint names the program as the refreshed copy answers
 		r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctorHint(d.command(), t.settingsPath, t.defaultPath))
+		env.Deps = d
+		if err := refreshExecutor(ctx, r, env, rt, s); err != nil {
+			return err
+		}
 		return holdPage(scr)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
@@ -205,12 +209,11 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err != nil {
 		return err
 	}
-	c := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, image: image, previous: previous, tokenFile: r.preset("token-file", "")}
-	if c.tokenFile == "" {
-		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
-			return err
-		}
+	tokenFile, err := instanceTokenFile(r, env.Deps)
+	if err != nil {
+		return err
 	}
+	c := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, image: image, previous: previous, tokenFile: tokenFile}
 	if c.secrets, err = c.readSecretState(ctx); err != nil {
 		return err
 	}
@@ -251,6 +254,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	scr.Step(5)
 	c.restartAfterReboot(ctx)
 	c.env.Deps = refreshCopy(ctx, c.env) // before the hints below, which name the program as the refreshed copy answers
+	c.setUpExecutor(ctx)                 // after it: what it says names the program as the refreshed copy answers
 	cmd := c.env.Deps.command()
 	upgraded(scr, image, dir, goBackColocated(cmd, engine, previous.Image, dir, scopeFlags(r, false)), doctorHint(cmd, t.settingsPath, t.defaultPath))
 	c.installSelf(ctx)

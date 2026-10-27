@@ -211,8 +211,8 @@ jobs:
         with:
           go-version-file: .go-version
           cache: false
-      - name: Render the units of both installer shapes
-        # The same RenderUnits the installer writes: with GitHub on the default ports, and without GitHub on other ports with a job timeout.
+      - name: Render the units of every installer shape
+        # The same RenderUnits the installer writes: with GitHub on the default ports, without GitHub on other ports with a job timeout, and without the executor token.
         run: |
           mkdir "$RUNNER_TEMP/units"
           SUITEWARD_QUADLET_OUT="$RUNNER_TEMP/units" go test -count=1 -tags quadlet -run TestRenderUnitsForTheQuadletDryRun ./internal/installer
@@ -223,7 +223,7 @@ jobs:
           dnf -y install podman > /dev/null
           podman --version
           services=(suiteward.service suiteward-migrate.service suiteward-db.service suiteward-network.service suiteward-data-volume.service suiteward-db-data-volume.service)
-          for shape in github no-github; do
+          for shape in github no-github no-executor; do
             if ! out=$(QUADLET_UNIT_DIRS="/units/$shape" /usr/lib/systemd/system-generators/podman-system-generator --user --dryrun); then
               echo "::error::The quadlet generator refused the $shape units"
               exit 1

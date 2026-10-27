@@ -331,7 +331,7 @@ func TestPurgeRemovesTheRecordOfAnApp(t *testing.T) {
 	if err := os.WriteFile(pendingAppPath(h.settingsPath()), []byte("app_id: 1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := purgeState(context.Background(), newRootlessPodman(t, h.f, ""), h.tokenPath(), h.settingsPath()); err != nil {
+	if err := purgeState(context.Background(), newRootlessPodman(t, h.f, ""), []string{h.tokenPath()}, h.settingsPath()); err != nil {
 		t.Fatal(err)
 	}
 	if exists(pendingAppPath(h.settingsPath())) {

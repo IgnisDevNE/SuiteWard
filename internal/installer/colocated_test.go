@@ -38,6 +38,19 @@ type harness struct {
 	githubSeen  []githubEnv
 	status      func(ctx context.Context, address string) ([]byte, error) // GET /status of the service; nil: no owner is enrolled yet
 	atServe     map[string]bool                                           // facts at the moment the service container was started
+	exe         string                                                    // the program of this run, which the executor gets a copy of; program() makes a small one
+}
+
+// program is the program of this run: a small file of the test, so that the install copies bytes that a test can compare.
+func (h *harness) program() string {
+	h.t.Helper()
+	if h.exe == "" {
+		h.exe = filepath.Join(h.t.TempDir(), "suiteward")
+		if err := os.WriteFile(h.exe, []byte("the program of this run"), 0o755); err != nil { //nolint:gosec // a test program
+			h.t.Fatal(err)
+		}
+	}
+	return h.exe
 }
 
 func newHarness(t *testing.T, goos string) *harness {
@@ -45,6 +58,9 @@ func newHarness(t *testing.T, goos string) *harness {
 	h := &harness{t: t, f: newFake(goos), dir: t.TempDir(), busy: map[int]bool{}, atServe: map[string]bool{}}
 	h.f.env["USERNAME"] = "tester"
 	h.f.fail("image inspect", errors.New("no such image")) // pulled unless a test says the image is here
+	if goos == "windows" {
+		h.f.fail("/Query /TN", errors.New("schtasks: the system cannot find the file specified")) // no task of the executor yet: a test that has one says so first
+	}
 	h.f.on("info --format {{.Host.Security.Rootless}}", "true\n")
 	h.f.on("--format {{json .State}} suiteward-db", `{"Status":"running","Health":{"Status":"healthy"}}`)
 	return h
@@ -55,6 +71,9 @@ func dockerHarness(t *testing.T, goos string) *harness {
 	h := &harness{t: t, f: newFake(goos), dir: t.TempDir(), busy: map[int]bool{}, atServe: map[string]bool{}}
 	h.f.env["USERNAME"] = "tester"
 	h.f.fail("image inspect", errors.New("no such image"))
+	if goos == "windows" {
+		h.f.fail("/Query /TN", errors.New("schtasks: the system cannot find the file specified"))
+	}
 	h.f.on("version --format", dockerDesktopServer).on("info --format", `["name=seccomp,profile=builtin"]`)
 	h.f.on("--format {{json .State}} suiteward-db", `{"Status":"running","Health":{"Status":"healthy"}}`)
 	return h
@@ -101,7 +120,9 @@ func (h *harness) uninstall(args ...string) error {
 }
 
 func (h *harness) newEnv() Env {
+	h.f.env["HOME"] = h.dir // where the executor's unit or launch agent goes: a directory of the test, never the real one
 	d := h.f.deps()
+	d.Executable = func() (string, error) { return h.program(), nil }
 	inner := d.Exec
 	d.Exec = func(ctx context.Context, name string, a []string, stdin io.Reader) ([]byte, error) {
 		var data []byte
@@ -304,6 +325,9 @@ func TestInstallPodmanBringsTheStackUpInOrder(t *testing.T) {
 		"run --detach --replace --name suiteward --network",
 	)
 	for _, c := range h.f.calls {
+		if isOSCall(c) {
+			continue // the executor is kept by the operating system, not by the engine
+		}
 		if c.args[0] != "--connection" || c.args[1] != "pm" {
 			t.Errorf("a call does not use the selected connection: %v", c.args)
 		}
@@ -422,7 +446,7 @@ func TestInstallRerunCreatesOnlyWhatIsMissing(t *testing.T) {
 	h := newHarness(t, "linux")
 	h.have(KindNetwork, NetworkName)
 	h.have(KindVolume, VolumeData, VolumeDBData)
-	for _, name := range []string{SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth} {
+	for _, name := range []string{SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth, SecretExecutorAuth} {
 		h.have(kindSecret, name)
 	}
 	h.first("secret inspect --showsecret --format {{.SecretData}} "+SecretDatabaseURL, DatabaseURL(appRole, "x")+"\n")
@@ -645,7 +669,7 @@ func TestInstallAdoptionCarriesTheKnownFields(t *testing.T) {
 	h.existingStack(want, testImage, nil)
 	h.have(KindNetwork, NetworkName)
 	h.have(KindVolume, VolumeData, VolumeDBData)
-	h.have(kindSecret, SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth, SecretGitHubAppKey)
+	h.have(kindSecret, SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth, SecretExecutorAuth, SecretGitHubAppKey)
 	h.first("secret inspect --showsecret --format {{.SecretData}} "+SecretDatabaseURL, DatabaseURL(appRole, "x")+"\n")
 	h.roleExists = true
 	h.busy[18081], h.busy[18091] = true, true // the running service holds its own ports
@@ -948,7 +972,7 @@ func TestInstallWritesTheMCPTokenCopyAndRestrictsItOnWindows(t *testing.T) {
 	}
 	var acl []call
 	for _, c := range h.f.calls {
-		if c.name == "icacls" {
+		if c.name == "icacls" && c.args[0] == h.tokenPath() {
 			acl = append(acl, c)
 		}
 	}
@@ -959,7 +983,7 @@ func TestInstallWritesTheMCPTokenCopyAndRestrictsItOnWindows(t *testing.T) {
 	order := h.f.lines()
 	icacls, create := -1, -1
 	for i, c := range h.f.calls {
-		if c.name == "icacls" {
+		if c.name == "icacls" && c.args[0] == h.tokenPath() {
 			icacls = i
 		}
 		if strings.Contains(order[i], "secret create suiteward-mcp-token") {
@@ -1223,7 +1247,7 @@ func TestInstallDockerBringsTheStackUpWithSecretVolumes(t *testing.T) {
 		"run --detach --name suiteward --network",
 	)
 	for _, c := range h.f.calls {
-		if c.name == "icacls" {
+		if c.name == "icacls" || isOSCall(c) {
 			continue
 		}
 		if c.name != dockerDesktopCLI || c.args[0] != "--context" || c.args[1] != "desktop-linux" {
@@ -1261,7 +1285,7 @@ func TestInstallDockerDoesNotAdoptAndRerunsFromItsSettings(t *testing.T) {
 	again.have(KindContainer, ContainerDB, ContainerServe)
 	again.have(KindNetwork, NetworkName)
 	again.have(KindVolume, VolumeData, VolumeDBData, "suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward")
-	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token"} {
+	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token", "executor-token"} {
 		again.haveDockerSecret(file)
 	}
 	again.first("cat /s/database-url", DatabaseURL(appRole, "x"))
@@ -1417,7 +1441,7 @@ func TestInstallRemembersTheImageSoADockerRerunNeedsNoFlag(t *testing.T) {
 	again.have(KindContainer, ContainerDB, ContainerServe)
 	again.have(KindNetwork, NetworkName)
 	again.have(KindVolume, VolumeData, VolumeDBData, "suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward")
-	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token"} {
+	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token", "executor-token"} {
 		again.haveDockerSecret(file)
 	}
 	again.first("cat /s/database-url", DatabaseURL(appRole, "x"))

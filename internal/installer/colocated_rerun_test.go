@@ -36,7 +36,7 @@ func dockerRerunOf(t *testing.T, first *harness, dbState, serveState string) *ha
 	again.have(KindContainer, ContainerDB, ContainerServe)
 	again.have(KindNetwork, NetworkName)
 	again.have(KindVolume, VolumeData, VolumeDBData, "suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward")
-	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token"} {
+	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token", "executor-token"} {
 		again.haveDockerSecret(file)
 	}
 	again.first("cat /s/database-url", DatabaseURL(appRole, "x"))

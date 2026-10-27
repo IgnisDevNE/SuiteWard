@@ -158,3 +158,14 @@ func TestTheRestoreWarningNamesTheDefaultBranchOnlyForABackupThatMayHoldReposito
 		})
 	}
 }
+
+// The credentials are not in a backup, and the executor's token is one of them: a restore leaves it as it was, so the executor keeps working.
+func TestARestoreSaysThatTheExecutorTokenIsAsItWas(t *testing.T) {
+	u := restoreHarness(t)
+	if err := u.restore(aBackup(t, withoutRepositories), "--kit", writeTestKit(t, t.TempDir()), "--yes", "--instance", testInstance); err != nil {
+		t.Fatal(err)
+	}
+	if out := u.out.String(); !strings.Contains(out, "the executor token") {
+		t.Errorf("the closing lines of a restore lack the executor's token among the credentials that are as they were:\n%s", out)
+	}
+}

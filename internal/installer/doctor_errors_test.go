@@ -19,7 +19,7 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("the pipe
 func TestDoctorReportsWhatPreventsItFromRunning(t *testing.T) {
 	t.Run("deps without an Exec", func(t *testing.T) {
 		var out bytes.Buffer
-		code := Doctor(context.Background(), Deps{GOOS: "linux", Getenv: func(string) string { return "" }}, filepath.Join(t.TempDir(), "settings.yaml"), &out, false)
+		code := Doctor(context.Background(), Deps{GOOS: "linux", Getenv: func(string) string { return "" }}, filepath.Join(t.TempDir(), "settings.yaml"), "", &out, false)
 		if code != 1 || !strings.Contains(out.String(), "FAIL settings") || !strings.Contains(out.String(), "report it") {
 			t.Errorf("exit %d, output %q", code, out.String())
 		}
@@ -30,7 +30,7 @@ func TestDoctorReportsWhatPreventsItFromRunning(t *testing.T) {
 		if err := SaveSettings(path, s); err != nil {
 			t.Fatal(err)
 		}
-		if code := Doctor(context.Background(), f.deps(), path, failingWriter{}, false); code != 1 {
+		if code := Doctor(context.Background(), f.deps(), path, "", failingWriter{}, false); code != 1 {
 			t.Errorf("exit %d for a healthy stack whose report could not be written, want 1", code)
 		}
 	})
@@ -40,7 +40,7 @@ func TestDoctorReportsWhatPreventsItFromRunning(t *testing.T) {
 		t.Setenv("HOME", "")
 		f := newFake("linux")
 		var out bytes.Buffer
-		if code := Doctor(context.Background(), f.deps(), "", &out, false); code != 1 || !strings.Contains(out.String(), "--settings PATH") {
+		if code := Doctor(context.Background(), f.deps(), "", "", &out, false); code != 1 || !strings.Contains(out.String(), "--settings PATH") {
 			t.Errorf("exit %d, output %q", code, out.String())
 		}
 		if len(f.calls) != 0 {

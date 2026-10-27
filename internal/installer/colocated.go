@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
@@ -117,6 +118,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err := c.bringUp(ctx, save); err != nil {
 		return err
 	}
+	c.setUpExecutor(ctx)
 	c.restartAfterReboot(ctx)
 	scr.Step(5)
 	return c.finish(ctx, scr, t)
@@ -261,7 +263,7 @@ func (c *colocatedInstall) pullImages(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return pullMissing(ctx, screenOn(c.out), c.rt, c.image, postgres)
+	return pullMissing(ctx, screenOn(c.out), c.rt, c.image, postgres, goprofile.Image) // the sandboxes of the executor run from the last
 }
 
 // pullMissing pulls the images the engine does not have yet, each under a spinner on a full screen.
@@ -388,12 +390,14 @@ type colocatedInstall struct {
 	machineUser string // the rootless user of the Podman machine, once it has been looked up
 
 	copyRows summaryRows // what the offer of the copy of the program says in the summary (installSelf)
+
+	executorRow string // what the summary says of the executor: how it is kept running, or why it is not
 }
 
 // secretState is what the stack already has of its database secrets, read before anything is changed.
 type secretState struct {
-	haveDB, haveOwner, haveToken bool
-	needAppURL                   bool // the application URL secret is missing, still the owner URL of a v0.1.x stack, or differs between volumes
+	haveDB, haveOwner, haveToken, haveExecutor bool
+	needAppURL                                 bool // the application URL secret is missing, still the owner URL of a v0.1.x stack, or differs between volumes
 }
 
 // inMachine says whether the stack runs in a Podman machine (Windows, macOS): its ports are published there, not on this
@@ -482,7 +486,14 @@ func (c colocatedInstall) readSecretState(ctx context.Context) (secretState, err
 	if err != nil {
 		return secretState{}, err
 	}
-	state := secretState{haveDB: haveDB, haveOwner: haveOwner, haveToken: haveToken, needAppURL: !haveURL}
+	haveExecutor, err := secrets.Exists(ctx, SecretExecutorAuth)
+	if err != nil {
+		return secretState{}, err
+	}
+	state := secretState{haveDB: haveDB, haveOwner: haveOwner, haveToken: haveToken, haveExecutor: haveExecutor, needAppURL: !haveURL}
+	if err := c.checkExecutorTokenFile(haveExecutor); err != nil { // before anything is changed, by an install and an upgrade alike
+		return secretState{}, err
+	}
 	if !haveURL {
 		return state, nil
 	}
@@ -584,6 +595,9 @@ func (c colocatedInstall) ensureObjects(ctx context.Context) error {
 	if err := c.ensureMCPToken(ctx); err != nil {
 		return err
 	}
+	if err := c.ensureExecutorToken(ctx); err != nil {
+		return err
+	}
 	if c.githubKey == nil {
 		return nil
 	}
@@ -642,7 +656,7 @@ func (c *colocatedInstall) planKeep(ctx context.Context) error {
 		return err
 	}
 	// The service reads its secrets when it starts, so one that this run makes or rewrites needs a new service.
-	if !reflect.DeepEqual(was.Serve, c.stack.Serve) || !s.haveToken || s.needAppURL || c.githubKey != nil {
+	if !reflect.DeepEqual(was.Serve, c.stack.Serve) || !s.haveToken || !s.haveExecutor || s.needAppURL || c.githubKey != nil {
 		return nil
 	}
 	// ensureRole rewrites the application URL when the role is missing.
@@ -948,4 +962,49 @@ func engineCommand(rt Runtime, goos string) (string, error) {
 		}
 	}
 	return strings.Join(append([]string{bin}, c.base...), " "), nil
+}
+
+// checkExecutorTokenFile refuses to overwrite an executor token copy that this instance did not make, as checkTokenFile does for the MCP token:
+// the file exists, but this instance has no executor token secret.
+func (c colocatedInstall) checkExecutorTokenFile(haveSecret bool) error {
+	if haveSecret {
+		return nil
+	}
+	path := executorTokenFile(c.tokenFile)
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("%s exists, but this instance has no %s secret, so the file belongs to another instance: "+
+			"pass --token-file and --settings with files of their own for a second instance, remove the other instance first, "+
+			"or delete the file if an interrupted install left it", path, SecretExecutorAuth)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("look for %s: %w", path, err)
+	}
+	return nil
+}
+
+// ensureExecutorToken makes the executor token once, like the MCP token: the copy for the executor is written first and restricted to this
+// user, then the secret is made, so a failure in between leaves a file that the next run refuses to overwrite (checkExecutorTokenFile says what
+// to do). When the secret is there and the copy is gone, the secret is the token and the copy is written from it.
+func (c colocatedInstall) ensureExecutorToken(ctx context.Context) error {
+	path := executorTokenFile(c.tokenFile)
+	secrets := c.rt.Secrets()
+	if c.secrets.haveExecutor {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("look for %s: %w", path, err)
+		}
+		token, err := secrets.Read(ctx, SecretExecutorAuth)
+		if err != nil {
+			return err
+		}
+		return writeTokenFile(ctx, c.env.Deps, path, string(token))
+	}
+	token, err := NewExecutorToken()
+	if err != nil {
+		return err
+	}
+	if err := writeTokenFile(ctx, c.env.Deps, path, token); err != nil {
+		return err
+	}
+	return secrets.Write(ctx, SecretExecutorAuth, []byte(token), false)
 }

@@ -878,7 +878,14 @@ func readRepositories(ctx context.Context, a ghAccess, repos []string) ([]repoIn
 	return infos, nil
 }
 
-// checkRunNames lists the check runs on the head of the default branch, without duplicates and without the contract check.
+// receiptCheck is the second check SuiteWard publishes, beside protection.ContractCheck. It is spelled here because no package the installer
+// imports exports its name yet; change both together.
+const receiptCheck = "SuiteWard / Receipt"
+
+// ownCheck is whether a check name is one of the two that SuiteWard publishes: neither is the project's test check.
+func ownCheck(name string) bool { return name == protection.ContractCheck || name == receiptCheck }
+
+// checkRunNames lists the check runs on the head of the default branch, without duplicates and without the two checks SuiteWard publishes.
 // shortcut: the first 100 runs only, and legacy commit statuses do not show as check runs: the user types such a name.
 func checkRunNames(ctx context.Context, client *rest.Client, r repoInfo) ([]string, error) {
 	if r.branch == "." || r.branch == ".." {
@@ -898,7 +905,7 @@ func checkRunNames(ctx context.Context, client *rest.Client, r repoInfo) ([]stri
 	}
 	var names []string
 	for _, run := range out.CheckRuns {
-		if run.Name != "" && run.Name != protection.ContractCheck && !slices.Contains(names, run.Name) {
+		if run.Name != "" && run.Name != protection.ContractCheck && run.Name != receiptCheck && !slices.Contains(names, run.Name) {
 			names = append(names, run.Name)
 		}
 	}
@@ -941,8 +948,8 @@ func chooseTestChecks(ctx context.Context, env githubEnv, a ghAccess, repos []re
 		switch answer {
 		case "":
 			return nil, fmt.Errorf("the test check of %s is empty", r.name)
-		case protection.ContractCheck:
-			return nil, fmt.Errorf("%s is SuiteWard's own check, not the project's test check", protection.ContractCheck)
+		case protection.ContractCheck, receiptCheck:
+			return nil, fmt.Errorf("%s is SuiteWard's own check, not the project's test check", answer)
 		}
 		checks[r.name] = answer
 	}
@@ -988,7 +995,7 @@ func askTestCheck(ctx context.Context, env githubEnv, client *rest.Client, r rep
 	asking := env.R.screen.FullScreen() && env.R.asks(key)
 	if asking { // one repository to a page, before the list is read: the list goes under it
 		env.R.screen.Page("Required test check for "+r.name,
-			ui.Para("SuiteWard runs no tests. The ruleset of this repository requires your CI's test check beside "+protection.ContractCheck+", so a pull request needs both to pass. The list shows the checks seen on the default branch."))
+			ui.Para("SuiteWard does not replace your CI's tests: the ruleset of this repository requires your CI's test check beside "+protection.ContractCheck+", so a pull request needs both to pass. The list shows the checks seen on the default branch."))
 	}
 	names, err := checkRunNames(ctx, client, r)
 	if err != nil {
@@ -1375,8 +1382,8 @@ func setupArgv(owner string, checks map[string]string) ([]string, error) {
 		if !repositoryName.MatchString(repo) || strings.TrimSpace(check) == "" {
 			return nil, fmt.Errorf("the test check %q of %q is not a repository (owner/name) with a check name", check, repo)
 		}
-		if strings.TrimSpace(check) == protection.ContractCheck {
-			return nil, fmt.Errorf("the test check of %s is %s, SuiteWard's own check, not the project's test check", repo, protection.ContractCheck)
+		if own := strings.TrimSpace(check); ownCheck(own) {
+			return nil, fmt.Errorf("the test check of %s is %s, SuiteWard's own check, not the project's test check", repo, own)
 		}
 		if len(check) > appowner.MaxTestCheckBytes { // the limit setup enforces, so setup does not refuse after the container is entered
 			return nil, fmt.Errorf("the test check of %s is longer than %d bytes", repo, appowner.MaxTestCheckBytes)

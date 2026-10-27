@@ -57,10 +57,10 @@ func ColocatedStack(s Settings, image string) (Stack, error) {
 	serve := RunSpec{
 		Name: ContainerServe, Image: image, Network: NetworkName, Detach: true, Restart: "always", Memory: "256m", StopTimeout: 45,
 		Env: []string{
-			"SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url", "SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token",
+			"SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url", "SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token", executorAuthFileEnv + "=/run/secrets/executor-token",
 			"SUITEWARD_INSTALLATION_TIER=" + string(s.Tier), reportBaseURLEnv + "=" + reportBaseURL(s.HTTPPort),
 		},
-		Secrets: []string{SecretDatabaseURL, SecretMCPAuth},
+		Secrets: []string{SecretDatabaseURL, SecretMCPAuth, SecretExecutorAuth},
 		Volumes: []string{VolumeData + ":/data"},
 		Publish: []string{
 			"127.0.0.1:" + strconv.Itoa(s.HTTPPort) + ":8080",

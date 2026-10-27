@@ -43,14 +43,14 @@ const interruptedKey = "\x00interrupted"
 // not a failed install: it never fails the run. A Ctrl-C is the exception, as it is for doctor itself: one during the checks ends the
 // command as interrupted, and the checks it cancelled are not counted. One that came before them only skips them ("skipped (Ctrl-C)"), as
 // it skips the wait for the service. again is the command that checks again.
-func (s *summaryRows) addDoctor(ctx context.Context, env Env, settingsPath, again string) {
+func (s *summaryRows) addDoctor(ctx context.Context, env Env, settingsPath, tokenFile, again string) {
 	if ctx.Err() != nil {
 		s.add("Doctor", "skipped (Ctrl-C)")
 		s.add("Check again", again)
 		return
 	}
 	var results []doctorResult
-	spinning(screenOn(env.Term.Out), "Checking the instance", func() { results = doctorChecks(ctx, env.Deps, env.httpGet(), settingsPath) })
+	spinning(screenOn(env.Term.Out), "Checking the instance", func() { results = doctorChecks(ctx, env.Deps, env.httpGet(), settingsPath, tokenFile) })
 	if ctx.Err() != nil {
 		s.add("Doctor", "interrupted")
 		s.add("Check again", again)
@@ -176,9 +176,10 @@ func (c *colocatedInstall) installSummary(ctx context.Context, t installTarget) 
 	rows.add("Owner", c.owner)
 	rows.add("Status", c.statusRow(ctx))
 	rows.add("Token file", c.tokenFile)
+	rows.add("Executor", c.executorRow)
 	rows.add("Settings", t.settingsPath)
 	rows = append(rows, c.copyRows...)
-	rows.addDoctor(ctx, c.env, t.settingsPath, doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
+	rows.addDoctor(ctx, c.env, t.settingsPath, c.tokenFile, c.doctorAgain(t))
 	return rows
 }
 
@@ -190,9 +191,10 @@ func (c *colocatedInstall) upgradeSummary(ctx context.Context, t installTarget) 
 	rows.add("Image", fmt.Sprintf("%s (was %s)", digestOf(c.image), digestOf(c.previous.Image)))
 	rows.add("Status", c.statusRow(ctx))
 	rows.add("Token file", c.tokenFile)
+	rows.add("Executor", c.executorRow)
 	rows.add("Settings", t.settingsPath)
 	rows = append(rows, c.copyRows...)
-	rows.addDoctor(ctx, c.env, t.settingsPath, doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
+	rows.addDoctor(ctx, c.env, t.settingsPath, c.tokenFile, c.doctorAgain(t))
 	return rows
 }
 
@@ -211,6 +213,16 @@ func isolatedSummary(ctx context.Context, env Env, host isolatedHost, s Settings
 	}
 	rows.add("Status", address)
 	rows.add("Settings", host.settingsPath)
-	rows.addDoctor(ctx, env, host.settingsPath, env.Deps.command()+" doctor")
+	rows.addDoctor(ctx, env, host.settingsPath, "", env.Deps.command()+" doctor")
 	return rows
+}
+
+// doctorAgain is the command that checks the instance again: it names the token file of an instance that keeps its own, which doctor finds the
+// executor's files beside.
+func (c *colocatedInstall) doctorAgain(t installTarget) string {
+	hint := doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath)
+	if def, err := defaultTokenFile(c.env.Deps); err == nil && c.tokenFile != def {
+		hint += " --token-file " + quoteArg(c.tokenFile)
+	}
+	return hint
 }

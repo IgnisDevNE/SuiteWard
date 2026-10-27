@@ -298,7 +298,7 @@ func TestInstallHostOnAFullScreenShowsTheSteps(t *testing.T) {
 	if err := installHost(liveContext(t), []string{"--yes", "--metadata-rule", "no"}, env); err != nil {
 		t.Fatal(err)
 	}
-	c.steps(t, "Podman", "Account", "Metadata", "Next")
+	c.steps(t, "Podman", "Account", "Metadata", "Executor", "Next")
 	if !c.closed() || !strings.Contains(c.tail(), "The host is ready.") {
 		t.Errorf("the next command must stay in the scrollback:\n%s", c.tail())
 	}

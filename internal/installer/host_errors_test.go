@@ -44,17 +44,17 @@ func TestPrepareHostStopsAtTheStepThatFails(t *testing.T) {
 			h.subuid, h.subgid = "", ""
 			h.failOn["usermod"] = errInjected
 		}, "add the subordinate id ranges", [2]string{"loginctl", ""}},
-		{"linger", func(h *hostFake) { h.failOn["loginctl enable-linger"] = errInjected }, "enable linger for suiteward", [2]string{"mkdir", ""}},
-		{"curl", func(h *hostFake) { h.failOn["curl --version"] = errInjected }, "curl is needed", [2]string{"mkdir", ""}},
+		{"linger", func(h *hostFake) { h.failOn["loginctl enable-linger"] = errInjected }, "enable linger for suiteward", [2]string{"curl", ""}},
+		{"curl", func(h *hostFake) { h.failOn["curl --version"] = errInjected }, "curl is needed", [2]string{"tee", "imds-block"}},
 		{"the installation of nft", func(h *hostFake) {
 			h.metadata = "200"
 			h.failOn["command -v nft"] = errInjected
 			h.failOn["dnf install -y nftables"] = errInjected
-		}, "dnf install -y nftables", [2]string{"tee", ""}},
+		}, "dnf install -y nftables", [2]string{"tee", "imds-block"}},
 		{"an nft that is still missing", func(h *hostFake) {
 			h.metadata = "200"
 			h.failOn["command -v nft"] = errInjected
-		}, "nft is still missing after the installation", [2]string{"tee", ""}},
+		}, "nft is still missing after the installation", [2]string{"tee", "imds-block"}},
 		{"the directory of the rule", func(h *hostFake) {
 			h.metadata = "200"
 			h.failOn["mkdir -p"] = errInjected
@@ -76,8 +76,10 @@ func TestPrepareHostStopsAtTheStepThatFails(t *testing.T) {
 			h.nftOutput = "table inet suiteward_imds { }"
 		}, "has no reject rule", [2]string{"getent", ""}},
 		{"the account entry", func(h *hostFake) { h.failOn["getent"] = errInjected }, "look up the account suiteward", [2]string{"install", "-d"}},
-		{"the creation of the configuration directory", func(h *hostFake) { h.failOn["install -d"] = errInjected }, "create /home/suiteward/.config/suiteward", [2]string{"cmp", ""}},
-		{"the copy of the env file", func(h *hostFake) { h.failOn["install -o"] = errInjected }, "copy /etc/suiteward/github.env", [2]string{}},
+		{"the creation of the configuration directory", func(h *hostFake) { h.failOn["install -d -o suiteward"] = errInjected }, "create /home/suiteward/.config/suiteward", [2]string{"cmp", ""}},
+		{"the copy of the env file", func(h *hostFake) {
+			h.failOn["install -o suiteward -g suiteward -m 0600 /etc/suiteward/github.env"] = errInjected
+		}, "copy /etc/suiteward/github.env", [2]string{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,7 +117,7 @@ func TestPrepareHostAsksOrRefusesTheMetadataQuestion(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "--metadata-rule") {
 			t.Fatalf("PrepareHost = %v", err)
 		}
-		if h.has("tee", "") || h.has("mkdir", "") {
+		if writeOf(h, imdsRuleFile) != "" || h.has("mkdir", "-p /etc/suiteward") {
 			t.Errorf("the rule was written without an answer: %v", h.lines())
 		}
 	})

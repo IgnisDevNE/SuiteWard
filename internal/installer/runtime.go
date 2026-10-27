@@ -120,6 +120,7 @@ const (
 	SecretDatabaseURL      = secretPrefix + "database-url"
 	SecretGitHubAppKey     = secretPrefix + "github-app-key"
 	SecretMCPAuth          = secretPrefix + "mcp-token"
+	SecretExecutorAuth     = secretPrefix + "executor-token" // the executor API's bearer token: the service verifies it, the executor sends it
 )
 
 // parseImage reads an --image value into the reference the installer pins: a bare sha256:<64 hex> digest is the release image,

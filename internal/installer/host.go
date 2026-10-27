@@ -50,7 +50,7 @@ func PrepareHost(ctx context.Context, r *Resolver, d Deps, out io.Writer) error 
 	}
 	h := &host{r: r, d: d, out: out}
 	scr := r.screen
-	scr.Steps("Podman", "Account", "Metadata", "Next")
+	scr.Steps("Podman", "Account", "Metadata", "Executor", "Next")
 	uid, err := h.run(ctx, "id", "-u")
 	if err != nil {
 		return fmt.Errorf("find out who is running the installer: %w", err)
@@ -58,7 +58,7 @@ func PrepareHost(ctx context.Context, r *Resolver, d Deps, out io.Writer) error 
 	if uid != "0" {
 		return errors.New("install host changes the system and must run as root: run it with sudo, then run the service-account step as the service account")
 	}
-	for i, step := range []func(context.Context) error{h.podman, h.account, h.metadata, h.configDir} { // the last one and next are step 4
+	for i, step := range []func(context.Context) error{h.podman, h.account, h.metadata, h.executor, h.configDir} { // the last one and next are step 5
 		scr.Step(i + 1)
 		if err := step(ctx); err != nil {
 			return err
@@ -152,14 +152,28 @@ func podmanAtLeast(versionOutput string, major, minor int) bool {
 	return ma > major || ma == major && mi >= minor
 }
 
-// account creates the service account if it is missing, gives it subordinate id ranges no other account uses, and enables
-// linger so its services start at boot and run without a login.
+// account makes the two accounts of the stack: the service account and the executor's. The cgroup controllers that the executor's limits need
+// are delegated first, before any account lingers: a user manager that starts afterwards has them, and restarting one stops its containers.
 func (h *host) account(ctx context.Context) error {
-	if _, err := h.run(ctx, "id", "-u", ServiceAccount); err != nil {
-		if _, err := h.run(ctx, "useradd", "--create-home", "--shell", "/usr/sbin/nologin", ServiceAccount); err != nil {
-			return fmt.Errorf("create the account %s: %w", ServiceAccount, err)
+	if err := h.delegation(ctx); err != nil {
+		return err
+	}
+	for _, name := range []string{ServiceAccount, ExecutorAccount} {
+		if err := h.ensureAccount(ctx, name); err != nil {
+			return err
 		}
-		h.check("Created the account %s with no login shell.\n", ServiceAccount)
+	}
+	return h.executorManager(ctx)
+}
+
+// ensureAccount creates the account if it is missing, gives it subordinate id ranges no other account uses, and enables linger so its
+// services start at boot and run without a login.
+func (h *host) ensureAccount(ctx context.Context, name string) error {
+	if _, err := h.run(ctx, "id", "-u", name); err != nil {
+		if _, err := h.run(ctx, "useradd", "--create-home", "--shell", "/usr/sbin/nologin", name); err != nil {
+			return fmt.Errorf("create the account %s: %w", name, err)
+		}
+		h.check("Created the account %s with no login shell.\n", name)
 	}
 	var add []string
 	for _, f := range []struct{ file, flag string }{{"/etc/subuid", "--add-subuids"}, {"/etc/subgid", "--add-subgids"}} {
@@ -167,7 +181,7 @@ func (h *host) account(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", f.file, err)
 		}
-		start, has, err := freeSubidRange(raw, ServiceAccount)
+		start, has, err := freeSubidRange(raw, name)
 		if err != nil {
 			return fmt.Errorf("%s: %w", f.file, err)
 		}
@@ -176,13 +190,13 @@ func (h *host) account(ctx context.Context) error {
 		}
 	}
 	if len(add) > 0 {
-		if _, err := h.run(ctx, "usermod", append(add, ServiceAccount)...); err != nil {
+		if _, err := h.run(ctx, "usermod", append(add, name)...); err != nil {
 			return fmt.Errorf("add the subordinate id ranges: %w", err)
 		}
 		h.check("Added the subordinate id ranges %s.\n", strings.Join(add, " "))
 	}
-	if _, err := h.run(ctx, "loginctl", "enable-linger", ServiceAccount); err != nil {
-		return fmt.Errorf("enable linger for %s: %w", ServiceAccount, err)
+	if _, err := h.run(ctx, "loginctl", "enable-linger", name); err != nil {
+		return fmt.Errorf("enable linger for %s: %w", name, err)
 	}
 	return nil
 }
@@ -237,9 +251,40 @@ func (h *host) metadata(ctx context.Context) error {
 	return h.installMetadataRule(ctx, installed)
 }
 
+// nftSetup is a rule that refuses addresses for one account: the table it makes, its file and the unit that loads it at every boot.
+type nftSetup struct {
+	label       string   // what the rule is called in an error: "metadata" or "executor"
+	table       string   // the nft table, inet
+	ruleFile    string   // where the rule lives
+	unit        string   // the oneshot unit that loads it
+	rule        string   // the text of the rule file
+	addresses   []string // each must be refused in the loaded table
+	consequence string   // what must not run on this host until the rule is loaded
+	description string   // the unit's description
+	refusedLine string   // the line that says the rule is loaded
+}
+
 // installMetadataRule writes the rule and its unit and loads them. installed says the unit was there before: enable --now
 // does nothing for a unit that is already active, so a rule file that changed needs a restart to be loaded.
 func (h *host) installMetadataRule(ctx context.Context, installed bool) error {
+	return h.installNft(ctx, nftSetup{
+		label: "metadata", table: "suiteward_imds", ruleFile: imdsRuleFile, unit: imdsUnit,
+		rule: fmt.Sprintf(`add table inet suiteward_imds
+delete table inet suiteward_imds
+table inet suiteward_imds {
+  chain output {
+    type filter hook output priority 0; policy accept;
+    meta skuid %s ip daddr %s reject
+  }
+}
+`, ServiceAccount, metadataAddress),
+		addresses: []string{metadataAddress}, consequence: "the service must not run on this host until it does",
+		description: "Reject the instance metadata service for the " + ServiceAccount + " user",
+		refusedLine: fmt.Sprintf("Refusing %s for the account %s (the rule loads at every boot).\n", metadataAddress, ServiceAccount),
+	}, installed)
+}
+
+func (h *host) installNft(ctx context.Context, s nftSetup, installed bool) error {
 	nft, err := h.run(ctx, "sh", "-c", "command -v nft")
 	if err != nil {
 		if err := h.dnf(ctx, "nft is not installed", "install", "-y", "nftables"); err != nil {
@@ -249,17 +294,8 @@ func (h *host) installMetadataRule(ctx context.Context, installed bool) error {
 			return fmt.Errorf("nft is still missing after the installation: %w", err)
 		}
 	}
-	rule := fmt.Sprintf(`add table inet suiteward_imds
-delete table inet suiteward_imds
-table inet suiteward_imds {
-  chain output {
-    type filter hook output priority 0; policy accept;
-    meta skuid %s ip daddr %s reject
-  }
-}
-`, ServiceAccount, metadataAddress)
 	unit := fmt.Sprintf(`[Unit]
-Description=Reject the instance metadata service for the %[1]s user
+Description=%[1]s
 Before=systemd-user-sessions.service
 After=nftables.service
 
@@ -267,38 +303,40 @@ After=nftables.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=%[2]s -f %[3]s
-ExecStop=-%[2]s delete table inet suiteward_imds
+ExecStop=-%[2]s delete table inet %[4]s
 
 [Install]
 WantedBy=multi-user.target
-`, ServiceAccount, nft, imdsRuleFile)
-	onDisk, readErr := h.run(ctx, "cat", imdsRuleFile)
-	ruleChanged := readErr != nil || onDisk != strings.TrimSpace(rule)
-	if _, err := h.run(ctx, "mkdir", "-p", path.Dir(imdsRuleFile)); err != nil {
+`, s.description, nft, s.ruleFile, s.table)
+	onDisk, readErr := h.run(ctx, "cat", s.ruleFile)
+	ruleChanged := readErr != nil || onDisk != strings.TrimSpace(s.rule)
+	if err := h.makeDir(ctx, path.Dir(s.ruleFile)); err != nil {
 		return err
 	}
-	for file, content := range map[string]string{imdsRuleFile: rule, "/etc/systemd/system/" + imdsUnit: unit} {
-		if _, err := h.d.Exec(ctx, "tee", []string{file}, strings.NewReader(content)); err != nil {
-			return fmt.Errorf("write %s: %w", file, err)
+	for file, content := range map[string]string{s.ruleFile: s.rule, "/etc/systemd/system/" + s.unit: unit} {
+		if err := h.writeReadable(ctx, file, content); err != nil {
+			return err
 		}
 	}
-	steps := [][]string{{"daemon-reload"}, {"enable", "--now", imdsUnit}}
+	steps := [][]string{{"daemon-reload"}, {"enable", "--now", s.unit}}
 	if installed && ruleChanged {
-		steps = append(steps, []string{"restart", imdsUnit})
+		steps = append(steps, []string{"restart", s.unit})
 	}
 	for _, args := range steps {
 		if _, err := h.run(ctx, "systemctl", args...); err != nil {
 			return fmt.Errorf("systemctl %s: %w", strings.Join(args, " "), err)
 		}
 	}
-	table, err := h.run(ctx, "nft", "list", "table", "inet", "suiteward_imds")
+	table, err := h.run(ctx, "nft", "list", "table", "inet", s.table)
 	if err != nil {
-		return fmt.Errorf("the metadata rule is not loaded: %w", err)
+		return fmt.Errorf("the %s rule is not loaded: %w", s.label, err)
 	}
-	if !strings.Contains(table, "reject") || !strings.Contains(table, metadataAddress) {
-		return fmt.Errorf("the table suiteward_imds has no reject rule for %s: the service must not run on this host until it does", metadataAddress)
+	for _, address := range s.addresses {
+		if !strings.Contains(table, "reject") || !strings.Contains(table, address) {
+			return fmt.Errorf("the table %s has no reject rule for %s: %s", s.table, address, s.consequence)
+		}
 	}
-	h.check("Refusing %s for the account %s (the rule loads at every boot).\n", metadataAddress, ServiceAccount)
+	h.check("%s", s.refusedLine)
 	return nil
 }
 
@@ -335,6 +373,9 @@ func (h *host) configDir(ctx context.Context) error {
 	if _, err := h.run(ctx, "install", "-d", "-o", ServiceAccount, "-g", ServiceAccount, "-m", "0700", dotConfig, dir); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
+	if err := h.executorHandover(ctx, dir); err != nil {
+		return err
+	}
 	if !h.exists(ctx, etcEnvFile) {
 		return nil
 	}
@@ -370,6 +411,7 @@ func (h *host) next(ctx context.Context) error {
 	}
 	h.say("\nThe host is ready. Now run the installer as the service account, in a shell with its user bus (the account has no login shell):\n\n")
 	h.say("  sudo -u %s -H env XDG_RUNTIME_DIR=/run/user/%s DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus %s\n\n", ServiceAccount, uid, uid, command)
+	h.say("The executor of canonical execution already runs as %s and waits for the service. It is pointed at the HTTP port that the settings of the service account name, else at %d: when the service will publish its HTTP listener on another port, run this step again with --http-port <port>. Keep one executor for each container engine: at start it removes every %s container of its engine, so a second one would remove the sandboxes of the first.\n\n", ExecutorAccount, DefaultHTTPPort, sandboxNamePrefix)
 	h.say("The account must be able to run %s", exe)
 	if strings.HasPrefix(exe, "/root/") || strings.HasPrefix(exe, "/home/") {
 		h.say(": that path is inside a home directory, so copy the binary to a shared place such as /usr/local/bin first")

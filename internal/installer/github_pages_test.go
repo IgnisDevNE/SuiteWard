@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -231,7 +232,7 @@ func TestTheTestCheckIsExplainedForEachRepositoryOnAFullScreen(t *testing.T) {
 	if err != nil || res.TestChecks["acme/r1"] != "CI / test" || res.TestChecks["acme/r2"] != "CI / test" {
 		t.Fatalf("resolveGitHub = %v, %v", res.TestChecks, err)
 	}
-	for _, want := range []string{"Required test check for acme/r1", "Required test check for acme/r2", "SuiteWard runs no tests", "SuiteWard / Contract", "CI / test"} {
+	for _, want := range []string{"Required test check for acme/r1", "Required test check for acme/r2", "SuiteWard does not replace your CI's tests", "SuiteWard / Contract", "CI / test"} {
 		if !shows(out.String(), want) {
 			t.Errorf("the screen never showed %q", want)
 		}
@@ -660,5 +661,29 @@ func TestTheFilesAreInTheScrollbackAfterACtrlCAtTheRulesetPause(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Since M2.1 SuiteWard runs tests, and no text of the installer says that it does not (runtime contract, "What a text says about running
+// tests"): the sources are read, because a screen shows only the texts a test happens to draw.
+func TestNoInstallerTextSaysThatSuiteWardRunsNoTests(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Clean(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, banned := range []string{"runs no tests", "does not run tests", "did not run any tests", "did not run the tests"} {
+			if strings.Contains(strings.ToLower(string(raw)), banned) {
+				t.Errorf("%s says %q", name, banned)
+			}
+		}
 	}
 }

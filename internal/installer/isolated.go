@@ -138,6 +138,25 @@ func askedSettings(r *Resolver, base Settings) (Settings, error) {
 	return s, nil
 }
 
+// adoptEnvFileApp takes the App of the env file when the settings name none (a host installed by hand, or a run that stopped after it wrote the
+// file): it is the App of this install, and the flow must not offer to create another. fromFile is what the file held, zero when the settings
+// name an App.
+func adoptEnvFileApp(s *Settings, configDir string) (fromFile GitHub, err error) {
+	if s.GitHub.AppID != 0 {
+		return GitHub{}, nil
+	}
+	if fromFile, err = readGitHubEnvFile(filepath.Join(configDir, "github.env")); err != nil {
+		return GitHub{}, err
+	}
+	s.GitHub = fromFile
+	return fromFile, nil
+}
+
+// sameApp is whether a names the App, installation and repositories that b does.
+func sameApp(a, b GitHub) bool {
+	return a.AppID == b.AppID && a.InstallationID == b.InstallationID && slices.Equal(a.Repositories, b.Repositories)
+}
+
 func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) error {
 	d, out, scr := env.Deps, env.Term.Out, r.screen
 	scr.Steps(isolatedInstallSteps...)
@@ -159,14 +178,9 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 		return err
 	}
 	oldEnvFile := installed.oldEnv
-	// An App the settings do not name, but the env file does (a host installed by hand, or a run that stopped after it wrote the
-	// file), is the App of this install: the flow must not offer to create another.
-	var fromFile GitHub
-	if s.GitHub.AppID == 0 {
-		if fromFile, err = readGitHubEnvFile(filepath.Join(configDir, "github.env")); err != nil {
-			return err
-		}
-		s.GitHub = fromFile
+	fromFile, err := adoptEnvFileApp(&s, configDir)
+	if err != nil {
+		return err
 	}
 	// Every port this run publishes is free, or the install stops; the listener on a port of the installed units is the service of
 	// the stack itself while it runs.
@@ -198,6 +212,10 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := g.checkAppKey(ctx, host.envPath); err != nil {
 		return err
 	}
+	executor, err := readExecutorSetup(configDir)
+	if err != nil {
+		return err
+	}
 
 	// Changes begin here. The env file comes before the secrets: when the flow just created the App (its key is stored already), a
 	// failure in between must still leave a file for a re-run to take the App from.
@@ -206,8 +224,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 		return fmt.Errorf("create %s: %w", configDir, err)
 	}
 	gh := g.s.GitHub // an env file that already holds these values stays as its author wrote it
-	inFile := gh.AppID == fromFile.AppID && gh.InstallationID == fromFile.InstallationID && slices.Equal(gh.Repositories, fromFile.Repositories)
-	envChanged, err := writeEnvFile(filepath.Join(configDir, "github.env"), gh, gh.AppID != 0 && !inFile)
+	envChanged, err := writeEnvFile(filepath.Join(configDir, "github.env"), gh, gh.AppID != 0 && !sameApp(gh, fromFile))
 	if err != nil {
 		return err
 	}
@@ -215,7 +232,12 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := ensureSecrets(ctx, rt.Secrets(), g.githubKey); err != nil {
 		return err
 	}
-	units, err := prepareUnits(ctx, host, d, scr, UnitParamsFrom(g.s, digest), false)
+	params := UnitParamsFrom(g.s, digest)
+	restart, err := executor.settle(ctx, rt.Secrets(), scr, &params, "this install again", keyStored)
+	if err != nil {
+		return err
+	}
+	units, err := prepareUnits(ctx, host, d, scr, params, false)
 	if err != nil {
 		return err
 	}
@@ -223,7 +245,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	// A running service reads its unit, its env file and its key secret when it starts: it is restarted when this run changed
 	// one of them, and before setup enrolls the owner, which must not happen on a service that cannot reach GitHub yet.
 	scr.Step(5)
-	leftRunning, err := startStack(ctx, rt, d, scr, installed.mustRestart(units, envChanged, keyStored))
+	leftRunning, err := startStack(ctx, rt, d, scr, installed.mustRestart(units, envChanged, restart))
 	if err != nil {
 		return err
 	}
@@ -573,7 +595,7 @@ func installedWithGiven(r *Resolver, installed, asked Settings) Settings {
 // sayChanges says which installed port or job timeout this run changes.
 func sayChanges(say func(string, ...any), installed, now Settings) {
 	if now.HTTPPort != installed.HTTPPort {
-		say("Changing the HTTP port of the installed stack from %d to %d, as asked.\n", installed.HTTPPort, now.HTTPPort)
+		say("Changing the HTTP port of the installed stack from %d to %d, as asked. The executor is pointed at the old one by the administrator's step: run `sudo suiteward install host --http-port %d` so that it finds the service.\n", installed.HTTPPort, now.HTTPPort, now.HTTPPort)
 	}
 	if now.MCPPort != installed.MCPPort {
 		say("Changing the MCP port of the installed stack from %d to %d, as asked.\n", installed.MCPPort, now.MCPPort)

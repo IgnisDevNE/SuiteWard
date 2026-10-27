@@ -24,7 +24,7 @@ import (
 
 // Doctor is the host half of `suiteward doctor`:
 //
-//	func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, jsonOut bool) (exitCode int)
+//	func Doctor(ctx context.Context, deps Deps, settingsPath, tokenFile string, out io.Writer, jsonOut bool) (exitCode int)
 //
 // It reads the settings at settingsPath (the default location when empty), checks the engine, the containers or units, the
 // pins, the ports and /status of the instance those settings describe, runs `suiteward check --json` in the service
@@ -32,13 +32,13 @@ import (
 // `check`), or with jsonOut the array of {name, ok, detail, fix}, which also carries the detail of the passing checks. On a
 // full screen the results are lines of the screen, ended by the counts ("N ok, N warnings, N failures"), and the caller holds the page
 // until Enter (doctorCommand). The exit code is 0 when everything passed and 1 otherwise. Doctor only reads: it never creates, starts, stops or removes anything.
-func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, jsonOut bool) int {
+func Doctor(ctx context.Context, deps Deps, settingsPath, tokenFile string, out io.Writer, jsonOut bool) int {
 	scr := screenOn(out)
 	if !jsonOut {
 		scr.Steps("Doctor")
 	}
 	var results []doctorResult
-	spinning(scr, "Checking the instance", func() { results = doctorChecks(ctx, deps, httpGet, settingsPath) })
+	spinning(scr, "Checking the instance", func() { results = doctorChecks(ctx, deps, httpGet, settingsPath, tokenFile) })
 	if err := writeDoctor(out, results, jsonOut); err != nil {
 		return 1 // a failed write to the output cannot be reported anywhere else
 	}
@@ -51,8 +51,8 @@ func Doctor(ctx context.Context, deps Deps, settingsPath string, out io.Writer, 
 // doctorChecks runs every check of doctor and returns the results, the one of the settings first, and draws nothing: the install and the
 // upgrade run it at their end, under their own page. fetch reads an address of the local service: Doctor passes httpGet, an install the one
 // of its Env, which a test replaces.
-func doctorChecks(ctx context.Context, deps Deps, fetch func(context.Context, string) ([]byte, error), settingsPath string) []doctorResult {
-	d := &doctor{deps: deps, fetch: fetch, raw: map[string][]byte{}, units: map[string]map[string]string{}}
+func doctorChecks(ctx context.Context, deps Deps, fetch func(context.Context, string) ([]byte, error), settingsPath, tokenFile string) []doctorResult {
+	d := &doctor{deps: deps, fetch: fetch, tokenFile: tokenFile, raw: map[string][]byte{}, units: map[string]map[string]string{}}
 	if err := deps.validate(); err != nil {
 		d.fail("settings", err.Error(), "this is a bug of the installer: report it")
 		return d.results
@@ -170,16 +170,17 @@ type machineEntry struct {
 }
 
 type doctor struct {
-	deps    Deps
-	fetch   func(context.Context, string) ([]byte, error) // GET of an address of the local service
-	s       Settings
-	rt      Runtime
-	why     string // the check that failed when rt is nil
-	machine machineInfo
-	viaSSH  bool // co-located Podman off Linux: the instance lives in a Podman machine
-	raw     map[string][]byte
-	units   map[string]map[string]string // isolated: `systemctl show` of each unit
-	results []doctorResult
+	deps      Deps
+	fetch     func(context.Context, string) ([]byte, error) // GET of an address of the local service
+	s         Settings
+	rt        Runtime
+	why       string // the check that failed when rt is nil
+	machine   machineInfo
+	viaSSH    bool   // co-located Podman off Linux: the instance lives in a Podman machine
+	tokenFile string // --token-file: where the instance keeps the copy of its MCP token, and the executor its files beside it; empty for the default place
+	raw       map[string][]byte
+	units     map[string]map[string]string // isolated: `systemctl show` of each unit
+	results   []doctorResult
 }
 
 func (d *doctor) pass(name, detail string) {
@@ -257,6 +258,9 @@ func (d *doctor) run(ctx context.Context, settingsPath string) {
 	if isolated {
 		d.checkHost(ctx)
 		d.checkMetadata(ctx)
+		d.checkExecutorIsolated(ctx)
+	} else {
+		d.checkExecutorColocated(ctx)
 	}
 	d.checkInstance(ctx)
 }
@@ -803,6 +807,8 @@ func (d *doctor) checkPorts(ctx context.Context) {
 	if err == nil {
 		if err = json.Unmarshal(body, &status); err != nil {
 			err = errors.New("the answer is not JSON")
+		} else {
+			d.raw["status"] = body // the executor's results read the execution object, whatever else /status reports
 		}
 	}
 	if err != nil {

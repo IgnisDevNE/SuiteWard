@@ -879,7 +879,9 @@ func readRepositories(ctx context.Context, a ghAccess, repos []string) ([]repoIn
 }
 
 // ownCheck is whether a check name is one of the two that SuiteWard publishes: neither is the project's test check.
-func ownCheck(name string) bool { return name == protection.ContractCheck || name == github.ReceiptCheckName }
+func ownCheck(name string) bool {
+	return name == protection.ContractCheck || name == github.ReceiptCheckName
+}
 
 // checkRunNames lists the check runs on the head of the default branch, without duplicates and without the two checks SuiteWard publishes.
 // shortcut: the first 100 runs only, and legacy commit statuses do not show as check runs: the user types such a name.

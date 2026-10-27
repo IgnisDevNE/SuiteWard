@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -41,13 +42,29 @@ func docker(t *testing.T) sandbox.Runtime {
 			t.Skipf("cannot pull the pinned image: %v: %s", err, out)
 		}
 	}
+	before := sandboxContainers(t)
 	t.Cleanup(func() {
-		out, err := exec.Command("docker", "ps", "-a", "-q", "--filter", "name=suiteward-sandbox-").Output()
-		if err != nil || strings.TrimSpace(string(out)) != "" {
-			t.Errorf("a sandbox container was left behind: %q, %v", out, err)
+		for name := range sandboxContainers(t) {
+			if !before[name] {
+				t.Errorf("the sandbox container %s was left behind", name)
+			}
 		}
 	})
 	return rt
+}
+
+// sandboxContainers are the names of the sandbox containers that exist now, so that a test looks only at the ones it created.
+func sandboxContainers(t *testing.T) map[string]bool {
+	t.Helper()
+	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=suiteward-sandbox-", "--format", "{{.Names}}").Output()
+	if err != nil {
+		t.Fatalf("list the sandbox containers: %v", err)
+	}
+	names := map[string]bool{}
+	for _, name := range strings.Fields(string(out)) {
+		names[name] = true
+	}
+	return names
 }
 
 func spec(t *testing.T, stdin []byte, argv ...string) sandbox.Spec {
@@ -85,6 +102,10 @@ func tarOf(t *testing.T, files map[string]string) []byte {
 			}
 		}
 	}
+	// The completion marker is the last entry: the container refuses to start Argv without it.
+	if err := w.WriteHeader(&tar.Header{Name: sandbox.CompleteMarker, Mode: 0o644, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +125,7 @@ func run(t *testing.T, rt sandbox.Runtime, s sandbox.Spec) sandbox.Outcome {
 
 func TestTheSandboxHasNoNetworkAndAReadOnlyRoot(t *testing.T) {
 	rt := docker(t)
-	probe := `ls /sys/class/net; touch /etc/x 2>/dev/null && echo root-writable; echo ok > /work/w && echo work-writable; id -u`
+	probe := `ls /sys/class/net; touch /tmp/x 2>/dev/null && echo root-writable; echo ok > /work/w && echo work-writable; id -u`
 	out := run(t, rt, spec(t, tarOf(t, nil), "sh", "-c", probe))
 	if got, want := string(out.Stdout), "lo\nwork-writable\n65534\n"; got != want || out.ExitCode != 0 {
 		t.Errorf("the container saw %q (exit %d), want %q: only the loopback, a writable /work, a read-only root, uid 65534", got, out.ExitCode, want)
@@ -125,25 +146,27 @@ func TestTheStdinTarIsExtractedUnderWorkAndTheExitStatusIsThatOfArgv(t *testing.
 	}
 }
 
-func TestOnlyTheGivenEnvironmentReachesTheContainer(t *testing.T) {
+func TestTheEnvironmentOfArgvIsExactlyTheGivenOne(t *testing.T) {
 	rt := docker(t)
 	t.Setenv("SUITEWARD_SANDBOX_LEAK", "leaked")
 	s := spec(t, tarOf(t, nil), "env")
-	s.Env = append(s.Env, "ONLY=this")
+	s.Env = append(s.Env, "ONLY=this", "EMPTY=")
 	out := run(t, rt, s)
-	lines := strings.Split(string(out.Stdout), "\n")
-	if !contains(lines, "ONLY=this") || contains(lines, "SUITEWARD_SANDBOX_LEAK=leaked") {
-		t.Errorf("the environment must be the given one: %q", lines)
+	got := strings.Fields(string(out.Stdout))
+	want := slices.Clone(s.Env)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) || out.ExitCode != 0 {
+		t.Errorf("the environment must be the given one and no other:\n got %q\nwant %q", got, want)
 	}
-}
-
-func contains(lines []string, want string) bool {
-	for _, l := range lines {
-		if l == want {
-			return true
+	// The image has an environment of its own (GOLANG_VERSION, GOPATH), and the runtime adds HOSTNAME and HOME: none reaches Argv.
+	for _, name := range []string{"HOSTNAME", "GOLANG_VERSION", "GOPATH", "HOME", "SUITEWARD_SANDBOX_LEAK"} {
+		for _, line := range got {
+			if strings.HasPrefix(line, name+"=") {
+				t.Errorf("%s reached Argv: %s", name, line)
+			}
 		}
 	}
-	return false
 }
 
 func TestAMemoryHogIsSeenAsOOMKilled(t *testing.T) {
@@ -241,4 +264,45 @@ func pinnedImage(t *testing.T) string {
 		t.Fatal("the Containerfile no longer pins the golang builder image by digest")
 	}
 	return strings.ReplaceAll(string(pin), "${GO_VERSION}", strings.TrimSpace(string(version)))
+}
+
+// unmarkedTar is a whole tar, footer included, that lacks the completion marker.
+func unmarkedTar(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := tar.NewWriter(&buf)
+	if err := w.WriteHeader(&tar.Header{Name: "top.txt", Mode: 0o644, Size: 3, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("top")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// A failure before Argv starts is not the status of Argv: tar, the test for the marker and cd exit with the reserved status.
+func TestAFailureBeforeArgvIsASetupFailureAndArgvNeverStarts(t *testing.T) {
+	rt := docker(t)
+	for name, tc := range map[string]struct {
+		stdin   []byte
+		workdir string
+	}{
+		"a whole tar with no completion marker": {unmarkedTar(t), "."},
+		"bytes that are not a tar":              {[]byte("this is not a tar"), "."},
+		"a work directory that is not in it":    {tarOf(t, nil), "no/such/dir"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := spec(t, tc.stdin, "sleep", "300") // Argv would run until the kill if it started, and then it is no setup failure
+			s.Workdir = tc.workdir
+			s.Limits.KillAfter = 20 * time.Second
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if _, err := rt.Run(ctx, s); !errors.Is(err, sandbox.ErrSetupFailed) {
+				t.Errorf("want ErrSetupFailed, got %v", err)
+			}
+		})
+	}
 }

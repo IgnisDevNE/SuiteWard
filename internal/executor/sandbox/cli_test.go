@@ -1,7 +1,6 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -17,7 +16,14 @@ const pinned = "registry.example/sandbox/runtime:1@sha256:aaaaaaaaaaaaaaaaaaaaaa
 
 const (
 	exitedState = `{"Status":"exited","Running":false,"OOMKilled":false,"ExitCode":0,"Error":"","StartedAt":"2026-10-26T21:58:19.830463123Z"}`
-	wantScript  = `tar -x -C /work && cd "/work/$1" && shift && exec "$@"`
+	wantScript  = `{ tar -x -C /work && test -f /work/.suiteward/complete && cd "/work/$1"; } || exit 113; shift; exec env -i "$@"`
+)
+
+// The `version` output of the engines the runner tells apart.
+const (
+	dockerJSON   = `{"Client":{"Version":"29.9.2"},"Server":{"Platform":{"Name":"Docker Desktop 4.96.1 (244132)"},"Version":"29.9.2","Components":[{"Name":"Engine","Version":"29.9.2"},{"Name":"containerd","Version":"v2.4.2"}]}}`
+	podmanLocal  = `{"Client":{"APIVersion":"5.8.2","Version":"5.8.2","OsArch":"linux/amd64"}}`
+	podmanRemote = `{"Client":{"Version":"5.8.2"},"Server":{"Platform":{"Name":"linux/amd64/fedora-42"},"Version":"5.5.0","Components":[{"Name":"Podman Engine","Version":"5.5.0"}]}}`
 )
 
 type call struct {
@@ -34,13 +40,14 @@ type fakeRuntime struct {
 	onRun    func(ctx context.Context, stdin io.Reader, stdout io.Writer) (int, string, error)
 	state    string // what `inspect` prints; empty means the runtime has no such container
 	killExit func() int
+	rmExit   int    // the exit status of `rm`
 	version  string // what `version` prints; empty means the runtime does not answer
 	killed   chan struct{}
 	killOnce sync.Once
 }
 
 func newFake() *fakeRuntime {
-	return &fakeRuntime{state: exitedState, killed: make(chan struct{})}
+	return &fakeRuntime{state: exitedState, version: dockerJSON, killed: make(chan struct{})}
 }
 
 func (f *fakeRuntime) exec(ctx context.Context, name string, args []string, stdin io.Reader, stdout io.Writer) (int, string, error) {
@@ -75,7 +82,7 @@ func (f *fakeRuntime) exec(ctx context.Context, name string, args []string, stdi
 		_, err := io.WriteString(stdout, f.version)
 		return 0, "", err
 	default: // rm
-		return 0, "", nil
+		return f.rmExit, "", nil
 	}
 }
 
@@ -118,16 +125,25 @@ func run(t *testing.T, f *fakeRuntime, binary string, s Spec) (Outcome, error) {
 	return newCLI(binary, f.exec).Run(context.Background(), s)
 }
 
-func TestRunBuildsTheIsolationOfADR0028ForBothRuntimes(t *testing.T) {
-	for _, binary := range []string{"docker", "podman"} {
-		t.Run(binary, func(t *testing.T) {
+func TestRunBuildsTheIsolationOfADR0028ForBothEngines(t *testing.T) {
+	for _, tc := range []struct {
+		name, binary, version string
+		podman                bool
+	}{
+		{"Docker", "docker", dockerJSON, false},
+		{"local Podman", "podman", podmanLocal, true},
+		{"a Podman machine", "podman", podmanRemote, true},
+		{"Podman behind a command named docker", "docker", podmanRemote, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			f := newFake()
-			if _, err := run(t, f, binary, validSpec()); err != nil {
+			f.version = tc.version
+			if _, err := run(t, f, tc.binary, validSpec()); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 			runs := f.commands("run")
-			if len(runs) != 1 || runs[0].name != binary {
-				t.Fatalf("want one %s run, got %+v", binary, runs)
+			if len(runs) != 1 || runs[0].name != tc.binary {
+				t.Fatalf("want one %s run, got %+v", tc.binary, runs)
 			}
 			got := runs[0].args
 			i := slices.Index(got, "--name")
@@ -138,19 +154,44 @@ func TestRunBuildsTheIsolationOfADR0028ForBothRuntimes(t *testing.T) {
 			if !strings.HasPrefix(name, "suiteward-sandbox-") {
 				t.Errorf("the container name %q does not carry the sandbox prefix", name)
 			}
-			// Exactly these arguments: nothing else (no --rm, no mount, no published port, no extra capability) may creep in.
-			want := []string{
-				"run", "--name", name, "-i", "--pull=never", "--network=none", "--read-only",
+			// Exactly these arguments: nothing else (no --rm, no mount, no published port, no extra capability, no --env: the image's
+			// own environment must not reach Argv) may creep in. The environment of Argv is the assignments after the work directory.
+			want := []string{"run", "--name", name, "-i", "--pull=never", "--network=none", "--read-only"}
+			if tc.podman {
+				// Podman keeps /tmp, /var/tmp, /run and /dev/shm writable under --read-only unless it is told not to.
+				want = append(want, "--read-only-tmpfs=false")
+			}
+			want = append(want,
 				"--tmpfs", "/work:rw,exec,nosuid,nodev,size=1024m",
 				"--cap-drop=ALL", "--security-opt", "no-new-privileges", "--user", "65534:65534",
 				"--pids-limit", "512", "--memory", "3072m", "--memory-swap", "3072m", "--cpus", "4",
-				"--env", "HOME=/work/home", "--env", "GOFLAGS=",
-				pinned, "sh", "-c", wantScript, "sh", "pkg/x", "go", "test", "./...",
-			}
+				pinned, "sh", "-c", wantScript, "sh", "pkg/x", "HOME=/work/home", "GOFLAGS=", "go", "test", "./...",
+			)
 			if !slices.Equal(got, want) {
 				t.Errorf("the run arguments differ\n got %q\nwant %q", got, want)
 			}
 		})
+	}
+}
+
+func TestRunAsksTheEngineOnceAndRefusesToRunBlind(t *testing.T) {
+	f := newFake()
+	c := newCLI("docker", f.exec)
+	for range 2 {
+		if _, err := c.Run(context.Background(), validSpec()); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	}
+	if n := len(f.commands("version")); n != 1 {
+		t.Errorf("the engine is asked once for a runner, not %d times", n)
+	}
+	blind := newFake()
+	blind.version = ""
+	if _, err := run(t, blind, "docker", validSpec()); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("a runtime that does not say what it is must not run a sandbox with the flags of the wrong engine: %v", err)
+	}
+	if len(blind.commands("run")) != 0 {
+		t.Errorf("no container may be run blind")
 	}
 }
 
@@ -178,7 +219,7 @@ func TestRunReadsTheStateThenRemovesTheContainer(t *testing.T) {
 	if out.ExitCode != 3 || !out.OOMKilled || out.Killed || out.Truncated {
 		t.Errorf("the outcome must be the runtime's state: %+v", out)
 	}
-	if got, want := f.verbs(), []string{"run", "inspect", "rm"}; !slices.Equal(got, want) {
+	if got, want := f.verbs(), []string{"version", "run", "inspect", "rm"}; !slices.Equal(got, want) {
 		t.Fatalf("commands %q, want %q", got, want)
 	}
 	name := f.commands("run")[0].args[2]
@@ -308,38 +349,41 @@ func TestRunCapsTheStdout(t *testing.T) {
 func TestRunRefusesAWeakerSpecBeforeAnyCommand(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 	mutations := map[string]func(*Spec){
-		"a tag, no digest":                     func(s *Spec) { s.Image = "golang:1.27.3-alpine" },
-		"no image":                             func(s *Spec) { s.Image = "" },
-		"a short digest":                       func(s *Spec) { s.Image = "golang@sha256:" + digest[:63] },
-		"a long digest":                        func(s *Spec) { s.Image = "golang@sha256:" + digest + "0" },
-		"an upper-case digest":                 func(s *Spec) { s.Image = "golang@sha256:" + strings.ToUpper(digest) },
-		"another algorithm":                    func(s *Spec) { s.Image = "golang@sha512:" + digest },
-		"no name":                              func(s *Spec) { s.Image = "@sha256:" + digest },
-		"a name that is a flag":                func(s *Spec) { s.Image = "-v@sha256:" + digest },
-		"a space in the image":                 func(s *Spec) { s.Image = "gol ang@sha256:" + digest },
-		"an empty workdir":                     func(s *Spec) { s.Workdir = "" },
-		"an absolute workdir":                  func(s *Spec) { s.Workdir = "/etc" },
-		"a workdir above /work":                func(s *Spec) { s.Workdir = "../etc" },
-		"a workdir that climbs":                func(s *Spec) { s.Workdir = "a/../../b" },
-		"a workdir that is not clean":          func(s *Spec) { s.Workdir = "a//b" },
-		"a workdir with a trailing /":          func(s *Spec) { s.Workdir = "a/" },
-		"a workdir with a NUL":                 func(s *Spec) { s.Workdir = "a\x00b" },
-		"an env entry with no value":           func(s *Spec) { s.Env = []string{"HOME"} },
-		"an env entry with no name":            func(s *Spec) { s.Env = []string{"=x"} },
-		"an env name with a space":             func(s *Spec) { s.Env = []string{"A B=x"} },
-		"an env name that starts with a digit": func(s *Spec) { s.Env = []string{"1A=x"} },
-		"an env value with a NUL":              func(s *Spec) { s.Env = []string{"A=b\x00c"} },
-		"no argv":                              func(s *Spec) { s.Argv = nil },
-		"an empty program":                     func(s *Spec) { s.Argv = []string{""} },
-		"a program that is a flag":             func(s *Spec) { s.Argv = []string{"-x"} },
-		"no memory limit":                      func(s *Spec) { s.Limits.MemoryMiB = 0 },
-		"no cpu limit":                         func(s *Spec) { s.Limits.CPUs = 0 },
-		"no pids limit":                        func(s *Spec) { s.Limits.Pids = 0 },
-		"no tmpfs size":                        func(s *Spec) { s.Limits.TmpfsMiB = 0 },
-		"no kill deadline":                     func(s *Spec) { s.Limits.KillAfter = 0 },
-		"a negative memory limit":              func(s *Spec) { s.Limits.MemoryMiB = -1 },
-		"no stdout limit":                      func(s *Spec) { s.StdoutLimit = 0 },
-		"no stdin":                             func(s *Spec) { s.Stdin = nil },
+		"a tag, no digest":                      func(s *Spec) { s.Image = "golang:1.27.3-alpine" },
+		"no image":                              func(s *Spec) { s.Image = "" },
+		"a short digest":                        func(s *Spec) { s.Image = "golang@sha256:" + digest[:63] },
+		"a long digest":                         func(s *Spec) { s.Image = "golang@sha256:" + digest + "0" },
+		"an upper-case digest":                  func(s *Spec) { s.Image = "golang@sha256:" + strings.ToUpper(digest) },
+		"another algorithm":                     func(s *Spec) { s.Image = "golang@sha512:" + digest },
+		"no name":                               func(s *Spec) { s.Image = "@sha256:" + digest },
+		"a name that is a flag":                 func(s *Spec) { s.Image = "-v@sha256:" + digest },
+		"a space in the image":                  func(s *Spec) { s.Image = "gol ang@sha256:" + digest },
+		"an empty workdir":                      func(s *Spec) { s.Workdir = "" },
+		"an absolute workdir":                   func(s *Spec) { s.Workdir = "/etc" },
+		"a workdir above /work":                 func(s *Spec) { s.Workdir = "../etc" },
+		"a workdir that climbs":                 func(s *Spec) { s.Workdir = "a/../../b" },
+		"a workdir that is not clean":           func(s *Spec) { s.Workdir = "a//b" },
+		"a workdir with a trailing /":           func(s *Spec) { s.Workdir = "a/" },
+		"a workdir with a NUL":                  func(s *Spec) { s.Workdir = "a\x00b" },
+		"an env entry with no value":            func(s *Spec) { s.Env = []string{"HOME"} },
+		"an env entry with no name":             func(s *Spec) { s.Env = []string{"=x"} },
+		"an env name with a space":              func(s *Spec) { s.Env = []string{"A B=x"} },
+		"an env name that starts with a digit":  func(s *Spec) { s.Env = []string{"1A=x"} },
+		"an env value with a NUL":               func(s *Spec) { s.Env = []string{"A=b\x00c"} },
+		"no argv":                               func(s *Spec) { s.Argv = nil },
+		"an empty program":                      func(s *Spec) { s.Argv = []string{""} },
+		"a program that is a flag":              func(s *Spec) { s.Argv = []string{"-x"} },
+		"a program that reads as an assignment": func(s *Spec) { s.Argv = []string{"A=b", "go"} },
+		"a NUL in the program":                  func(s *Spec) { s.Argv = []string{"go\x00"} },
+		"a NUL in an argument":                  func(s *Spec) { s.Argv = []string{"go", "test", "a\x00b"} },
+		"no memory limit":                       func(s *Spec) { s.Limits.MemoryMiB = 0 },
+		"no cpu limit":                          func(s *Spec) { s.Limits.CPUs = 0 },
+		"no pids limit":                         func(s *Spec) { s.Limits.Pids = 0 },
+		"no tmpfs size":                         func(s *Spec) { s.Limits.TmpfsMiB = 0 },
+		"no kill deadline":                      func(s *Spec) { s.Limits.KillAfter = 0 },
+		"a negative memory limit":               func(s *Spec) { s.Limits.MemoryMiB = -1 },
+		"no stdout limit":                       func(s *Spec) { s.StdoutLimit = 0 },
+		"no stdin":                              func(s *Spec) { s.Stdin = nil },
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
@@ -403,29 +447,64 @@ func TestRunRemovesAContainerThatTheRuntimeCreatedButCouldNotStart(t *testing.T)
 	}
 }
 
-func TestRunFailsClosedWhenItsStandardInputBreaks(t *testing.T) {
+func TestRunStopsTheContainerAtOnceWhenItsStandardInputBreaks(t *testing.T) {
 	boom := errors.New("the archive stream broke")
 	f := newFake()
-	var got []byte
-	f.onRun = func(_ context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
-		var err error
-		got, err = io.ReadAll(stdin)
-		return 0, "", err
+	f.onRun = func(ctx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
+		_, err := io.ReadAll(stdin) // the CLI copies the standard input to the container
+		if !errors.Is(err, boom) {
+			t.Errorf("the container's side must see the error of the stream as it is, not a clean end: %v", err)
+		}
+		select {
+		case <-f.killed:
+			return 137, "", nil
+		case <-ctx.Done():
+			return -1, "", ctx.Err()
+		case <-time.After(10 * time.Second): // the run would wait for the clock, which is an hour away
+			return -1, "", errors.New("the container was never killed")
+		}
 	}
-	s := validSpec()
+	s := validSpec() // KillAfter is an hour: only the broken stream can have caused the kill
 	s.Stdin = io.MultiReader(strings.NewReader("abc"), iotest.ErrReader(boom))
 	_, err := run(t, f, "docker", s)
 	if !errors.Is(err, boom) {
 		t.Fatalf("the error of the standard input must be the run's: %v", err)
 	}
-	// A tar that stops at a file boundary is a complete tar to busybox, which would run the command on a part of the tree. The
-	// stream therefore ends in a block that no tar reader accepts as a header.
-	poison := bytes.Repeat([]byte{0xff}, 512)
-	if !bytes.HasPrefix(got, []byte("abc")) || !bytes.HasSuffix(got, poison) || len(got) != 3+512 {
-		t.Errorf("the container must receive what was read, then a block that breaks tar: %d bytes", len(got))
+	name := f.commands("run")[0].args[2]
+	if kills := f.commands("kill"); len(kills) == 0 || !slices.Equal(kills[0].args, []string{"kill", name}) {
+		t.Errorf("the container must be killed by name as soon as the stream breaks: %+v", kills)
 	}
 	if len(f.commands("rm")) != 1 {
 		t.Errorf("the container must be removed: %q", f.verbs())
+	}
+}
+
+func TestRunReportsTheReservedStatusAsAFailureBeforeArgv(t *testing.T) {
+	// tar, the test for the completion marker and cd exit 113 on failure, before exec; no status of Docker's own (125 to 127).
+	f := newFake()
+	f.state = `{"Status":"exited","OOMKilled":false,"ExitCode":113,"Error":"","StartedAt":"2026-10-26T21:58:19Z"}`
+	out, err := run(t, f, "docker", validSpec())
+	if !errors.Is(err, ErrSetupFailed) {
+		t.Fatalf("want ErrSetupFailed, got %v", err)
+	}
+	if errors.Is(err, ErrUnavailable) || out.ExitCode != 0 {
+		t.Errorf("a failed setup is not the status of Argv, and not an unavailable runtime: %+v, %v", out, err)
+	}
+	if len(f.commands("rm")) != 1 {
+		t.Errorf("the container must still be removed: %q", f.verbs())
+	}
+}
+
+func TestRunReturnsTheOutcomeWithAnErrorWhenTheContainerCannotBeRemoved(t *testing.T) {
+	f := newFake()
+	f.state = `{"Status":"exited","OOMKilled":false,"ExitCode":3,"Error":"","StartedAt":"2026-10-26T21:58:19Z"}`
+	f.rmExit = 1
+	out, err := run(t, f, "docker", validSpec())
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("a container left behind is the runtime's failure: %v", err)
+	}
+	if out.ExitCode != 3 {
+		t.Errorf("what the run reported must still be returned: %+v", out)
 	}
 }
 
@@ -450,9 +529,6 @@ func TestRunRemovesTheContainerOfACancelledRun(t *testing.T) {
 }
 
 func TestInfoNamesTheRuntimeAndItsVersion(t *testing.T) {
-	const dockerJSON = `{"Client":{"Version":"29.9.2"},"Server":{"Platform":{"Name":"Docker Desktop 4.96.1 (244132)"},"Version":"29.9.2","Components":[{"Name":"Engine","Version":"29.9.2"},{"Name":"containerd","Version":"v2.4.2"}]}}`
-	const podmanLocal = `{"Client":{"APIVersion":"5.8.2","Version":"5.8.2","OsArch":"linux/amd64"}}`
-	const podmanRemote = `{"Client":{"Version":"5.8.2"},"Server":{"Platform":{"Name":"linux/amd64/fedora-42"},"Version":"5.5.0","Components":[{"Name":"Podman Engine","Version":"5.5.0"}]}}`
 	for _, tc := range []struct{ name, binary, json, wantName, wantVersion string }{
 		{"Docker Desktop", "docker", dockerJSON, "docker", "29.9.2"},
 		{"local Podman, which reports only its client", "podman", podmanLocal, "podman", "5.8.2"},

@@ -21,6 +21,10 @@ var (
 	ErrUnavailable = errors.New("the sandbox runtime is unavailable")
 	// ErrInvalidSpec reports a Spec the runner refuses before it runs any command.
 	ErrInvalidSpec = errors.New("invalid sandbox spec")
+	// ErrSetupFailed reports a container that failed before Argv started: tar could not extract the standard input, the completion marker
+	// was missing from it, or the work directory is not in the tree. The container exited with the reserved status 113, so a Argv that
+	// exits 113 reads the same.
+	ErrSetupFailed = errors.New("the sandbox failed before the program started")
 )
 
 // Limits are the resource limits of one sandbox. Every one is required: the runtimes read zero as no limit.
@@ -101,3 +105,7 @@ func (l Limits) validate() error {
 	}
 	return nil
 }
+
+// CompleteMarker is the file, relative to /work, that must be the last entry of the standard input tar: the container refuses to
+// start Argv when tar has not extracted it, so a stream that was cut short is never run, wherever the cut falls.
+const CompleteMarker = ".suiteward/complete"

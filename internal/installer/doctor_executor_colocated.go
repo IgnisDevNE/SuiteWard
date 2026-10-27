@@ -21,6 +21,12 @@ func (d *doctor) installFix() string {
 	return fmt.Sprintf("run `%[1]s install --upgrade` with this program when the service is of an earlier release, or `%[1]s install` again: either copies this program as the executor, makes its token and starts it", cmd)
 }
 
+// anotherInstanceFix is the fix of an executor that is registered for another instance: an install of this one skips it, so it is that instance's removal that frees the place.
+func (d *doctor) anotherInstanceFix() string {
+	cmd := d.deps.command()
+	return "a computer has one executor, and it is registered for another instance: remove that instance (`" + cmd + " uninstall`, with its own --settings and --token-file), then run `" + cmd + " install` again for this one; until then the install leaves the registered executor as it is"
+}
+
 // checkExecutorColocated runs the checks of the executor on this computer. Doctor finds its files beside the token file that --token-file names, else
 // beside the default place of this user's token file.
 func (d *doctor) checkExecutorColocated(ctx context.Context) {
@@ -40,9 +46,19 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	d.checkExecutorToken(plan)
 	d.checkExecutorColocatedBinary(plan)
 	registered, running, stateErr := plan.state(ctx, d.deps)
+	other := false // what is registered is another instance's executor: a computer has one, and the install skips it
+	if stateErr == nil {
+		other, stateErr = plan.foreign(registered)
+	}
+	notRunning := plan.startHint()
+	if other {
+		notRunning = d.anotherInstanceFix()
+	}
 	switch {
 	case stateErr != nil:
 		d.fail("executor.lifecycle", "ask the operating system about the executor: "+stateErr.Error(), d.installFix())
+	case other:
+		d.fail("executor.lifecycle", "the executor of this user is registered for another instance, not for the token file "+tokenFile+": a computer has one executor", d.anotherInstanceFix())
 	case !registered:
 		d.fail("executor.lifecycle", "the executor is not registered with the operating system: it should be "+executorMechanism(plan.goos), d.installFix())
 	default:
@@ -52,13 +68,15 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 		switch {
 		case stateErr != nil:
 			return fmt.Errorf("it is not known whether the executor runs: %w", stateErr)
+		case other:
+			return errors.New("the executor that is registered is another instance's, so none runs for this one")
 		case !running:
 			return errors.New("the executor is not running")
 		}
 		return nil
 	}, runningFixes{
 		noToken:    d.installFix(),
-		notRunning: plan.startHint(),
+		notRunning: notRunning,
 		notSeen:    "read the executor's log (" + plan.logWhere() + "), then " + d.installFix() + ", so that the service and the executor hold one token and one port",
 	})
 	d.checkExecutorImage(ctx)

@@ -87,7 +87,7 @@ func (h *hostFake) answer(c call) ([]byte, error) {
 			return nil, err
 		}
 	}
-	if out, err, ok := h.answerExecutor(c); ok {
+	if out, ok, err := h.answerExecutor(c); ok {
 		return out, err
 	}
 	fail := errors.New(c.name + ": exit status 1")

@@ -39,7 +39,7 @@ var executorPaths = []string{execDropIn, execRuleFile, execBlockUnit, execPinFil
 func writeProgram(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "suiteward")
-	if err := os.WriteFile(path, []byte("the program of this run"), 0o700); err != nil {
+	if err := os.WriteFile(path, []byte("the program of this run"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -55,32 +55,32 @@ func sha256File(t *testing.T, path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (h *hostFake) answerExecutor(c call) (out []byte, err error, handled bool) {
+func (h *hostFake) answerExecutor(c call) (out []byte, handled bool, err error) {
 	line := c.line()
 	fail := errors.New(c.name + ": exit status 1")
 	switch {
 	case c.name == "id" && line == "-u "+execAccountName:
 		if !h.execAccount {
-			return nil, fail, true
+			return nil, true, fail
 		}
-		return []byte("1002\n"), nil, true
+		return []byte("1002\n"), true, nil
 	case c.name == "useradd" && strings.HasSuffix(line, " "+execAccountName):
 		h.execAccount = true
-		return nil, nil, true
+		return nil, true, nil
 	case c.name == "cat" && line == execControllers:
-		return []byte(h.controllers + "\n"), nil, true
+		return []byte(h.controllers + "\n"), true, nil
 	case c.name == "cat" && slices.Contains(executorPaths, line):
 		if content, ok := h.files[line]; ok {
-			return []byte(content), nil, true
+			return []byte(content), true, nil
 		}
-		return nil, fail, true
+		return nil, true, fail
 	case c.name == "nft" && line == "list table inet suiteward_exec":
-		return []byte("table inet suiteward_exec { chain output { meta skuid 1002 ip daddr 169.254.169.254 reject meta skuid 1002 ip6 daddr fd00:ec2::254 reject } }"), nil, true
+		return []byte("table inet suiteward_exec { chain output { meta skuid 1002 ip daddr 169.254.169.254 reject meta skuid 1002 ip6 daddr fd00:ec2::254 reject } }"), true, nil
 	case c.name == "sha256sum":
 		if sum, ok := h.hashes[line]; ok {
-			return []byte(sum + "  " + line + "\n"), nil, true
+			return []byte(sum + "  " + line + "\n"), true, nil
 		}
-		return nil, fail, true
+		return nil, true, fail
 	case c.name == "install" && strings.HasPrefix(line, "-m 0755 -o root -g root "):
 		fields := strings.Fields(line)
 		src, dest := fields[len(fields)-2], fields[len(fields)-1]
@@ -91,30 +91,30 @@ func (h *hostFake) answerExecutor(c call) (out []byte, err error, handled bool) 
 		if h.tornCopy {
 			h.hashes[dest] = strings.Repeat("9", 64)
 		}
-		return nil, nil, true
+		return nil, true, nil
 	}
 	return h.answerExecutorUnits(c)
 }
 
 // answerExecutorUnits answers what the host step asks of systemd about the executor.
-func (h *hostFake) answerExecutorUnits(c call) (out []byte, err error, handled bool) {
+func (h *hostFake) answerExecutorUnits(c call) (out []byte, handled bool, err error) {
 	line := c.line()
 	switch {
 	case c.name != "systemctl":
-		return nil, nil, false
+		return nil, false, nil
 	case line == "restart user@1002.service":
 		h.controllers = h.afterRestart
-		return nil, nil, true
+		return nil, true, nil
 	case strings.Contains(line, execUserSystemd) && strings.Contains(line, "enable --now suiteward-executor.service"):
 		h.execEnabled = true
-		return nil, nil, true
+		return nil, true, nil
 	case strings.Contains(line, execUserSystemd) && strings.Contains(line, "show") && strings.HasSuffix(line, "suiteward-executor.service"):
 		if !h.execRunning && !h.execEnabled {
-			return []byte("inactive\n"), nil, true // a unit that was not there before the step
+			return []byte("inactive\n"), true, nil // a unit that was not there before the step
 		}
-		return []byte(h.execUnitState + "\n"), nil, true
+		return []byte(h.execUnitState + "\n"), true, nil
 	}
-	return nil, nil, false
+	return nil, false, nil
 }
 
 func hostCallIndex(h *hostFake, name, text string) int {

@@ -116,5 +116,5 @@ func (e executorSetup) currentNote(serviceWithout bool, install string) string {
 	if !serviceWithout || !e.found {
 		return ""
 	}
-	return fmt.Sprintf("The host step made an executor token that the service does not have yet: run `%s` to give it, which restarts the service.\n", install)
+	return fmt.Sprintf("The host step made an executor token that the service does not have yet: run %#q to give it, which restarts the service.\n", install)
 }

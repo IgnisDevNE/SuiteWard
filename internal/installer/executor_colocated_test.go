@@ -208,7 +208,7 @@ func TestInstallReplacesTheExecutorsProgramAndRestartsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	newer := filepath.Join(t.TempDir(), "suiteward")
-	if err := os.WriteFile(newer, []byte("the next release"), 0o700); err != nil {
+	if err := os.WriteFile(newer, []byte("the next release"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	again := newHarness(t, "linux")
@@ -231,7 +231,7 @@ func TestInstallStopsAScheduledTaskBeforeItReplacesTheProgramItHolds(t *testing.
 		t.Fatal(err)
 	}
 	newer := filepath.Join(t.TempDir(), "suiteward.exe")
-	if err := os.WriteFile(newer, []byte("the next release"), 0o700); err != nil {
+	if err := os.WriteFile(newer, []byte("the next release"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	again := machineHarnessOn(t, "windows")
@@ -430,7 +430,7 @@ func TestInstallBootsOutALoadedLaunchAgentBeforeItLoadsTheNewDefinition(t *testi
 		t.Fatal(err)
 	}
 	newer := filepath.Join(t.TempDir(), "suiteward")
-	if err := os.WriteFile(newer, []byte("the next release"), 0o700); err != nil {
+	if err := os.WriteFile(newer, []byte("the next release"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	again := machineHarnessOn(t, "darwin")

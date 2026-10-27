@@ -138,6 +138,25 @@ func askedSettings(r *Resolver, base Settings) (Settings, error) {
 	return s, nil
 }
 
+// adoptEnvFileApp takes the App of the env file when the settings name none (a host installed by hand, or a run that stopped after it wrote the
+// file): it is the App of this install, and the flow must not offer to create another. fromFile is what the file held, zero when the settings
+// name an App.
+func adoptEnvFileApp(s *Settings, configDir string) (fromFile GitHub, err error) {
+	if s.GitHub.AppID != 0 {
+		return GitHub{}, nil
+	}
+	if fromFile, err = readGitHubEnvFile(filepath.Join(configDir, "github.env")); err != nil {
+		return GitHub{}, err
+	}
+	s.GitHub = fromFile
+	return fromFile, nil
+}
+
+// sameApp is whether a names the App, installation and repositories that b does.
+func sameApp(a, b GitHub) bool {
+	return a.AppID == b.AppID && a.InstallationID == b.InstallationID && slices.Equal(a.Repositories, b.Repositories)
+}
+
 func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) error {
 	d, out, scr := env.Deps, env.Term.Out, r.screen
 	scr.Steps(isolatedInstallSteps...)
@@ -159,14 +178,9 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 		return err
 	}
 	oldEnvFile := installed.oldEnv
-	// An App the settings do not name, but the env file does (a host installed by hand, or a run that stopped after it wrote the
-	// file), is the App of this install: the flow must not offer to create another.
-	var fromFile GitHub
-	if s.GitHub.AppID == 0 {
-		if fromFile, err = readGitHubEnvFile(filepath.Join(configDir, "github.env")); err != nil {
-			return err
-		}
-		s.GitHub = fromFile
+	fromFile, err := adoptEnvFileApp(&s, configDir)
+	if err != nil {
+		return err
 	}
 	// Every port this run publishes is free, or the install stops; the listener on a port of the installed units is the service of
 	// the stack itself while it runs.
@@ -210,8 +224,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 		return fmt.Errorf("create %s: %w", configDir, err)
 	}
 	gh := g.s.GitHub // an env file that already holds these values stays as its author wrote it
-	inFile := gh.AppID == fromFile.AppID && gh.InstallationID == fromFile.InstallationID && slices.Equal(gh.Repositories, fromFile.Repositories)
-	envChanged, err := writeEnvFile(filepath.Join(configDir, "github.env"), gh, gh.AppID != 0 && !inFile)
+	envChanged, err := writeEnvFile(filepath.Join(configDir, "github.env"), gh, gh.AppID != 0 && !sameApp(gh, fromFile))
 	if err != nil {
 		return err
 	}

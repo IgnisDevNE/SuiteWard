@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,6 +15,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
@@ -193,4 +195,103 @@ func TestChecksCancelTheOpenJobsOfARepositoryWhoseCanonicalFailedItsIntegrityChe
 		}
 	}
 	w.want(4, checks.Failure, "integrity-failed", 2)
+}
+
+// publishedReceipt gives pull 5 a Receipt check for the head cjHead2 as an earlier run would have published it, without going through the job.
+func (w *cjJobWorld) publishedReceipt() {
+	w.t.Helper()
+	first := execution.ReceiptCheck{RepositoryID: bootRepoID, PullNumber: 5, HeadSHA: cjHead2, State: execution.CheckInProgress, Reason: "receipt-running", Reference: "P2-R1"}
+	_, _, err := w.receipts.ReceiptMemory.Publish(w.t.Context(), first, w.clock, func(generation int64) (governance.OutboxMessage, error) {
+		return governance.OutboxMessage{Key: fmt.Sprintf("receipt-check:%d:5:%d", bootRepoID, generation), Kind: "github_receipt_check", Payload: json.RawMessage(`{}`)}, nil
+	})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// ciOnly is the files of a head that changes only a file that the protected defaults cover and no include pattern matches, so that its receipt does not apply.
+func ciOnly(decl string) map[string]string {
+	files := execHeadFiles(decl, "v1")
+	files[".github/workflows/ci.yml"] = "on: pull_request\n"
+	return files
+}
+
+// A head that already has a published Receipt check and whose receipt then does not apply, or whose level is off, gets one last run, neutral, and nothing after it
+// while that stays so; a head that never had one gets none (docs/contracts/runtime.md, "The SuiteWard / Receipt check").
+func TestChecksPublishOneLastNeutralRunWhenThePublishedReceiptOfAHeadNoLongerApplies(t *testing.T) {
+	cases := []struct {
+		name string
+		decl string
+	}{
+		{"the revision changes no file the canonical include matches", execDeclaration("off", "required")},
+		{"the receipt level is off", execDeclaration("advisory", "off")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := newExecWorld(t, c.decl)
+			w.tree(cjHead2, ciOnly(c.decl))
+			w.sync(map[int]string{5: cjHead2})
+			w.publishedReceipt()
+
+			w.execRun()
+
+			record := w.wantReceipt(execution.CheckNeutral, "receipt-not-applicable", 2)
+			if record.Reference != "P2-R1" || record.JobID != 0 || record.Unblocked {
+				t.Errorf("record %+v, want the revision kept and no job", record)
+			}
+			payload := w.lastReceiptPayload()
+			if payload["state"] != "neutral" || payload["reason"] != "receipt-not-applicable" || payload["unavailable"] != nil || payload["unblocked"] != nil {
+				t.Errorf("payload %v, want neutral with the reason receipt-not-applicable", payload)
+			}
+			wantCounts(t, payload, nil)
+
+			w.execRun()
+			w.execRun()
+			w.wantReceipt(execution.CheckNeutral, "receipt-not-applicable", 2) // nothing after the last run
+			if len(w.receipts.messages) != 1 {
+				t.Errorf("%d messages, want the one of the last run", len(w.receipts.messages))
+			}
+		})
+	}
+}
+
+func TestChecksWithdrawNoReceiptThatIsNotTheHeadsOrThatTheRunCouldNotDecide(t *testing.T) {
+	decl := execDeclaration("off", "required")
+	t.Run("a Receipt check of another head", func(t *testing.T) {
+		w := newExecWorld(t, decl)
+		w.tree(cjHead3, ciOnly(decl))
+		w.sync(map[int]string{5: cjHead3})
+		w.publishedReceipt() // of cjHead2
+
+		w.execRun()
+
+		w.wantReceipt(execution.CheckInProgress, "receipt-running", 1)
+	})
+	t.Run("a policy that cannot be read", func(t *testing.T) {
+		w := newExecWorld(t, decl)
+		w.tree(cjHead2, ciOnly(decl))
+		w.sync(map[int]string{5: cjHead2})
+		w.publishedReceipt()
+		w.check.contents = unreadableContents{}
+		w.clock = w.clock.Add(time.Minute)
+
+		if err := w.check.run(t.Context()); err == nil {
+			t.Fatal("the run succeeded while the policy could not be read")
+		}
+
+		w.wantReceipt(execution.CheckInProgress, "receipt-running", 1)
+	})
+}
+
+func TestTheReceiptCheckMessageKnowsEveryReasonOfTheCheckAndNoOther(t *testing.T) {
+	for _, reason := range []string{"receipt-running", "receipt-failing", "receipt-complete", "receipt-not-run", "receipt-not-applicable"} {
+		check := execution.ReceiptCheck{RepositoryID: bootRepoID, PullNumber: 5, HeadSHA: cjHead2, State: execution.CheckNeutral, Reason: reason}
+		if _, err := newReceiptCheckMessage(bootRepo, receiptDecision{publish: true, check: check}, "isolated", 1); err != nil {
+			t.Errorf("reason %s: %v", reason, err)
+		}
+	}
+	check := execution.ReceiptCheck{RepositoryID: bootRepoID, PullNumber: 5, HeadSHA: cjHead2, State: execution.CheckNeutral, Reason: "receipt-unknown"}
+	if _, err := newReceiptCheckMessage(bootRepo, receiptDecision{publish: true, check: check}, "isolated", 1); err == nil {
+		t.Error("a reason that the check does not have was accepted")
+	}
 }

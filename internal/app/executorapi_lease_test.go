@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -110,22 +111,9 @@ func TestLeaseGrantsACanonicalJobWithEveryFieldOfTheContract(t *testing.T) {
 	if l.JobID != job.ID || l.Plan != "canonical" || l.Pull != 3 || l.Profile.ID != "go" || l.Profile.Image != goprofile.Image {
 		t.Errorf("lease = %+v; want job %d, canonical, pull 3, the go profile with the pinned image", l, job.ID)
 	}
-	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(l.LeaseID) {
-		t.Errorf("leaseId = %q; want 32 lower-case hexadecimal digits", l.LeaseID)
-	}
-	if want := e.clock.Now().Add(execution.LeaseTTL); !execUTC(t, l.LeaseExpiresAt).Equal(want) {
-		t.Errorf("leaseExpiresAt = %s; want %v", l.LeaseExpiresAt, want)
-	}
-	if want := e.clock.Now().Add(e.times.JobTimeout); !execUTC(t, l.DeadlineAt).Equal(want) {
-		t.Errorf("deadlineAt = %s; want %v, the job timeout from now", l.DeadlineAt, want)
-	}
-	if l.Head == nil || l.Head.SHA != execSHA(1) || len(l.Head.Tree) != len(head) {
-		t.Fatalf("head = %+v; want the commit and its three entries", l.Head)
-	}
-	for i, entry := range head {
-		if l.Head.Tree[i] != entry {
-			t.Errorf("head.tree[%d] = %+v; want %+v", i, l.Head.Tree[i], entry)
-		}
+	e.wantLeaseTimes(l)
+	if l.Head == nil || l.Head.SHA != execSHA(1) || !slices.Equal(l.Head.Tree, head) {
+		t.Errorf("head = %+v; want the commit and its three entries", l.Head)
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(got.body, &raw); err != nil {
@@ -134,18 +122,7 @@ func TestLeaseGrantsACanonicalJobWithEveryFieldOfTheContract(t *testing.T) {
 	if _, present := raw["base"]; present {
 		t.Error("a canonical job has a base in its lease answer")
 	}
-	m := e.manifest(defaultFiles)
-	if l.Manifest.Source != "V1" || l.Manifest.Digest != m.Digest().String() || len(l.Manifest.Files) != len(m.Entries()) {
-		t.Fatalf("manifest = %+v; want V1, %s and its %d files", l.Manifest, m.Digest(), len(m.Entries()))
-	}
-	for i, entry := range m.Entries() {
-		if l.Manifest.Files[i].Path != entry.Path || l.Manifest.Files[i].Digest != entry.Content.String() {
-			t.Errorf("manifest.files[%d] = %+v; want %s %s", i, l.Manifest.Files[i], entry.Path, entry.Content)
-		}
-	}
-	if l.Declaration == nil || *l.Declaration != base64.StdEncoding.EncodeToString([]byte(defaultFiles[".suiteward.yml"])) {
-		t.Errorf("declaration = %v; want the base64 of the .suiteward.yml the manifest names", l.Declaration)
-	}
+	e.wantLeaseManifest(l, defaultFiles)
 	wantLimits := `{"archiveBytes":268435456,"fileBytes":8388608,"testTimeoutSeconds":600,"memoryMiB":3072,"cpus":4,"pids":512,"tmpfsMiB":1024,"prefetchModules":2000,"prefetchBytes":536870912,"reruns":2}`
 	if !jsonEqual(t, string(execJSON(t, l.Limits)), wantLimits) {
 		t.Errorf("limits = %s; want %s", execJSON(t, l.Limits), wantLimits)
@@ -156,6 +133,37 @@ func TestLeaseGrantsACanonicalJobWithEveryFieldOfTheContract(t *testing.T) {
 	}
 	if asked := e.trees.asked(); len(asked) != 1 || asked[0].repo != execRepoName || asked[0].sha != execSHA(1) {
 		t.Errorf("tree reads = %+v; want one, of the head of %s", asked, execRepoName)
+	}
+}
+
+// wantLeaseTimes checks the lease id and its two times against the clock.
+func (e *execTestEnv) wantLeaseTimes(l execLease) {
+	e.t.Helper()
+	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(l.LeaseID) {
+		e.t.Errorf("leaseId = %q; want 32 lower-case hexadecimal digits", l.LeaseID)
+	}
+	if want := e.clock.Now().Add(execution.LeaseTTL); !execUTC(e.t, l.LeaseExpiresAt).Equal(want) {
+		e.t.Errorf("leaseExpiresAt = %s; want %v", l.LeaseExpiresAt, want)
+	}
+	if want := e.clock.Now().Add(e.times.JobTimeout); !execUTC(e.t, l.DeadlineAt).Equal(want) {
+		e.t.Errorf("deadlineAt = %s; want %v, the job timeout from now", l.DeadlineAt, want)
+	}
+}
+
+// wantLeaseManifest checks the manifest of the answer and the declaration it carries against the files of the job.
+func (e *execTestEnv) wantLeaseManifest(l execLease, files map[string]string) {
+	e.t.Helper()
+	m := e.manifest(files)
+	if l.Manifest.Source != "V1" || l.Manifest.Digest != m.Digest().String() || len(l.Manifest.Files) != len(m.Entries()) {
+		e.t.Fatalf("manifest = %+v; want V1, %s and its %d files", l.Manifest, m.Digest(), len(m.Entries()))
+	}
+	for i, entry := range m.Entries() {
+		if l.Manifest.Files[i].Path != entry.Path || l.Manifest.Files[i].Digest != entry.Content.String() {
+			e.t.Errorf("manifest.files[%d] = %+v; want %s %s", i, l.Manifest.Files[i], entry.Path, entry.Content)
+		}
+	}
+	if l.Declaration == nil || *l.Declaration != base64.StdEncoding.EncodeToString([]byte(files[".suiteward.yml"])) {
+		e.t.Errorf("declaration = %v; want the base64 of the .suiteward.yml the manifest names", l.Declaration)
 	}
 }
 

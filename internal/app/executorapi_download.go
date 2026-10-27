@@ -1,8 +1,10 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -169,7 +171,7 @@ func (h *executorAPI) file(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(content) // a failed write is the client leaving
+	_, _ = io.Copy(w, bytes.NewReader(content)) // a failed write is the client leaving
 }
 
 // lists reports whether a file of the manifest has the digest.

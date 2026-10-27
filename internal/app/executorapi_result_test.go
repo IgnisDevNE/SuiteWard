@@ -171,7 +171,7 @@ func TestResultHeadsMustBeTheJobs(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newExecEnv(t)
-			e.canonicalJob(1, defaultFiles)
+			e.canonicalJob(0xabcdef, defaultFiles) // a head with letters, so that its upper case differs
 			leased := e.grant()
 			b := e.complete(leased)
 			edit(leased, b)
@@ -186,7 +186,7 @@ func TestResultHeadsMustBeTheJobs(t *testing.T) {
 	} {
 		t.Run("receipt: "+name, func(t *testing.T) {
 			e := newExecEnv(t)
-			e.receiptJob(1, defaultFiles)
+			e.receiptJob(0xabcdef, defaultFiles)
 			leased := e.grant()
 			b := e.complete(leased)
 			edit(leased, b)

@@ -127,10 +127,18 @@ func (e *env) newLeaseID() string {
 	return e.leaseID(e.leases)
 }
 
-// lease asks for a job at the time now.
+// leaseRequest asks for a job at the time now, with a lease id that was not used.
+func (e *env) leaseRequest(now time.Duration) execution.LeaseRequest {
+	return execution.LeaseRequest{Now: at(now), LeaseID: e.newLeaseID(), JobTimeout: jobTimeout, GitHubWait: githubWait}
+}
+
+// trees is the Prepare of a lease whose reads all succeed.
+func trees(context.Context, execution.Job) error { return nil }
+
+// lease asks for a job at the time now, and reads the trees of the job that it finds.
 func (e *env) lease(now time.Duration) (execution.Job, bool) {
 	e.t.Helper()
-	job, found, err := e.s.Lease(e.ctx, execution.LeaseRequest{Now: at(now), LeaseID: e.newLeaseID(), JobTimeout: jobTimeout})
+	job, found, err := e.s.Lease(e.ctx, e.leaseRequest(now), trees)
 	e.must(err)
 	return job, found
 }
@@ -233,6 +241,11 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		{"Lease is exclusive under concurrency", jbLeaseConcurrent},
 		{"a job whose lease expired is queued again with its backoff and the third failure is final", jbLeaseExpiry},
 		{"Lease goes on to the next candidate after it expired a lease", jbLeaseNextCandidate},
+		{"Lease gives a ready job to prepare, and nil grants the lease", jbLeasePrepare},
+		{"a GitHub failure of prepare is recorded as GitHubFailure records it, and ends the call", jbLeasePrepareGitHub},
+		{"a GitHub failure of prepare a whole wait after the first ends the job", jbLeasePrepareGitHubBound},
+		{"a job that prepare finds too large is unavailable at once, and the call goes on", jbLeasePrepareTooLarge},
+		{"any other failure of prepare ends the call with nothing written", jbLeasePrepareAbort},
 		{"a failed attempt with a retried reason is queued again, and any other reason is final at once", jbRetriedReasons},
 		{"a GitHub failure counts no failure, keeps the job pending and is bounded by the wait", jbGitHubFailure},
 		{"a leased job is never ended by the GitHub bound and a lease does not clear github_since", jbGitHubLeased},

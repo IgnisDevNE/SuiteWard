@@ -185,7 +185,7 @@ func (s executionStore) Enqueue(ctx context.Context, n execution.NewJob) (execut
 }
 
 // Lease implements execution.Store in one transaction: the oldest ready job, with SKIP LOCKED so that two leases never take one.
-func (s executionStore) Lease(ctx context.Context, req execution.LeaseRequest) (execution.Job, bool, error) {
+func (s executionStore) Lease(ctx context.Context, req execution.LeaseRequest, _ execution.Prepare) (execution.Job, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return execution.Job{}, false, err
 	}

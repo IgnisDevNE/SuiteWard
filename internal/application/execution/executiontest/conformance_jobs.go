@@ -44,7 +44,9 @@ func (e *env) expire(p execution.ExpireParams) int {
 // leaseWith asks for a job with a job timeout of its own.
 func (e *env) leaseWith(now, timeout time.Duration) (execution.Job, bool) {
 	e.t.Helper()
-	job, found, err := e.s.Lease(e.ctx, execution.LeaseRequest{Now: at(now), LeaseID: e.newLeaseID(), JobTimeout: timeout})
+	req := e.leaseRequest(now)
+	req.JobTimeout = timeout
+	job, found, err := e.s.Lease(e.ctx, req, trees)
 	e.must(err)
 	return job, found
 }
@@ -312,12 +314,13 @@ func jbLeaseGrant(e *env) {
 
 	// The request is checked.
 	for name, req := range map[string]execution.LeaseRequest{
-		"no time":          {LeaseID: e.leaseID(100), JobTimeout: jobTimeout},
-		"a short id":       {Now: at(0), LeaseID: "abc", JobTimeout: jobTimeout},
-		"an upper-case id": {Now: at(0), LeaseID: strings.Repeat("A", 32), JobTimeout: jobTimeout},
-		"no timeout":       {Now: at(0), LeaseID: e.leaseID(101)},
+		"no time":          {LeaseID: e.leaseID(100), JobTimeout: jobTimeout, GitHubWait: githubWait},
+		"a short id":       {Now: at(0), LeaseID: "abc", JobTimeout: jobTimeout, GitHubWait: githubWait},
+		"an upper-case id": {Now: at(0), LeaseID: strings.Repeat("A", 32), JobTimeout: jobTimeout, GitHubWait: githubWait},
+		"no timeout":       {Now: at(0), LeaseID: e.leaseID(101), GitHubWait: githubWait},
+		"no GitHub wait":   {Now: at(0), LeaseID: e.leaseID(102), JobTimeout: jobTimeout},
 	} {
-		_, _, err := e.s.Lease(e.ctx, req)
+		_, _, err := e.s.Lease(e.ctx, req, trees)
 		if !errors.Is(err, execution.ErrInvalidRequest) {
 			e.t.Fatalf("%s: Lease error = %v; want ErrInvalidRequest", name, err)
 		}
@@ -365,7 +368,7 @@ func jbLeaseConcurrent(e *env) {
 	found := make([]bool, callers)
 	failures := make([]error, callers)
 	parallel(callers, func(i int) {
-		got[i], found[i], failures[i] = e.s.Lease(e.ctx, execution.LeaseRequest{Now: at(time.Minute), LeaseID: ids[i], JobTimeout: jobTimeout})
+		got[i], found[i], failures[i] = e.s.Lease(e.ctx, execution.LeaseRequest{Now: at(time.Minute), LeaseID: ids[i], JobTimeout: jobTimeout, GitHubWait: githubWait}, trees)
 	})
 	seen := map[int64]bool{}
 	for i := range callers {
@@ -820,7 +823,7 @@ func jbCanceled(e *env) {
 			return err
 		},
 		"Lease": func() error {
-			_, _, err := e.s.Lease(ctx, execution.LeaseRequest{Now: at(0), LeaseID: e.leaseID(1), JobTimeout: jobTimeout})
+			_, _, err := e.s.Lease(ctx, execution.LeaseRequest{Now: at(0), LeaseID: e.leaseID(1), JobTimeout: jobTimeout, GitHubWait: githubWait}, trees)
 			return err
 		},
 		"Heartbeat": func() error { _, err := e.s.Heartbeat(ctx, job.ID, e.leaseID(1), at(0)); return err },

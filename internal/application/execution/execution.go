@@ -27,6 +27,11 @@ var (
 	ErrLeaseLost = errors.New("execution: the lease was lost")
 	// ErrConflict marks a result for a finished job whose body is not the stored one.
 	ErrConflict = errors.New("execution: the job finished with another result")
+	// ErrGitHubUnavailable is what a Prepare function returns when GitHub could not be read for the job (a failed read, a refused budget
+	// or a secondary limit), and what Lease then returns after it recorded the failure: the executor API answers 502.
+	ErrGitHubUnavailable = errors.New("execution: GitHub could not be read for the job")
+	// ErrTooLarge is what a Prepare function returns for a job whose commit is too large to lease: the job is unavailable for too-large.
+	ErrTooLarge = errors.New("execution: the job is too large to lease")
 )
 
 // The durations of the job lifecycle (docs/contracts/runtime.md, "Job lifecycle"; A0's numbers).
@@ -134,12 +139,19 @@ type Job struct {
 }
 
 // LeaseRequest asks for the oldest job that is ready. LeaseID is new for each grant (32 lower-case hexadecimal digits); JobTimeout
-// is the time the run of the job may last (EXECUTOR_JOB_TIMEOUT).
+// is the time the run of the job may last (EXECUTOR_JOB_TIMEOUT); GitHubWait is EXECUTOR_GITHUB_WAIT, which bounds a job whose
+// tree reads keep failing.
 type LeaseRequest struct {
 	Now        time.Time
 	LeaseID    string
 	JobTimeout time.Duration
+	GitHubWait time.Duration
 }
+
+// Prepare is the read that a lease needs before it is granted (the trees of the commits of the job). Lease calls it with a ready job
+// while the job is held, so that two leases never read for one job, and it must not call the store. It returns nil to grant the lease,
+// an error that wraps ErrGitHubUnavailable or ErrTooLarge, or another error, which ends the call with nothing written.
+type Prepare func(ctx context.Context, job Job) error
 
 // ExpireParams are the times that the sweep applies. LastSeenAt is the time an executor was last seen (the start time at
 // startup); LeaseWait and GitHubWait are EXECUTOR_LEASE_WAIT and EXECUTOR_GITHUB_WAIT.
@@ -276,8 +288,12 @@ type Store interface {
 	Enqueue(ctx context.Context, n NewJob) (Job, bool, error)
 	// Lease grants the oldest ready job (by creation time, then id): pending with its not_before reached, or leased with an expired
 	// lease. An expired lease counts as a failure (lease-expired, or timeout past the deadline) first, and the call goes on to the
-	// next candidate. It returns false when nothing is ready.
-	Lease(ctx context.Context, req LeaseRequest) (Job, bool, error)
+	// next candidate. It returns false when nothing is ready. A ready job is first given to prepare, which is required (nil is
+	// ErrInvalidRequest): when it fails with ErrGitHubUnavailable the store records the failure as GitHubFailure does, with no attempt,
+	// and Lease returns an error that wraps ErrGitHubUnavailable and goes no further; when it fails with ErrTooLarge the job becomes
+	// unavailable for too-large, with no attempt and no results row, and the call goes on to the next candidate; any other error ends
+	// the call with nothing written.
+	Lease(ctx context.Context, req LeaseRequest, prepare Prepare) (Job, bool, error)
 	// Heartbeat extends the lease of a leased job, never beyond its deadline, and returns the new expiry. ErrNotFound for a job
 	// that does not exist, ErrLeaseLost for any other job than one that is leased with this lease and not yet expired.
 	Heartbeat(ctx context.Context, jobID int64, leaseID string, now time.Time) (time.Time, error)

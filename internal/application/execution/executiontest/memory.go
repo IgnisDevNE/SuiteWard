@@ -91,7 +91,7 @@ func (m *Memory) oldestReady(now time.Time) (execution.Job, bool) {
 }
 
 // Lease implements execution.Store.
-func (m *Memory) Lease(ctx context.Context, req execution.LeaseRequest) (execution.Job, bool, error) {
+func (m *Memory) Lease(ctx context.Context, req execution.LeaseRequest, _ execution.Prepare) (execution.Job, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return execution.Job{}, false, err
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"slices"
 	"time"
 
@@ -387,9 +386,9 @@ func (j *checksJob) canonicalJob(ctx context.Context, spec execution.Spec) error
 	return j.enqueue(ctx, spec, j.unconfigured())
 }
 
-// receiptJob creates the receipt job of the head under spec unless one holds its binding. applies is false when the receipt does not apply to the revision,
-// or cannot be told (the manifest of the revision is not stored: the Contract check does not wait for it). When it applies and there is no job yet because
-// GitHub could not be read, the receipt reads as pending, and no job is made until it can be, or until EXECUTOR_GITHUB_WAIT has passed.
+// receiptJob creates the receipt job of the head under spec unless one holds its binding. applies is false when the receipt does not apply to the revision.
+// When it applies and there is no job yet because GitHub could not be read, the receipt reads as pending, and no job is made until it can be, or until
+// EXECUTOR_GITHUB_WAIT has passed.
 func (j *checksJob) receiptJob(ctx context.Context, s *pullState, x *executionRun, spec execution.Spec, bound revisionBinding) (applies bool, err error) {
 	held, found, err := j.holder(ctx, spec)
 	if err != nil {
@@ -398,12 +397,7 @@ func (j *checksJob) receiptJob(ctx context.Context, s *pullState, x *executionRu
 	if found && !j.replaceable(held) {
 		return true, nil
 	}
-	spec.ChangedPaths, spec.ChangedTotal, err = j.revisionChanges(ctx, bound, x.policy)
-	switch {
-	case errors.Is(err, errManifestNotStored):
-		j.logger.WarnContext(ctx, "github checks receipt skipped: the manifest of the revision is not stored", "repo", s.p.Repo, "pull", s.pull.Number)
-		return false, nil
-	case err != nil || spec.ChangedTotal == 0:
+	if spec.ChangedPaths, spec.ChangedTotal, err = j.revisionChanges(ctx, bound, x.policy); err != nil || spec.ChangedTotal == 0 {
 		return false, err
 	}
 	read, err := j.readReceipt(ctx, s, x)
@@ -415,45 +409,37 @@ func (j *checksJob) receiptJob(ctx context.Context, s *pullState, x *executionRu
 	return true, j.enqueue(ctx, spec, read.final)
 }
 
-// errManifestNotStored says that the content store has no manifest for a revision (one from before manifests were kept).
-var errManifestNotStored = errors.New("the manifest of the revision is not stored")
-
-// revisionChanges lists the files that the canonical include matches (and its exclude does not) and the revision adds or changes against the
-// manifest of the canonical it expects: at most maxExecutionPaths, in path order, and how many there are. The service decides it from the two
-// manifests, with no Go parsing. None means the receipt is not applicable.
+// revisionChanges lists the files that the receipt evaluates (docs/contracts/runtime.md, "Applicable and not applicable"): the files of the revision that the
+// canonical include matches and its exclude does not, and that the manifest of the canonical version it expects lacks or holds with other bytes. It is
+// EvaluatedFiles of the domain, which the receipt gate of the commands job uses too. At most maxExecutionPaths are kept, in path order, and how many there are.
+// None means the receipt is not applicable.
 func (j *checksJob) revisionChanges(ctx context.Context, b revisionBinding, policy executionPolicy) (paths []string, total int, err error) {
-	raw, err := j.contents.Read(ctx, b.manifest)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, 0, errManifestNotStored
+	revision, err := j.revisionManifest(ctx, b.manifest)
+	if err != nil {
+		return nil, 0, err
+	}
+	files, err := domain.EvaluatedFiles(revision, b.base, domain.Selection{Include: policy.scope.Include(), Exclude: policy.scope.Exclude()})
+	if err != nil {
+		return nil, 0, &opaque{what: "list the files of the receipt", cause: err}
+	}
+	return files[:min(len(files), maxExecutionPaths)], len(files), nil
+}
+
+// revisionManifest reads the manifest of a revision from the content store and checks that it is the one the digest names. The store never deletes, so a manifest
+// that it lacks is an impossible state, and so is one that does not parse: both fail the step with an error that says nothing of the store.
+func (j *checksJob) revisionManifest(ctx context.Context, digest artifact.Digest) (artifact.Manifest, error) {
+	raw, err := j.contents.Read(ctx, digest)
+	if err != nil {
+		return artifact.Manifest{}, &opaque{what: "read the manifest of the revision", cause: err}
+	}
+	manifest, err := artifact.ParseManifest(raw)
+	if err == nil && manifest.Digest() != digest { // the bytes of another manifest than the one the revision names
+		err = fmt.Errorf("%w: the entries are those of %s", artifact.ErrInvalidEncoding, manifest.Digest())
 	}
 	if err != nil {
-		return nil, 0, fmt.Errorf("read the manifest %s of the revision: %w", b.manifest, err)
+		return artifact.Manifest{}, &opaque{what: "parse the manifest of the revision", cause: err}
 	}
-	proposed, err := artifact.ParseManifest(raw)
-	if err == nil && proposed.Digest() != b.manifest { // the bytes of another manifest than the one the revision names
-		err = fmt.Errorf("%w: the entries are those of %s", artifact.ErrInvalidEncoding, proposed.Digest())
-	}
-	if err != nil {
-		return nil, 0, fmt.Errorf("the manifest %s of the revision: %w", b.manifest, err)
-	}
-	before := map[string]artifact.Digest{}
-	for _, e := range b.base.Entries() {
-		before[e.Path] = e.Content
-	}
-	include, exclude := policy.scope.Include(), policy.scope.Exclude()
-	for _, e := range proposed.Entries() {
-		if content, found := before[e.Path]; found && content == e.Content {
-			continue
-		}
-		if !matchesAny(include, e.Path) || matchesAny(exclude, e.Path) {
-			continue
-		}
-		total++
-		if len(paths) < maxExecutionPaths {
-			paths = append(paths, e.Path)
-		}
-	}
-	return paths, total, nil
+	return manifest, nil
 }
 
 // matchesAny reports whether a pattern matches the path. A path that is no valid path (artifact.ErrInvalidPath) matches none: no manifest holds it.

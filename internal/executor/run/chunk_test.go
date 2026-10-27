@@ -32,7 +32,7 @@ func TestManyTestsAreSplitSoThatNoInvocationPassesTheArgumentBound(t *testing.T)
 	for p := range 20 {
 		for n := range 100 {
 			tests = append(tests, goprofile.TestID{
-				Package: fmt.Sprintf("pkg/p%02d", p), Name: fmt.Sprintf("Test%s%03d", strings.Repeat("N", 40), n), File: fmt.Sprintf("pkg/p%02d/x_test.go", p),
+				Package: fmt.Sprintf("pkg/p%02d", p), Name: fmt.Sprintf("Test%02d%s%03d", p, strings.Repeat("N", 38), n), File: fmt.Sprintf("pkg/p%02d/x_test.go", p),
 			})
 		}
 	}

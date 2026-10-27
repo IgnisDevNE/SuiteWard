@@ -673,7 +673,7 @@ Base path `/executor/v1` on the service's HTTP listener. It is not served (404, 
 
 **Size check before `go test`.** While the tar streams, and before `go test` starts, the executor sums the uncompressed size of the composed tree, the bytes of the module zips and their unpacked size (from each zip's directory once the zip has passed). When the sum passes half of `tmpfsMiB`, it reports `too-large` and does not run. The other half is left to the Go build cache; a build cache larger than that still fills the tmpfs, and the run then reads as a build error, a residual risk. "No space left" text in the output is never trusted. The executor prefetches for the `go.sum` of each side (the head's, and for a receipt the base side's).
 
-A tree entry is `{path, mode, sha}`: `path` is at most 4096 bytes, `mode` is one of `100644`, `100664` (a regular file), `100755`, `120000` and `160000`, and `sha` is the 40-hex git id of the blob (of the commit, for a submodule).
+A tree entry is `{path, mode, sha}`: `path` is at most 4096 bytes, `mode` is one of `100644`, `100664` (a regular file), `100755`, `120000` and `160000`, and `sha` is the 40-hex git id of the blob (of the commit, for a submodule). An entry that GitHub lists with another mode or type is a failed GitHub read (502, `github-unavailable` once `EXECUTOR_GITHUB_WAIT` has passed), not `too-large`. The tree reads of one lease have their own deadline (15 s †), shorter than the lease request's, so a slow GitHub ends as a recorded GitHub failure and never as a rolled-back transaction.
 
 **`GET /jobs/{id}/archive/{head|base}`.** The commit's `tar.gz`, streamed by the service from GitHub's archive of that exact SHA, with a token that holds Contents read only (the [GitHub contract](github.md#m21-execution-reads-normative) has the redirect and the budget). The executor never holds a GitHub token.
 - *200:* `application/gzip`, no `Content-Length`. The service streams through `Reader.Archive` with `limits.archiveBytes` as the limit, so it sends at most that many bytes. Once the 200 is sent the status cannot change: an error after it (the limit passed, GitHub cut off) aborts the response, and the executor sees a broken stream. A stream that stops after exactly `archiveBytes` bytes and before the tar ends means that the archive is larger: the executor reports `too-large`. A stream that breaks short of the limit is a GitHub failure: the executor reports `github-unavailable`, which consumes no attempt, and not `archive-unavailable`, which does.
@@ -683,7 +683,7 @@ A tree entry is `{path, mode, sha}`: `path` is at most 4096 bytes, `mode` is one
 
 **`GET /jobs/{id}/files/{digest}`.** One file of `manifest.files`, from the service's store.
 - *200:* `application/octet-stream` with `X-Content-Type-Options: nosniff`, at most `limits.fileBytes`. The executor re-checks the digest of what it received.
-- *404:* a digest that is not in this job's manifest. The service never reads another one. *409:* the lease. *500:* the store has no valid content for a digest of the manifest (logged at Error). Also 401.
+- *404:* a digest that is not in this job's manifest. The service never reads another one. *409:* the lease. *413* `too-large`: a listed file over `limits.fileBytes` (the executor reads it as `too-large`). *500:* the store has no valid content for a digest of the manifest (logged at Error). Also 401; a missing or malformed lease header is 409 `lease-lost`, on every route under `/jobs/{id}`.
 - *Idempotent:* it may be repeated.
 
 **`POST /jobs/{id}/heartbeat`.**
@@ -721,7 +721,7 @@ The service validates, in this order:
 5. for an open job, the lease header against the job's latest lease, that the job is `leased` and that the lease has not expired (409 `lease-lost`);
 6. the strict decoding;
 7. the heads against the job;
-8. every rule above.
+8. every rule above, including that each test's observations classify under the domain's rules (`ClassifyReceipt`, `ClassifyCanonical`): a combination they refuse, such as a head pass over an absent base in a package whose base did not build, is 400. In the `sandbox` object, `toolchain` and `runtime` are required for `complete` only; for `unavailable` they may be empty (the executor may fail before it asked the image or the runtime).
 
 Every string is valid UTF-8 and holds no control or format character and no newline. A result that breaks a rule is 400 and nothing is stored. For a retried reason with attempts left, or for `github-unavailable`, the service stores no result: it queues the job again and answers `pending`. Otherwise it derives each test's state from its observations with the domain, stores the result, sets the job's state and wakes `github_checks`. The result carries no output, no error text and no free text: an executor cannot put words into a check or a page.
 

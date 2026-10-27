@@ -186,6 +186,19 @@ func removeExecutor(ctx context.Context, d Deps, tokenFile string) (existed, for
 	return true, false, plan.remove(ctx, d, registered)
 }
 
+// removeByHand is how a person stops the executor and removes it where the operating system keeps it, for an uninstall that could not: the
+// commands of each system, then the executor's directory.
+func removeByHand(goos string) string {
+	switch goos {
+	case "windows":
+		return fmt.Sprintf("end the scheduled task with `schtasks /End /TN \"%[1]s\"`, end the process %[2]s if it still runs, delete the task with `schtasks /Delete /TN \"%[1]s\" /F`, and delete that directory", executorTaskName, executorBinaryName(goos))
+	case "darwin":
+		return fmt.Sprintf("`launchctl bootout gui/$(id -u)/%[1]s` stops it and unloads it, and deleting that directory and ~/Library/LaunchAgents/%[1]s.plist removes it", executorLabel)
+	default:
+		return fmt.Sprintf("where the user manager of this user runs, `systemctl --user disable --now %s` stops it, and deleting that directory and its unit file removes it", executorUnitName)
+	}
+}
+
 // pathExists says whether something is at the path.
 func pathExists(path string) bool {
 	_, err := os.Stat(path)

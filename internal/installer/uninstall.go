@@ -128,7 +128,7 @@ func removeStack(ctx context.Context, r *Resolver, d Deps, rt Runtime, purge boo
 		case foreign:
 			r.say("Kept the executor of this user: it is registered for another instance's token file, and a computer has one executor.\n")
 		case err != nil: // the executor is not the stack: the uninstall goes on, and says what is left
-			r.screen.Warn("Note: the executor was not removed (%v). It is in %s: where the user manager of this user runs, `systemctl --user disable --now %s` stops it, and deleting that directory and its unit file removes it.\n", err, executorDirOf(token.path), executorUnitName)
+			r.screen.Warn("Note: the executor was not removed (%v). It is in %s: %s.\n", err, executorDirOf(token.path), removeByHand(d.GOOS))
 		case existed:
 			r.say("Stopped the executor and removed its program and its definition.\n")
 		}

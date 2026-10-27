@@ -1,6 +1,6 @@
-# Re-scans the pinned PostgreSQL image every week, and on demand, for vulnerabilities published since the digest was chosen. Not part of the CI gate and not a required check.
-# A fixable HIGH or CRITICAL finding in the OS packages fails the run: refresh the postgres image in every copy listed in dev/tools.json and the docs (scripts/check-pins.ps1 enforces that they agree).
-# The findings in language packages are only reported: they are in usr/local/bin/gosu, an upstream binary that runs at container start to drop privileges, and a digest bump cannot fix them.
+# Re-scans the pinned PostgreSQL image and the pinned Go image (the one the executor runs the sandboxes of canonical execution from) every week, and on demand, for vulnerabilities published since the digests were chosen. Not part of the CI gate and not a required check.
+# A fixable HIGH or CRITICAL finding in the OS packages of either image fails the run: refresh the postgres image in every copy listed in dev/tools.json and the docs, or the golang image in internal/executor/goprofile, deploy/Containerfile, the GO_IMAGE below and the docs (scripts/check-pins.ps1 enforces that the copies agree).
+# The findings in language packages are only reported. In the postgres image they are in usr/local/bin/gosu, an upstream binary that runs at container start to drop privileges, and a digest bump cannot fix them; in the golang image they are in the Go toolchain, which a Go bump replaces with the digest.
 name: Image scan
 
 on:
@@ -19,7 +19,7 @@ jobs:
   scan:
     name: Scan ${{ matrix.platform }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -37,18 +37,28 @@ jobs:
           curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "$RUNNER_TEMP/trivy.tar.gz" "$url"
           echo "$sha256  $RUNNER_TEMP/trivy.tar.gz" | sha256sum --check --strict -
           tar --extract --gzip --file "$RUNNER_TEMP/trivy.tar.gz" --directory "$RUNNER_TEMP" trivy
-      - name: Scan the pinned image
+      - name: Scan the pinned images
         env:
           PLATFORM: ${{ matrix.platform }}
+          # The Go image of the executor's sandboxes (internal/executor/goprofile). The copy that scripts/check-pins.ps1 compares with the others.
+          GO_IMAGE: docker.io/library/golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd
         run: |
           set -euo pipefail
-          image=$(jq -er '.postgres.image' dev/tools.json)
+          images=("$(jq -er '.postgres.image' dev/tools.json)" "$GO_IMAGE")
           scan=("$RUNNER_TEMP/trivy" image --image-src remote --platform "$PLATFORM" --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --no-progress)
           {
             echo "### $PLATFORM: language packages (reported, not a failure)"
-            echo "These are in an upstream binary (gosu) that runs only at container start, so a digest bump cannot fix them."
-            echo '```'
-            "${scan[@]}" --pkg-types library --format table "$image"
-            echo '```'
+            echo "In the postgres image these are in an upstream binary (gosu) that runs only at container start, so a digest bump cannot fix them; in the golang image they are in the Go toolchain."
+            for image in "${images[@]}"; do
+              echo "#### $image"
+              echo '```'
+              "${scan[@]}" --pkg-types library --format table "$image"
+              echo '```'
+            done
           } >> "$GITHUB_STEP_SUMMARY"
-          "${scan[@]}" --pkg-types os --exit-code 1 "$image"
+          # Both images are scanned before the run fails, so one finding does not hide the other image's.
+          failed=0
+          for image in "${images[@]}"; do
+            "${scan[@]}" --pkg-types os --exit-code 1 "$image" || failed=1
+          done
+          exit "$failed"

@@ -19,7 +19,7 @@ import (
 // skipped: it cannot give a pass, and a test that only such a line mentions is absent.
 //
 // An invocation that exits with a failing status and wrote no event at all ran nothing: go refused before it built a
-// package (a vendor/ that does not agree with go.mod, a toolchain that does not suit go.mod, a pattern it rejects), so
+// package (a vendor/ that does not agree with go.mod, a toolchain that does not suit go.mod), so
 // every expected test reads build-error.
 //
 // Otherwise only the top-level tests of the expected packages are read, and each line on its own:

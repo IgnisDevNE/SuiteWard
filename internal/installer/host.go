@@ -411,6 +411,7 @@ func (h *host) next(ctx context.Context) error {
 	}
 	h.say("\nThe host is ready. Now run the installer as the service account, in a shell with its user bus (the account has no login shell):\n\n")
 	h.say("  sudo -u %s -H env XDG_RUNTIME_DIR=/run/user/%s DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus %s\n\n", ServiceAccount, uid, uid, command)
+	h.say("The executor of canonical execution already runs as %s and waits for the service. It is pointed at the HTTP port that the settings of the service account name, else at %d: when the service will publish its HTTP listener on another port, run this step again with --http-port <port>. Keep one executor for each container engine: at start it removes every %s container of its engine, so a second one would remove the sandboxes of the first.\n\n", ExecutorAccount, DefaultHTTPPort, sandboxNamePrefix)
 	h.say("The account must be able to run %s", exe)
 	if strings.HasPrefix(exe, "/root/") || strings.HasPrefix(exe, "/home/") {
 		h.say(": that path is inside a home directory, so copy the binary to a shared place such as /usr/local/bin first")

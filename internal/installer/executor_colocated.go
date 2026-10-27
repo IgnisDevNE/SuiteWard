@@ -204,6 +204,7 @@ func (p executorPlan) launchAgent() string {
   <dict>
 ` + env.String() + `  </dict>
   <key>RunAtLoad</key><true/>
+  <key>ExitTimeOut</key><integer>45</integer>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Background</string>
   <key>StandardOutPath</key><string>` + xmlEscaper.Replace(p.log) + `</string>
@@ -233,7 +234,8 @@ StartLimitIntervalSec=0
 
 [Service]
 ExecStart="` + unitValue(p.binary) + `" execute
-` + env.String() + `Restart=always
+` + env.String() + `TimeoutStopSec=45
+Restart=always
 RestartSec=5
 
 [Install]

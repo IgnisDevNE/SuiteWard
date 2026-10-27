@@ -13,12 +13,17 @@ ExecStart=/usr/local/libexec/suiteward/suiteward-executor execute
 Environment=SUITEWARD_EXECUTOR_URL=http://127.0.0.1:27081
 Environment=SUITEWARD_EXECUTOR_TOKEN_FILE=/etc/suiteward/executor-token
 Environment=SUITEWARD_EXECUTOR_RUNTIME=podman
-# The prefetch buffers a module body that comes with no length, up to what is left of its budget (512 MiB), and for a moment about twice that;
-# 2 GiB leaves room for the Go runtime, the tar of a run and the runtime's command. The sandboxes (3 GiB each) are containers that Podman puts
-# in scopes of their own, outside this unit's cgroup: that is assumed here and to be confirmed on a live host. NoNewPrivileges stays off: it
-# would stop newuidmap and newgidmap, which rootless Podman needs.
-MemoryMax=2G
+# MemoryMax is 3 GiB. What the executor holds at its peak: a module body that comes with no length, buffered up to what is left of the prefetch
+# budget (512 MiB) and for a moment about twice that (1 GiB); up to 64 MiB of output of one `go test` invocation, held and parsed (about 128 MiB);
+# and the analysis files of both sides in memory (a few hundred MiB at most). That is about 1.5 GiB live, and the Go runtime lets its heap grow to
+# about twice what is live before it collects, so the resident size can reach 3 GiB: a lower limit would kill the executor in the middle of a job
+# that is within every bound. A host that runs one sandbox at a time needs 8 GiB (3 GiB of sandbox, 3 GiB of executor, the database and the
+# service). The sandboxes are containers that Podman puts in scopes of their own, outside this unit's cgroup: that is assumed here and to be
+# confirmed on a live host. NoNewPrivileges stays off: it would stop newuidmap and newgidmap, which rootless Podman needs.
+MemoryMax=3G
 MemorySwapMax=0
+# On SIGTERM the executor gives a job 30 s to finish and post its result, then kills its sandbox and exits: the stop timeout exceeds that.
+TimeoutStopSec=45
 Restart=always
 RestartSec=5
 

@@ -73,3 +73,6 @@ func RenderExecutorUnit(httpPort int) ([]byte, error) {
 func executorDirOf(tokenFile string) string {
 	return filepath.Join(filepath.Dir(tokenFile), "executor")
 }
+
+// sandboxNamePrefix starts the name of every sandbox container (internal/executor/sandbox): the executor removes the ones of its engine when it starts.
+const sandboxNamePrefix = "suiteward-sandbox-"

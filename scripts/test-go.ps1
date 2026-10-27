@@ -86,6 +86,7 @@ try {
         throw 'Coverage must receive the discovered module packages as one explicit argument, without a wildcard or extra packages.'
     }
     if (($lint.Events -join ';') -cne 'vet') { throw "Coverage mode must not run lint (the integration-tagged run lints once). Events: $($lint.Events -join ';')" }
+    if (($invocation.Commands['vet'] -join ' ') -cne 'vet -tags=sandbox ./...') { throw "go vet must also vet the sandbox-tagged files. Received: $($invocation.Commands['vet'] -join ' ')" }
     $lint.Events.Clear()
     & (Join-Path $fixtureScripts 'check-go.ps1')
     if (($lint.Events -join ';') -cne 'vet;install golangci-lint;lint run ./...') {
@@ -133,7 +134,7 @@ try {
         if ($null -eq $savedDatabase) { Remove-Item -LiteralPath Env:SUITEWARD_TEST_DATABASE_URL -ErrorAction SilentlyContinue }
         else { [Environment]::SetEnvironmentVariable('SUITEWARD_TEST_DATABASE_URL', $savedDatabase, 'Process') }
     }
-    Write-Output 'Passed 24 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
+    Write-Output 'Passed 25 Go verification invocation checks. These verify arguments and required database applicability, not adapter behavior or application coverage.'
 } finally {
     $resolved = (Resolve-Path -LiteralPath $scratch).Path
     if ($resolved -ne [IO.Path]::GetFullPath($scratch) -or -not $resolved.StartsWith($scratchBase + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {

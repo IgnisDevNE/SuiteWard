@@ -22,13 +22,10 @@ try {
             if ($LASTEXITCODE -ne 0) { throw 'gofmt failed' }
         })
     if ($unformatted.Count -gt 0) { throw "Run gofmt on: $($unformatted -join ', ')" }
-    go vet @buildTags ./...
+    # The sandbox-tagged tests need a container engine, so they are vetted here and run by hand (internal/executor).
+    $vetTags = @(if ($Integration) { $buildTags } else { '-tags=sandbox' })
+    go vet @vetTags ./...
     if ($LASTEXITCODE -ne 0) { throw 'go vet failed' }
-    if (-not $Integration) {
-        # The sandbox-tagged tests need a container engine, so they are vetted here and run by hand (internal/executor).
-        go vet -tags=sandbox ./internal/executor/...
-        if ($LASTEXITCODE -ne 0) { throw 'go vet of the sandbox-tagged files failed' }
-    }
     if ($SkipLint -and -not $Coverage -and -not $Integration) {
         # The macOS CI runner: the pinned-tool bootstrap (dev-env.ps1) supports Windows and Linux x64 only, and the Linux and Windows jobs lint the same sources.
         Write-Host 'Skipping golangci-lint: no pinned build for this platform; the Linux and Windows jobs lint the same sources.'

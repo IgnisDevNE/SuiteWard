@@ -555,3 +555,22 @@ func TestModeLineRefusesASummaryNoTextCanSay(t *testing.T) {
 		}
 	}
 }
+
+// The page asks whether the receipt of the revision applies before it reads the job of the plan, as the gates do: a job that is under the manifest the revision expects, but
+// belongs to a revision whose receipt applies, is not the receipt of one whose receipt does not.
+func TestReceiptPageAsksWhetherTheReceiptAppliesBeforeItReadsItsJob(t *testing.T) {
+	w := newPageWorld(t)
+	w.execPullFive(execHeadFiles(receiptDecl+"# a comment\n", "v1")) // a revision whose receipt does not apply: the declaration changes, no file of the include
+	w.noJobs(5, cjHead2, execution.PlanReceipt)
+	w.seedJob(execution.Spec{RepositoryID: bootRepoID, PullNumber: 5, Plan: execution.PlanReceipt, Profile: "go", HeadSHA: cjHead2, BaseSHA: execMergeBase,
+		GoverningDigest: w.canonicalManifest(), GoverningSource: "V1", DeclarationDigest: artifact.Hash([]byte(receiptDecl)),
+		CanonicalLevel: domain.CanonicalLevelAdvisory, ReceiptLevel: domain.ReceiptLevelAdvisory})
+
+	response := w.get("127.0.0.1:8080", receiptPath)
+
+	page := html.UnescapeString(response.Body.String())
+	if response.Code != http.StatusOK || strings.Contains(page, "<h2>Receipt</h2>") {
+		t.Errorf("status %d: the page shows the receipt of a revision whose receipt does not apply:\n%s", response.Code, page)
+	}
+	w.wantText(page, "This revision changes no file that the approved patterns match, so it has no receipt.")
+}

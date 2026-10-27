@@ -41,7 +41,7 @@ li { overflow-wrap: anywhere; }
 <li>Installation tier: {{.Tier}}</li>
 </ul>
 {{if not .Open}}<p>This pull request is not open: the results are those of the last head recorded for it.</p>
-{{end}}<p class="note">The results below are evidence reported by an executor, not a verdict. SuiteWard shows what the executor saw and decides nothing from it here.</p>
+{{end}}<p class="note">The results below are evidence reported by an executor, not a verdict.</p>
 {{if .CoLocated}}<p class="note">This SuiteWard instance runs beside the coding agent (co-located tier), so its assurance is reduced: the agent can reach SuiteWard's credentials, database and confirmation secret.</p>
 {{end}}{{range .Empty}}<p>{{.}}</p>
 {{end}}{{range .Runs}}<section>

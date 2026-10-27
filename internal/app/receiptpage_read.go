@@ -92,25 +92,23 @@ func (p *receiptPages) read(ctx context.Context, state owner.State, project owne
 	if err != nil {
 		return receiptPageData{}, err
 	}
+	// The gates ask whether the receipt applies before they read its job, and so does the page: a revision that expects no canonical, a baseline, has no receipt.
+	applies, governing, err := reader.receiptApplies(ctx, view)
+	if err != nil {
+		return receiptPageData{}, err
+	}
 	var receipt execution.Job
 	var hasReceipt bool
-	expects := view.revised && !view.expected.IsZero() // a revision that expects no canonical, a baseline, has no receipt to look for
-	if expects {
-		if receipt, hasReceipt, err = reader.gateJob(ctx, project.RepositoryID, number, pull.HeadSHA, execution.PlanReceipt, view.expected.Digest()); err != nil {
+	if applies {
+		if receipt, hasReceipt, err = reader.gateJob(ctx, project.RepositoryID, number, pull.HeadSHA, execution.PlanReceipt, governing); err != nil {
 			return receiptPageData{}, err
 		}
 	}
 	if !hasCanonical && !hasReceipt {
 		data.Empty = append(data.Empty, "No execution results for this pull request yet.")
 	}
-	if expects && !hasReceipt {
-		applies, _, err := reader.receiptApplies(ctx, view)
-		if err != nil {
-			return receiptPageData{}, err
-		}
-		if !applies {
-			data.Empty = append(data.Empty, "This revision changes no file that the approved patterns match, so it has no receipt.")
-		}
+	if view.revised && !view.expected.IsZero() && !applies {
+		data.Empty = append(data.Empty, "This revision changes no file that the approved patterns match, so it has no receipt.")
 	}
 	if hasCanonical {
 		run, err := p.canonicalRun(ctx, reader, state, canonical)

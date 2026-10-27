@@ -200,13 +200,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	plan := upgradePlan{oldImage: previous.Image, newImage: image, oldDB: dbImage, newDB: postgres}
 	// A stack without a settings file (made by local.ps1) is converted even when it runs this release: the settings are saved.
 	if plan.current() && t.haveSaved {
-		d := refreshCopy(ctx, env) // first: the hint names the program as the refreshed copy answers
-		r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctorHint(d.command(), t.settingsPath, t.defaultPath))
-		env.Deps = d
-		if err := refreshExecutor(ctx, r, env, rt, s, pin); err != nil {
-			return err
-		}
-		return holdPage(scr)
+		return upgradeColocatedCurrent(ctx, r, env, rt, s, t, image, pin)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
 	agreed, err := settleRecipient(r, env, &s)

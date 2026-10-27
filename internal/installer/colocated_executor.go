@@ -236,3 +236,15 @@ func releasePin(r *Resolver, d Deps) (string, error) {
 	}
 	return pinFromSums(string(sums), sum, sumsFile, d.GOOS)
 }
+
+// upgradeColocatedCurrent is an upgrade of a stack that runs the release already: it says so, and sets the executor up as an install does, so that a
+// program that was replaced since, or a pin of the release's sums that was given now, reaches the executor.
+func upgradeColocatedCurrent(ctx context.Context, r *Resolver, env Env, rt Runtime, s Settings, t installTarget, image, pin string) error {
+	d := refreshCopy(ctx, env) // first: the hint names the program as the refreshed copy answers
+	r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctorHint(d.command(), t.settingsPath, t.defaultPath))
+	env.Deps = d
+	if err := refreshExecutor(ctx, r, env, rt, s, pin); err != nil {
+		return err
+	}
+	return holdPage(r.screen)
+}

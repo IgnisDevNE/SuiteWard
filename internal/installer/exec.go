@@ -26,6 +26,8 @@ type Interactive func(ctx context.Context, name string, args []string) error
 type Deps struct {
 	Exec        Exec
 	Interactive Interactive
+	// Executable is the path of this program, of which the executor runs a copy. A command that copies the program refuses a Deps without it; a test names a file of its own.
+	Executable func() (string, error)
 	GOOS        string
 	Getenv      func(string) string
 	// UserSID is the Windows SID of the current user, which restrictPath grants; only a Windows run asks for it.
@@ -45,7 +47,7 @@ func (d Deps) validate() error {
 
 // OSDeps runs real commands on this machine.
 func OSDeps() Deps {
-	return Deps{Exec: OSExec, Interactive: OSInteractive, GOOS: runtime.GOOS, Getenv: os.Getenv, UserSID: osUserSID}
+	return Deps{Exec: OSExec, Interactive: OSInteractive, GOOS: runtime.GOOS, Getenv: os.Getenv, UserSID: osUserSID, Executable: os.Executable}
 }
 
 // OSExec runs name with args. When name is an absolute path its directory is put first on the child's PATH, because

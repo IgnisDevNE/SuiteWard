@@ -28,6 +28,16 @@ type hostFake struct {
 	envsDiffer  bool
 	dnfFixesCVE bool
 	failOn      map[string]error // command name + " " + arguments containing the key -> its error
+
+	// The executor (host_executor_test.go).
+	execAccount     bool              // suiteward-exec exists (useradd makes it)
+	files           map[string]string // what cat prints for the files of the executor
+	hashes          map[string]string // what sha256sum prints for the installed binary (install makes it)
+	controllers     string            // the cgroup controllers of the executor's manager, before a restart
+	afterRestart    string            // and after a restart of it
+	execUnitState   string            // the ActiveState of the executor's unit
+	exe             string            // the program of this run
+	tornCopy        bool              // install leaves a file that is not the one it was given
 }
 
 func newHostFake() *hostFake {
@@ -37,6 +47,7 @@ func newHostFake() *hostFake {
 		nftOutput: "table inet suiteward_imds { chain output { meta skuid suiteward ip daddr 169.254.169.254 reject } }",
 		paths:     map[string]bool{"/etc/suiteward/github.env": true},
 		symlinks:  map[string]bool{},
+		execAccount: true, files: map[string]string{}, hashes: map[string]string{}, controllers: "cpu cpuset io memory pids", afterRestart: "cpu cpuset io memory pids", execUnitState: "active",
 	}
 }
 
@@ -45,6 +56,7 @@ func (h *hostFake) deps() Deps {
 		GOOS:        h.goos,
 		Getenv:      func(string) string { return "" },
 		Interactive: func(context.Context, string, []string) error { return nil },
+		Executable:  func() (string, error) { return h.exe, nil },
 		Exec: func(_ context.Context, name string, args []string, stdin io.Reader) ([]byte, error) {
 			c := call{name: name, args: append([]string(nil), args...)}
 			if stdin != nil {
@@ -66,6 +78,9 @@ func (h *hostFake) answer(c call) ([]byte, error) {
 		if strings.Contains(c.name+" "+line, match) {
 			return nil, err
 		}
+	}
+	if out, err, ok := h.answerExecutor(c); ok {
+		return out, err
 	}
 	fail := errors.New(c.name + ": exit status 1")
 	switch {
@@ -172,6 +187,9 @@ func (h *hostFake) lines() []string {
 // runHost runs PrepareHost and returns everything it printed.
 func runHost(t *testing.T, h *hostFake, flags map[string]string, tty bool, input string) (string, error) {
 	t.Helper()
+	if h.exe == "" {
+		h.exe = writeProgram(t)
+	}
 	term, termOut := fakeTerminal(tty, input)
 	r := newTestResolver(t, flags, nil, term)
 	var out bytes.Buffer

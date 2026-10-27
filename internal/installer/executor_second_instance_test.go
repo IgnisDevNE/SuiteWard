@@ -74,7 +74,7 @@ func assertAsksForATokenFile(t *testing.T, u *upgradeHarness, err error) {
 		t.Errorf("got %v, want a refusal that says that nothing was changed", err)
 		return
 	}
-	for _, want := range []string{"--token-file", "the only instance on this computer", "--token-file " + defaultFile} {
+	for _, want := range []string{"--token-file", "the only instance on this computer", "--token-file " + quoteArg(defaultFile)} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal lacks %q: %v", want, err)
 		}

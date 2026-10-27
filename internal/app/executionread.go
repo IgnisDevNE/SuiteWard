@@ -9,7 +9,9 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
@@ -19,17 +21,18 @@ import (
 type executionReader struct {
 	executions execution.Store
 	contents   governance.ContentReader
+	suites     governance.UnitOfWork                // the units of work that read a revision and the canonical it expects: only receiptView needs them
 	report     func(what string, cause error) error // how a failed read of the store is reported: each job keeps the class of error it has always returned
 }
 
 // reads is the reader of the checks job, whose errors say what failed and why.
 func (j *checksJob) reads() executionReader {
-	return executionReader{executions: j.executions, contents: j.contents, report: wrapRead}
+	return executionReader{executions: j.executions, contents: j.contents, suites: j.suites, report: wrapRead}
 }
 
 // reads is the reader of the commands job, whose errors say only what failed.
 func (j *commandsJob) reads() executionReader {
-	return executionReader{executions: j.executions, contents: j.contents, report: opaqueRead}
+	return executionReader{executions: j.executions, contents: j.contents, suites: j.suites, report: opaqueRead}
 }
 
 func opaqueRead(what string, cause error) error { return &opaque{what: what, cause: cause} }
@@ -220,4 +223,77 @@ func executionLevels(policy scope.Execution) (domain.CanonicalLevel, domain.Rece
 		return 0, 0, fmt.Errorf("the receipt level: %w", err)
 	}
 	return canonical, receipt, nil
+}
+
+// receiptView is what the receipt of a revision is decided on, read in one unit of work.
+type receiptView struct {
+	canonical contract.CanonicalSnapshot // the Suite's; with no current version before the first one
+	revised   bool                       // the revision that was looked for exists
+	binding   contract.ApprovalBinding   // of that revision
+	expected  artifact.Manifest          // of the canonical version that it expects; zero for a revision that expects none
+}
+
+// receiptView reads the Suite's canonical and, when it has a current version, the revision of the proposal that find returns (it reports false for none) and the
+// manifest of the canonical version that the revision expects. A project with no Suite has nothing to read: the view is empty.
+func (r executionReader) receiptView(ctx context.Context, repositoryID int64, find func(context.Context, governance.Tx) (contract.Proposal, bool, error)) (receiptView, error) {
+	var view receiptView
+	err := r.suites.Do(ctx, owner.ProjectID(repositoryID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		state, err := tx.Suite(ctx)
+		if err != nil {
+			return fmt.Errorf("load suite: %w", err)
+		}
+		view.canonical = state.Canonical
+		if _, current := state.Canonical.Suite().CurrentVersionID(); !current {
+			return nil // no policy before the first version, so nothing to decide
+		}
+		proposal, found, err := find(ctx, tx)
+		if err != nil || !found {
+			return err
+		}
+		view.binding, view.revised = proposal.Current().Binding(), true
+		version := view.binding.ExpectedCanonical()
+		if version == "" {
+			return nil
+		}
+		historical, found, err := tx.Version(ctx, version)
+		if err != nil {
+			return err
+		}
+		if !found { // a binding names a version that was promoted: its absence is stored state that is broken, not a missing Suite
+			return fmt.Errorf("the canonical version %s that %s expects is not stored", version, view.binding.Reference().RevisionID)
+		}
+		view.expected = historical.Version().Manifest()
+		return nil
+	})
+	if errors.Is(err, governance.ErrNotFound) {
+		return receiptView{}, nil
+	}
+	if err != nil {
+		return receiptView{}, &opaque{what: "read the revision", cause: err}
+	}
+	return view, nil
+}
+
+// receiptApplies reports whether the receipt of the revision applies: whether it adds or changes a file that the include of the canonical version it expects
+// matches and the exclude does not (docs/contracts/runtime.md, "Applicable and not applicable"). A revision that expects no canonical, a baseline, has nothing to
+// be added to or changed against. governing is the digest of the manifest of that version, which the receipt jobs of the revision name.
+func (r executionReader) receiptApplies(ctx context.Context, view receiptView) (applies bool, governing artifact.Digest, err error) {
+	if !view.revised || view.expected.IsZero() {
+		return false, artifact.Digest{}, nil
+	}
+	declaration := scope.NoDeclaration()
+	if i := slices.IndexFunc(view.expected.Entries(), func(e artifact.Entry) bool { return e.Path == scope.DeclarationPath }); i >= 0 {
+		raw, err := r.contents.Read(ctx, view.expected.Entries()[i].Content)
+		if err != nil {
+			return false, artifact.Digest{}, &opaque{what: "read the declaration of the version", cause: err}
+		}
+		if declaration, err = scope.ParseDeclaration(raw); err != nil {
+			return false, artifact.Digest{}, &opaque{what: "parse the declaration of the version", cause: err}
+		}
+	}
+	files, err := r.evaluatedFiles(ctx, view.binding.ManifestDigest(), view.expected, domain.Selection{Include: declaration.Include(), Exclude: declaration.Exclude()})
+	if err != nil {
+		return false, artifact.Digest{}, err
+	}
+	return len(files) > 0, view.expected.Digest(), nil
 }

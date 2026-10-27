@@ -362,3 +362,79 @@ func TestChecksKeepTheGitHubClockOfAHeadWhenItsJobCouldNotBeCreated(t *testing.T
 
 	requireFinal(t, w.onlyJob(5, cjHead2, execution.PlanReceipt), execution.ReasonGitHubUnavailable)
 }
+
+// headJobsFail is an execution store that cannot list the jobs of a head, which fails the step of execution of every pull request.
+type headJobsFail struct{ execution.Store }
+
+func (headJobsFail) HeadJobs(context.Context, int64, int, string, execution.Plan) ([]execution.Job, error) {
+	return nil, errors.New("the store is down")
+}
+
+// A step of execution that fails holds the check as the wait rule does, and the wait rule lets a wrong code that was entered since fail it: a failed step never
+// hides one, whether the check it holds is a wait, a success or a runner block.
+func TestChecksFailTheCheckOnAFreshWrongCodeWhenTheStepFails(t *testing.T) {
+	t.Run("over a stored approval-missing, with a manifest that is not stored", func(t *testing.T) {
+		decl := execDeclaration("off", "required")
+		w := newExecWorld(t, decl)
+		w.reader.mergeErrs = map[string]error{cjHead2: errors.New("github: 502")} // no receipt job yet, so the next run reads the manifest of the revision
+		w.execPullFive(execHeadFiles(decl, "v2"))
+		w.want(5, checks.InProgress, "approval-missing", 1)
+		w.entry(5, 302, bootOwnerID, commands.InvalidCode, "")
+		w.hideManifests(decl)
+
+		w.check.liveness.Saw(w.clock.Add(time.Minute))
+		if err := w.runChecks(); err == nil {
+			t.Fatal("the run succeeded though the step failed")
+		}
+
+		w.want(5, checks.Failure, "owner-command-rejected", 2)
+	})
+	t.Run("over a stored success, with a store that is down", func(t *testing.T) {
+		w := newExecWorld(t, execDeclaration("required", "off"))
+		w.sync(map[int]string{4: bootHead})
+		w.execRun()
+		w.finish(w.onlyJob(4, bootHead, execution.PlanCanonical), canonicalTests("pass"))
+		w.execRun()
+		w.want(4, checks.Success, "unchanged", 2)
+		w.entry(4, 303, bootOwnerID, commands.InvalidCode, "")
+		w.check.executions = headJobsFail{w.jobs}
+
+		w.check.liveness.Saw(w.clock.Add(time.Minute))
+		if err := w.runChecks(); err == nil {
+			t.Fatal("the run succeeded though the step failed")
+		}
+
+		w.want(4, checks.Failure, "owner-command-rejected", 3)
+	})
+}
+
+func TestChecksRestoreARunnerBlockWithItsRunnerSetWhenTheStepFails(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.runnerPull(withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
+	w.want(5, checks.InProgress, "runner-uncovered", 1)
+	if err := w.memory.FailMessage(t.Context(), "check:1001:5:1"); err != nil { // the message of the check is lost, so the next run publishes it again, with its files
+		t.Fatal(err)
+	}
+	w.check.executions = headJobsFail{w.check.executions}
+
+	err := w.runChecks()
+
+	if err == nil || strings.Contains(err.Error(), "no runner set") {
+		t.Fatalf("the run failed with %v, want the failure of the step and no complaint of a missing runner set", err)
+	}
+	w.want(5, checks.InProgress, "runner-uncovered", 2)
+}
+
+func TestChecksFailARunnerBlockOnAFreshWrongCodeWhenTheStepFails(t *testing.T) {
+	w := newCJWorld(t, true)
+	w.runnerPull(withFiles(bootFiles("v1"), cjJest), added(cjJest)...)
+	w.want(5, checks.InProgress, "runner-uncovered", 1)
+	w.entry(5, 304, bootOwnerID, commands.InvalidCode, "")
+	w.check.executions = headJobsFail{w.check.executions}
+
+	if err := w.runChecks(); err == nil {
+		t.Fatal("the run succeeded though the step failed")
+	}
+
+	w.want(5, checks.Failure, "owner-command-rejected", 2)
+}

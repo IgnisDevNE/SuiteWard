@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"log/slog"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 )
@@ -71,5 +72,32 @@ func TestAResultTheServiceRefusesUntilTheMarginIsGivenUp(t *testing.T) {
 	d.noResult()
 	if n := sv.results.Load(); n != 3 {
 		t.Errorf("the result was posted %d times; want 3: none after the margin", n)
+	}
+}
+
+// The heartbeat stops before the first post and the lease lasts 60 s from the last one, so a resend that waits longer than a heartbeat
+// interval (20 s) can miss a service that is back while the lease still holds. The wait doubles from the lease backoff and stops at 20 s,
+// where the old cap (60 s) posted at 0, 5, 15, 35 and 75 s after the first refusal.
+func TestTheWaitBetweenPostsOfAResultNeverPassesAHeartbeatInterval(t *testing.T) {
+	sv, rt := aJob(1)
+	sv.answer = func(n int) (int, string) {
+		if n <= 6 {
+			return http.StatusServiceUnavailable, ""
+		}
+		return http.StatusOK, ""
+	}
+	d := start(t, newService(t, sv), rt, func(_ *Config, d *driver) {
+		d.sleeps.immediate, d.sleeps.reached, d.patience = 6, make(chan struct{}), 5*time.Second
+	})
+	wait(d, d.sleeps.reached) // the service took the seventh post, and the executor went on to ask for a job
+	var idle []time.Duration
+	for _, w := range d.sleeps.durations() {
+		if waitKindOf(w) == idleWait {
+			idle = append(idle, w)
+		}
+	}
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 20 * time.Second, 20 * time.Second, 20 * time.Second}
+	if len(idle) < len(want) || !slices.Equal(idle[:len(want)], want) {
+		t.Errorf("the executor waited %v between the posts; want %v: doubling from 5 s and never past a heartbeat interval", idle, want)
 	}
 }

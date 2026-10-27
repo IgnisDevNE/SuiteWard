@@ -30,6 +30,7 @@ import (
 // The bounds of the wire (docs/contracts/runtime.md; the † numbers are A0's).
 const (
 	maxTreeEntries  = 50_000   // the tree entries of one commit
+	maxTreePath     = 4096     // the path of a tree entry
 	maxDeclaration  = 1 << 20  // the declaration of a job
 	maxLeaseAnswer  = 16 << 20 // a lease answer
 	maxResultBody   = 4 << 20  // a result

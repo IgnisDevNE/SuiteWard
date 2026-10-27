@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
@@ -184,6 +185,8 @@ func (h *executorAPI) side(ctx context.Context, job execution.Job, repo, sha str
 		return leaseSide{}, fmt.Errorf("%w: the tree could not be read", execution.ErrGitHubUnavailable)
 	case len(entries) > maxTreeEntries:
 		return leaseSide{}, fmt.Errorf("%w: %d tree entries, over %d", execution.ErrTooLarge, len(entries), maxTreeEntries)
+	case slices.ContainsFunc(entries, func(e treeEntry) bool { return len(e.Path) > maxTreePath }):
+		return leaseSide{}, fmt.Errorf("%w: a tree entry has a path over %d bytes", execution.ErrTooLarge, maxTreePath)
 	}
 	if entries == nil { // the reader is a boundary: an empty tree is a list in the answer, not null
 		entries = []treeEntry{}

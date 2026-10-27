@@ -163,8 +163,8 @@ func TestChecksJobOnPostgreSQLPublishesTheStatesThroughTheRelay(t *testing.T) {
 	client := bootMust(rest.NewClient(func(ctx context.Context) (string, string, error) { return "token", "installation", nil }, server.Client(), server.URL, budget))
 	publisher := &checkPublisher{runs: bootMust(github.NewChecks(client)), ledger: store.Checks(), instance: newLazy(store.Instance), appID: chkAppID, logger: logger, reports: newChangeReports(store, artifacts)}
 	relay := bootMust(river.NewRelay(river.RelayConfig{Store: store, Publishers: map[string]river.Publisher{githubCheckKind: publisher.publish}, MaxAttempts: 3, Lease: time.Minute, Logger: logger}))
-	job := &checksJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(), commands: store,
-		pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: time.Now}
+	job := (&checksJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(), commands: store,
+		pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: time.Now}).withExecution(store.Execution(), store.ReceiptChecks(), time.Now())
 	instance := bootMust(store.Instance(t.Context()))
 	step := func() {
 		t.Helper()

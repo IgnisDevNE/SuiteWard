@@ -317,6 +317,9 @@ type Store interface {
 	CurrentJob(ctx context.Context, key string) (Job, bool, error)
 	// HeadJobs reads the jobs of a head for one plan, oldest first (a head can have more than one over its life).
 	HeadJobs(ctx context.Context, repositoryID int64, pull int, headSHA string, plan Plan) ([]Job, error)
+	// OpenJobs reads the pending and leased jobs of a repository, oldest first: what the checks job cancels when a pull request closes,
+	// moves to another head or no longer wants the binding. It takes no lock.
+	OpenJobs(ctx context.Context, repositoryID int64) ([]Job, error)
 	// Result reads the results row of a job that has one.
 	Result(ctx context.Context, jobID int64) (StoredResult, bool, error)
 	// Tests reads the tests of a complete result, ordered by package then name.

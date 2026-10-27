@@ -829,6 +829,65 @@ func (q *Queries) OpenExecutionJobs(ctx context.Context) ([]ExecutionJob, error)
 	return items, nil
 }
 
+const repositoryOpenExecutionJobs = `-- name: RepositoryOpenExecutionJobs :many
+SELECT job_id, job_key, repository_id, pull_number, plan, profile, head_sha, base_sha, governing_digest, governing_source, declaration_digest, canonical_level,
+       receipt_level, unapproved_paths, changed_paths, changed_total, state, reason, attempts, failures, github_since, not_before, lease_id, lease_expires_at,
+       leased_at, deadline_at, created_at, finished_at
+FROM execution_jobs
+WHERE repository_id = $1 AND state IN ('pending', 'leased')
+ORDER BY job_id
+`
+
+// The open jobs of a repository, in id order, with no lock: the checks job cancels the ones that are no longer wanted.
+func (q *Queries) RepositoryOpenExecutionJobs(ctx context.Context, repositoryID int64) ([]ExecutionJob, error) {
+	rows, err := q.db.Query(ctx, repositoryOpenExecutionJobs, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExecutionJob{}
+	for rows.Next() {
+		var i ExecutionJob
+		if err := rows.Scan(
+			&i.JobID,
+			&i.JobKey,
+			&i.RepositoryID,
+			&i.PullNumber,
+			&i.Plan,
+			&i.Profile,
+			&i.HeadSha,
+			&i.BaseSha,
+			&i.GoverningDigest,
+			&i.GoverningSource,
+			&i.DeclarationDigest,
+			&i.CanonicalLevel,
+			&i.ReceiptLevel,
+			&i.UnapprovedPaths,
+			&i.ChangedPaths,
+			&i.ChangedTotal,
+			&i.State,
+			&i.Reason,
+			&i.Attempts,
+			&i.Failures,
+			&i.GithubSince,
+			&i.NotBefore,
+			&i.LeaseID,
+			&i.LeaseExpiresAt,
+			&i.LeasedAt,
+			&i.DeadlineAt,
+			&i.CreatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateExecutionJob = `-- name: UpdateExecutionJob :execrows
 UPDATE execution_jobs
 SET state = $1, reason = $2, attempts = $3, failures = $4, github_since = $5,

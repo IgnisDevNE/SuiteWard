@@ -410,6 +410,7 @@ func (j *checksJob) receiptJob(ctx context.Context, s *pullState, x *executionRu
 	if err != nil || read.wait {
 		return true, err
 	}
+	delete(j.mergeFailures, checkPull{s.p.RepositoryID, s.pull.Number}) // a job is created for the head, whatever it is, and that ends the clock of its failures
 	spec.UnapprovedPaths, spec.BaseSHA = read.unapproved, read.base
 	return true, j.enqueue(ctx, spec, read.final)
 }
@@ -490,7 +491,6 @@ func (j *checksJob) readReceipt(ctx context.Context, s *pullState, x *executionR
 	base, err := j.reader.MergeBase(ctx, s.p.Repo, s.pull.BaseSHA, s.pull.HeadSHA)
 	switch {
 	case err == nil:
-		delete(j.mergeFailures, checkPull{s.p.RepositoryID, s.pull.Number})
 		return receiptRead{unapproved: unapproved, base: base}, nil
 	case errors.Is(err, rest.ErrNotFound):
 		return receiptRead{unapproved: unapproved, final: execution.ReasonNoMergeBase}, nil

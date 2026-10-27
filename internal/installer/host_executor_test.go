@@ -95,7 +95,13 @@ func (h *hostFake) answerExecutor(c call) (out []byte, err error, handled bool) 
 	case c.name == "systemctl" && line == "restart user@1002.service":
 		h.controllers = h.afterRestart
 		return nil, nil, true
+	case c.name == "systemctl" && strings.Contains(line, execUserSystemd) && strings.Contains(line, "enable --now suiteward-executor.service"):
+		h.execEnabled = true
+		return nil, nil, true
 	case c.name == "systemctl" && strings.Contains(line, execUserSystemd) && strings.Contains(line, "show") && strings.HasSuffix(line, "suiteward-executor.service"):
+		if !h.execRunning && !h.execEnabled {
+			return []byte("inactive\n"), nil, true // a unit that was not there before the step
+		}
 		return []byte(h.execUnitState + "\n"), nil, true
 	}
 	return nil, nil, false
@@ -122,6 +128,7 @@ func writeOf(h *hostFake, path string) string {
 func TestPrepareHostCreatesTheExecutorAccountApartFromTheServiceAccount(t *testing.T) {
 	h := newHostFake()
 	h.execAccount = false
+	h.subuid, h.subgid = "suiteward:100000:65536\n", "suiteward:100000:65536\n"
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +234,7 @@ func TestPrepareHostRejectsTheMetadataAddressesForTheExecutorByDestinationWithou
 func TestPrepareHostFailsWhenTheExecutorRulesAreNotLoaded(t *testing.T) {
 	h := newHostFake()
 	h.failOn = map[string]error{"nft list table inet suiteward_exec": errInjected}
-	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || !strings.Contains(err.Error(), "suiteward_exec") {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || !strings.Contains(err.Error(), "executor rule is not loaded") {
 		t.Fatalf("rules that are not loaded must stop the run before the executor starts, got %v", err)
 	}
 	if h.has("systemctl", "suiteward-executor.service") {
@@ -455,7 +462,7 @@ func TestPrepareHostRestartsAnExecutorThatRunsOldFiles(t *testing.T) {
 	h := newHostFake()
 	h.exe = writeProgram(t)
 	h.hashes[execBinaryPath] = strings.Repeat("0", 64) // another build of the program is installed
-	h.paths[execUnitFile] = true
+	h.execRunning = true
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}

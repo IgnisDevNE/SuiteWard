@@ -28,8 +28,8 @@ type Deps struct {
 	Interactive Interactive
 	// Executable is the path of this program, of which the executor runs a copy. A command that copies the program refuses a Deps without it; a test names a file of its own.
 	Executable func() (string, error)
-	GOOS        string
-	Getenv      func(string) string
+	GOOS       string
+	Getenv     func(string) string
 	// UserSID is the Windows SID of the current user, which restrictPath grants; only a Windows run asks for it.
 	UserSID func() (string, error)
 	// Command is how a command of the installer names this program in a hint: "suiteward" where the shell finds the program by that name,

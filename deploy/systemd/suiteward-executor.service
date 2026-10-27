@@ -1,0 +1,26 @@
+# The SuiteWard executor of the isolated tier (ADR 0028, section 10): `suiteward execute`, a native process of the account suiteward-exec that
+# runs the sandboxes of canonical execution through that account's own rootless Podman. It is a systemd user unit: `suiteward install host`
+# writes it to /etc/systemd/user/ and enables it for suiteward-exec only, so it starts at boot with that account's lingering manager and runs
+# under the cgroup controllers that the drop-in user@.service.d/delegate.conf gives the manager. ConditionUser keeps the manager of every other
+# account from running it. The binary is a root-owned copy of the release's program, which `suiteward doctor` compares with the pin beside it.
+[Unit]
+Description=SuiteWard executor
+ConditionUser=suiteward-exec
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/local/libexec/suiteward/suiteward-executor execute
+Environment=SUITEWARD_EXECUTOR_URL=http://127.0.0.1:27081
+Environment=SUITEWARD_EXECUTOR_TOKEN_FILE=/etc/suiteward/executor-token
+Environment=SUITEWARD_EXECUTOR_RUNTIME=podman
+# The prefetch buffers a module body that comes with no length, up to what is left of its budget (512 MiB), and for a moment about twice that;
+# 2 GiB leaves room for the Go runtime, the tar of a run and the runtime's command. The sandboxes (3 GiB each) are containers that Podman puts
+# in scopes of their own, outside this unit's cgroup: that is assumed here and to be confirmed on a live host. NoNewPrivileges stays off: it
+# would stop newuidmap and newgidmap, which rootless Podman needs.
+MemoryMax=2G
+MemorySwapMax=0
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

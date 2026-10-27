@@ -265,7 +265,7 @@ func releasePin(r *Resolver, d Deps) (string, error) {
 // program that was replaced since, or a pin of the release's sums that was given now, reaches the executor.
 func upgradeColocatedCurrent(ctx context.Context, r *Resolver, env Env, rt Runtime, s Settings, t installTarget, tokenFile, image, pin string) error {
 	d := refreshCopy(ctx, env) // first: the hint names the program as the refreshed copy answers
-	r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctorHint(d.command(), t.settingsPath, t.defaultPath))
+	r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), colocatedDoctorHint(d, t, tokenFile))
 	env.Deps = d
 	refreshExecutor(ctx, env, rt, s, tokenFile, pin)
 	return holdPage(r.screen)

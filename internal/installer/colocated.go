@@ -923,7 +923,7 @@ func (c *colocatedInstall) finish(ctx context.Context, scr *ui.Screen, t install
 			return err
 		}
 		c.say("Read the status of the service: %s\n", c.statusHint(ctx)) // after the enrollment, which waited for the service to answer
-		c.say("Then check the instance with `%s`.\n", doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
+		c.say("Then check the instance with `%s`.\n", c.doctorAgain(t))
 	}
 	scr.Step(6)
 	c.installSelf(ctx)

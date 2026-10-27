@@ -604,3 +604,21 @@ func TestUpgradeAtTheInstalledReleaseDoesNotStartAnExecutorWithoutItsTokenCopy(t
 		t.Errorf("the output must say that the token copy is missing and what to run:\n%s", out)
 	}
 }
+
+// A batch file reads a percent sign: `%` in the folder of the executor (a profile or a token file under a name with one) has to be doubled in the
+// line that starts the program and in the one that names its log, as it is in the `set` lines.
+func TestTheWrapperOfTheWindowsTaskDoublesAPercentSignInItsProgramAndLogPaths(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	h.dir = filepath.Join(h.dir, "50%off")
+	if err := os.MkdirAll(h.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	doubled := func(path string) string { return strings.ReplaceAll(path, "%", "%%") }
+	want := `"` + doubled(h.executorBinary()) + `" execute >> "` + doubled(filepath.Join(h.executorDir(), "executor.log")) + `" 2>&1`
+	if wrapper := h.readHome("executor/run.cmd"); !strings.Contains(wrapper, want) {
+		t.Errorf("the wrapper lacks the line that starts the program with its percent signs doubled, %s:\n%s", want, wrapper)
+	}
+}

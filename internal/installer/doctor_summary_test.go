@@ -178,7 +178,7 @@ func TestAPlainInstallDoesNotRunDoctor(t *testing.T) {
 		t.Errorf("a plain install ran doctor: %v", calls)
 	}
 	out := h.out.String()
-	if !strings.Contains(out, "Then check the instance with `suiteward doctor --settings "+quoteArg(h.settingsPath())+"`.") || doctorSummaryRow.MatchString(out) {
+	if !strings.Contains(out, "Then check the instance with `suiteward doctor --settings "+quoteArg(h.settingsPath())+" --token-file "+quoteArg(h.tokenPath())+"`.") || doctorSummaryRow.MatchString(out) {
 		t.Errorf("the plain output changed:\n%s", out)
 	}
 }

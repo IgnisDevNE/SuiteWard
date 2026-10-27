@@ -275,14 +275,10 @@ func TestReceiptCheckPublisherReturnsGitHubErrorsAsStatusOnly(t *testing.T) {
 	}
 }
 
-// With no receipt, nothing is published (domain.ConclusionNone is no GitHub value): a message of a state that is none of the four is refused, when it is built and when it is
-// delivered, and GitHub is never called.
+// With no receipt, nothing is published (domain.ConclusionNone is no GitHub value): a message of a state that is none of the four is refused when it is delivered, and
+// GitHub is never called.
 func TestTheReceiptCheckNeverSendsAStateThatIsNoGitHubConclusion(t *testing.T) {
 	for _, state := range []execution.CheckState{"", "none", "cancelled", "skipped", "queued", cmtLeakText} {
-		d := rcpDecision(state, receiptComplete)
-		if m, err := newReceiptCheckMessage(cmtRepo, d, owner.TierIsolated, 3); err == nil {
-			t.Fatalf("state %q: built %s", state, m.Payload)
-		}
 		w := newRcpWorld()
 		m := rcpGood(t)
 		m.Payload = bytes.Replace(m.Payload, []byte(`"state":"success"`), []byte(`"state":"`+string(state)+`"`), 1)

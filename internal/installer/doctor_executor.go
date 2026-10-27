@@ -39,7 +39,11 @@ func (d *doctor) checkExecutorIsolated(ctx context.Context) {
 	d.checkExecutorNetwork(ctx, uid)
 	d.checkExecutorUnit(ctx)
 	d.checkExecutorBinary(ctx)
-	d.checkExecutorRunning(ctx, d.isolatedProcess, "read why with `sudo journalctl _SYSTEMD_USER_UNIT="+executorUnitName+" -n 50 --no-pager`; "+d.hostStep()+" starts it")
+	d.checkExecutorRunning(ctx, d.isolatedProcess, runningFixes{
+		noToken:    d.hostStep() + ", then run `" + d.deps.command() + " install` (or `--upgrade`) as the service account, which gives the service the token",
+		notRunning: "read why with `sudo journalctl _SYSTEMD_USER_UNIT=" + executorUnitName + " -n 50 --no-pager`; " + d.hostStep() + " starts it",
+		notSeen:    "read the executor's log; " + d.hostStep() + " again, then the install as the service account, so that both hold one token and one port",
+	})
 }
 
 // subidRange is the range an account has in /etc/subuid or /etc/subgid.
@@ -269,11 +273,19 @@ func (d *doctor) isolatedProcess(ctx context.Context) error {
 	return nil
 }
 
+// runningFixes are the fixes of the ways the executor fails to run, which each tier words for its own commands: the isolated tier has an
+// administrator and a service account, the co-located tier one user.
+type runningFixes struct {
+	noToken    string // the service has no executor token
+	notRunning string // the process is not running
+	notSeen    string // it runs, and the service has not seen it lately
+}
+
 // checkExecutorRunning pairs the process of the executor with what /status says the service saw. The service starts the clock of its last sight
 // when it starts, so a service that was just restarted looks as if it saw an executor: the process is the evidence that the executor exists, and
 // the age of the last sight that it is the service's executor, with the service's token. A /status without the execution object is the answer
 // of a service older than M2.1.
-func (d *doctor) checkExecutorRunning(ctx context.Context, process func(context.Context) error, processFix string) {
+func (d *doctor) checkExecutorRunning(ctx context.Context, process func(context.Context) error, fixes runningFixes) {
 	body, ok := d.raw["status"]
 	if !ok {
 		d.skip("executor.running", "status")
@@ -292,17 +304,16 @@ func (d *doctor) checkExecutorRunning(ctx context.Context, process func(context.
 		d.fail("executor.running", "/status has no execution object: the service is older than M2.1 and cannot run an executor", upgrade)
 		return
 	case !doc.Execution.Enabled:
-		d.fail("executor.running", "the service has no executor token (EXECUTOR_TOKEN is unset), so it serves no executor and every execution job is unavailable", d.hostStep()+", then run `"+d.deps.command()+" install` (or `--upgrade`) as the service account, which gives the service the token")
+		d.fail("executor.running", "the service has no executor token (EXECUTOR_TOKEN is unset), so it serves no executor and every execution job is unavailable", fixes.noToken)
 		return
 	}
 	if err := process(ctx); err != nil {
-		d.fail("executor.running", err.Error(), processFix)
+		d.fail("executor.running", err.Error(), fixes.notRunning)
 		return
 	}
 	age := time.Since(doc.Execution.LastSeenAt).Round(time.Second)
 	if age > executorSeenWithin {
-		d.fail("executor.running", fmt.Sprintf("the executor runs, but the service last saw an executor %s ago: it cannot reach the service at http://127.0.0.1:%d, or it sends another token than the service's", age, d.s.HTTPPort),
-			"read the executor's log; "+d.hostStep()+" again, then the install as the service account, so that both hold one token and one port")
+		d.fail("executor.running", fmt.Sprintf("the executor runs, but the service last saw an executor %s ago: it cannot reach the service at http://127.0.0.1:%d, or it sends another token than the service's", age, d.s.HTTPPort), fixes.notSeen)
 		return
 	}
 	d.pass("executor.running", fmt.Sprintf("the executor runs, and it was last seen %s ago by the service (the service starts that clock when it starts, so the process is the evidence of the executor)", age))

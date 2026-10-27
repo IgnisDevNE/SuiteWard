@@ -120,7 +120,7 @@ func engineViolation(args []string) string {
 		return len(args) >= len(prefix) && slices.Equal(args[:len(prefix)], prefix)
 	}
 	switch {
-	case has("inspect"), has("info"), has("version"), has("container", "ls"), has("system", "connection", "list"), has("machine", "list"):
+	case has("inspect"), has("image", "inspect"), has("info"), has("version"), has("container", "ls"), has("system", "connection", "list"), has("machine", "list"):
 		return ""
 	case has("machine", "ssh"): // the last argument is the command run in the machine
 		remote := args[len(args)-1]
@@ -197,7 +197,7 @@ func runDoctorRaw(t *testing.T, f *fakeEngine, s Settings, jsonOut bool) (int, s
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	code := Doctor(context.Background(), f.deps(), path, &out, jsonOut)
+	code := Doctor(context.Background(), f.deps(), path, "", &out, jsonOut)
 	assertReadOnly(t, f)
 	return code, out.String()
 }
@@ -520,7 +520,7 @@ func TestDoctorStopsAtMissingOrInvalidSettings(t *testing.T) {
 	f := newFake("linux")
 	var out bytes.Buffer
 	path := filepath.Join(t.TempDir(), "settings.yaml")
-	if code := Doctor(context.Background(), f.deps(), path, &out, true); code != 1 {
+	if code := Doctor(context.Background(), f.deps(), path, "", &out, true); code != 1 {
 		t.Errorf("exit %d for a missing file", code)
 	}
 	var list []doctorResult
@@ -531,7 +531,7 @@ func TestDoctorStopsAtMissingOrInvalidSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if code := Doctor(context.Background(), f.deps(), path, &out, true); code != 1 || !strings.Contains(out.String(), "tier") {
+	if code := Doctor(context.Background(), f.deps(), path, "", &out, true); code != 1 || !strings.Contains(out.String(), "tier") {
 		t.Errorf("exit %d for invalid settings: %s", code, out.String())
 	}
 	if len(f.calls) != 0 {
@@ -889,7 +889,7 @@ func TestDoctorBoundsEveryQuery(t *testing.T) {
 	done := make(chan string)
 	go func() {
 		var out bytes.Buffer
-		Doctor(context.Background(), deps, path, &out, true)
+		Doctor(context.Background(), deps, path, "", &out, true)
 		done <- out.String()
 	}()
 	select {

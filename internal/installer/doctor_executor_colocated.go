@@ -19,13 +19,16 @@ func (d *doctor) installFix() string {
 	return fmt.Sprintf("run `%[1]s install --upgrade` with this program when the service is of an earlier release, or `%[1]s install` again: either copies this program as the executor, makes its token and starts it", cmd)
 }
 
-// checkExecutorColocated runs the checks of the executor on this computer. Doctor finds its files from the default place of this user's token
-// file: an instance that was installed with --token-file keeps them beside that file.
+// checkExecutorColocated runs the checks of the executor on this computer. Doctor finds its files beside the token file that --token-file names, else
+// beside the default place of this user's token file.
 func (d *doctor) checkExecutorColocated(ctx context.Context) {
-	tokenFile, err := defaultTokenFile(d.deps)
-	if err != nil {
-		d.fail("executor.token", err.Error(), "this is where doctor looks for the files of the executor: set the variable it names")
-		return
+	tokenFile := d.tokenFile
+	if tokenFile == "" {
+		var err error
+		if tokenFile, err = defaultTokenFile(d.deps); err != nil {
+			d.fail("executor.token", err.Error(), "this is where doctor looks for the files of the executor: set the variable it names, or pass --token-file")
+			return
+		}
 	}
 	plan, err := planExecutor(d.deps, tokenFile, d.s, engineBinDir(d.rt))
 	if err != nil {
@@ -51,7 +54,11 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 			return errors.New("the executor is not running")
 		}
 		return nil
-	}, plan.startHint())
+	}, runningFixes{
+		noToken:    d.installFix(),
+		notRunning: plan.startHint(),
+		notSeen:    "read the executor's log (" + plan.logWhere() + "), then " + d.installFix() + ", so that the service and the executor hold one token and one port",
+	})
 	d.checkExecutorLoopback(ctx)
 }
 
@@ -137,4 +144,12 @@ func (d *doctor) checkExecutorLoopback(ctx context.Context) {
 		return
 	}
 	d.pass("executor.loopback", fmt.Sprintf("this computer reaches 127.0.0.1:%d, the port that the Podman machine %s publishes", d.s.HTTPPort, d.machine.Name))
+}
+
+// logWhere is where the executor's log is: a file where the operating system has the program write one, the journal of the user's manager on Linux.
+func (p executorPlan) logWhere() string {
+	if p.goos == "linux" {
+		return "journalctl --user -u " + executorUnitName
+	}
+	return p.log
 }

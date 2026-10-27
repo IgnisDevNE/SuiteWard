@@ -197,7 +197,7 @@ func TestDoctorColocatedLoopbackOfAPodmanMachineThatDoesNotAnswerFromThisCompute
 				t.Fatal(err)
 			}
 			unreachable := func(context.Context, string) ([]byte, error) { return nil, errors.New("connection refused") }
-			results := doctorChecks(context.Background(), f.deps(), unreachable, path)
+			results := doctorChecks(context.Background(), f.deps(), unreachable, path, "")
 			var got doctorResult
 			for _, r := range results {
 				if r.Name == "executor.loopback" {

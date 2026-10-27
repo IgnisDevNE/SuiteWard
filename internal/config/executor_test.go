@@ -51,13 +51,13 @@ func TestLoadExecutorReadsEverySetting(t *testing.T) {
 	vars := required(t)
 	vars["SUITEWARD_EXECUTOR_TOKEN_FILE"] = "/t"
 	vars["SUITEWARD_EXECUTOR_JOB_TIMEOUT"] = "45m"
-	vars["SUITEWARD_EXECUTOR_LEASE_WAIT"] = "90s"
+	vars["SUITEWARD_EXECUTOR_LEASE_WAIT"] = "3m"
 	vars["SUITEWARD_EXECUTOR_GITHUB_WAIT"] = "2h"
 	cfg, warnings, err := fakeEnv{vars: vars, files: map[string]string{"/t": executorToken + "\n"}}.load()
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("Load: warnings %v, error %v", warnings, err)
 	}
-	want := ExecutorTimes{JobTimeout: 45 * time.Minute, LeaseWait: 90 * time.Second, GitHubWait: 2 * time.Hour}
+	want := ExecutorTimes{JobTimeout: 45 * time.Minute, LeaseWait: 3 * time.Minute, GitHubWait: 2 * time.Hour}
 	if cfg.ExecutorToken.Reveal() != executorToken || cfg.Executor != want {
 		t.Fatalf("token %q, times %+v; want the token and %+v", cfg.ExecutorToken.Reveal(), cfg.Executor, want)
 	}
@@ -103,7 +103,7 @@ func TestLoadExecutorDurationRanges(t *testing.T) {
 		name, lo, hi, below, above string
 	}{
 		{"EXECUTOR_JOB_TIMEOUT", "11m", "6h", "10m59s", "6h0m1s"},
-		{"EXECUTOR_LEASE_WAIT", "10s", "1h", "9s", "1h0m1s"},
+		{"EXECUTOR_LEASE_WAIT", "2m", "1h", "1m59s", "1h0m1s"},
 		{"EXECUTOR_GITHUB_WAIT", "1m", "6h", "59s", "6h0m1s"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

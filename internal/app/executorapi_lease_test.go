@@ -533,3 +533,28 @@ func TestLeaseBoundsTheTreeReads(t *testing.T) {
 		}
 	}
 }
+
+// A tree entry's path is at most 4096 bytes on the wire: a tree with a longer one is a tree past its limit, final for the job.
+func TestLeaseRefusesATreeEntryWithAPathOver4096Bytes(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		size   int
+		wantOK bool
+	}{{"4096 bytes", 4096, true}, {"4097 bytes", 4097, false}} {
+		t.Run(test.name, func(t *testing.T) {
+			e := newExecEnv(t)
+			job := e.canonicalJob(1, defaultFiles)
+			e.trees.set(execSHA(1), []treeEntry{{Path: "a.go", Mode: "100644", SHA: strings.Repeat("a", 40)}, {Path: strings.Repeat("p", test.size), Mode: "100644", SHA: strings.Repeat("b", 40)}})
+
+			got := e.lease()
+
+			stored := e.job(job.ID)
+			if test.wantOK && (got.status != http.StatusOK || stored.State != execution.StateLeased) {
+				t.Errorf("lease = %d, job %+v; want a lease for a path of %d bytes", got.status, stored, test.size)
+			}
+			if !test.wantOK && (got.status != http.StatusNoContent || stored.Reason != execution.ReasonTooLarge) {
+				t.Errorf("lease = %d, job %+v; want too-large for a path of %d bytes", got.status, stored, test.size)
+			}
+		})
+	}
+}

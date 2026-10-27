@@ -203,22 +203,29 @@ func (h *host) executorToken(ctx context.Context) (made bool, err error) {
 	return made, nil
 }
 
-// releaseAsset is the name of a Linux binary in the release's SHA256SUMS.
-var releaseAsset = regexp.MustCompile(`^suiteward_v[0-9][^_\s]*_linux_(amd64|arm64)$`)
+// releaseAssetOf is the pattern of the name of a binary of goos in the release's SHA256SUMS: suiteward_<tag>_<os>_<arch>, with .exe on Windows.
+func releaseAssetOf(goos string) *regexp.Regexp {
+	suffix := ""
+	if goos == "windows" {
+		suffix = `\.exe`
+	}
+	return regexp.MustCompile(`^suiteward_v[0-9][^_\s]*_` + regexp.QuoteMeta(goos) + `_(amd64|arm64)` + suffix + `$`)
+}
 
-// pinFromSums is the line of the release's SHA256SUMS that lists sum as a Linux binary, which is the pin of the executor's binary. The
-// program must be listed exactly once: one that is not is not the release's.
-func pinFromSums(sums, sum, sumsFile string) (string, error) {
+// pinFromSums is the line of the release's SHA256SUMS that lists sum as a binary of goos, which is the pin of the executor's binary. The program
+// must be listed exactly once: one that is not is not the release's.
+func pinFromSums(sums, sum, sumsFile, goos string) (string, error) {
+	asset := releaseAssetOf(goos)
 	var found []string
 	for _, line := range strings.Split(sums, "\n") {
 		hash, name, ok := strings.Cut(strings.TrimSpace(line), " ")
 		name = strings.TrimPrefix(strings.TrimSpace(name), "*")
-		if ok && hash == sum && releaseAsset.MatchString(name) {
+		if ok && hash == sum && asset.MatchString(name) {
 			found = append(found, hash+"  "+name)
 		}
 	}
 	if len(found) != 1 {
-		return "", fmt.Errorf("this program (SHA-256 %s) is not listed exactly once as a Linux binary in %s, so it is not the release's and is not installed as the executor: verify the download as the install guide says, and give the SHA256SUMS of that release", sum, sumsFile)
+		return "", fmt.Errorf("this program (SHA-256 %s) is not listed exactly once as a %s binary in %s, so it is not the release's and is not installed as the executor: verify the download as the install guide says, and give the SHA256SUMS of that release", sum, goos, sumsFile)
 	}
 	return found[0], nil
 }
@@ -276,7 +283,7 @@ func (h *host) verifyRelease(ctx context.Context) (releaseProgram, error) {
 	if err != nil {
 		return releaseProgram{}, fmt.Errorf("read %s: %w", sumsFile, err)
 	}
-	pin, err := pinFromSums(sums, sum, sumsFile)
+	pin, err := pinFromSums(sums, sum, sumsFile, "linux")
 	if err != nil {
 		return releaseProgram{}, err
 	}

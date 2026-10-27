@@ -24,7 +24,9 @@ import (
 //
 // Otherwise only the top-level tests of the expected packages are read, and each line on its own:
 //   - a package whose build failed (its package-level fail event names FailedBuild, a compile error, a vet failure or an
-//     import that does not resolve alike) gives build-error to every expected test of it;
+//     import that does not resolve alike) gives build-error to every expected test of it. go names such a package by its import
+//     path, except one it cannot resolve (a directory under another module), which it names by the pattern of the invocation
+//     (./dir): a setup failure that reads the same;
 //   - a name with a start that no result ended is fail: a timeout, which go test reports for the package only, or a twin
 //     of a name that hangs after the other passed. A name that has not started has no such start;
 //   - a test's pass, fail and skip give pass, fail and skip. A name that reports twice (an internal and an external test
@@ -57,7 +59,7 @@ func Parse(stdout []byte, exitCode int, module string, expected []TestID) (map[T
 		return obs, nil
 	}
 	for _, id := range expected {
-		obs[id] = r.observation(importPath(module, id.Package), id.Name)
+		obs[id] = r.observation(importPath(module, id.Package), pattern(id.Package), id.Name)
 	}
 	if r.failure(obs) == (exitCode == 0) {
 		for id := range obs {
@@ -120,10 +122,10 @@ func read(stdout []byte) report {
 	return r
 }
 
-func (r report) observation(pkg, name string) execution.Observation {
+func (r report) observation(pkg, dirPattern, name string) execution.Observation {
 	k := key{pkg, name}
 	switch {
-	case r.notBuilt[pkg]:
+	case r.notBuilt[pkg] || r.notBuilt[dirPattern]:
 		return execution.ObservedBuildError
 	case r.open[k] > 0:
 		return execution.ObservedFail

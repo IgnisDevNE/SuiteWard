@@ -34,7 +34,7 @@ func TestScopeReplyNamesTheBaseItComparedWith(t *testing.T) {
 			body := noticeText(t, reply(tc.base))
 			for _, w := range []string{"`/suiteward suggest`", "Nothing changed", tc.subject + " does not cover", "```\ninternal/x/x_test.go\ne2e/testdata/a.json\n```",
 				"```\n*_test.go\n```", "```\nconftest.py\n```", "```\n" + string(reply(tc.base).Declaration) + "```", "In reply to [your command](#issuecomment-2345678901).",
-				"does not change the check", "does not run tests"} {
+				"does not change the check"} {
 				if !strings.Contains(body, w) {
 					t.Errorf("body lacks %q:\n%s", w, body)
 				}

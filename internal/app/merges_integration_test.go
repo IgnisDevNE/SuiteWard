@@ -272,7 +272,7 @@ func TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay(t *testing.T) {
 		pass()
 	}
 	check := func(pull int, key string, want ...string) { requireMergeComment(t, gh, instance, pull, key, want...) }
-	check(6, "merge:1001:6", "V2", mgSHA6, "did not run the tests")
+	check(6, "merge:1001:6", "V2", mgSHA6, "checked the approval and the integrity of the protected files at that commit.")
 	check(5, "merge:1001:5", "stays at V2", "canonical contract changed after")
 
 	// A replay: the job decides nothing again and nothing is posted again.

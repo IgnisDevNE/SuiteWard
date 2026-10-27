@@ -25,7 +25,7 @@ func TestScopeNoticeWithoutADeclarationOffersThePatternsAlone(t *testing.T) {
 	body := noticeText(t, n)
 	for _, w := range []string{
 		"```\ninternal/x/x_test.go\ne2e/testdata/a.json\n```", "Patterns missing from the `include` list", "```\n*_test.go\n**/testdata/**\n```",
-		"Patterns missing from the `runner` list", "```\nconftest.py\n```", "creates a protected change", "does not run tests",
+		"Patterns missing from the `runner` list", "```\nconftest.py\n```", "creates a protected change",
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
@@ -108,7 +108,7 @@ func protectOnly() commandtext.RunnerUncovered {
 func TestRunnerUncoveredCommentWithoutAProtectDeclarationOffersTheRunnerPatternsAlone(t *testing.T) {
 	n := protectOnly()
 	body := runnerText(t, n)
-	for _, w := range []string{"Protect the files", "`runner` list", "```\njest.config.*\n```", "Ignore the files", "```\n" + string(n.Ignore) + "```", "Commit suggestion", "does not run tests"} {
+	for _, w := range []string{"Protect the files", "`runner` list", "```\njest.config.*\n```", "Ignore the files", "```\n" + string(n.Ignore) + "```", "Commit suggestion"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
 		}

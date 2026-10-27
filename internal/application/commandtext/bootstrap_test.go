@@ -180,7 +180,7 @@ func TestAcknowledgeProposeAndSkip(t *testing.T) {
 		{
 			"nothing uncovered",
 			with(commandtext.Ack{Outcome: commandtext.NothingUncovered, Base: commandtext.BaseContract}),
-			[]string{"every test-like path in this pull request's head is covered by the current contract already", "nothing to suggest", "Nothing changed.", "not an approval", "does not run tests"},
+			[]string{"every test-like path in this pull request's head is covered by the current contract already", "nothing to suggest", "Nothing changed.", "not an approval"},
 			[]string{" for P", "P0"},
 		},
 		{

@@ -492,7 +492,7 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"bootstrap promoted",
 			commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Version: 1, Owner: owner},
-			[]string{"Bootstrap complete: P1-R1, approved by @octo-owner, is now canonical version V1.", "did not run any tests"},
+			[]string{"Bootstrap complete: P1-R1, approved by @octo-owner, is now canonical version V1.", "recorded an integrity assessment of the approved files at the pinned origin commit."},
 			[]string{"eligible", "/suiteward"},
 		},
 	}

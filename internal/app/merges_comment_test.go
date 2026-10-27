@@ -142,8 +142,8 @@ func TestCommentPublisherPostsAPromotionAndACorrectionWithTheVersionAndTheCommit
 
 			w.wantPost(cmtMergeKey, commandtext.MergeComment(tc.want))
 			body := w.writer.posts()[0].body
-			if !strings.Contains(body, "did not run the tests") || !strings.Contains(body, cmtMergeSHA) || !strings.Contains(body, "V"+string(tc.outcome.Version[1])) {
-				t.Fatalf("the comment does not name the version and the commit or say that tests were not run:\n%s", body)
+			if !strings.Contains(body, "checked the approval and the integrity of the protected files at that commit.") || strings.Contains(body, "did not run") || !strings.Contains(body, cmtMergeSHA) || !strings.Contains(body, "V"+string(tc.outcome.Version[1])) {
+				t.Fatalf("the comment does not name the version and the commit or say what was checked:\n%s", body)
 			}
 		})
 	}

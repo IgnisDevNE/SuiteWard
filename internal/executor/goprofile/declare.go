@@ -42,11 +42,11 @@ type key struct{ pkg, name string }
 // that declare it, the first by path stands for it. Directories that go does not build (testdata, vendor, and names
 // that start with "." or "_") hold no test.
 //
-// A file is the candidate's, so none is ever an error. A runnable file that go cannot read (a syntax error, a build
+// A file is the candidate's, so none of them fails the call. A runnable file that go cannot read (a syntax error, a build
 // constraint that does not parse, a NUL byte) gives no test and is listed in Unparsed: the build of its package fails
 // when the tests run. A file that the context leaves out, or a nested module's, is skipped if it cannot be read, since
-// go reads only the header of such a file. The error is always nil.
-func DeclaredTests(files map[string][]byte, goarch string) (Declared, error) {
+// go reads only the header of such a file.
+func DeclaredTests(files map[string][]byte, goarch string) Declared {
 	scanned := scan(files, goarch)
 	declared := Declared{Unparsed: scanned.unparsed}
 	for _, d := range ordered(pick(scanned.decls)) {
@@ -56,7 +56,7 @@ func DeclaredTests(files map[string][]byte, goarch string) (Declared, error) {
 			declared.Excluded = append(declared.Excluded, ExcludedTest{TestID: d.id, Reason: d.reason})
 		}
 	}
-	return declared, nil
+	return declared
 }
 
 // ChangedTests lists the test functions that head adds or changes against canonical: a name that canonical does not
@@ -65,8 +65,8 @@ func DeclaredTests(files map[string][]byte, goarch string) (Declared, error) {
 // lists them as excluded by looking them up in DeclaredTests. A name that two files of a package declare (an internal
 // and an external test package) is changed when either text differs, and its File is the first of them in the head.
 // Files are read as DeclaredTests reads them, go.mod files included, and one that cannot be read gives no test (the
-// caller finds it in the Unparsed of DeclaredTests). The error is always nil.
-func ChangedTests(head, canonical map[string][]byte, goarch string) (added, changed []TestID, err error) {
+// caller finds it in the Unparsed of DeclaredTests).
+func ChangedTests(head, canonical map[string][]byte, goarch string) (added, changed []TestID) {
 	before := pick(scan(canonical, goarch).decls)
 	for _, d := range ordered(pick(scan(head, goarch).decls)) {
 		old, ok := before[key{d.id.Package, d.id.Name}]
@@ -77,7 +77,7 @@ func ChangedTests(head, canonical map[string][]byte, goarch string) (added, chan
 			changed = append(changed, d.id)
 		}
 	}
-	return added, changed, nil
+	return added, changed
 }
 
 // scanned is what the test files of a tree hold: their test functions, and the runnable files that could not be read.

@@ -42,7 +42,8 @@ import (
 //
 // The rule catches a report that contradicts the status, not one that agrees with it. A package whose init prints the
 // events of go test's own framing (each line starts with the byte \x16) and then exits with status 0 forges any result,
-// and nothing contradicts it: the markers (forged-event and exit-in-init of Markers) are the only sign.
+// and nothing contradicts it. The markers (forged-event and exit-in-init of Markers) are the only signals that SuiteWard
+// looks for, and code that builds the byte at run time ([]byte{22}, rune('\x16')) or exits through a helper evades both.
 func Parse(stdout []byte, exitCode int, module string, expected []TestID) (map[TestID]execution.Observation, error) {
 	if module == "" {
 		return nil, errors.New("go test output: no module path to name the packages by")

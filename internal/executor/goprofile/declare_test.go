@@ -44,7 +44,7 @@ func reasons(excluded []ExcludedTest) map[string]string {
 }
 
 func TestDeclaredTestsAreTheTopLevelFunctionsOfTheTestingSignature(t *testing.T) {
-	declared, err := DeclaredTests(map[string][]byte{"a/sig_test.go": src(`
+	declared := DeclaredTests(map[string][]byte{"a/sig_test.go": src(`
 func TestOne(t *testing.T) {}
 func TestTwo(t *testing.T) {}
 func Test(t *testing.T) {}
@@ -71,9 +71,6 @@ func TestGeneric[T any](t *testing.T) {}
 
 type suite struct{}
 `)}, "amd64")
-	if err != nil {
-		t.Fatal(err)
-	}
 	const file = "a/sig_test.go"
 	sameIDs(t, "tests", declared.Tests, []TestID{
 		idOf(file, "Test"), idOf(file, "TestBlank"), idOf(file, "TestMainLike"), idOf(file, "TestOne"), idOf(file, "TestTwo"),
@@ -83,14 +80,11 @@ type suite struct{}
 }
 
 func TestDeclaredTestsReadTheSignatureThroughTheImportName(t *testing.T) {
-	declared, err := DeclaredTests(map[string][]byte{
+	declared := DeclaredTests(map[string][]byte{
 		"p/alias_test.go": []byte("package p\n\nimport tt \"testing\"\n\nfunc TestAliased(t *tt.T) {}\n\nfunc TestPlain(t *testing.T) {}\n"),
 		"p/dot_test.go":   []byte("package p\n\nimport . \"testing\"\n\nfunc TestDot(t *T) {}\n"),
 		"p/other_test.go": []byte("package p\n\nimport testing \"example.com/other\"\n\nfunc TestOther(t *testing.T) {}\n"),
 	}, "amd64")
-	if err != nil {
-		t.Fatal(err)
-	}
 	// TestPlain names a package that its file does not import, and TestOther one that is not the standard library's.
 	sameIDs(t, "tests", declared.Tests, []TestID{idOf("p/alias_test.go", "TestAliased"), idOf("p/dot_test.go", "TestDot")})
 }
@@ -132,10 +126,7 @@ func TestDeclaredTestsFollowTheBuildContextOfTheSandbox(t *testing.T) {
 		"amd64": {{"TestAmd64", "TestAmd64V1"}, {"TestArm64", "TestArm64V80"}},
 		"arm64": {{"TestArm64", "TestArm64V80"}, {"TestAmd64", "TestAmd64V1"}},
 	} {
-		declared, err := DeclaredTests(files, goarch)
-		if err != nil {
-			t.Fatal(goarch, err)
-		}
+		declared := DeclaredTests(files, goarch)
 		if got, want := names(declared.Tests), slices.Sorted(slices.Values(append(slices.Clone(arch[0]), always...))); !slices.Equal(got, want) {
 			t.Errorf("%s tests: got %v want %v", goarch, got, want)
 		}
@@ -151,7 +142,7 @@ func TestDeclaredTestsFollowTheBuildContextOfTheSandbox(t *testing.T) {
 }
 
 func TestDeclaredTestsListANameOnce(t *testing.T) {
-	declared, err := DeclaredTests(map[string][]byte{
+	declared := DeclaredTests(map[string][]byte{
 		// The same test for two systems: it is runnable here, so it is not excluded because of the other file.
 		"p/path_linux_test.go":   src("func TestPath(t *testing.T) {}\n"),
 		"p/path_windows_test.go": src("func TestPath(t *testing.T) {}\n"),
@@ -162,20 +153,17 @@ func TestDeclaredTestsListANameOnce(t *testing.T) {
 		"r/e_windows_test.go": src("func TestElsewhere(t *testing.T) {}\n"),
 		"r/e_darwin_test.go":  src("func TestElsewhere(t *testing.T) {}\n"),
 	}, "amd64")
-	if err != nil {
-		t.Fatal(err)
-	}
 	sameIDs(t, "tests", declared.Tests, []TestID{idOf("p/path_linux_test.go", "TestPath"), idOf("q/dup_test.go", "TestDup")})
 	sameIDs(t, "excluded", excludedIDs(declared.Excluded), []TestID{idOf("r/e_darwin_test.go", "TestElsewhere")})
 }
 
-// A file that go cannot read is the candidate's content, never an error here: the build of its package fails when the
+// A file that go cannot read is the candidate's content, and fails nothing here: the build of its package fails when the
 // tests run, and the file is listed so that the caller can say so. It contributes no test.
 func TestDeclaredTestsListAFileThatDoesNotParseAndGoOn(t *testing.T) {
 	good := src("func TestGood(t *testing.T) {}\n")
-	control, err := DeclaredTests(map[string][]byte{"a/good_test.go": good}, "amd64")
-	if err != nil || len(control.Unparsed) != 0 || len(control.Tests) != 1 {
-		t.Fatalf("a file that parses: %v, %v", control, err)
+	control := DeclaredTests(map[string][]byte{"a/good_test.go": good}, "amd64")
+	if len(control.Unparsed) != 0 || len(control.Tests) != 1 {
+		t.Fatalf("a file that parses: %v", control)
 	}
 	for name, bad := range map[string][]byte{
 		"a syntax error":              src("func TestBad( {\n"),
@@ -184,10 +172,7 @@ func TestDeclaredTestsListAFileThatDoesNotParseAndGoOn(t *testing.T) {
 		"a NUL byte":                  append([]byte(header+"func TestBad(t *testing.T) {}\n"), 0),
 	} {
 		t.Run(name, func(t *testing.T) {
-			declared, err := DeclaredTests(map[string][]byte{"a/good_test.go": good, "a/bad_test.go": bad}, "amd64")
-			if err != nil {
-				t.Fatal(err)
-			}
+			declared := DeclaredTests(map[string][]byte{"a/good_test.go": good, "a/bad_test.go": bad}, "amd64")
 			sameIDs(t, "tests", declared.Tests, []TestID{idOf("a/good_test.go", "TestGood")})
 			if !slices.Equal(declared.Unparsed, []string{"a/bad_test.go"}) {
 				t.Errorf("unparsed %v", declared.Unparsed)
@@ -200,7 +185,7 @@ func TestDeclaredTestsListAFileThatDoesNotParseAndGoOn(t *testing.T) {
 // skipped, whatever it holds, and so is a file of a nested module or of a directory that go does not build.
 func TestDeclaredTestsSkipTheBodyOfAFileTheContextLeavesOut(t *testing.T) {
 	bad := src("func TestBad( {\n")
-	declared, err := DeclaredTests(map[string][]byte{
+	declared := DeclaredTests(map[string][]byte{
 		"a/good_test.go":        src("func TestGood(t *testing.T) {}\n"),
 		"a/bad_windows_test.go": bad,
 		"a/bad_ignored_test.go": append([]byte("//go:build ignore\n\n"), bad...),
@@ -208,9 +193,6 @@ func TestDeclaredTestsSkipTheBodyOfAFileTheContextLeavesOut(t *testing.T) {
 		"n/bad_test.go":         bad,
 		"testdata/bad_test.go":  bad,
 	}, "amd64")
-	if err != nil {
-		t.Fatal(err)
-	}
 	sameIDs(t, "tests", declared.Tests, []TestID{idOf("a/good_test.go", "TestGood")})
 	sameIDs(t, "excluded", excludedIDs(declared.Excluded), nil)
 	if len(declared.Unparsed) != 0 {
@@ -219,7 +201,7 @@ func TestDeclaredTestsSkipTheBodyOfAFileTheContextLeavesOut(t *testing.T) {
 }
 
 func TestDeclaredTestsSkipWhatGoDoesNotBuild(t *testing.T) {
-	declared, err := DeclaredTests(map[string][]byte{
+	declared := DeclaredTests(map[string][]byte{
 		"testdata/a_test.go":         src("func TestFixture(t *testing.T) {}\n"),
 		"a/testdata/b/b_test.go":     src("func TestDeepFixture(t *testing.T) {}\n"),
 		"vendor/m/m_test.go":         src("func TestVendored(t *testing.T) {}\n"),
@@ -229,21 +211,15 @@ func TestDeclaredTestsSkipWhatGoDoesNotBuild(t *testing.T) {
 		"a/README.md":                []byte("func TestInProse(t *testing.T) {}"),
 		"a/testdata_helpers_test.go": src("func TestRealOne(t *testing.T) {}\n"),
 	}, "amd64")
-	if err != nil {
-		t.Fatal(err)
-	}
 	sameIDs(t, "tests", declared.Tests, []TestID{idOf("a/testdata_helpers_test.go", "TestRealOne")})
 	sameIDs(t, "excluded", excludedIDs(declared.Excluded), nil)
 }
 
 func TestDeclaredTestsNamePackagesByDirectoryFromTheRoot(t *testing.T) {
-	declared, err := DeclaredTests(map[string][]byte{
+	declared := DeclaredTests(map[string][]byte{
 		"root_test.go":       src("func TestRoot(t *testing.T) {}\n"),
 		"a/b/c/deep_test.go": src("func TestDeep(t *testing.T) {}\n"),
 	}, "amd64")
-	if err != nil {
-		t.Fatal(err)
-	}
 	sameIDs(t, "tests", declared.Tests, []TestID{
 		{Package: ".", Name: "TestRoot", File: "root_test.go"},
 		{Package: "a/b/c", Name: "TestDeep", File: "a/b/c/deep_test.go"},
@@ -251,9 +227,8 @@ func TestDeclaredTestsNamePackagesByDirectoryFromTheRoot(t *testing.T) {
 }
 
 func TestDeclaredTestsOfNoFilesAreNone(t *testing.T) {
-	declared, err := DeclaredTests(nil, "amd64")
-	if err != nil || len(declared.Tests) != 0 || len(declared.Excluded) != 0 {
-		t.Fatalf("got %v, %v", declared, err)
+	if declared := DeclaredTests(nil, "amd64"); len(declared.Tests) != 0 || len(declared.Excluded) != 0 || len(declared.Unparsed) != 0 {
+		t.Fatalf("got %v", declared)
 	}
 }
 
@@ -341,32 +316,26 @@ func TestChangedTests(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			added, changed, err := ChangedTests(c.head, c.canonical, "amd64")
-			if err != nil {
-				t.Fatal(err)
-			}
+			added, changed := ChangedTests(c.head, c.canonical, "amd64")
 			sameIDs(t, "added", added, c.added)
 			sameIDs(t, "changed", changed, c.changed)
 		})
 	}
 }
 
-// A file that does not parse contributes no test to either side, and is no error.
+// A file that does not parse contributes no test to either side.
 func TestChangedTestsSkipAFileThatDoesNotParse(t *testing.T) {
 	good := map[string][]byte{"a/a_test.go": src("func TestA(t *testing.T) {}\n")}
 	bad := map[string][]byte{"a/a_test.go": src("func TestA( {\n")}
-	added, changed, err := ChangedTests(good, good, "amd64")
-	if err != nil || len(added) != 0 || len(changed) != 0 {
-		t.Fatalf("files that parse: %v, %v, %v", added, changed, err)
+	added, changed := ChangedTests(good, good, "amd64")
+	if len(added) != 0 || len(changed) != 0 {
+		t.Fatalf("files that parse: %v, %v", added, changed)
 	}
-	added, changed, err = ChangedTests(bad, good, "amd64")
-	if err != nil || len(added) != 0 || len(changed) != 0 {
-		t.Errorf("a head that does not parse: %v, %v, %v", added, changed, err)
+	added, changed = ChangedTests(bad, good, "amd64")
+	if len(added) != 0 || len(changed) != 0 {
+		t.Errorf("a head that does not parse: %v, %v", added, changed)
 	}
-	added, changed, err = ChangedTests(good, bad, "amd64")
-	if err != nil {
-		t.Fatal(err)
-	}
+	added, changed = ChangedTests(good, bad, "amd64")
 	sameIDs(t, "added", added, []TestID{idOf("a/a_test.go", "TestA")})
 	sameIDs(t, "changed", changed, nil)
 }
@@ -391,10 +360,7 @@ func TestDeclaredTestsExcludeWhatLivesUnderANestedModule(t *testing.T) {
 		"nested/testdata/t_test.go": src("func TestFixture(t *testing.T) {}\n"),
 		"nested/vendor/v/v_test.go": src("func TestVendored(t *testing.T) {}\n"),
 	}
-	declared, err := DeclaredTests(files, "amd64")
-	if err != nil {
-		t.Fatal(err)
-	}
+	declared := DeclaredTests(files, "amd64")
 	sameIDs(t, "tests", declared.Tests, []TestID{
 		idOf("root_test.go", "TestRoot"), idOf("a/a_test.go", "TestA"), idOf("pkg/p_test.go", "TestPkg"),
 	})
@@ -416,14 +382,11 @@ func TestDeclaredTestsExcludeWhatLivesUnderANestedModule(t *testing.T) {
 // The tests that are run are the tests that are declared and not excluded: no package of a nested module reaches a
 // go test invocation.
 func TestNoPackageOfANestedModuleIsNamedInTheInvocation(t *testing.T) {
-	declared, err := DeclaredTests(map[string][]byte{
+	declared := DeclaredTests(map[string][]byte{
 		"a/a_test.go":      src("func TestA(t *testing.T) {}\n"),
 		"nested/go.mod":    []byte("module example.com/nested\n"),
 		"nested/n_test.go": src("func TestN(t *testing.T) {}\n"),
 	}, "amd64")
-	if err != nil {
-		t.Fatal(err)
-	}
 	argv, _ := Command(declared.Tests, time.Minute, false)
 	if !slices.Contains(argv, "./a") || slices.Contains(argv, "./nested") {
 		t.Errorf("packages in %q", argv)
@@ -446,16 +409,10 @@ func TestChangedTestsSeeANestedModule(t *testing.T) {
 		"n/sub/s_test.go":  src("func TestSub(t *testing.T) {}\n"),
 		"root_new_test.go": src("func TestNew(t *testing.T) {}\n"),
 	}
-	added, changed, err := ChangedTests(head, canonical, "amd64")
-	if err != nil {
-		t.Fatal(err)
-	}
+	added, changed := ChangedTests(head, canonical, "amd64")
 	sameIDs(t, "added", added, []TestID{idOf("root_new_test.go", "TestNew"), idOf("n/n_test.go", "TestN"), idOf("n/sub/s_test.go", "TestSub")})
 	sameIDs(t, "changed", changed, nil)
-	declared, err := DeclaredTests(head, "amd64")
-	if err != nil {
-		t.Fatal(err)
-	}
+	declared := DeclaredTests(head, "amd64")
 	if got, want := reasons(declared.Excluded), map[string]string{"TestA": ReasonNestedModule, "TestN": ReasonNestedModule, "TestSub": ReasonNestedModule}; !maps.Equal(got, want) {
 		t.Errorf("excluded: got %v want %v", got, want)
 	}

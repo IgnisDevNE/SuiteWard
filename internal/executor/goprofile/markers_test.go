@@ -143,7 +143,7 @@ func TestMarkersFlagExitsThatInitIsNotNeededFor(t *testing.T) {
 }
 
 // go test marks the events of a test binary with a SYN byte (\x16). A package that prints such frames in an init and
-// exits with status 0 reports whatever it likes and contradicts nothing: its literal is the only sign.
+// exits with status 0 reports whatever it likes and contradicts nothing: its literal is a signal, and no guarantee.
 func TestMarkersFlagALiteralThatHoldsAFrameByte(t *testing.T) {
 	// The source has the escapes as text; the last line is a raw string with the byte itself in it.
 	const source = `package p

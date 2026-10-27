@@ -30,7 +30,11 @@ type Marker struct {
 //   - env-read: a call of os.Getenv or os.LookupEnv with the literal "TESTING" or "CI";
 //   - forged-event: a string literal that holds a SYN byte (\x16), the byte that go test frames the events of a test
 //     binary with. A package whose init prints such frames and exits with status 0 reports any result, and the exit
-//     status contradicts nothing: this marker and exit-in-init are the only signs of it.
+//     status contradicts nothing.
+//
+// These markers (forged-event, and exit-in-init for the exit) are the only signals that SuiteWard looks for, and they
+// are no guarantee: code that builds the byte at run time ([]byte{22}, rune('\x16')) or exits through a helper evades
+// both.
 //
 // The line of a marker is the line of the file, whatever //line directives it holds.
 //

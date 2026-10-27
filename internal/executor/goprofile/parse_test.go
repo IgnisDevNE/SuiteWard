@@ -327,8 +327,8 @@ func TestReruns(t *testing.T) {
 }
 
 // An invocation that exits with a failing status and wrote no event at all ran nothing: go refused before it built a
-// package (a vendor/ that does not agree with go.mod, a toolchain that does not suit go.mod, a pattern it rejects). No
-// test of it built, and none is absent for want of a run.
+// package (a vendor/ that does not agree with go.mod, a toolchain that does not suit go.mod). No test of it built, and
+// none is absent for want of a run. A package that go rejects as a pattern is no such case: go reports it as events.
 func TestParseReadsAFailingStatusWithNoEventAsNothingBuilt(t *testing.T) {
 	expected := []TestID{at("a", "TestA"), at(".", "TestRoot")}
 	for name, stdout := range map[string][]byte{

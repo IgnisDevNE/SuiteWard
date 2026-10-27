@@ -84,6 +84,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 		OutboxPollInterval: 5 * time.Second,
 		OutboxLease:        time.Minute,
 		Tier:               TierCoLocated,
+		Executor:           defaultExecutorTimes,
 	}
 	if cfg != want {
 		t.Fatalf("Config = %+v, want %+v", cfg, want)
@@ -123,6 +124,7 @@ func TestLoadReadsEverySetting(t *testing.T) {
 		OutboxPollInterval: 10 * time.Second,
 		OutboxLease:        90 * time.Second,
 		Tier:               TierIsolated,
+		Executor:           defaultExecutorTimes,
 	}
 	if cfg != want {
 		t.Fatalf("Config = %+v, want %+v", cfg, want)

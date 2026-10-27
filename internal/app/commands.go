@@ -13,10 +13,12 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
+	"github.com/IgnisDevNE/SuiteWard/internal/config"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/totp"
@@ -49,6 +51,11 @@ type commandsJob struct {
 	tier     string                   // the configured INSTALLATION_TIER
 	logger   *slog.Logger
 	now      func() time.Time
+
+	executions         execution.Store      // the execution ledger (M2.1)
+	liveness           *execution.Liveness  // when an executor was last seen
+	executor           config.ExecutorTimes // the durations of the executor settings
+	executorConfigured bool                 // EXECUTOR_TOKEN is set
 
 	failing  commandFailure  // the candidate that failed last, in this process; runs never overlap
 	recorded bool            // the current run recorded a ledger entry

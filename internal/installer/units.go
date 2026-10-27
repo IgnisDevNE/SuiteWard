@@ -56,10 +56,13 @@ func UnitParamsFrom(s Settings, digest string) UnitParams {
 	return UnitParams{Digest: digest, Tier: s.Tier, HTTPPort: s.HTTPPort, MCPPort: s.MCPPort, JobTimeout: s.JobTimeout, NoGitHub: s.GitHub.AppID == 0}
 }
 
-// The two lines of the service unit that mount the GitHub App key and name its file; NoGitHub drops them.
+// The lines of the service unit that mount the GitHub App key and the executor token and name their files; NoGitHub and NoExecutor drop them.
 const (
 	keySecretLine = "Secret=" + SecretGitHubAppKey + ",type=mount,target=/run/secrets/github-app-key,uid=65532,mode=0400"
 	keyEnvLine    = "Environment=SUITEWARD_GITHUB_APP_KEY_FILE=/run/secrets/github-app-key"
+
+	executorSecretLine = "Secret=" + SecretExecutorAuth + ",type=mount,target=/run/secrets/executor-token,uid=65532,mode=0400"
+	executorEnvLine    = "Environment=" + executorTokenFileEnv + "=/run/secrets/executor-token"
 )
 
 func (p UnitParams) validate() error {
@@ -135,6 +138,9 @@ func render(templates map[string][]byte, p UnitParams) (map[string][]byte, error
 	}
 	if p.NoGitHub {
 		serve = append(serve, lineEdit{old: keySecretLine, drop: true}, lineEdit{old: keyEnvLine, drop: true})
+	}
+	if p.NoExecutor {
+		serve = append(serve, lineEdit{old: executorSecretLine, drop: true}, lineEdit{old: executorEnvLine, drop: true})
 	}
 	edits := map[string][]lineEdit{"suiteward-migrate.container": {release}, "suiteward.container": serve}
 	out := make(map[string][]byte, len(templates))

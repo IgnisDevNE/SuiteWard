@@ -128,6 +128,21 @@ func adoptContainers(raw map[string][]byte, refreshDB bool) (Adopted, error) {
 	if _, has := envMap(parsed[ContainerServe].Config.Env)[reportBaseURLEnv]; !has {
 		stack.Serve.Env = slices.DeleteFunc(stack.Serve.Env, func(e string) bool { return strings.HasPrefix(e, reportBaseURLEnv+"=") })
 	}
+	// A service of an earlier release has no executor token, a known shape that the next install or upgrade completes; one that has only the
+	// variable or only the secret is a diff.
+	serve := parsed[ContainerServe]
+	_, hasToken := envMap(serve.Config.Env)[executorTokenFileEnv]
+	hasSecret := slices.ContainsFunc(serve.Config.Secrets, func(s struct {
+		Name string
+		UID  int
+		Mode int
+	}) bool {
+		return s.Name == SecretExecutorAuth
+	})
+	if !hasToken && !hasSecret {
+		stack.Serve.Env = slices.DeleteFunc(stack.Serve.Env, func(e string) bool { return strings.HasPrefix(e, executorTokenFileEnv+"=") })
+		stack.Serve.Secrets = slices.DeleteFunc(stack.Serve.Secrets, func(name string) bool { return name == SecretExecutorAuth })
+	}
 	specs := []RunSpec{stack.DB, stack.Migrate}
 	if len(diffs) == 0 { // a service whose known fields could not be read is already reported, and its defaults would only repeat it
 		specs = append(specs, stack.Serve)

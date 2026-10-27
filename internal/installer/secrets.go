@@ -35,6 +35,7 @@ var secretCatalog = []secretSpec{
 	{SecretDatabaseURL, "database-url", []consumer{{ContainerMigrate, uidService}, {ContainerServe, uidService}}},
 	{SecretGitHubAppKey, "github-app-key", []consumer{{ContainerServe, uidService}}},
 	{SecretMCPAuth, "mcp-token", []consumer{{ContainerServe, uidService}}},
+	{SecretExecutorAuth, "executor-token", []consumer{{ContainerServe, uidService}}},
 }
 
 func lookupSecret(name string) (secretSpec, error) {

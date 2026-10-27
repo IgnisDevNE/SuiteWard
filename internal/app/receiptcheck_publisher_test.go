@@ -420,3 +420,35 @@ func TestReceiptCheckPublisherAsksForTheRunsOfItsOwnName(t *testing.T) {
 		t.Fatalf("posted %+v, want one run named %q", posts, github.ReceiptCheckName)
 	}
 }
+
+// A message that the renderer refuses is refused when it is built, as every github_check message is: the checks step fails, instead of every delivery of the message.
+func TestNewReceiptCheckMessageRefusesWhatTheRendererRefuses(t *testing.T) {
+	for name, edit := range map[string]func(*receiptDecision){
+		"a state that is none":                   func(d *receiptDecision) { d.check.State = "" },
+		"a state that is no GitHub conclusion":   func(d *receiptDecision) { d.check.State = "none" },
+		"a reason of another state":              func(d *receiptDecision) { d.check.State = execution.CheckFailure },
+		"a reason nobody can render":             func(d *receiptDecision) { d.check.Reason = "receipt-green" },
+		"counts on a running receipt":            func(d *receiptDecision) { d.check.State, d.check.Reason = execution.CheckInProgress, receiptRunning },
+		"a complete receipt with a failing test": func(d *receiptDecision) { d.counts.Fails = 1 },
+		"a failing receipt that blocks nothing": func(d *receiptDecision) {
+			d.check.State, d.check.Reason, d.counts = execution.CheckFailure, receiptFailing, receiptCheckCounts{Detects: 1}
+		},
+		"a receipt that was not run, with no reason": func(d *receiptDecision) {
+			d.check.State, d.check.Reason, d.counts = execution.CheckNeutral, receiptNotRun, receiptCheckCounts{}
+		},
+		"a receipt that was not run, for a reason that is none": func(d *receiptDecision) {
+			d.check.State, d.check.Reason, d.counts, d.unavailable = execution.CheckNeutral, receiptNotRun, receiptCheckCounts{}, "the-moon"
+		},
+		"an unblock of a complete receipt":  func(d *receiptDecision) { d.check.Unblocked = true },
+		"a negative count":                  func(d *receiptDecision) { d.counts.Inert = -1 },
+		"a reference that is not P<n>-R<m>": func(d *receiptDecision) { d.check.Reference = "P1" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := rcpDecision(execution.CheckSuccess, receiptComplete)
+			edit(&d)
+			if m, err := newReceiptCheckMessage(cmtRepo, d, owner.TierIsolated, 3); err == nil {
+				t.Fatalf("built %s", m.Payload)
+			}
+		})
+	}
+}

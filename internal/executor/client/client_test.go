@@ -165,7 +165,7 @@ func TestLeaseRefusesAnAnswerThatBreaksTheContract(t *testing.T) {
 		"a receipt without a base":     func(a map[string]any) { delete(a, "base") },
 		"a canonical with a base":      func(a map[string]any) { a["plan"] = "canonical" },
 		"a head that is not a SHA":     func(a map[string]any) { a["head"].(map[string]any)["sha"] = "abc" },
-		"a base that is not a SHA":     func(a map[string]any) { a["base"].(map[string]any)["sha"] = strings.ToUpper(baseSHA) },
+		"a base that is not a SHA":     func(a map[string]any) { a["base"].(map[string]any)["sha"] = "ABCDEF1111111111111111111111111111111111" },
 		"no profile":                   func(a map[string]any) { a["profile"] = map[string]any{} },
 		"an image that is not pinned":  func(a map[string]any) { a["profile"].(map[string]any)["image"] = "golang:latest" },
 		"a manifest source of no kind": func(a map[string]any) { a["manifest"].(map[string]any)["source"] = "main" },

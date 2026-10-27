@@ -1,11 +1,14 @@
 package client
 
 import (
+	"errors"
+	"fmt"
+	"regexp"
 	"time"
 )
 
 // Job is the answer of POST /lease: what the executor runs and the lease that it holds (docs/contracts/runtime.md, "The executor
-// API"). Validate has checked its shape, which is all the client knows of it.
+// API"). The client has checked its shape, which is all that it knows of it.
 type Job struct {
 	JobID          int64     `json:"jobId"`
 	LeaseID        string    `json:"leaseId"`
@@ -74,7 +77,88 @@ type Limits struct {
 	Reruns             int   `json:"reruns"`
 }
 
-// validate checks the shape of a job that the service granted: the fields the executor reads with no further check.
+const (
+	maxImageBytes = 300 // the longest image reference of the contract
+	// The largest limits that are believed: bounds that no machine reaches, so that no product of limits overflows.
+	maxBytesLimit = int64(1) << 40
+	maxCountLimit = 1 << 20
+)
+
+var (
+	leasePattern    = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	shaPattern      = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	sourcePattern   = regexp.MustCompile(`^(V[1-9][0-9]{0,8}|P[1-9][0-9]{0,8}-R[1-9][0-9]{0,8})$`)
+	profilePattern  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+	imagePattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[0-9a-f]{64}$`)
+	errLimitInvalid = errors.New("a limit is out of range")
+)
+
+// validate checks the shape of a job that the service granted: the fields that the executor reads with no further check.
 func (j Job) validate() error {
+	switch {
+	case j.JobID < 1 || j.Pull < 1:
+		return errors.New("the job and the pull request need positive ids")
+	case !leasePattern.MatchString(j.LeaseID):
+		return errors.New("the lease id is not 32 lowercase hexadecimal digits")
+	case j.LeaseExpiresAt.IsZero() || j.DeadlineAt.IsZero():
+		return errors.New("the lease expiry and the deadline are required")
+	case !profilePattern.MatchString(j.Profile.ID) || len(j.Profile.Image) > maxImageBytes || !imagePattern.MatchString(j.Profile.Image):
+		return errors.New("the profile needs an id and an image pinned by digest")
+	case !shaPattern.MatchString(j.Head.SHA):
+		return errors.New("the head is not 40 lowercase hexadecimal digits")
+	}
+	if err := j.validatePlan(); err != nil {
+		return err
+	}
+	if err := j.Manifest.validate(); err != nil {
+		return err
+	}
+	return j.Limits.validate()
+}
+
+func (j Job) validatePlan() error {
+	switch j.Plan {
+	case PlanCanonical:
+		if j.Base != nil {
+			return errors.New("a canonical job has no base")
+		}
+	case PlanReceipt:
+		if j.Base == nil || !shaPattern.MatchString(j.Base.SHA) {
+			return errors.New("a receipt job needs a base of 40 lowercase hexadecimal digits")
+		}
+	default:
+		return fmt.Errorf("the plan %q is neither canonical nor receipt", j.Plan)
+	}
+	return nil
+}
+
+func (m Manifest) validate() error {
+	if !sourcePattern.MatchString(m.Source) || !digestPattern.MatchString(m.Digest) {
+		return errors.New("the manifest needs a source (V<n> or P<n>-R<m>) and a sha256 digest")
+	}
+	for _, f := range m.Files {
+		if f.Path == "" || !digestPattern.MatchString(f.Digest) {
+			return errors.New("a manifest file needs a path and a sha256 digest")
+		}
+	}
+	return nil
+}
+
+func (l Limits) validate() error {
+	bytes := []int64{l.ArchiveBytes, l.FileBytes, l.PrefetchBytes}
+	counts := []int{l.TestTimeoutSeconds, l.MemoryMiB, l.CPUs, l.Pids, l.TmpfsMiB, l.PrefetchModules}
+	for _, n := range bytes {
+		if n < 1 || n > maxBytesLimit {
+			return errLimitInvalid
+		}
+	}
+	for _, n := range counts {
+		if n < 1 || n > maxCountLimit {
+			return errLimitInvalid
+		}
+	}
+	if l.Reruns < 0 || l.Reruns > maxCountLimit || l.TmpfsMiB > l.MemoryMiB {
+		return errors.New("the reruns are negative, or the tmpfs is larger than the memory it counts in")
+	}
 	return nil
 }

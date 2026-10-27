@@ -3,6 +3,7 @@ package executiontest
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -811,6 +812,41 @@ func jbReads(e *env) {
 		e.t.Fatalf("Job of an unknown id = %+v, found %v, error %v; want none", got, found, err)
 	}
 	e.requireCounts(3, 0, 0, 0, 1)
+}
+
+func jbOpenJobs(e *env) {
+	other := func(s execution.Spec) execution.Spec { s.RepositoryID = 20; return s }
+	leased := e.enqueue(canonicalSpec(1), 0)
+	pending := e.enqueue(receiptSpec(1), time.Second)
+	cancelled := e.enqueue(canonicalSpec(2), time.Second)
+	e.enqueueFinal(withBase(receiptSpec(3), ""), execution.ReasonNotConfigured, time.Second)
+	elsewhere := e.enqueue(other(canonicalSpec(5)), time.Second) // the key holds no repository, so another head
+	e.mustLease(leased.ID, 2*time.Second)
+	if _, err := e.s.Cancel(e.ctx, cancelled.ID, execution.ReasonHeadMoved, at(3*time.Second)); err != nil {
+		e.t.Fatal(err)
+	}
+	open := func(repository int64, want ...int64) {
+		e.t.Helper()
+		got, err := e.s.OpenJobs(e.ctx, repository)
+		e.must(err)
+		if len(got) != len(want) {
+			e.t.Fatalf("OpenJobs(%d) = %d jobs; want jobs %v", repository, len(got), want)
+		}
+		for i, job := range got {
+			if job.ID != want[i] {
+				e.t.Fatalf("OpenJobs(%d)[%d] = job %d; want job %d", repository, i, job.ID, want[i])
+			}
+			if diff := diffValues(reflect.ValueOf(job), reflect.ValueOf(e.get(want[i])), "job"); diff != "" {
+				e.t.Fatalf("OpenJobs(%d) job %d differs from the stored job: %s", repository, job.ID, diff)
+			}
+		}
+	}
+	open(10, leased.ID, pending.ID) // a leased job is open; a cancelled one and one created unavailable are not
+	open(20, elsewhere.ID)
+	open(30)
+	if _, err := e.s.OpenJobs(e.ctx, 0); !errors.Is(err, execution.ErrInvalidRequest) {
+		e.t.Fatalf("OpenJobs of repository 0: error = %v; want ErrInvalidRequest", err)
+	}
 }
 
 func jbCanceled(e *env) {

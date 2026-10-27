@@ -919,7 +919,7 @@ func TestCommandsJobRepeatsEarlierStepsHarmlesslyAfterACrash(t *testing.T) {
 		crash func(w *cjWorld)
 	}{
 		{"after the step was consumed", func(w *cjWorld) { w.owners.crashAfter = true }},
-		{"after ProcessConsent committed", func(w *cjWorld) { w.suites.crashAt = 1 }},
+		{"after ProcessConsent committed", func(w *cjWorld) { w.suites.crashAt = 3 }}, // call 1 is the carrier check, 2 the receipt gate's read
 		{"after the ledger entry was recorded", func(w *cjWorld) { w.ledger.crashRecord = commands.Processed }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -959,10 +959,10 @@ func TestCommandsJobRepeatsARejectedRecordAfterACrash(t *testing.T) {
 
 func TestCommandsJobTreatsAFailedSuiteProbeAsAStoreError(t *testing.T) {
 	// An unknown proposal makes ProcessConsent report ErrNotFound; the probe that tells it from a missing Suite then fails
-	// (call 1 is ProcessConsent, call 2 the probe). That is a store error to retry, never a no-suite acknowledgment.
+	// (call 1 is the carrier check, 2 the receipt gate's read, 3 ProcessConsent, 4 the probe). That is a store error to retry, never a no-suite acknowledgment.
 	w := newCjWorld(t)
 	w.syncAll([]cjComment{ownerCommand(500, cjAt(10), "approve", "P9-R1", 0)})
-	w.suites.failAt = 2
+	w.suites.failAt = 4
 	w.mustRun()
 	w.requireNoEntry(cjID1, 500)
 }

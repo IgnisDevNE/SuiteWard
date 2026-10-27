@@ -675,8 +675,29 @@ func (p *commentPublisher) publish(ctx context.Context, key string, payload json
 	return nil
 }
 
-func (p *commentPublisher) acknowledgment(ctx context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+// decodeAck reads the payload of an acknowledgment strictly. Every key of its counts is always present, as in the Receipt check's payload, which strict decoding cannot tell
+// from a count of zero.
+func decodeAck(key string, payload json.RawMessage) (ackPayload, error) {
 	a, err := decodePayload[ackPayload](githubCommentKind, key, payload)
+	if err != nil || a.Counts == nil {
+		return a, err
+	}
+	var raw struct {
+		Counts map[string]json.RawMessage `json:"counts"`
+	}
+	if err := json.Unmarshal(payload, &raw); err != nil { // decodePayload read it: only the shape of the counts is left to see
+		return a, keyError(githubCommentKind, key, "the payload does not decode")
+	}
+	for _, name := range receiptCountKeys {
+		if _, present := raw.Counts[name]; !present {
+			return a, keyError(githubCommentKind, key, "a count of the receipt is missing")
+		}
+	}
+	return a, nil
+}
+
+func (p *commentPublisher) acknowledgment(ctx context.Context, key, tail string, payload json.RawMessage) (commentTarget, string, error) {
+	a, err := decodeAck(key, payload)
 	if err != nil {
 		return commentTarget{}, "", err
 	}

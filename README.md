@@ -95,7 +95,7 @@ flowchart LR
 | --- | --- | --- |
 | `/suiteward propose` | Owner | Proposes the first contract from this pull request, or replies with a suggested declaration when there is none. |
 | `/suiteward skip <code>` | Owner | Lets this pull request merge before any contract exists. |
-| `/suiteward approve P<n>-R<m> [fix\|feature\|refactor] <code>` | Owner | Approves that exact revision. The mode is optional, except under `receipt: required` for a receipt that applies. |
+| `/suiteward approve P<n>-R<m> [fix\|feature\|refactor] <code>` | Owner | Approves that exact revision. The mode is optional, except under `receipt: required` for a receipt that is complete and not empty: an empty receipt, one that does not apply and an unblocked run that was unavailable need none ([the full rule](docs/install.md#running-the-tests-canonical-execution-and-the-receipt)). |
 | `/suiteward revoke P<n>-R<m> <code>` | Owner | Withdraws an approval before the merge. |
 | `/suiteward mode <fix\|feature\|refactor>` | Owner | Sets the mode that the receipt page previews. It needs no code, and no gate reads it. |
 | `/suiteward unblock <code>` | Owner | Lifts the runs of this pull request's head that could not be completed, and nothing else. |
@@ -142,7 +142,7 @@ Patterns are gitignore-style. A pattern with no slash inside it matches at any d
 
 SuiteWard is self-hosted: one container image (`ghcr.io/ignisdevne/suiteward`, `linux/amd64` and `linux/arm64`) plus PostgreSQL, and a GitHub App. You install it with the `suiteward` installer, a signed release binary for linux/amd64, linux/arm64, windows/amd64, darwin/amd64 and darwin/arm64 that carries the digest of its own image. The [install guide](docs/install.md) covers both tiers:
 - **Co-located:** `suiteward install` on the developer's own PC, with Podman (strongly recommended) or Docker (discouraged). It starts the stack, creates the GitHub App through your browser, writes the ruleset for you to import, runs the owner setup, and starts the executor of canonical execution as a process of your user (a scheduled task on Windows, a launch agent on macOS, a user unit on Linux). On a terminal it runs full screen, in the SuiteWard colors, with a page that explains each question, and prints plain lines with `--plain` or no terminal. Windows is validated live; macOS is covered by tests that CI runs on a macOS machine, with its live validation pending (the binaries are not notarized); Linux is covered by tests only.
-- **Isolated:** `sudo suiteward install host`, then `suiteward install --tier isolated` as the service account (it creates the GitHub App through a Session Manager port forward, or takes one you made), on an AlmaLinux 9 host (Podman 5.5 or later) under systemd, outbound only, with full assurance. The host step also makes the executor, under an account of its own.
+- **Isolated:** `sudo suiteward install host --sha256sums <the verified SHA256SUMS of the release>`, then `suiteward install --tier isolated` as the service account (it creates the GitHub App through a Session Manager port forward, or takes one you made), on an AlmaLinux 9 host (Podman 5.5 or later) under systemd, outbound only, with full assurance. The host step also makes the executor, under an account of its own.
 
 On Linux and macOS, one command downloads, checks and installs the binary of a release whose page lists `install.sh`:
 

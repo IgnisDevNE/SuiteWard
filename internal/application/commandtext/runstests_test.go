@@ -86,6 +86,12 @@ func everyBody(t *testing.T) map[string]string {
 			_, s := commandtext.ReceiptCheckSummary(c)
 			return s
 		})
+		add("receipt complete, empty "+tier, func() string {
+			c := receiptOf("receipt-complete")
+			c.Tier, c.Counts, c.Markers = value, execution.ReceiptCounts{}, 0
+			_, s := commandtext.ReceiptCheckSummary(c)
+			return s
+		})
 		add("revision "+tier, func() string { return commandtext.RevisionComment(revision(value)) })
 		add("revision that reduces the scope "+tier, func() string {
 			r := revision(value)

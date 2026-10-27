@@ -18,6 +18,9 @@ const (
 	receiptUnblockedText = "The owner unblocked this head: its receipt was unavailable, so the tests did not run."
 )
 
+// receiptBanned matches what a public summary never holds: a mode, a link, a path, a test name, an HTML comment, a mention or a command.
+var receiptBanned = regexp.MustCompile(`(?i)\b(mode|link|paths?|https?|tests? names?)\b|<!--|@|#issuecomment|/suiteward`)
+
 // receiptReasons are the reasons of the Receipt check, each with its state, its title and a phrase only its text holds.
 var receiptReasons = []struct {
 	state  commandtext.CheckState
@@ -26,7 +29,7 @@ var receiptReasons = []struct {
 	phrase string
 	name   string
 }{
-	{commandtext.CheckInProgress, "receipt-running", "Receipt pending", "is running the tests", "in_progress"},
+	{commandtext.CheckInProgress, "receipt-running", "Receipt pending", "it is waiting for an executor, or it is running", "in_progress"},
 	{commandtext.CheckFailure, "receipt-failing", "Receipt: failing or missing tests", "FAILS or is MISSING", "failure"},
 	{commandtext.CheckSuccess, "receipt-complete", "Receipt ready", "ran the tests that this revision adds or changes", "success"},
 	{commandtext.CheckNeutral, "receipt-not-run", "Receipt unavailable", "could not run the receipt of this head", "neutral"},
@@ -79,10 +82,10 @@ func TestReceiptCheckTitlesAreTheOnesOfTheContract(t *testing.T) {
 	}
 }
 
-func TestReceiptCheckSummaryStatesTheStateTheRevisionTheTierAndTheEvidence(t *testing.T) {
+func TestReceiptCheckSummaryStatesTheStateTheRevisionAndTheTier(t *testing.T) {
 	for _, tc := range receiptReasons {
 		_, summary := receiptText(t, receiptOf(tc.reason))
-		for _, w := range []string{tc.phrase, "- State: `" + tc.name + "`", "- Proposal revision: P3-R2", "- Installation tier: `isolated`", evidenceText} {
+		for _, w := range []string{tc.phrase, "- State: `" + tc.name + "`", "- Proposal revision: P3-R2", "- Installation tier: `isolated`"} {
 			if !strings.Contains(summary, w) {
 				t.Errorf("%s: summary lacks %q:\n%s", tc.reason, w, summary)
 			}
@@ -90,6 +93,47 @@ func TestReceiptCheckSummaryStatesTheStateTheRevisionTheTierAndTheEvidence(t *te
 		if strings.Contains(summary, "unblocked") || strings.Contains(summary, "Why it") {
 			t.Errorf("%s: the summary says something of an unblock or of a reason that it has not:\n%s", tc.reason, summary)
 		}
+	}
+}
+
+// Every reason but receipt-not-applicable says that the results are evidence; a withdrawn receipt observed nothing, so it does not.
+func TestReceiptCheckSummaryStatesTheEvidenceSentenceExceptWhereNothingWasObserved(t *testing.T) {
+	for _, tc := range receiptReasons {
+		_, summary := receiptText(t, receiptOf(tc.reason))
+		if has := strings.Contains(summary, evidenceText); has != (tc.reason != "receipt-not-applicable") {
+			t.Errorf("%s: the evidence sentence is there: %v\n%s", tc.reason, has, summary)
+		}
+	}
+}
+
+const (
+	receiptRunningText  = "The receipt of this head has not finished: it is waiting for an executor, or it is running. The check has no result yet."
+	receiptCompleteText = "SuiteWard ran the tests that this revision adds or changes, on the head and on the code before the change. The counts below are what it saw."
+	receiptEmptyText    = "This revision adds or changes no test that SuiteWard can run, so the receipt is empty. The counts below are what it saw."
+)
+
+// The text of a reason is the first paragraph of its summary. A complete receipt with no evaluated test (every state count at zero) says that it is empty; any state
+// count makes it a receipt of tests that ran. Excluded tests and marker lines are not evaluated tests.
+func TestReceiptCheckSummaryOpensWithTheTextOfItsReason(t *testing.T) {
+	opens := func(t *testing.T, c commandtext.ReceiptCheck, text string) {
+		t.Helper()
+		_, summary := receiptText(t, c)
+		if first, _, _ := strings.Cut(summary, "\n\n"); first != text {
+			t.Errorf("%s %+v: the first paragraph is %q, want %q", c.Reason, c.Counts, first, text)
+		}
+	}
+	opens(t, receiptOf("receipt-running"), receiptRunningText)
+	for name, counts := range map[string]execution.ReceiptCounts{"nothing": {}, "only excluded tests": {Excluded: 5}} {
+		c := receiptOf("receipt-complete")
+		c.Counts, c.Markers = counts, 4
+		t.Run("empty receipt with "+name, func(t *testing.T) { opens(t, c, receiptEmptyText) })
+	}
+	for name, counts := range map[string]execution.ReceiptCounts{
+		"a test that detects": {Detects: 1}, "an inert test": {Inert: 1}, "a new API test": {NewAPI: 1}, "a flaky test": {Flaky: 1}, "a skipped test": {Skipped: 1}, "every state": seen,
+	} {
+		c := receiptOf("receipt-complete")
+		c.Counts = counts
+		t.Run("receipt with "+name, func(t *testing.T) { opens(t, c, receiptCompleteText) })
 	}
 }
 
@@ -173,7 +217,6 @@ func TestReceiptCheckSummaryOfAnUnblockedHeadSaysThatTheTestsDidNotRun(t *testin
 }
 
 func TestReceiptCheckSummaryStatesTheTierAndHoldsNoRepositoryTextNoPathNoLinkAndNoMode(t *testing.T) {
-	banned := regexp.MustCompile(`(?i)\b(mode|link|paths?|https?|tests? names?)\b|<!--|@|#issuecomment|/suiteward`)
 	for _, tc := range receiptReasons {
 		for _, tier := range []commandtext.Tier{commandtext.Isolated, commandtext.CoLocated} {
 			c := receiptOf(tc.reason)
@@ -189,9 +232,26 @@ func TestReceiptCheckSummaryStatesTheTierAndHoldsNoRepositoryTextNoPathNoLinkAnd
 				t.Errorf("%s: the isolated summary states a reduced assurance:\n%s", tc.reason, summary)
 			}
 			for _, s := range []string{title, summary} {
-				if s == "" || banned.MatchString(s) || len(s) > 4096 {
-					t.Errorf("%s: the output is empty, long or holds %q: %q", tc.reason, banned.FindString(s), s)
+				if s == "" || receiptBanned.MatchString(s) || len(s) > 4096 {
+					t.Errorf("%s: the output is empty, long or holds %q: %q", tc.reason, receiptBanned.FindString(s), s)
 				}
+			}
+		}
+	}
+}
+
+// The summary of an empty receipt is a text of its own: it holds the same nothing, and none of the phrases that the owner's rule removes.
+func TestReceiptCheckSummaryOfAnEmptyReceiptHoldsNoRepositoryTextAndDoesNotSayThatNoTestsRan(t *testing.T) {
+	c := receiptOf("receipt-complete")
+	c.Counts, c.Markers = execution.ReceiptCounts{}, 0
+	title, summary := receiptText(t, c)
+	for _, s := range []string{title, summary} {
+		if receiptBanned.MatchString(s) {
+			t.Errorf("the output holds %q: %q", receiptBanned.FindString(s), s)
+		}
+		for _, phrase := range notRunPhrases {
+			if strings.Contains(s, phrase) {
+				t.Errorf("the output says %q: %q", phrase, s)
 			}
 		}
 	}

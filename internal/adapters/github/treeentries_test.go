@@ -72,6 +72,7 @@ func TestTreeEntriesRejectsAnEntryThatGitDoesNotList(t *testing.T) {
 		{"a git id that is not one", "tests/odd_entry", "100644", "blob", "../../../pulls"},
 		{"an upper-case git id", "tests/odd_entry", "100644", "blob", strings.ToUpper(sha)},
 		{"no path", "", "100644", "blob", sha},
+		{"no mode and no type", "tests/odd_entry", "", "", sha},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader, _ := newReader(t, map[string]reply{treeURI: ok(treeWith(tc.path, tc.mode, tc.kind, tc.sha))})

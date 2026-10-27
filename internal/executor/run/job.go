@@ -10,36 +10,32 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 )
 
-// handle runs one leased job and posts its result once. The work has its own context: it outlives the signal that stops the loop by the
-// grace (30 s), ends 30 s before the deadline of the job (the only time kill: the service then ends the attempt as timeout), and ends when a
-// heartbeat learns that the lease is lost. Work that ended that way posts nothing, and the service sees the job again once its lease expires
-// or its deadline passes. Ending the context of the work stops the sandbox, which kills its container, and a container that was killed so is
-// never read as a resource limit.
+// handle runs one leased job and posts its result once. The work has its own context, which ends with a cause: the grace after the signal
+// that stops the loop (30 s) is over, the deadline of the job less 30 s has come (the only time kill: the service then ends the attempt as
+// timeout), or a heartbeat learned that the lease is lost. The two times are waited for through Sleep. Work that ended that way posts
+// nothing, and the service sees the job again once its lease expires or its deadline passes. Ending the context of the work stops the
+// sandbox, which kills its container, and a container that was killed so is never read as a resource limit.
 func (e *Executor) handle(ctx context.Context, lease *client.Lease) {
 	log := e.cfg.Log.With("job", lease.JobID, "plan", lease.Plan, "pull", lease.Pull)
-	deadline, stopTimer := context.WithDeadline(context.WithoutCancel(ctx), lease.DeadlineAt.Add(-e.cfg.Pacing.Margin))
-	defer stopTimer()
-	work, lost := context.WithCancel(deadline)
-	defer lost()
-	graceCtx, stopGrace := context.WithCancel(work)
-	graced := make(chan struct{})
-	go func() {
-		defer close(graced)
-		e.grace(ctx, graceCtx, lost, log)
-	}()
-	defer func() { stopGrace(); <-graced }()
+	work, drop := context.WithCancelCause(context.WithoutCancel(ctx))
+	defer drop(nil)
+	over, finish := context.WithCancel(work) // ends with the work, and when the attempt is over
+	timers := make(chan struct{}, 2)
+	go func() { e.dropAtDeadline(over, lease.DeadlineAt, drop, log); timers <- struct{}{} }()
+	go func() { e.grace(ctx, over, drop, log); timers <- struct{}{} }()
+	defer func() { finish(); <-timers; <-timers }()
 	beat, stopBeat := context.WithCancel(work)
 	beating := make(chan struct{})
 	go func() {
 		defer close(beating)
-		e.heartbeat(beat, lease, lost, log)
+		e.heartbeat(beat, lease, func() { drop(client.ErrLeaseLost) }, log)
 	}()
 
 	body, abandon := e.attempt(work, lease, log)
 	stopBeat()
 	<-beating
 	if abandon || work.Err() != nil {
-		log.Info("the work was dropped and nothing is posted")
+		log.Info("the work was dropped and nothing is posted", "cause", context.Cause(work))
 		return
 	}
 	state, err := lease.Result(work, body)
@@ -53,9 +49,18 @@ func (e *Executor) handle(ctx context.Context, lease *client.Lease) {
 	}
 }
 
+// dropAtDeadline waits until the deadline of the attempt less the margin, and then drops the work with the deadline as the cause. An attempt
+// that ends first ends over, and so ends the wait.
+func (e *Executor) dropAtDeadline(over context.Context, deadline time.Time, drop context.CancelCauseFunc, log *slog.Logger) {
+	if e.cfg.Sleep(over, time.Until(deadline.Add(-e.cfg.Pacing.Margin))) == nil {
+		log.Warn("the attempt is near its deadline: it is dropped, and the service ends it as timeout", "margin", e.cfg.Pacing.Margin)
+		drop(context.DeadlineExceeded)
+	}
+}
+
 // grace gives the job in flight the time after the signal: when it has passed, and the job is still running (over has not ended), the work
 // is dropped. A job that ends in time ends over, and so ends the wait.
-func (e *Executor) grace(signal, over context.Context, drop context.CancelFunc, log *slog.Logger) {
+func (e *Executor) grace(signal, over context.Context, drop context.CancelCauseFunc, log *slog.Logger) {
 	select {
 	case <-signal.Done():
 	case <-over.Done():
@@ -63,7 +68,7 @@ func (e *Executor) grace(signal, over context.Context, drop context.CancelFunc, 
 	}
 	if e.cfg.Sleep(over, e.cfg.Pacing.Grace) == nil {
 		log.Warn("the grace after the signal is over: the job is dropped and its lease will expire", "grace", e.cfg.Pacing.Grace)
-		drop()
+		drop(errGraceOver)
 	}
 }
 

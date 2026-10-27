@@ -228,7 +228,10 @@ func (a *attempt) canonical(ctx context.Context) (completion, error) {
 	if err != nil {
 		return completion{}, err
 	}
-	declared := goprofile.DeclaredTests(withModules(files, tree), goarch)
+	// Only a go.mod that the governing manifest lists makes a nested module: a go.mod that the head adds in a protected test directory is the
+	// candidate's, and must not turn the manifest's approved tests there into excluded ones. The root go.mod is read above, whoever has it.
+	modules := slices.DeleteFunc(slices.Clone(tree), func(f execution.TreeFile) bool { return f.Source != execution.FromManifest })
+	declared := goprofile.DeclaredTests(withModules(files, modules), goarch)
 	done := completion{tests: declaredRows(declared), submodules: head.Submodules}
 	if err := done.check(); err != nil {
 		return completion{}, err

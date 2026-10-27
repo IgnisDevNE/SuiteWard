@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
@@ -43,6 +44,22 @@ type executionStatus struct {
 	enabled  bool
 	jobs     executionCounter
 	liveness *execution.Liveness
+}
+
+// executionStates are the states /status counts, each even at zero.
+var executionStates = []execution.State{execution.StatePending, execution.StateLeased, execution.StateComplete, execution.StateUnavailable, execution.StateCancelled}
+
+// report is the execution block of /status: counts and a time only, never a repository, a path or a test name.
+func (e *executionStatus) report(ctx context.Context) (map[string]any, error) {
+	counts, err := e.jobs.Counts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("count the execution jobs: %w", err)
+	}
+	jobs := make(map[string]int, len(executionStates))
+	for _, state := range executionStates {
+		jobs[string(state)] = counts[state]
+	}
+	return map[string]any{"enabled": e.enabled, "jobs": jobs, "lastSeenAt": e.liveness.LastSeen().UTC().Format(time.RFC3339)}, nil
 }
 
 // api serves /healthz, /readyz, /status and the change report pages. Only fixed reasons reach a
@@ -122,6 +139,14 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 	}
 	if Source != "" {
 		body["source"] = Source
+	}
+	if a.execution != nil {
+		block, err := a.execution.report(ctx)
+		if err != nil {
+			a.storeFailed(w, r, err)
+			return
+		}
+		body["execution"] = block
 	}
 	if enrolled {
 		body["owner"] = map[string]any{"login": enrollment.Owner.Login, "accountId": enrollment.Owner.AccountID, "enrolledAt": enrollment.EnrolledAt.UTC().Format(time.RFC3339)}

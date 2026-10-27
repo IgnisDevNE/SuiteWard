@@ -215,7 +215,7 @@ func withModules(files map[string][]byte, tree []execution.TreeFile) map[string]
 //   - a go.mod that the revision's manifest lists. The revision's manifest is the head's files under the approved patterns, and the job
 //     holds the canonical version that the revision expects, not that manifest: a head go.mod counts when the expected canonical's scope
 //     covers its path (the patterns that the canonical approves; a pattern that only the head adds is not approved yet, and covers nothing);
-//   - a go.mod that the expected canonical itself lists (a.governing, which the scope would cover too unless the head changed the patterns).
+//   - a go.mod that the expected canonical itself lists (a.governing, which its own scope normally covers too).
 //
 // Any other go.mod of the head is the candidate's, in a directory that it may have chosen, and must not turn a test of the candidate that
 // go would run into an excluded one. A nested module that the base has and the head removed is no module of the head: its tests run, and

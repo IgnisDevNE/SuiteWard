@@ -45,7 +45,7 @@ func call(t *testing.T, a *api, method, path string) (int, string) {
 
 func TestHealthzAnswersWhileTheProcessServes(t *testing.T) {
 	// Liveness does not consult the store: even a broken one is alive.
-	a := &api{owners: ownertest.NewMemory(), store: fakeStore{versionErr: errors.New("down")}, logger: quietLogger()}
+	a := &api{executorStatus: idleExecutorStatus(), owners: ownertest.NewMemory(), store: fakeStore{versionErr: errors.New("down")}, logger: quietLogger()}
 	if code, body := call(t, a, http.MethodGet, "/healthz"); code != http.StatusOK || body != `{"status":"ok"}` {
 		t.Fatalf("GET /healthz = %d %s; want 200 {\"status\":\"ok\"}", code, body)
 	}
@@ -67,7 +67,7 @@ func TestReadyzReportsReadinessWithoutLeakingCauses(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			a := &api{owners: ownertest.NewMemory(), store: test.store, logger: quietLogger()}
+			a := &api{executorStatus: idleExecutorStatus(), owners: ownertest.NewMemory(), store: test.store, logger: quietLogger()}
 			a.stopping.Store(test.stopping)
 			code, body := call(t, a, http.MethodGet, "/readyz")
 			if code != test.code {
@@ -84,12 +84,12 @@ func TestReadyzReportsReadinessWithoutLeakingCauses(t *testing.T) {
 }
 
 func TestStatusReportsEveryStateEvenAtZero(t *testing.T) {
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "isolated", store: fakeStore{version: 10, counts: postgres.Counts{
+	a := &api{executorStatus: idleExecutorStatus(), owners: ownertest.NewMemory(), logger: quietLogger(), tier: "isolated", store: fakeStore{version: 10, counts: postgres.Counts{
 		Jobs:   map[string]int64{"completed": 3, "discarded": 1, "cancelled": 9, "pending": 8},
 		Outbox: map[string]int64{"delivered": 2},
 	}}}
 	code, body := call(t, a, http.MethodGet, "/status")
-	want := `{"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":10,"tier":"isolated",
+	want := `{` + idleExecutionJSON + `,"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":10,"tier":"isolated",
 		"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":3,"discarded":1},
 		"outbox":{"pending":0,"delivered":2,"failed":0}}`
 	if code != http.StatusOK || !jsonEqual(t, body, want) {
@@ -98,7 +98,7 @@ func TestStatusReportsEveryStateEvenAtZero(t *testing.T) {
 }
 
 func TestStatusNamesTheInstanceByItsShortId(t *testing.T) {
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "isolated", store: fakeStore{version: 10}}
+	a := &api{executorStatus: idleExecutorStatus(), owners: ownertest.NewMemory(), logger: quietLogger(), tier: "isolated", store: fakeStore{version: 10}}
 	code, body := call(t, a, http.MethodGet, "/status")
 	var got map[string]any
 	if err := json.Unmarshal([]byte(body), &got); err != nil || code != http.StatusOK || got["instance"] != "1a2b3c4d" {
@@ -112,7 +112,7 @@ func TestStatusReportsTheSourceOnlyWhenTheBuildSetIt(t *testing.T) {
 			previous := Source
 			t.Cleanup(func() { Source = previous })
 			Source = source
-			a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "isolated", store: fakeStore{version: 10}}
+			a := &api{executorStatus: idleExecutorStatus(), owners: ownertest.NewMemory(), logger: quietLogger(), tier: "isolated", store: fakeStore{version: 10}}
 			code, body := call(t, a, http.MethodGet, "/status")
 			var status map[string]any
 			if err := json.Unmarshal([]byte(body), &status); err != nil || code != http.StatusOK {
@@ -137,7 +137,7 @@ func TestStatusIsUnavailableWhenTheStoreFails(t *testing.T) {
 		"instance":       {version: 10, instanceErr: errors.New(leakCause)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			code, body := call(t, &api{owners: ownertest.NewMemory(), store: store, logger: quietLogger()}, http.MethodGet, "/status")
+			code, body := call(t, &api{executorStatus: idleExecutorStatus(), owners: ownertest.NewMemory(), store: store, logger: quietLogger()}, http.MethodGet, "/status")
 			if code != http.StatusServiceUnavailable || strings.Contains(body, "hunter2") || !strings.Contains(body, "database unavailable") {
 				t.Fatalf("GET /status = %d %s; want 503 database unavailable without the cause", code, body)
 			}
@@ -146,7 +146,7 @@ func TestStatusIsUnavailableWhenTheStoreFails(t *testing.T) {
 }
 
 func TestOnlyGetOnTheThreePaths(t *testing.T) {
-	a := &api{owners: ownertest.NewMemory(), store: fakeStore{version: 10}, logger: quietLogger()}
+	a := &api{executorStatus: idleExecutorStatus(), owners: ownertest.NewMemory(), store: fakeStore{version: 10}, logger: quietLogger()}
 	for _, path := range []string{"/healthz", "/readyz", "/status"} {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 			if code, _ := call(t, a, method, path); code != http.StatusMethodNotAllowed {
@@ -169,7 +169,7 @@ func (brokenWriter) WriteHeader(int)           {}
 
 func TestAFailedResponseWriteIsLogged(t *testing.T) {
 	var logs bytes.Buffer
-	a := &api{owners: ownertest.NewMemory(), store: fakeStore{version: 10}, logger: slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+	a := &api{executorStatus: idleExecutorStatus(), owners: ownertest.NewMemory(), store: fakeStore{version: 10}, logger: slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))}
 	newRouter(a).ServeHTTP(brokenWriter{header: http.Header{}}, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if !strings.Contains(logs.String(), "client went away") {
 		t.Fatalf("the failed write was not logged: %q", logs.String())

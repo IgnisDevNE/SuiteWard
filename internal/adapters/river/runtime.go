@@ -100,7 +100,8 @@ func (w *relayWorker) Work(ctx context.Context, _ *riverqueue.Job[relayArgs]) er
 // Runtime runs the River workers and the outbox relay.
 type Runtime struct {
 	client *riverqueue.Client[pgx.Tx]
-	sync   bool // the synchronization jobs are registered
+	sync   bool   // the synchronization jobs are registered
+	waker  *waker // the wake-ups of the runs, which Wake gives to a caller that is not one
 }
 
 // NewRuntime builds the River client over pool. The relay is a periodic job
@@ -161,7 +162,7 @@ func NewRuntime(pool *pgxpool.Pool, store OutboxStore, config Config) (*Runtime,
 		return nil, fmt.Errorf("create the River client: %w", err)
 	}
 	wake.client = client
-	return &Runtime{client: client, sync: config.SyncTick != nil}, nil
+	return &Runtime{client: client, sync: config.SyncTick != nil, waker: wake}, nil
 }
 
 // Start begins processing jobs and relaying the outbox. It returns once started.

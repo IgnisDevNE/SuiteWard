@@ -74,7 +74,7 @@ func storedResult(result protection.Result) owner.ProtectionResult {
 
 func (r *protectionRun) statusBody(t *testing.T) string {
 	t.Helper()
-	a := &api{
+	a := &api{executorStatus: idleExecutorStatus(),
 		owners: r.store, logger: quietLogger(), tier: "co-located", store: fakeStore{version: 1},
 		github: &githubStatus{repos: []string{setupWidgetsRepo}, store: githubsynctest.NewMemory(), ids: r.ids, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}},
 	}
@@ -353,7 +353,7 @@ func TestStatusShowsTheLatestProtectionOfEachRepositoryAndNothingBeforeTheFirstV
 func TestStatusIsUnavailableWhenTheProtectionCannotBeRead(t *testing.T) {
 	r := newProtectionRun(t, newSetupGitHub(t))
 	r.ids.set(setupWidgetsRepo, setupRepoID)
-	a := &api{
+	a := &api{executorStatus: idleExecutorStatus(),
 		owners: brokenOwners{Store: r.store, protection: errors.New("dial tcp db.internal:5432: password=hunter2")}, logger: quietLogger(), store: fakeStore{version: 1},
 		github: &githubStatus{repos: []string{setupWidgetsRepo}, store: githubsynctest.NewMemory(), ids: r.ids, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}},
 	}

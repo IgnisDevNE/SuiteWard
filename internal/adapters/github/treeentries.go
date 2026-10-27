@@ -51,7 +51,7 @@ func (r *Reader) TreeEntries(ctx context.Context, repo, commitSHA string) ([]Tre
 		if e.Mode == "040000" && e.Type == "tree" {
 			continue
 		}
-		if entryTypes[e.Mode] != e.Type || e.Path == "" || !hexSHA.MatchString(e.SHA) {
+		if kind, listed := entryTypes[e.Mode]; !listed || kind != e.Type || e.Path == "" || !hexSHA.MatchString(e.SHA) {
 			return nil, fmt.Errorf("%w: entry %d of the tree of %s at %s is no blob or submodule that git lists", ErrInvalidResponse, i, repo, commitSHA)
 		}
 		entries = append(entries, TreeEntry{Path: e.Path, Mode: e.Mode, SHA: e.SHA})

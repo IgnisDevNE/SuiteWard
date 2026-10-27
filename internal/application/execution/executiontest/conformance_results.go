@@ -32,7 +32,8 @@ func completeCanonical(leaseID, body string) execution.Result {
 // completeReceipt is a valid complete result of a receipt job, with markers.
 func completeReceipt(leaseID, body string) execution.Result {
 	r := execution.Result{LeaseID: leaseID, Report: report(execution.StateComplete, "", body)}
-	r.Markers = []execution.Marker{{Kind: "env-read", Path: "a_test.go", Line: 12}, {Kind: "testing-import", Path: "pkg/p_test.go", Line: 3}}
+	r.Markers = []execution.Marker{{Kind: "env-read", Path: "a_test.go", Line: 12}, {Kind: "testing-import", Path: "pkg/p_test.go", Line: 3}, {Kind: "forged-event", Path: "pkg/g_test.go", Line: 7}}
+	r.Unparsed = []string{"pkg/broken_test.go", "tools/old_test.go"}
 	r.Tests = []execution.Test{
 		{Package: "pkg", Name: "TestChanged", File: "pkg/p_test.go", Kind: execution.KindChanged, HeadRuns: []string{"pass", "pass"}, BaseRuns: []string{"pass", "skip"}, State: "inert"},
 		{Package: ".", Name: "TestNew", File: "a_test.go", Kind: execution.KindAdded, HeadRuns: []string{"pass"}, BaseRuns: []string{"build-error"}, State: "new_api"},
@@ -224,10 +225,11 @@ func rsPlanRules(e *env) {
 	cl := e.mustLease(canonical.ID, 0)
 	validCanonical := func() execution.Result { return completeCanonical(cl.LeaseID, "canonical") }
 	requireInvalid(e, validCanonical, map[string]func(*execution.Result){
-		"a canonical row with base runs":     func(r *execution.Result) { r.Tests[1].BaseRuns = []string{"pass"} },
-		"a canonical row of a receipt kind":  func(r *execution.Result) { r.Tests[1].Kind = execution.KindAdded },
-		"a changed row in a canonical run":   func(r *execution.Result) { r.Tests[1].Kind = execution.KindChanged },
-		"a receipt state in a canonical run": func(r *execution.Result) { r.Tests[1].State = "detects" },
+		"a canonical row with base runs":      func(r *execution.Result) { r.Tests[1].BaseRuns = []string{"pass"} },
+		"a canonical row of a receipt kind":   func(r *execution.Result) { r.Tests[1].Kind = execution.KindAdded },
+		"a changed row in a canonical run":    func(r *execution.Result) { r.Tests[1].Kind = execution.KindChanged },
+		"a receipt state in a canonical run":  func(r *execution.Result) { r.Tests[1].State = "detects" },
+		"a canonical run with unparsed files": func(r *execution.Result) { r.Unparsed = []string{"a_test.go"} },
 		"a canonical run with markers": func(r *execution.Result) {
 			r.Markers = []execution.Marker{{Kind: "env-read", Path: "a_test.go", Line: 1}}
 		},
@@ -248,11 +250,28 @@ func rsPlanRules(e *env) {
 		"an excluded receipt row with base runs":    func(r *execution.Result) { r.Tests[2].BaseRuns = []string{"pass"} },
 		"a receipt row with four base runs":         func(r *execution.Result) { r.Tests[0].BaseRuns = []string{"pass", "pass", "pass", "pass"} },
 		"a receipt row with an empty base run list": func(r *execution.Result) { r.Tests[0].BaseRuns = []string{} },
+		"101 unparsed files":                        func(r *execution.Result) { r.Unparsed = testFiles(101, 20) },
+		"an unparsed path of 1025 bytes":            func(r *execution.Result) { r.Unparsed = testFiles(1, 1025) },
+		"an unparsed path that is not a test file":  func(r *execution.Result) { r.Unparsed = []string{"pkg/p.go"} },
+		"an empty unparsed path":                    func(r *execution.Result) { r.Unparsed = []string{""} },
+		"an absolute unparsed path":                 func(r *execution.Result) { r.Unparsed = []string{"/pkg/p_test.go"} },
+		"an unparsed path above the tree":           func(r *execution.Result) { r.Unparsed = []string{"../p_test.go"} },
+		"an unparsed path that climbs out and in":   func(r *execution.Result) { r.Unparsed = []string{"pkg/../p_test.go"} },
+		"an unparsed path with an empty segment":    func(r *execution.Result) { r.Unparsed = []string{"pkg//p_test.go"} },
+		"an unparsed path with a dot segment":       func(r *execution.Result) { r.Unparsed = []string{"./p_test.go"} },
+		"an unparsed path with a trailing slash":    func(r *execution.Result) { r.Unparsed = []string{"pkg/p_test.go/"} },
+		"a marker of an unknown kind":               func(r *execution.Result) { r.Markers[0].Kind = "forged" },
 	}, func(r execution.Result) error {
 		_, err := e.s.Complete(e.ctx, receipt.ID, r, at(time.Minute+30*time.Second), githubWait)
 		return err
 	})
 	e.requireUntouched(rl)
+	// The longest list is accepted, and the files are read back with the result: the store keeps them and judges nothing.
+	edge := completeReceipt(rl.LeaseID, "edge")
+	edge.Unparsed = testFiles(100, 1024)
+	_, err := e.s.Complete(e.ctx, receipt.ID, edge, at(time.Minute+30*time.Second), githubWait)
+	e.must(err)
+	e.requireResult(receipt.ID, execution.OriginExecutor, time.Minute+30*time.Second, edge.Report)
 }
 
 func long(n int) string { return strings.Repeat("a", n) }
@@ -361,4 +380,14 @@ func rsBound(e *env) {
 	if len(got) != maxTests {
 		e.t.Fatalf("Tests = %d rows; want %d", len(got), maxTests)
 	}
+}
+
+// testFiles are n paths of size bytes each that end _test.go and differ, for the lists that are bounded.
+func testFiles(n, size int) []string {
+	paths := make([]string, n)
+	for i := range paths {
+		name := fmt.Sprintf("%0*d", size-len("_test.go"), i)
+		paths[i] = name + "_test.go"
+	}
+	return paths
 }

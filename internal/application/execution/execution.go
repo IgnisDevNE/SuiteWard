@@ -222,6 +222,7 @@ type Report struct {
 	BodyDigest      artifact.Digest // of the request body, so that the same result sent again is recognized
 	Markers         []Marker
 	Submodules      []string
+	Unparsed        []string // the changed test files that go cannot parse, which list no test (a receipt only), at most 100 clean relative paths ending _test.go
 }
 
 // Result is a request to store the result of a leased job.

@@ -353,6 +353,16 @@ func TestExecutionResultConstraints(t *testing.T) {
 		{"a marker that is not an object", "23514", "execution_results_markers_check", map[string]any{"markers": `[1]`}},
 		{"a marker without a line", "23514", "execution_results_markers_check", map[string]any{"markers": `[{"kind":"env-read","path":"a_test.go"}]`}},
 		{"101 submodules", "23514", "execution_results_submodules_check", map[string]any{"submodules": append([]string(nil), make([]string, 101)...)}},
+		{"101 unparsed files", "23514", "execution_results_unparsed_check", map[string]any{"unparsed": unparsedFiles(101, 20)}},
+		{"an unparsed path of 1025 bytes", "23514", "execution_results_unparsed_check", map[string]any{"unparsed": unparsedFiles(1, 1025)}},
+		{"an unparsed path that is not a test file", "23514", "execution_results_unparsed_check", map[string]any{"unparsed": []string{"pkg/p.go"}}},
+		{"an empty unparsed path", "23514", "execution_results_unparsed_check", map[string]any{"unparsed": []string{""}}},
+		{"an absolute unparsed path", "23514", "execution_results_unparsed_check", map[string]any{"unparsed": []string{"/pkg/p_test.go"}}},
+		{"an unparsed path above the tree", "23514", "execution_results_unparsed_check", map[string]any{"unparsed": []string{"../p_test.go"}}},
+		{"an unparsed path that climbs out and in", "23514", "execution_results_unparsed_check", map[string]any{"unparsed": []string{"pkg/../p_test.go"}}},
+		{"an unparsed path with an empty segment", "23514", "execution_results_unparsed_check", map[string]any{"unparsed": []string{"pkg//p_test.go"}}},
+		{"an unparsed path with a dot segment", "23514", "execution_results_unparsed_check", map[string]any{"unparsed": []string{"./p_test.go"}}},
+		{"an unparsed path with a trailing slash", "23514", "execution_results_unparsed_check", map[string]any{"unparsed": []string{"pkg/p_test.go/"}}},
 		{"a result for an unknown job", "23503", "execution_results_job_fkey", map[string]any{"job_id": 99}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -363,10 +373,13 @@ func TestExecutionResultConstraints(t *testing.T) {
 	}
 	// The rows of the contract are accepted, and a job has one results row.
 	for name, row := range map[string]map[string]any{
-		"an executor row that is complete":    {},
-		"an executor row that is unavailable": unavailable,
-		"a row of the service":                service,
-		"a marker of the longest kind":        {"markers": `[{"kind":"testing-testing","path":"pkg/a_test.go","line":10000000}]`},
+		"an executor row that is complete":     {},
+		"an executor row that is unavailable":  unavailable,
+		"a row of the service":                 service,
+		"a marker of the longest kind":         {"markers": `[{"kind":"testing-testing","path":"pkg/a_test.go","line":10000000}]`},
+		"a marker of a forged event":           {"markers": `[{"kind":"forged-event","path":"pkg/a_test.go","line":1}]`},
+		"changed test files that do not parse": {"unparsed": []string{"pkg/p_test.go", "p_test.go", "a/b/c_test.go"}},
+		"the longest list of them":             {"unparsed": unparsedFiles(100, 1024)},
 	} {
 		inRolledBackTransaction(t, database, func(tx pgx.Tx) {
 			if err := insertRow(t.Context(), tx, "execution_results", row); err != nil {
@@ -565,4 +578,13 @@ func TestCommandLedgerAcceptsAModeAndTheExecutionDispositions(t *testing.T) {
 		mustInsert(t, database.conn, "pr_commands", map[string]any{"comment_id": 300 + i, "disposition": disposition})
 	}
 	mustInsert(t, database.conn, "pr_commands", map[string]any{"comment_id": 400, "disposition": "processed", "operation_id": "op"})
+}
+
+// unparsedFiles are n paths of size bytes each that end _test.go and differ.
+func unparsedFiles(n, size int) []string {
+	paths := make([]string, n)
+	for i := range paths {
+		paths[i] = fmt.Sprintf("%0*d", size-len("_test.go"), i) + "_test.go"
+	}
+	return paths
 }

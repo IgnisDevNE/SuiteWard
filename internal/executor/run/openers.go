@@ -32,8 +32,9 @@ func (a archives) Open(ctx context.Context, side source.Side) (io.ReadCloser, er
 	}
 }
 
-// manifestFiles opens the files of the manifest of a lease. The source package passes an opener's error on as it comes, so the 404 and
-// the 500 of the service are wrapped here as a file that cannot be read.
+// manifestFiles opens the files of the manifest of a lease. The source package passes an opener's error on as it comes, so what the service
+// answers is wrapped here: a 413 is a listed file over the cap of a file, which no other attempt makes smaller (too-large), and the 404 and
+// the 500 are a file that cannot be read.
 type manifestFiles struct{ lease *client.Lease }
 
 func (m manifestFiles) Open(ctx context.Context, d artifact.Digest) (io.ReadCloser, error) {
@@ -43,6 +44,8 @@ func (m manifestFiles) Open(ctx context.Context, d artifact.Digest) (io.ReadClos
 		return rc, nil
 	case errors.Is(err, client.ErrLeaseLost):
 		return nil, err
+	case errors.Is(err, client.ErrTooLarge):
+		return nil, fmt.Errorf("the manifest file %s: %w: %w", d, source.ErrTooLarge, err)
 	default:
 		return nil, fmt.Errorf("the manifest file %s: %w: %w", d, source.ErrArchiveUnreadable, err)
 	}

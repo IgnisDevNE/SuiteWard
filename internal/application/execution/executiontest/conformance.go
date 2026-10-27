@@ -241,6 +241,7 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		{"Lease is exclusive under concurrency", jbLeaseConcurrent},
 		{"a job whose lease expired is queued again with its backoff and the third failure is final", jbLeaseExpiry},
 		{"Lease goes on to the next candidate after it expired a lease", jbLeaseNextCandidate},
+		{"OpenJobs reads the pending and leased jobs of one repository, oldest first", jbOpenJobs},
 		{"Lease gives a ready job to prepare, and nil grants the lease", jbLeasePrepare},
 		{"a GitHub failure of prepare is recorded as GitHubFailure records it, and ends the call", jbLeasePrepareGitHub},
 		{"a GitHub failure of prepare a whole wait after the first ends the job", jbLeasePrepareGitHubBound},

@@ -30,6 +30,7 @@ const usage = `usage: suiteward serve
        suiteward setup --owner LOGIN --test-check OWNER/NAME=CHECK [--test-check ...]
        suiteward check [--json]
        suiteward scope add [--runner] PATTERN...
+       suiteward execute
        suiteward install [flags]
        suiteward install --upgrade [--yes] [--backup-dir DIR] [--backup-recipient age1pq1...] [--image sha256:<digest>] [flags]
        suiteward install host [flags]
@@ -72,6 +73,9 @@ func Run(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) 
 	}
 	if len(args) > 0 && args[0] == "scope" { // it edits a file of the checkout and reads no setting
 		return runScope(args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "execute" { // the executor holds no setting of the service: it has three of its own
+		return runExecute(ctx, args[1:], env, stdout, stderr)
 	}
 	return runWith(ctx, args, env, stdout, stderr, migrateWait{attempts: 30, interval: time.Second, timeout: 5 * time.Second})
 }

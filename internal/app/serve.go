@@ -104,18 +104,21 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 	}
 	tier := string(cfg.Tier)
 	reports := newChangeReports(store, artifacts) // one source for the report page, the revision comment and the check summary: one build at a time
-	a := &api{store: store, owners: store, logger: logger, tier: tier, reports: reports}
-	backend := &mcpBackend{store: store, owners: store, instance: store.Instance, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
 	executions := store.Execution()
 	liveness := execution.NewLiveness(time.Now()) // one record for the whole process: the executor API (M2.1-T4) writes it, the jobs read it
 	executorConfigured := cfg.ExecutorToken != ""
-	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
+	a := &api{store: store, owners: store, logger: logger, tier: tier, reports: reports,
+		executorStatus: &executorStatus{enabled: executorConfigured, jobs: executions, liveness: liveness}}
+	backend := &mcpBackend{store: store, owners: store, instance: store.Instance, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
+	trees, archives := treeReader(noTrees), archiveReader(noArchives) // the executor API reads GitHub through these: without the settings they fail
+	if cfg.GitHub != nil {                                            // the GitHub settings are optional: unset, nothing GitHub-related is composed
 		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger}, time.Now, logger)
 		if err != nil {
 			pool.Close()
 			return err
 		}
 		riverConfig.SyncTick, riverConfig.SyncRepo = gh.tick, gh.syncRepo
+		trees, archives = githubTrees(gh.readers.read), gh.archive.Archive
 		ids := &repositoryIDs{}
 		check := &protectionCheck{repos: gh.repos, appID: gh.appID, readers: gh.readers, store: store, ids: ids, logger: logger, now: time.Now, within: tickDeadline(cfg.JobTimeout)}
 		riverConfig.ProtectionCheck = check.run
@@ -130,7 +133,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		checkProblems := &bootstrapProblems{}
 		checkJob := &checksJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(), commands: store,
 			pulls: store, tier: tier, problems: checkProblems, logger: logger, now: time.Now,
-			executions: executions, liveness: liveness, executor: cfg.Executor, executorConfigured: executorConfigured}
+			executions: executions, receipts: store.ReceiptChecks(), liveness: liveness, executor: cfg.Executor, executorConfigured: executorConfigured}
 		riverConfig.Checks = checkJob.run
 		mergeProblems := &bootstrapProblems{}
 		mergeJob := &mergesJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, content: artifacts, store: store, integrity: store.Integrity(), tier: tier,
@@ -155,6 +158,18 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		return fmt.Errorf("start the job runtime: %w", err)
 	}
 	backend.inserter = runtime
+	if executorConfigured { // the executor API is served exactly when the token is set, with or without GitHub
+		wake := func(context.Context) error { return nil } // there is no checks job to wake without the GitHub settings
+		if cfg.GitHub != nil {
+			wake = func(ctx context.Context) error { return runtime.Wake(ctx, river.Wake{river.ChecksKind}) }
+		}
+		executorAPI, err := newExecutorAPI(executorDeps{token: []byte(cfg.ExecutorToken.Reveal()), store: executions, liveness: liveness, times: cfg.Executor, treeTimeout: treeReadTimeout, content: artifacts,
+			owners: store, trees: trees, archives: archives, wake: wake, stopping: a.stopping.Load, logger: logger, now: time.Now})
+		if err != nil {
+			return errors.Join(err, shutdown(logger, a, newHTTPServer(nil), runtime, pool, cfg.ShutdownTimeout))
+		}
+		a.executor = executorAPI
+	}
 	srv := newHTTPServer(newRouter(a))
 	var (
 		mcpServers []*http.Server

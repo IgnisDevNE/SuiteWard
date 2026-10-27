@@ -1,9 +1,13 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"sync"
@@ -156,7 +160,10 @@ func TestRunBuildsTheIsolationOfADR0028ForBothEngines(t *testing.T) {
 			}
 			// Exactly these arguments: nothing else (no --rm, no mount, no published port, no extra capability, no --env: the image's
 			// own environment must not reach Argv) may creep in. The environment of Argv is the assignments after the work directory.
-			want := []string{"run", "--name", name, "-i", "--pull=never", "--network=none", "--read-only"}
+			// --sig-proxy=false: a signal to the CLI (systemd stopping the executor's unit reaches it) is never forwarded to go test, which is
+			// the container's first process: it would end with 143, and every expected test would read fail. The executor's grace and its
+			// kill by name decide how a container ends.
+			want := []string{"run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only"}
 			if tc.podman {
 				// Podman keeps /tmp, /var/tmp, /run and /dev/shm writable under --read-only unless it is told not to.
 				want = append(want, "--read-only-tmpfs=false")
@@ -301,6 +308,82 @@ func TestRunKeepsKillingUntilTheContainerExists(t *testing.T) {
 	}
 }
 
+// KillAfter runs from the start of the container, as it did before the executor stopped using it: the container is killed KillAfter after it
+// starts, whether or not its standard input has ended.
+func TestRunKillsTheContainerKillAfterItStartsEvenWhileItsStandardInputIsOpen(t *testing.T) {
+	f := newFake()
+	f.onRun = func(ctx context.Context, _ io.Reader, _ io.Writer) (int, string, error) {
+		select {
+		case <-f.killed:
+			return 137, "", nil
+		case <-ctx.Done():
+			return -1, "", ctx.Err()
+		case <-time.After(3 * time.Second):
+			return -1, "", errors.New("the container was never killed")
+		}
+	}
+	open, _ := io.Pipe() // never written and never closed
+	s := validSpec()
+	s.Stdin, s.Limits.KillAfter = open, 20*time.Millisecond
+	if out, err := run(t, f, "docker", s); err != nil || !out.Killed {
+		t.Fatalf("Run = %+v, %v; want the container killed KillAfter after it started", out, err)
+	}
+}
+
+// A caller that has a deadline of its own, the executor's, passes none: the clock is optional, and a Spec with no KillAfter has no clock.
+func TestRunWithNoKillAfterHasNoClock(t *testing.T) {
+	f := newFake()
+	f.onRun = func(ctx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
+		_, _ = io.Copy(io.Discard, stdin)
+		select {
+		case <-f.killed:
+			return 137, "", nil
+		case <-time.After(150 * time.Millisecond): // long after a clock of any size would have fired
+			return 0, "", nil
+		case <-ctx.Done():
+			return -1, "", ctx.Err()
+		}
+	}
+	s := validSpec()
+	s.Limits.KillAfter = 0
+	out, err := run(t, f, "docker", s)
+	if err != nil || out.Killed || out.ExitCode != 0 {
+		t.Fatalf("Run = %+v, %v; want the container to end by itself", out, err)
+	}
+	if kills := f.commands("kill"); len(kills) != 0 {
+		t.Errorf("no clock, so no kill: %+v", kills)
+	}
+}
+
+func TestRunKillsTheContainerByNameWhenItsContextEnds(t *testing.T) {
+	f := newFake()
+	ctx, cancel := context.WithCancel(context.Background())
+	f.onRun = func(runCtx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
+		_, _ = io.Copy(io.Discard, stdin)
+		cancel() // the shutdown has run out of grace: the CLI is stopped with the context, and the container must not outlive it
+		<-runCtx.Done()
+		return -1, "", runCtx.Err()
+	}
+	// A container that was killed reports the status 137, as the runtime says of any killed container: a run that its context ended is never
+	// reported as that status, which a caller would read as a resource limit. It is the context's error.
+	f.state = `{"Status":"exited","OOMKilled":false,"ExitCode":137,"Error":"","StartedAt":"2026-10-26T21:58:19Z"}`
+	out, err := newCLI("docker", f.exec).Run(ctx, validSpec())
+	if !errors.Is(err, context.Canceled) || out.ExitCode != 0 || out.Killed {
+		t.Fatalf("Run = %+v, %v; want the context's error and no outcome", out, err)
+	}
+	name := f.commands("run")[0].args[2]
+	kills := f.commands("kill")
+	if len(kills) == 0 || !slices.Equal(kills[0].args, []string{"kill", name}) {
+		t.Fatalf("the container must be killed by name when the context ends: %q", f.verbs())
+	}
+	if kills[0].ctx != nil {
+		t.Errorf("the kill must not run under the cancelled context")
+	}
+	if len(f.commands("rm")) != 1 {
+		t.Errorf("the container must still be removed: %q", f.verbs())
+	}
+}
+
 func TestRunDoesNotKillAContainerThatEndsFirst(t *testing.T) {
 	f := newFake()
 	out, err := run(t, f, "docker", validSpec())
@@ -380,7 +463,7 @@ func TestRunRefusesAWeakerSpecBeforeAnyCommand(t *testing.T) {
 		"no cpu limit":                          func(s *Spec) { s.Limits.CPUs = 0 },
 		"no pids limit":                         func(s *Spec) { s.Limits.Pids = 0 },
 		"no tmpfs size":                         func(s *Spec) { s.Limits.TmpfsMiB = 0 },
-		"no kill deadline":                      func(s *Spec) { s.Limits.KillAfter = 0 },
+		"a negative kill deadline":              func(s *Spec) { s.Limits.KillAfter = -time.Second },
 		"a negative memory limit":               func(s *Spec) { s.Limits.MemoryMiB = -1 },
 		"no stdout limit":                       func(s *Spec) { s.StdoutLimit = 0 },
 		"no stdin":                              func(s *Spec) { s.Stdin = nil },
@@ -566,3 +649,58 @@ func TestInfoRefusesWhatItCannotRead(t *testing.T) {
 		})
 	}
 }
+
+// TestHelperPrintEnv is not a test: osExec starts the test binary as the runtime's CLI, and this prints the environment that it got.
+func TestHelperPrintEnv(t *testing.T) {
+	if !slices.Contains(os.Args, "print-env") {
+		return
+	}
+	for _, entry := range os.Environ() {
+		fmt.Println(entry)
+	}
+	os.Exit(0)
+}
+
+func TestCLIEnvKeepsTheEnvironmentButTheSuitewardVariables(t *testing.T) {
+	got := CLIEnv([]string{
+		"PATH=/usr/bin", "SUITEWARD_EXECUTOR_TOKEN=leak", "HTTPS_PROXY=http://proxy.invalid", "SUITEWARD_EXECUTOR_URL=https://x",
+		"DOCKER_HOST=unix:///run/docker.sock", "suiteward_lower=leak", "SUITEWARD=leak", "NOT_SUITEWARD_X=kept", "SUITEWARD_=leak",
+	})
+	want := []string{"PATH=/usr/bin", "HTTPS_PROXY=http://proxy.invalid", "DOCKER_HOST=unix:///run/docker.sock", "SUITEWARD=leak", "NOT_SUITEWARD_X=kept"}
+	if !slices.Equal(got, want) {
+		t.Errorf("CLIEnv = %q; want %q (every variable that starts with SUITEWARD_, in any case, is dropped)", got, want)
+	}
+}
+
+// The children that osExec starts get that environment, not the executor's own.
+func TestTheRuntimeCLIIsStartedWithoutTheExecutorsSettings(t *testing.T) {
+	t.Setenv("SUITEWARD_EXECUTOR_TOKEN", "a-secret-that-must-not-leak")
+	t.Setenv("SUITEWARD_ANYTHING", "1")
+	t.Setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+	t.Setenv("DOCKER_HOST", "unix:///run/test-docker.sock")
+	previous := commandContext
+	commandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return startHelper(ctx, os.Args[0], "-test.run=^TestHelperPrintEnv$", "--", "print-env")
+	}
+	t.Cleanup(func() { commandContext = previous })
+	var out bytes.Buffer
+	if exit, stderr, err := osExec(context.Background(), "docker", []string{"version"}, nil, &out); err != nil || exit != 0 {
+		t.Fatalf("osExec = %d, %q, %v", exit, stderr, err)
+	}
+	printed := out.String()
+	// Only the names of the variables that leaked are reported: the rest of the environment is not for a test log.
+	for _, line := range strings.Split(printed, "\n") {
+		if name, _, _ := strings.Cut(line, "="); strings.HasPrefix(strings.ToUpper(name), "SUITEWARD_") {
+			t.Errorf("the CLI got the variable %s", name)
+		}
+	}
+	for _, want := range []string{"HTTPS_PROXY=http://proxy.invalid:3128", "DOCKER_HOST=unix:///run/test-docker.sock"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("the CLI did not get %s", want)
+		}
+	}
+}
+
+// startHelper is exec.CommandContext. These tests start their own binary with arguments of their own, so gosec's G204 (a subprocess launched
+// with a variable) does not apply.
+var startHelper = exec.CommandContext

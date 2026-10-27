@@ -525,11 +525,11 @@ func TestStatusReportsTheConfiguredRepositories(t *testing.T) {
 	if err := store.RecordFailure(t.Context(), githubsync.Failure{Repo: "acme/down", InstallationID: 2, At: at, Kind: githubsync.FailureTransport}); err != nil {
 		t.Fatal(err)
 	}
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok", "acme/limited", "acme/down", "acme/new"}, store: store, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}}
+	a := &api{executorStatus: idleExecutorStatus(), owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok", "acme/limited", "acme/down", "acme/new"}, store: store, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 
-	want := `{"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":11,"tier":"co-located",
+	want := `{` + idleExecutionJSON + `,"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":11,"tier":"co-located",
 		"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":0,"discarded":0},
 		"outbox":{"pending":0,"delivered":0,"failed":0},
 		"github":[
@@ -552,12 +552,12 @@ func TestStatusShowsTheBudgetOnlyWhenKnown(t *testing.T) {
 		"unknown": {fakeBudget{}, ``},
 	} {
 		t.Run(name, func(t *testing.T) {
-			a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11},
+			a := &api{executorStatus: idleExecutorStatus(), owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11},
 				github: &githubStatus{repos: []string{"acme/ok"}, store: githubsynctest.NewMemory(), ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: test.budget}}
 
 			code, body := call(t, a, http.MethodGet, "/status")
 
-			want := `{"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":11,"tier":"co-located",
+			want := `{` + idleExecutionJSON + `,"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":11,"tier":"co-located",
 				"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":0,"discarded":0},
 				"outbox":{"pending":0,"delivered":0,"failed":0},
 				"github":[{"repo":"acme/ok"}]` + test.want + `}`
@@ -573,12 +573,12 @@ func TestStatusShowsTheLastBootstrapProblemOfARepository(t *testing.T) {
 	problems.set("acme/ok", "origin-not-passed")
 	problems.set("acme/down", "read-failed")
 	problems.clear("acme/down")
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11},
+	a := &api{executorStatus: idleExecutorStatus(), owners: ownertest.NewMemory(), logger: quietLogger(), tier: "co-located", store: fakeStore{version: 11},
 		github: &githubStatus{repos: []string{"acme/ok", "acme/down"}, store: githubsynctest.NewMemory(), ids: &repositoryIDs{}, problems: problems, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 
-	want := `{"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":11,"tier":"co-located",
+	want := `{` + idleExecutionJSON + `,"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":11,"tier":"co-located",
 		"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":0,"discarded":0},
 		"outbox":{"pending":0,"delivered":0,"failed":0},
 		"github":[{"repo":"acme/ok","bootstrap":"origin-not-passed"},{"repo":"acme/down"}]}`
@@ -594,7 +594,7 @@ func (failingRepositories) Repository(context.Context, string) (githubsync.Repos
 }
 
 func TestStatusIsUnavailableWhenTheObservationsCannotBeRead(t *testing.T) {
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok"}, store: failingRepositories{}, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}}
+	a := &api{executorStatus: idleExecutorStatus(), owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 11}, github: &githubStatus{repos: []string{"acme/ok"}, store: failingRepositories{}, ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 

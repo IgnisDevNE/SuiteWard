@@ -352,6 +352,25 @@ func (m *Memory) HeadJobs(ctx context.Context, repositoryID int64, pull int, hea
 	return jobs, nil
 }
 
+// OpenJobs implements execution.Store.
+func (m *Memory) OpenJobs(ctx context.Context, repositoryID int64) ([]execution.Job, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := execution.ValidateRepository(repositoryID); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	jobs := []execution.Job{}
+	for _, id := range m.sortedIDs() {
+		if j := m.jobs[id]; j.RepositoryID == repositoryID && !j.State.Final() {
+			jobs = append(jobs, clone(j))
+		}
+	}
+	return jobs, nil
+}
+
 // Result implements execution.Store.
 func (m *Memory) Result(ctx context.Context, jobID int64) (execution.StoredResult, bool, error) {
 	if err := ctx.Err(); err != nil {

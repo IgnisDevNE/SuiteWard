@@ -37,6 +37,14 @@ func invalid(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidRequest, fmt.Sprintf(format, args...))
 }
 
+// ValidateRepository reports why no repository has this id, as ErrInvalidRequest.
+func ValidateRepository(repositoryID int64) error {
+	if repositoryID <= 0 {
+		return invalid("the repository id must be positive")
+	}
+	return nil
+}
+
 // ValidatePull reports why no pull request has these ids, as ErrInvalidRequest.
 func ValidatePull(repositoryID int64, pull int) error {
 	if repositoryID <= 0 || pull < 1 || pull > math.MaxInt32 {

@@ -169,6 +169,9 @@ func (m *Memory) Complete(ctx context.Context, jobID int64, r execution.Result, 
 	if r.BodyDigest.IsZero() {
 		return execution.Outcome{}, fmt.Errorf("%w: the body digest is required", execution.ErrInvalidRequest)
 	}
+	if err := execution.ValidateGitHubWait(githubWait); err != nil {
+		return execution.Outcome{}, err
+	}
 	now = execution.Stored(now)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -191,7 +194,9 @@ func (m *Memory) Complete(ctx context.Context, jobID int64, r execution.Result, 
 	settled := job.Settle(r, now, githubWait)
 	m.jobs[jobID] = settled.Job
 	if settled.Store {
-		m.results[jobID] = execution.StoredResult{JobID: jobID, Origin: execution.OriginExecutor, ReceivedAt: now, Report: cloneReport(r.Report)}
+		report := cloneReport(r.Report)
+		report.StartedAt, report.EndedAt = execution.Stored(report.StartedAt), execution.Stored(report.EndedAt) // the microseconds PostgreSQL keeps
+		m.results[jobID] = execution.StoredResult{JobID: jobID, Origin: execution.OriginExecutor, ReceivedAt: now, Report: report}
 		if r.Status == execution.StateComplete {
 			m.tests[jobID] = sortTests(r.Tests)
 		}
@@ -220,6 +225,9 @@ func sortTests(tests []execution.Test) []execution.Test {
 // GitHubFailure implements execution.Store.
 func (m *Memory) GitHubFailure(ctx context.Context, jobID int64, now time.Time, githubWait time.Duration) (execution.State, error) {
 	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := execution.ValidateGitHubWait(githubWait); err != nil {
 		return "", err
 	}
 	now = execution.Stored(now)

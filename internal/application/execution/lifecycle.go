@@ -222,10 +222,10 @@ func (j Job) Settle(r Result, now time.Time, githubWait time.Duration) Settlemen
 	return Settlement{Job: next, Store: true}
 }
 
-// Swept is the open job after the sweep (Store.Expire): a lease that ran out counts a failure; then, when no executor was seen for
-// the wait, a pending job is unavailable for no-executor; otherwise a pending job whose reason is github-unavailable is unavailable
-// for github-unavailable once its first failure is a whole wait old, and the service writes its results row. A leased job is never
-// ended by the GitHub bound.
+// Swept is the open job after the sweep (Store.Expire): a lease that ran out counts a failure; then a pending job whose reason is
+// github-unavailable is unavailable for github-unavailable once its first failure is a whole wait old, and the service writes its
+// results row; otherwise, when no executor was seen for the wait, a pending job is unavailable for no-executor. The GitHub bound comes
+// first, so a job past both ends on the cause that is GitHub's. A leased job is never ended by the GitHub bound.
 func (j Job) Swept(p ExpireParams) (next Job, changed, serviceRow bool) {
 	now := Stored(p.Now)
 	next = j
@@ -236,10 +236,10 @@ func (j Job) Swept(p ExpireParams) (next Job, changed, serviceRow bool) {
 		return next, changed, false
 	}
 	switch {
-	case !now.Before(Stored(p.LastSeenAt).Add(p.LeaseWait)):
-		return next.ended(StateUnavailable, ReasonNoExecutor, now), true, false
 	case next.Reason == ReasonGitHubUnavailable && next.githubBoundReached(now, p.GitHubWait):
 		return next.ended(StateUnavailable, ReasonGitHubUnavailable, now), true, true
+	case !now.Before(Stored(p.LastSeenAt).Add(p.LeaseWait)):
+		return next.ended(StateUnavailable, ReasonNoExecutor, now), true, false
 	}
 	return next, changed, false
 }

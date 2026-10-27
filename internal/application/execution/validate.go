@@ -6,6 +6,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 )
@@ -143,6 +144,17 @@ func (r LeaseRequest) Validate(prepare Prepare) error {
 func (p ExpireParams) Validate() error {
 	if p.Now.IsZero() || p.LastSeenAt.IsZero() {
 		return invalid("the sweep needs the time now and the time an executor was last seen")
+	}
+	if p.LeaseWait <= 0 {
+		return invalid("the lease wait must be positive")
+	}
+	return ValidateGitHubWait(p.GitHubWait)
+}
+
+// ValidateGitHubWait reports why a GitHub wait cannot be applied, as ErrInvalidRequest: it must be positive, as it is for a lease.
+func ValidateGitHubWait(wait time.Duration) error {
+	if wait <= 0 {
+		return invalid("the GitHub wait must be positive")
 	}
 	return nil
 }

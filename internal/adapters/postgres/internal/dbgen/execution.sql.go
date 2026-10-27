@@ -587,7 +587,7 @@ FROM execution_jobs
 WHERE (state = 'pending' AND not_before <= $1::timestamptz) OR (state = 'leased' AND lease_expires_at <= $1::timestamptz)
 ORDER BY created_at, job_id
 LIMIT 1
-FOR UPDATE SKIP LOCKED
+FOR NO KEY UPDATE SKIP LOCKED
 `
 
 // The oldest job that a lease may take or must first expire: pending with its not_before reached, or leased with an expired lease. A job that
@@ -697,10 +697,11 @@ const lockExecutionJob = `-- name: LockExecutionJob :one
 SELECT job_id, job_key, repository_id, pull_number, plan, profile, head_sha, base_sha, governing_digest, governing_source, declaration_digest, canonical_level,
        receipt_level, unapproved_paths, changed_paths, changed_total, state, reason, attempts, failures, github_since, not_before, lease_id, lease_expires_at,
        leased_at, deadline_at, created_at, finished_at
-FROM execution_jobs WHERE job_id = $1 FOR UPDATE
+FROM execution_jobs WHERE job_id = $1 FOR NO KEY UPDATE
 `
 
-// Holds the row until the transaction ends.
+// Holds the row until the transaction ends. The lock is FOR NO KEY UPDATE, as is that of the lease and the sweep: the guard trigger forbids a change of the
+// key, and the foreign keys of the approval receipts and the unblocks (which take FOR KEY SHARE) do not wait for a lease that reads GitHub.
 func (q *Queries) LockExecutionJob(ctx context.Context, jobID int64) (ExecutionJob, error) {
 	row := q.db.QueryRow(ctx, lockExecutionJob, jobID)
 	var i ExecutionJob
@@ -775,7 +776,7 @@ SELECT job_id, job_key, repository_id, pull_number, plan, profile, head_sha, bas
 FROM execution_jobs
 WHERE state IN ('pending', 'leased')
 ORDER BY job_id
-FOR UPDATE SKIP LOCKED
+FOR NO KEY UPDATE SKIP LOCKED
 `
 
 // The open jobs for the sweep, locked, in id order. A job that a lease holds is left to the next sweep.

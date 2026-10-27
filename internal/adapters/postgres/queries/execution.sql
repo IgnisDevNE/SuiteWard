@@ -21,12 +21,13 @@ SELECT job_id, job_key, repository_id, pull_number, plan, profile, head_sha, bas
        leased_at, deadline_at, created_at, finished_at
 FROM execution_jobs WHERE job_id = sqlc.arg(job_id);
 
--- Holds the row until the transaction ends.
+-- Holds the row until the transaction ends. The lock is FOR NO KEY UPDATE, as is that of the lease and the sweep: the guard trigger forbids a change of the
+-- key, and the foreign keys of the approval receipts and the unblocks (which take FOR KEY SHARE) do not wait for a lease that reads GitHub.
 -- name: LockExecutionJob :one
 SELECT job_id, job_key, repository_id, pull_number, plan, profile, head_sha, base_sha, governing_digest, governing_source, declaration_digest, canonical_level,
        receipt_level, unapproved_paths, changed_paths, changed_total, state, reason, attempts, failures, github_since, not_before, lease_id, lease_expires_at,
        leased_at, deadline_at, created_at, finished_at
-FROM execution_jobs WHERE job_id = sqlc.arg(job_id) FOR UPDATE;
+FROM execution_jobs WHERE job_id = sqlc.arg(job_id) FOR NO KEY UPDATE;
 
 -- The current job of a key: not cancelled, and not unavailable for executor-not-configured or no-executor (the predicate of the unique index).
 -- name: GetCurrentExecutionJob :one
@@ -46,7 +47,7 @@ FROM execution_jobs
 WHERE (state = 'pending' AND not_before <= sqlc.arg(now)::timestamptz) OR (state = 'leased' AND lease_expires_at <= sqlc.arg(now)::timestamptz)
 ORDER BY created_at, job_id
 LIMIT 1
-FOR UPDATE SKIP LOCKED;
+FOR NO KEY UPDATE SKIP LOCKED;
 
 -- The open jobs for the sweep, locked, in id order. A job that a lease holds is left to the next sweep.
 -- name: OpenExecutionJobs :many
@@ -56,7 +57,7 @@ SELECT job_id, job_key, repository_id, pull_number, plan, profile, head_sha, bas
 FROM execution_jobs
 WHERE state IN ('pending', 'leased')
 ORDER BY job_id
-FOR UPDATE SKIP LOCKED;
+FOR NO KEY UPDATE SKIP LOCKED;
 
 -- The columns that the lifecycle changes; the guard trigger refuses any other move.
 -- name: UpdateExecutionJob :execrows

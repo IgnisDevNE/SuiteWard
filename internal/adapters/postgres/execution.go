@@ -337,6 +337,9 @@ func (s executionStore) Complete(ctx context.Context, jobID int64, r execution.R
 	if r.BodyDigest.IsZero() {
 		return execution.Outcome{}, fmt.Errorf("%w: the body digest is required", execution.ErrInvalidRequest)
 	}
+	if err := execution.ValidateGitHubWait(githubWait); err != nil {
+		return execution.Outcome{}, err
+	}
 	now = execution.Stored(now)
 	var outcome execution.Outcome
 	err := inTx(ctx, s.pool, "execution result", func(transaction pgx.Tx) error {
@@ -377,6 +380,9 @@ func (s executionStore) Complete(ctx context.Context, jobID int64, r execution.R
 
 // GitHubFailure implements execution.Store.
 func (s executionStore) GitHubFailure(ctx context.Context, jobID int64, now time.Time, githubWait time.Duration) (execution.State, error) {
+	if err := execution.ValidateGitHubWait(githubWait); err != nil {
+		return "", err
+	}
 	now = execution.Stored(now)
 	var state execution.State
 	err := inTx(ctx, s.pool, "execution GitHub failure", func(transaction pgx.Tx) error {

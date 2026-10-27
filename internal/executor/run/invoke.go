@@ -102,7 +102,7 @@ func (a *attempt) invoke(ctx context.Context, s *side, tests []goprofile.TestID)
 		// Only the out-of-band signals count, and before the report is read: a report of a killed container says nothing.
 		return nil, refuse(reasonResourceLimit, "the container was killed (out of memory %t, status %d, by the executor %t)", out.OOMKilled, out.ExitCode, out.Killed)
 	case out.Truncated:
-		return nil, refuse(reasonExecutorError, "the report of go test passed %d bytes, and a report that was cut is not read", stdoutLimit)
+		return nil, refuse(reasonResourceLimit, "the output of go test passed %d bytes, and output that was cut is never read", stdoutLimit)
 	}
 	return goprofile.Parse(out.Stdout, out.ExitCode, s.module, tests)
 }

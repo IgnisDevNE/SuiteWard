@@ -29,9 +29,10 @@ func excludedSubBody() string {
 
 const subModule = "module example.com/sub\n"
 
-// A go.mod that only the head has is the candidate's, in a directory that it may have chosen: it must not turn a test of the candidate that go
-// would run into an excluded one, which neither blocks nor counts. The test runs, go cannot resolve its package on the head side, and that
-// reads build-error: FAILS. On the base side, which has no such go.mod, the package resolves.
+// A go.mod that only the head has, and that the approved patterns of the canonical version do not cover, is the candidate's, in a directory that
+// it may have chosen: it must not turn a test of the candidate that go would run into an excluded one, which neither blocks nor counts. The
+// test runs, go cannot resolve its package on the head side, and that reads build-error: FAILS. On the base side, which has no such go.mod,
+// the package resolves.
 func TestAGoModThatOnlyTheHeadHasDoesNotExcludeTheTestsUnderIt(t *testing.T) {
 	body, rt := nestedReceipt(t,
 		repo{"go.mod": goMod, "lib.go": "package m\n", "sub/go.mod": subModule, "sub/sub_test.go": subTest},
@@ -58,13 +59,32 @@ func TestAGoModThatTheMergeBaseHasKeepsTheTestsUnderItExcluded(t *testing.T) {
 	}
 }
 
-// A go.mod that the revision's manifest lists is protected: the exclusion stays, whether or not the base has it.
-func TestAGoModThatTheManifestListsKeepsTheTestsUnderItExcluded(t *testing.T) {
+// The manifest of a receipt job is the canonical version that the revision expects, and not the revision's own manifest. A go.mod that it
+// lists is protected: the exclusion stays, whether or not the base has it.
+func TestAGoModThatTheExpectedCanonicalListsKeepsTheTestsUnderItExcluded(t *testing.T) {
 	body, rt := nestedReceipt(t,
 		repo{"go.mod": goMod, "lib.go": "package m\n", "sub/go.mod": subModule, "sub/sub_test.go": subTest},
 		repo{"go.mod": goMod, "lib.go": "package m\n"},
 		repo{".suiteward.yml": declaration, "sub/go.mod": subModule})
 	assertBody(t, body, excludedSubBody())
+	if n := len(rt.invocations()); n != 0 {
+		t.Errorf("%d containers ran go test for a test that is excluded", n)
+	}
+}
+
+// The revision's manifest is the head's files under the approved patterns of the canonical version. A go.mod that the head adds under such a
+// pattern is a protected file of the revision, as a real nested module of the repository would be: the exclusion stays. (A pull request that
+// adds a nested module at a protected path would otherwise read FAILS, and could never be approved under receipt: required.)
+func TestAGoModThatTheHeadAddsUnderAnApprovedPatternKeepsTheTestsUnderItExcluded(t *testing.T) {
+	const approved = "version: 1\ninclude:\n  - \"**/*_test.go\"\n  - \"x/**\"\nexecution:\n  profile: go\n"
+	body, rt := nestedReceipt(t,
+		repo{"go.mod": goMod, "lib.go": "package m\n", "x/go.mod": subModule, "x/x_test.go": subTest},
+		repo{"go.mod": goMod, "lib.go": "package m\n"},
+		repo{".suiteward.yml": approved})
+	assertBody(t, body, `{
+		"status": "complete", "head": {"sha": "`+headSHA+`"}, "base": {"sha": "`+baseSHA+`"}, `+commonExecutor+`, `+commonSandbox+`,
+		"tests": [{"package": "x", "name": "TestSub", "file": "x/x_test.go", "kind": "added", "excluded": "nested-module"}]
+	}`)
 	if n := len(rt.invocations()); n != 0 {
 		t.Errorf("%d containers ran go test for a test that is excluded", n)
 	}

@@ -62,7 +62,7 @@ func everyBody(t *testing.T) map[string]string {
 		}
 		add("check ready with counts "+tier, func() string {
 			c := check(commandtext.CheckSuccess, "ready")
-			c.Tier, c.Execution = value, ran()
+			c.Tier, c.Execution = value, passed()
 			_, s := commandtext.CheckSummary(c)
 			return s
 		})

@@ -30,7 +30,12 @@ var requiredReasons = []struct {
 	{commandtext.CheckFailure, "canonical-failing", "Canonical tests failing", "fails, is missing or is flaky", "failure"},
 }
 
-// ran is the counts of a complete canonical run: 14 tests ran, and 3 are excluded.
+// passed is the counts of a complete canonical run that no test blocks: 12 tests ran, and 3 are excluded.
+func passed() *commandtext.CheckExecution {
+	return &commandtext.CheckExecution{Tests: 12, Passed: 9, Skipped: 3, Excluded: 3}
+}
+
+// ran is the counts of a complete canonical run with a test that blocks: 14 tests ran, and 3 are excluded.
 func ran() *commandtext.CheckExecution {
 	return &commandtext.CheckExecution{Tests: 14, Passed: 9, Skipped: 2, Failed: 1, Missing: 1, Flaky: 1, Excluded: 3}
 }
@@ -82,15 +87,17 @@ func TestRequiredCheckSummaryStatesTheCountsOfACompleteRun(t *testing.T) {
 		name   string
 		reason string
 		state  commandtext.CheckState
+		counts *commandtext.CheckExecution
+		ran    string
 	}{
-		{"failing", "canonical-failing", commandtext.CheckFailure},
-		{"ready", "ready", commandtext.CheckSuccess},
-		{"unchanged", "unchanged", commandtext.CheckSuccess},
+		{"failing", "canonical-failing", commandtext.CheckFailure, ran(), "14 tests ran: 9 passed, 2 skipped, 1 failed, 1 missing, 1 flaky."},
+		{"ready", "ready", commandtext.CheckSuccess, passed(), "12 tests ran: 9 passed, 3 skipped, 0 failed, 0 missing, 0 flaky."},
+		{"unchanged", "unchanged", commandtext.CheckSuccess, passed(), "12 tests ran: 9 passed, 3 skipped, 0 failed, 0 missing, 0 flaky."},
 	} {
 		c := check(tc.state, tc.reason)
-		c.Execution = ran()
+		c.Execution = tc.counts
 		title, summary := checkText(t, c)
-		for _, w := range []string{"14 tests ran: 9 passed, 2 skipped, 1 failed, 1 missing, 1 flaky.", "Excluded tests (not run): 3. Excluded tests are not covered.", requiredClosing} {
+		for _, w := range []string{tc.ran, "Excluded tests (not run): 3. Excluded tests are not covered.", requiredClosing} {
 			if !strings.Contains(summary, w) {
 				t.Errorf("%s: summary lacks %q:\n%s", tc.name, w, summary)
 			}
@@ -143,7 +150,7 @@ func TestRequiredCheckSummaryStatesTheTierAndHoldsNoRepositoryText(t *testing.T)
 	claim := regexp.MustCompile(`(?i)\bcoverage\b|all tests pass|build passed|ci passed`)
 	variants := []commandtext.Check{requiredCheck("canonical-pending"), requiredCheck("canonical-unavailable"), requiredCheck("canonical-failing")}
 	ready := check(commandtext.CheckSuccess, "ready")
-	ready.Execution = ran()
+	ready.Execution = passed()
 	unblocked := check(commandtext.CheckSuccess, "unchanged")
 	unblocked.Unblocked = true
 	variants = append(variants, ready, unblocked)
@@ -186,7 +193,8 @@ func TestCheckSummaryRefusesRequiredFieldsThatDoNotFit(t *testing.T) {
 		"an unblock on an approval that is missing":  with(check(commandtext.CheckInProgress, "approval-missing"), unblock),
 		"an unblock on a pending run":                with(requiredCheck("canonical-pending"), unblock),
 		"an unblock on a failing run":                with(requiredCheck("canonical-failing"), unblock),
-		"an unblock with counts":                     with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { counts(c); unblock(c) }),
+		"an unblock with counts":                     with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = passed(); unblock(c) }),
+		"a success with a failing test":              with(check(commandtext.CheckSuccess, "ready"), counts),
 		"an unblock on a runner block":               with(check(commandtext.CheckInProgress, "runner-uncovered"), unblock),
 		"a pending run that is a failure":            with(requiredCheck("canonical-pending"), func(c *commandtext.Check) { c.State = commandtext.CheckFailure }),
 		"a failing run that is in progress":          with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.State = commandtext.CheckInProgress }),

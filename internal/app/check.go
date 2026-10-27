@@ -67,8 +67,8 @@ type checkExecution struct {
 	Excluded int `json:"excluded"`
 }
 
-// gateReasons are the reasons of a check that the canonical gate holds, whose summary is the one of canonical: required (the texts are those of the publisher).
-var gateReasons = []string{reasonCanonicalPending, reasonCanonicalUnavailable, reasonCanonicalFailing}
+// canonicalGateReasons are the reasons of a check that the canonical gate holds, whose summary is the one of canonical: required (the texts are those of the publisher).
+var canonicalGateReasons = []string{reasonCanonicalPending, reasonCanonicalUnavailable, reasonCanonicalFailing}
 
 // output validates the payload and renders the title and the summary of its check run; key only names the
 // message in an error, which never quotes the payload.
@@ -149,7 +149,7 @@ func newCheckMessageOf(repo string, r checks.Result, tier, version string, gener
 	}
 	key := fmt.Sprintf("%s:%d:%d:%d", checkKey, r.RepositoryID, r.PullNumber, generation)
 	var err error
-	if slices.Contains(gateReasons, p.Reason) || p.Execution != nil || p.Unblocked {
+	if slices.Contains(canonicalGateReasons, p.Reason) || p.Execution != nil || p.Unblocked {
 		_, err = p.check(key)
 	} else {
 		_, _, err = p.output(key)

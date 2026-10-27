@@ -178,10 +178,12 @@ func TestLeaseRefusesAnAnswerThatBreaksTheContract(t *testing.T) {
 		"a manifest file digest of no kind": func(a map[string]any) {
 			a["manifest"].(map[string]any)["files"] = []any{map[string]any{"path": "a", "digest": "abc"}}
 		},
-		"no deadline":              func(a map[string]any) { delete(a, "deadlineAt") },
-		"a limit of zero":          func(a map[string]any) { a["limits"].(map[string]any)["cpus"] = 0 },
-		"a negative limit":         func(a map[string]any) { a["limits"].(map[string]any)["fileBytes"] = -1 },
-		"a negative rerun count":   func(a map[string]any) { a["limits"].(map[string]any)["reruns"] = -1 },
+		"no deadline":            func(a map[string]any) { delete(a, "deadlineAt") },
+		"a limit of zero":        func(a map[string]any) { a["limits"].(map[string]any)["cpus"] = 0 },
+		"a negative limit":       func(a map[string]any) { a["limits"].(map[string]any)["fileBytes"] = -1 },
+		"a negative rerun count": func(a map[string]any) { a["limits"].(map[string]any)["reruns"] = -1 },
+		// A test has at most 3 observations (the first run and 2 reruns), so more reruns than 2 cannot be reported.
+		"three reruns":             func(a map[string]any) { a["limits"].(map[string]any)["reruns"] = 3 },
 		"a tmpfs over the memory":  func(a map[string]any) { a["limits"].(map[string]any)["tmpfsMiB"] = 4096 },
 		"a limit past any machine": func(a map[string]any) { a["limits"].(map[string]any)["memoryMiB"] = int64(1) << 60 },
 	} {
@@ -451,5 +453,16 @@ func TestOriginsThatAreAccepted(t *testing.T) {
 	}
 	if _, err := New("https://suiteward.example.com", ""); err == nil {
 		t.Error("New accepted an empty token")
+	}
+}
+
+func TestLeaseTakesNoRerunsAndTwo(t *testing.T) {
+	for _, reruns := range []int{0, 1, 2} {
+		answer := leaseAnswer()
+		answer["limits"].(map[string]any)["reruns"] = reruns
+		s := serve(t, func(w http.ResponseWriter, r *http.Request) { writeJSON(w, http.StatusOK, answer) })
+		if lease, err := newClient(t, s).Lease(context.Background()); err != nil || lease.Limits.Reruns != reruns {
+			t.Errorf("a lease with %d reruns gave %v", reruns, err)
+		}
 	}
 }

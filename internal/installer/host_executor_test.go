@@ -402,7 +402,7 @@ func TestPrepareHostWritesTheExecutorUnitForTheUserManagerOfTheExecutorOnly(t *t
 		"Environment=SUITEWARD_EXECUTOR_URL=http://127.0.0.1:27081",
 		"Environment=SUITEWARD_EXECUTOR_TOKEN_FILE=/etc/suiteward/executor-token",
 		"Environment=SUITEWARD_EXECUTOR_RUNTIME=podman",
-		"MemoryMax=2G", "MemorySwapMax=0", "Restart=always", "WantedBy=default.target",
+		"MemoryMax=3G", "MemorySwapMax=0", "TimeoutStopSec=45", "Restart=always", "WantedBy=default.target",
 	} {
 		if !slices.Contains(lines, want) {
 			t.Errorf("the unit lacks %q:\n%s", want, unit)

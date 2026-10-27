@@ -105,7 +105,7 @@ func TestDoctorIsolatedExecutorFailures(t *testing.T) {
 		{"the rule unit is not active", []rule{{match: "=show --property=ActiveState --value " + executorBlockUnit, out: "inactive\n"}}, "executor.network", []string{executorBlockUnit, "inactive"}, "install host"},
 		{"no unit", []rule{{match: "=" + executorUnitPath, err: errors.New("cat: no such file")}}, "executor.unit", []string{executorUnitPath}, "install host"},
 		{"the unit names another port", []rule{{match: "=" + executorUnitPath, out: strings.Replace(mustUnit(t, 27081), "27081", "9", 1)}}, "executor.unit", []string{"127.0.0.1:9"}, "--http-port"},
-		{"another unit", []rule{{match: "=" + executorUnitPath, out: strings.Replace(mustUnit(t, 0), "MemoryMax=2G", "MemoryMax=infinity", 1)}}, "executor.unit", []string{"differs"}, "install host"},
+		{"another unit", []rule{{match: "=" + executorUnitPath, out: strings.Replace(mustUnit(t, 0), "MemoryMax=3G", "MemoryMax=infinity", 1)}}, "executor.unit", []string{"differs"}, "install host"},
 		{"no binary", []rule{{match: "=" + executorBinary, err: errors.New("sha256sum: no such file")}}, "executor.binary", []string{executorBinary}, "install host"},
 		{"a binary that changed since it was installed", []rule{{match: "=" + executorBinary, out: strings.Repeat("0", 64) + "  x\n"}}, "executor.binary", []string{"changed"}, "install host"},
 		{"a binary of another build than this program", []rule{{match: "=" + executorPin, out: strings.Repeat("0", 64) + "  suiteward_v0.4.0_linux_amd64\n"}, {match: "=" + executorBinary, out: strings.Repeat("0", 64) + "  x\n"}}, "executor.binary", []string{"another build"}, "install host"},

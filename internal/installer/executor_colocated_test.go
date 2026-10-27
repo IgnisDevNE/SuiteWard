@@ -97,7 +97,7 @@ func TestInstallStartsTheExecutorAsASystemdUserUnitOnLinux(t *testing.T) {
 		`Environment="SUITEWARD_EXECUTOR_RUNTIME=podman"`,
 		`Environment="CONTAINER_CONNECTION=pm"`, // the executor must reach the engine the installer chose, and its CLI inherits this
 		`Environment="PATH=/opt/podman/bin:/usr/bin"`,
-		"Restart=always", "WantedBy=default.target",
+		"TimeoutStopSec=45", "Restart=always", "WantedBy=default.target", // the executor gives a job 30 s after SIGTERM: the stop timeout exceeds it
 	} {
 		if !slices.Contains(lines, want) {
 			t.Errorf("the unit lacks %s:\n%s", want, unit)
@@ -124,7 +124,7 @@ func TestInstallStartsTheExecutorAsALaunchAgentOnMacOS(t *testing.T) {
 		"<key>SUITEWARD_EXECUTOR_URL</key><string>http://127.0.0.1:18081</string>",
 		"<key>SUITEWARD_EXECUTOR_RUNTIME</key><string>podman</string>",
 		"<key>CONTAINER_CONNECTION</key><string>pm</string>",
-		"<key>RunAtLoad</key><true/>", "<key>KeepAlive</key><true/>",
+		"<key>RunAtLoad</key><true/>", "<key>KeepAlive</key><true/>", "<key>ExitTimeOut</key><integer>45</integer>",
 	} {
 		if !strings.Contains(plist, want) {
 			t.Errorf("the plist lacks %s:\n%s", want, plist)
@@ -399,5 +399,25 @@ func TestUninstallPurgeRemovesTheExecutorsTokenCopyToo(t *testing.T) {
 	}
 	if !strings.Contains(un.out.String(), executorTokenPath(h)) {
 		t.Errorf("a purge says what it deletes, and the executor's token copy is one of them:\n%s", un.out.String())
+	}
+}
+
+// The executor removes every suiteward-sandbox container of its engine when it starts: two executors on one engine would remove each other's
+// sandboxes, so the installer says so where it installs one, on both tiers.
+func TestTheInstallsSayThatAnEngineHasOneExecutor(t *testing.T) {
+	h := newHarness(t, "linux")
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	if out := h.out.String(); !strings.Contains(out, "one executor") || !strings.Contains(out, "suiteward-sandbox-") {
+		t.Errorf("the co-located install must say that an engine has one executor, and why:\n%s", out)
+	}
+	host := newHostFake()
+	out, err := runHost(t, host, declineMetadataRule, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "one executor") || !strings.Contains(out, "suiteward-sandbox-") {
+		t.Errorf("the host step must say that an engine has one executor, and why:\n%s", out)
 	}
 }

@@ -4,6 +4,7 @@ package run
 
 import (
 	"context"
+	"encoding/json"
 	"os/exec"
 	"slices"
 	"strings"
@@ -109,4 +110,67 @@ func TestAReceiptRunsATinyModuleOnRealDocker(t *testing.T) {
 			{"package": ".", "name": "TestInert", "file": "lib_test.go", "kind": "added", "head": ["pass"], "base": ["pass"]}
 		]
 	}`)
+}
+
+const sleepingTest = `package tiny
+
+import (
+	"testing"
+	"time"
+)
+
+func TestSleeps(t *testing.T) { time.Sleep(time.Hour) }
+`
+
+// After the signal the job in flight has the grace; when it is over the executor kills the container through the sandbox, posts nothing
+// and stops cleanly. The test's sleeper ends the grace at once, and the test then looks for the container that the job made.
+func TestTheGraceAfterTheSignalKillsTheContainerOnRealDocker(t *testing.T) {
+	rt := dockerRuntime(t)
+	before := sandboxContainers(t)
+	t.Cleanup(func() {
+		for _, name := range sandboxContainers(t) {
+			if !slices.Contains(before, name) {
+				t.Errorf("the sandbox container %s was left behind", name)
+				_ = docker("docker", "rm", "--force", name).Run()
+			}
+		}
+	})
+
+	s := canonicalScenario()
+	s.head = repo{"go.mod": tinyModule, "lib.go": "package tiny\n"}
+	s.manifest = repo{".suiteward.yml": declaration, "lib_test.go": sleepingTest}
+	svc := newService(t, s.serve(1))
+	d := start(t, svc, rt, func(_ *Config, d *driver) { d.sleeps.immediate, d.patience = 1, 2*time.Minute })
+
+	// The first container asks the image for its Go and ends at once; the container of go test is the one that the signal must stop.
+	deadline := time.Now().Add(2 * time.Minute)
+	for !runsGoTest(before, sandboxContainers(t)) {
+		if time.Now().After(deadline) {
+			t.Fatal("the job never made the container of go test")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	d.cancel() // the signal: the grace is over at once, and the work is dropped
+	if err := d.stopped(); err != nil {
+		t.Errorf("Run = %v; want a clean stop", err)
+	}
+	d.noResult()
+	if left := sandboxContainers(t); len(left) != len(before) {
+		t.Errorf("the sandbox containers are %v after the job was dropped; want those that were there before: its container was killed and removed", left)
+	}
+}
+
+// runsGoTest says whether one of the containers that are not in before has go test among its arguments.
+func runsGoTest(before, now []string) bool {
+	for _, name := range now {
+		if slices.Contains(before, name) {
+			continue
+		}
+		out, err := docker("docker", "inspect", "--type", "container", "--format", "{{json .Args}}", name).Output()
+		var args []string
+		if err == nil && json.Unmarshal(out, &args) == nil && slices.Contains(args, "-run") {
+			return true
+		}
+	}
+	return false
 }

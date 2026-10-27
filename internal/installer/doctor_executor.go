@@ -45,7 +45,7 @@ func (d *doctor) checkExecutorIsolated(ctx context.Context) {
 		notSeen:    "read the executor's log; " + d.hostStep() + " again, then the install as the service account, so that both hold one token and one port",
 	})
 	// The storage of the executor's Podman is its own, and this account cannot read it: the host step is what pulls the image and checks it by digest.
-	d.pass("executor.image", "the Go image of the sandboxes is in the storage of "+ExecutorAccount+", which this account cannot read: it is not checked here, the host step pulls it and verifies its digest at every run (run `sudo "+d.deps.command()+" install host` again after an upgrade)")
+	d.pass("executor.image", "the Go image of the sandboxes is in the storage of "+ExecutorAccount+", which this account cannot read: it is not checked here, the host step pulls it and verifies its digest at every run (run `sudo "+d.deps.command()+" install host --sha256sums <the SHA256SUMS of the release>` again after an upgrade)")
 }
 
 // subidRange is the range an account has in /etc/subuid or /etc/subgid.

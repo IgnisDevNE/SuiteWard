@@ -308,9 +308,16 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		}
 	}
 	var executed executionOutcome
-	if !d.wait { // a head that could not be assessed is planned for once it is
-		if executed, err = j.executionStep(ctx, s, x, assessed, &d); err != nil {
-			return "", err
+	var stepErr error // the step of execution failed: the check is held, and the failure is returned once the check is published
+	if !d.wait {      // a head that could not be assessed is planned for once it is
+		if executed, stepErr = j.executionStep(ctx, s, x, assessed, &d); stepErr != nil {
+			if cancelled := ctx.Err(); cancelled != nil {
+				return "", cancelled
+			}
+			// As when the head cannot be assessed: the stored check of this head, or assessment-pending, so that a head always has a check and none of them is a
+			// success that was not decided. The run goes on, and /status says failed.
+			executed, d.wait = executionOutcome{}, true
+			j.overrideWait(s, &d)
 		}
 	}
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
@@ -325,7 +332,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err := j.commentAfterCheck(ctx, s, d.result, runners); err != nil {
 		return "", err
 	}
-	return d.problem, nil
+	return d.problem, stepErr
 }
 
 func (j *checksJob) pullState(ctx context.Context, enrollment owner.State, p owner.ProjectPolicy, suite suiteView, pull githubsync.PullState) (*pullState, error) {

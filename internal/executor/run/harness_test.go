@@ -784,3 +784,78 @@ func (d *driver) tick() {
 		d.t.Fatal("nothing took the tick")
 	}
 }
+
+// logRecord is a line that the executor logged: its message and its attributes.
+type logRecord struct {
+	msg   string
+	attrs map[string]any
+}
+
+// logRecorder is a slog.Handler that keeps what is logged, so that a test can wait for a line and read its attributes.
+type logRecorder struct {
+	records chan logRecord
+	attrs   []slog.Attr
+}
+
+func newLogRecorder() *logRecorder { return &logRecorder{records: make(chan logRecord, 256)} }
+
+func (l *logRecorder) Enabled(context.Context, slog.Level) bool { return true }
+
+func (l *logRecorder) Handle(_ context.Context, r slog.Record) error {
+	rec := logRecord{msg: r.Message, attrs: map[string]any{}}
+	for _, a := range l.attrs {
+		rec.attrs[a.Key] = a.Value.Any()
+	}
+	r.Attrs(func(a slog.Attr) bool { rec.attrs[a.Key] = a.Value.Any(); return true })
+	select {
+	case l.records <- rec:
+	default: // the executor is never made to wait for a test
+	}
+	return nil
+}
+
+func (l *logRecorder) WithAttrs(attrs []slog.Attr) slog.Handler {
+	c := *l
+	c.attrs = append(slices.Clone(l.attrs), attrs...)
+	return &c
+}
+
+func (l *logRecorder) WithGroup(string) slog.Handler { return l }
+
+// droppedOrPosted waits for the executor to say that it dropped the work, and fails the test when a result is posted first.
+func (d *driver) droppedOrPosted(logs *logRecorder) logRecord {
+	d.t.Helper()
+	for {
+		select {
+		case rec := <-logs.records:
+			if rec.msg == "the work was dropped and nothing is posted" {
+				return rec
+			}
+		case p := <-d.svc.posts:
+			d.t.Fatalf("a result was posted: %s", p.body)
+		case err := <-d.done:
+			d.done <- err
+			d.t.Fatalf("the executor stopped (%v) before it dropped the work", err)
+		case <-time.After(d.patience):
+			d.t.Fatal("the work was neither dropped nor posted")
+		}
+	}
+}
+
+// assertWaits checks that the executor waited exactly this many times for the deadline of an attempt and for the grace after the signal,
+// and for nothing else of the kinds that a job in flight waits for.
+func (s *sleeper) assertWaits(t *testing.T, deadlines, graces int, what string) {
+	t.Helper()
+	var gotDeadlines, gotGraces int
+	for _, w := range s.durations() {
+		switch waitKindOf(w) {
+		case deadlineWait:
+			gotDeadlines++
+		case graceWait:
+			gotGraces++
+		}
+	}
+	if gotDeadlines != deadlines || gotGraces != graces {
+		t.Errorf("%s: the waits were %v, %d for the deadline and %d for the grace; want %d and %d", what, s.durations(), gotDeadlines, gotGraces, deadlines, graces)
+	}
+}

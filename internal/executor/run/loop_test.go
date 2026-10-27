@@ -3,6 +3,7 @@ package run
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -103,13 +104,30 @@ func TestAHeartbeatThatFailsOtherwiseDoesNotStopTheWork(t *testing.T) {
 	d.result()
 }
 
-func TestAJobPastItsDeadlineIsDroppedWithoutAResult(t *testing.T) {
-	s := canonicalScenario()
+// A lease that is already past its deadline less the margin never runs: it is dropped before the attempt starts, with the deadline as the
+// cause, nothing is posted, and the executor goes on to the next job. The test waits for the drop, or for a post, and then for the executor to
+// ask again, so that a result that is still on its way cannot slip past a check.
+func TestAJobPastItsDeadlineIsDroppedAtOnceAndNeverRuns(t *testing.T) {
+	s := withTests()
 	s.deadline = time.Now().Add(-time.Minute)
-	svc := newService(t, s.serve(1))
-	d := start(t, svc, newRuntime(nil), func(_ *Config, d *driver) { d.sleeps.reached = make(chan struct{}) })
-	wait(d, d.sleeps.reached)
+	sv, rt := s.serve(1), newRuntime(passing)
+	logs := newLogRecorder()
+	d := start(t, newService(t, sv), rt, func(cfg *Config, d *driver) {
+		cfg.Log = slog.New(logs)
+		d.sleeps.reached, d.patience = make(chan struct{}), 10*time.Second
+	})
+	rec := d.droppedOrPosted(logs)
+	if cause, _ := rec.attrs["cause"].(error); !errors.Is(cause, context.DeadlineExceeded) {
+		t.Errorf("the work was dropped with the cause %v; want the deadline", rec.attrs["cause"])
+	}
+	wait(d, d.sleeps.reached) // the executor handled the job and asked for the next one, which was a 204
 	d.noResult()
+	if n := sv.results.Load(); n != 0 {
+		t.Errorf("%d results were posted for a lease past its deadline", n)
+	}
+	if n := rt.probeCount() + len(rt.invocations()); n != 0 {
+		t.Errorf("%d containers ran for a lease past its deadline", n)
+	}
 }
 
 func TestTheResultIsPostedOnceWhateverTheServiceAnswers(t *testing.T) {
@@ -159,9 +177,7 @@ func TestOnShutdownTheExecutorLeasesNoMoreAndFinishesTheJobInFlight(t *testing.T
 	if n := svc.leaseRequests(); n != 1 {
 		t.Errorf("%d lease requests; the executor stops leasing at the signal", n)
 	}
-	if !slices.Contains(d.sleeps.durations(), 30*time.Second) {
-		t.Errorf("the executor waited %v; one wait is the 30 s grace of the job in flight", d.sleeps.durations())
-	}
+	d.sleeps.assertWaits(t, 1, 1, "the job in flight waits once for its deadline and once, after the signal, for the grace")
 }
 
 // The grace is 30 s from the signal. When it is over the work is dropped (the sandbox kills the container with its context), nothing is
@@ -180,9 +196,7 @@ func TestAJobInFlightIsAbandonedWhenTheGraceAfterTheSignalIsOver(t *testing.T) {
 	if n := sv.results.Load(); n != 0 {
 		t.Errorf("%d results were posted by a job that was abandoned", n)
 	}
-	if !slices.Contains(d.sleeps.durations(), 30*time.Second) {
-		t.Errorf("the executor waited %v; one wait is the 30 s grace", d.sleeps.durations())
-	}
+	d.sleeps.assertWaits(t, 1, 1, "the job in flight waits once for its deadline and once, after the signal, for the grace")
 	if n := svc.leaseRequests(); n != 1 {
 		t.Errorf("%d lease requests; the executor leases nothing after the signal", n)
 	}

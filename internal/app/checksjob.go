@@ -209,7 +209,9 @@ type bootstrapCarrier struct {
 func (j *checksJob) suite(ctx context.Context, p owner.ProjectPolicy) (suiteView, error) {
 	project := owner.ProjectID(p.RepositoryID)
 	var view suiteView
+	entered := false // Do answers ErrNotFound before it runs the work when the Suite does not exist: one that comes later is a read that failed
 	err := j.suites.Do(ctx, project, defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		entered = true
 		state, err := tx.Suite(ctx)
 		if err != nil {
 			return fmt.Errorf("load suite: %w", err)
@@ -238,7 +240,7 @@ func (j *checksJob) suite(ctx context.Context, p owner.ProjectPolicy) (suiteView
 		view.carrier = bootstrapCarrier{found: true, pull: pull, branch: current.OriginKind() == contract.OriginBranch, reference: current.Binding().Reference()}
 		return nil
 	})
-	if errors.Is(err, governance.ErrNotFound) { // no Suite yet: the bootstrap creates it
+	if errors.Is(err, governance.ErrNotFound) && !entered { // no Suite yet: the bootstrap creates it
 		return suiteView{}, nil
 	}
 	if err != nil || view.canonical == "" {

@@ -672,9 +672,7 @@ func TestTheSuiteViewFailsWhenTheLatestBootstrapProposalCannotBeRead(t *testing.
 		t.Fatal(err)
 	}
 
-	view, err := w.check.suite(t.Context(), enrollment.Projects[0])
-
-	if err == nil || view.exists {
-		t.Fatalf("suite = exists %v, error %v; want an error and no view", view.exists, err)
+	if _, err := w.check.suite(t.Context(), enrollment.Projects[0]); err == nil {
+		t.Fatal("suite = no error; want the failure of the read, not an empty view")
 	}
 }

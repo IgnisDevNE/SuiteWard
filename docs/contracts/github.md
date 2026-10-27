@@ -153,7 +153,7 @@ All of these use the synchronization token: `{metadata, pull_requests, contents}
 
 ## M2.1: execution reads (normative)
 
-[ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md) needs three reads that the service makes for the executor: the archive of a commit, the tree entries of a commit, and the merge base of a head. The archive read is written (task M2.1-T6, with its tests); the other two are specified here for M2.1-T4 and M2.1-T8. A † marks a name that task A0 chose.
+[ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md) needs three reads that the service makes for the executor: the archive of a commit, the tree entries of a commit, and the merge base of a head. All three are written, each with its tests: `Reader.Archive` (`internal/adapters/github/archive.go`), `Reader.TreeEntries` (`treeentries.go`) and `Reader.MergeBase` (`mergebase.go`). None has run against the real GitHub yet: the live test of the M2.1 verification is below. A † marks a name that task A0 chose.
 
 - **Permissions.** No new App permission, and still no Contents write ([D-GITHUB-ACCESS](../plan/decisions.md#d-github-access-github-app-permissions-and-token-lifecycle)).
   - The archive download requests its own map, `{metadata: read, contents: read}` (`archivePermissions` in `internal/app/github.go`), and nothing else uses it. It is the contents of a commit and nothing a pull request or a check could use.

@@ -183,3 +183,23 @@ func pathExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
+
+// instanceTokenFile is the token file of the instance a command works on: --token-file, else the per-user default.
+func instanceTokenFile(r *Resolver, d Deps) (string, error) {
+	if file := r.preset("token-file", ""); file != "" {
+		return file, nil
+	}
+	return defaultTokenFile(d)
+}
+
+// refreshExecutor is what an upgrade at the installed release does about the executor: the same as an install, so that a program that was
+// replaced since reaches the executor's copy, and an executor that stopped is started. It needs the token copy that the install made.
+func refreshExecutor(ctx context.Context, r *Resolver, env Env, rt Runtime, s Settings) error {
+	tokenFile, err := instanceTokenFile(r, env.Deps)
+	if err != nil {
+		return err
+	}
+	c := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, tokenFile: tokenFile}
+	c.setUpExecutor(ctx)
+	return nil
+}

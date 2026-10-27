@@ -23,9 +23,10 @@ func (x *cjExecWorld) approve(id int64, minute int, mode string) cjComment {
 	return x.sayWithCode(id, minute, command, 0)
 }
 
-// cjCounts is the counts of the acknowledgment of a refusal that the receipt did not meet: the states and the marker lines, with every key present.
-func cjCounts(detects, inert, newAPI, fails, missing, flaky, skipped, excluded, markers int) map[string]any {
-	return map[string]any{"detects": detects, "inert": inert, "newApi": newAPI, "fails": fails, "missing": missing, "flaky": flaky, "skipped": skipped, "excluded": excluded, "markers": markers}
+// cjCounts is the counts of the acknowledgment of a refusal that the receipt did not meet: the states, the marker lines and the changed test files that do not parse,
+// with every key present.
+func cjCounts(detects, inert, newAPI, fails, missing, flaky, skipped, excluded, markers, unparsed int) map[string]any {
+	return map[string]any{"detects": detects, "inert": inert, "newApi": newAPI, "fails": fails, "missing": missing, "flaky": flaky, "skipped": skipped, "excluded": excluded, "markers": markers, "unparsed": unparsed}
 }
 
 // gateWant is the approval receipt that a gate should record for the job that the case set up.
@@ -78,7 +79,7 @@ func TestTheReceiptGateDecidesAnApprove(t *testing.T) {
 		{"required: a complete receipt that meets the mode", "required", true, func(x *cjExecWorld) execution.Job { return x.receiptJob(detects, 0, nil) }, "fix",
 			commands.Processed, nil, gateOf(required, execution.RunComplete, execution.SummaryMet, false)},
 		{"required: a receipt that does not meet the mode", "required", true, func(x *cjExecWorld) execution.Job { return x.receiptJob(inert, 2, nil) }, "fix",
-			commands.ReceiptRefused, with(map[string]any{"reason": "mode-not-met", "mode": "fix", "counts": cjCounts(0, 1, 0, 0, 0, 0, 0, 0, 2)}),
+			commands.ReceiptRefused, with(map[string]any{"reason": "mode-not-met", "mode": "fix", "counts": cjCounts(0, 1, 0, 0, 0, 0, 0, 0, 2, 0)}),
 			gateOf(required, execution.RunComplete, execution.SummaryNotMet, false)},
 		{"required: an empty receipt needs no mode", "required", true, func(x *cjExecWorld) execution.Job { return x.receiptJob(nil, 0, nil) }, "",
 			commands.Processed, nil, gateOf(required, execution.RunComplete, "", false)},
@@ -90,7 +91,11 @@ func TestTheReceiptGateDecidesAnApprove(t *testing.T) {
 		}, "", commands.ReceiptRefused, with(map[string]any{"reason": "mode-required"}), gateOf(required, execution.RunComplete, "", false)},
 		{"required: a changed test file that does not parse blocks every mode", "required", true, func(x *cjExecWorld) execution.Job {
 			return x.receiptJob(detects, 0, []string{"a_test.go"})
-		}, "fix", commands.ReceiptRefused, with(map[string]any{"reason": "mode-not-met", "mode": "fix", "counts": cjCounts(1, 0, 0, 0, 0, 0, 0, 0, 0)}),
+		}, "fix", commands.ReceiptRefused, with(map[string]any{"reason": "mode-not-met", "mode": "fix", "counts": cjCounts(1, 0, 0, 0, 0, 0, 0, 0, 0, 1)}),
+			gateOf(required, execution.RunComplete, execution.SummaryNotMet, false)},
+		{"required: changed test files that do not parse and nothing else: the refusal states how many", "required", true, func(x *cjExecWorld) execution.Job {
+			return x.receiptJob(nil, 0, []string{"a_test.go", "pkg/b_test.go", "pkg/c_test.go"})
+		}, "fix", commands.ReceiptRefused, with(map[string]any{"reason": "mode-not-met", "mode": "fix", "counts": cjCounts(0, 0, 0, 0, 0, 0, 0, 0, 0, 3)}),
 			gateOf(required, execution.RunComplete, execution.SummaryNotMet, false)},
 		{"required: a receipt that does not apply needs no mode", "required", false, func(x *cjExecWorld) execution.Job { return execution.Job{} }, "",
 			commands.Processed, nil, gateOf(required, execution.RunNotApplicable, "", false)},

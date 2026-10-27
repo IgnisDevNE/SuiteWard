@@ -72,10 +72,10 @@ func TestCommentPublisherRendersTheAcknowledgmentsOfTheExecutionCommands(t *test
 				a.Outcome, a.Proposal, a.Revision, a.Gate = commandtext.ReceiptRefused, 2, 1, execution.ReasonModeRequired
 			})},
 		{"a mode that the receipt does not meet", map[string]any{"disposition": "receipt-refused", "reference": "P2-R1", "reason": "mode-not-met", "mode": "refactor",
-			"counts": cjCounts(1, 2, 3, 4, 5, 6, 7, 8, 9)},
+			"counts": cjCounts(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)},
 			with(func(a *commandtext.Ack) {
 				a.Outcome, a.Proposal, a.Revision, a.Gate, a.Mode = commandtext.ReceiptRefused, 2, 1, execution.ReasonModeNotMet, execution.ModeRefactor
-				a.Counts = execution.ReceiptCounts{Detects: 1, Inert: 2, NewAPI: 3, Fails: 4, Missing: 5, Flaky: 6, Skipped: 7, Excluded: 8}
+				a.Counts = execution.ReceiptCounts{Detects: 1, Inert: 2, NewAPI: 3, Fails: 4, Missing: 5, Flaky: 6, Skipped: 7, Excluded: 8, Unparsed: 10}
 				a.Markers = 9
 			})},
 	} {
@@ -92,7 +92,7 @@ func TestCommentPublisherRendersTheAcknowledgmentsOfTheExecutionCommands(t *test
 
 // A payload whose fields do not fit its disposition is an error that names the key, never a comment.
 func TestCommentPublisherRefusesAnExecutionAcknowledgmentThatDoesNotFitItsDisposition(t *testing.T) {
-	counts := cjCounts(0, 0, 0, 0, 0, 0, 0, 0, 0)
+	counts := cjCounts(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 	for name, payload := range map[string]map[string]any{
 		"a mode-set with no mode":                       {"disposition": "mode-set"},
 		"a mode-set with an unknown mode":               {"disposition": "mode-set", "mode": "loud"},
@@ -109,7 +109,8 @@ func TestCommentPublisherRefusesAnExecutionAcknowledgmentThatDoesNotFitItsDispos
 		"a receipt-refused with a reason of the domain": {"disposition": "receipt-refused", "reference": "P2-R1", "reason": "canonical-pending"},
 		"a mode-required that names a mode":             {"disposition": "receipt-refused", "reference": "P2-R1", "reason": "mode-required", "mode": "fix"},
 		"a mode-not-met with no mode":                   {"disposition": "receipt-refused", "reference": "P2-R1", "reason": "mode-not-met", "counts": counts},
-		"a receipt-pending with counts":                 {"disposition": "receipt-refused", "reference": "P2-R1", "reason": "receipt-pending", "counts": cjCounts(1, 0, 0, 0, 0, 0, 0, 0, 0)},
+		"a receipt-pending with counts":                 {"disposition": "receipt-refused", "reference": "P2-R1", "reason": "receipt-pending", "counts": cjCounts(1, 0, 0, 0, 0, 0, 0, 0, 0, 0)},
+		"a mode-not-met with a negative unparsed count": {"disposition": "receipt-refused", "reference": "P2-R1", "reason": "mode-not-met", "mode": "fix", "counts": cjCounts(0, 0, 0, 0, 0, 0, 0, 0, 0, -1)},
 		"a counts object on a mode-set":                 {"disposition": "mode-set", "mode": "fix", "counts": counts},
 		"a mode on an unblocked":                        {"disposition": "unblocked", "plans": []string{"receipt"}, "mode": "fix"},
 		"a mode on a processed acknowledgment":          {"project": "p", "suite": "default", "operation": "op", "mode": "fix"},
@@ -126,5 +127,29 @@ func TestCommentPublisherRefusesAnExecutionAcknowledgmentThatDoesNotFitItsDispos
 				t.Fatalf("posted %d comments for a payload that does not fit", len(posts))
 			}
 		})
+	}
+}
+
+// The counts of a mode that the receipt did not meet carry the number of changed test files that do not parse, which block every mode: the payload has the key
+// and the acknowledgment the publisher renders from it has the count.
+func TestTheCountsOfAModeThatWasNotMetCarryTheUnparsedFiles(t *testing.T) {
+	message, err := newReceiptRefusedAck(cmtTarget(), cmtComment, cmtOwner, "P2-R1", execution.ReasonModeNotMet, execution.ModeFix, execution.ReceiptCounts{Detects: 1, Unparsed: 3}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(message.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	counts, _ := payload["counts"].(map[string]any)
+	if got := counts["unparsed"]; got != float64(3) || len(counts) != 10 {
+		t.Fatalf("counts = %v; want the ten keys with unparsed 3", counts)
+	}
+	var stored ackPayload
+	if err := json.Unmarshal(message.Payload, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if ack := rejectedAckOf(stored); ack.Counts != (execution.ReceiptCounts{Detects: 1, Unparsed: 3}) || ack.Markers != 2 {
+		t.Fatalf("the acknowledgment holds counts %+v and %d markers; want 1 DETECTS, 3 unparsed and 2 markers", ack.Counts, ack.Markers)
 	}
 }

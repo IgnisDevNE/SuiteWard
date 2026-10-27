@@ -345,7 +345,7 @@ func (l *loader) executor() (Secret, ExecutorTimes) {
 	if token != "" && len(token) < minTokenBytes {
 		l.fail("EXECUTOR_TOKEN", fmt.Errorf("must be at least %d bytes", minTokenBytes))
 	}
-	// The job timeout starts at go test's -timeout plus the minute after which go test kills its own test binary. The lease wait starts above the executor's 60 s error backoff, so a live executor that backs off is still seen.
+	// The job timeout starts where a hung test still ends as go test's own kill, a minute past its -timeout, and not as the executor's drop of the attempt 30 s before the deadline (see execution.MinJobTimeout). The lease wait starts above the executor's 60 s error backoff, so a live executor that backs off is still seen.
 	return Secret(token), ExecutorTimes{
 		JobTimeout: number(l, "EXECUTOR_JOB_TIMEOUT", "30m", execution.MinJobTimeout, 6*time.Hour, time.ParseDuration),
 		LeaseWait:  number(l, "EXECUTOR_LEASE_WAIT", "5m", 2*time.Minute, time.Hour, time.ParseDuration),

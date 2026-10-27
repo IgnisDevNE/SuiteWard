@@ -191,7 +191,7 @@ func removeExecutor(ctx context.Context, d Deps, tokenFile string) (existed, for
 func removeByHand(goos string) string {
 	switch goos {
 	case "windows":
-		return fmt.Sprintf("end the scheduled task with `schtasks /End /TN \"%[1]s\"`, end the process %[2]s if it still runs, delete the task with `schtasks /Delete /TN \"%[1]s\" /F`, and delete that directory", executorTaskName, executorBinaryName(goos))
+		return fmt.Sprintf("end the scheduled task with `schtasks /End /TN \"%[1]s\"`, end the process with `taskkill /IM %[2]s /F` if it still runs, delete the task with `schtasks /Delete /TN \"%[1]s\" /F`, and delete that directory", executorTaskName, executorBinaryName(goos))
 	case "darwin":
 		return fmt.Sprintf("`launchctl bootout gui/$(id -u)/%[1]s` stops it and unloads it, and deleting that directory and ~/Library/LaunchAgents/%[1]s.plist removes it", executorLabel)
 	default:

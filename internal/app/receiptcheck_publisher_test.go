@@ -92,7 +92,7 @@ func TestReceiptCheckPublisherPostsEveryState(t *testing.T) {
 		status, conclusion string
 		phrase             string
 	}{
-		{execution.CheckInProgress, receiptRunning, "Receipt pending", "in_progress", "", "is running the tests"},
+		{execution.CheckInProgress, receiptRunning, "Receipt pending", "in_progress", "", "it is waiting for an executor, or it is running"},
 		{execution.CheckFailure, receiptFailing, "Receipt: failing or missing tests", "completed", "failure", "- Changed test files that do not parse: 7"},
 		{execution.CheckSuccess, receiptComplete, "Receipt ready", "completed", "success", "- Tests by state: 3 DETECTS, 2 INERT, 1 NEW API, 0 FAILS, 0 MISSING, 6 FLAKY, 4 SKIPPED"},
 		{execution.CheckNeutral, receiptNotRun, "Receipt unavailable", "completed", "neutral", "no executor was seen in time"},
@@ -115,8 +115,9 @@ func TestReceiptCheckPublisherPostsEveryState(t *testing.T) {
 			if p.Name != "SuiteWard / Receipt" || p.HeadSHA != chkHead || p.Status != tc.status || p.Conclusion != tc.conclusion || p.ExternalID != "suiteward:"+cmtInstance+":"+m.Key {
 				t.Fatalf("posted %+v", p)
 			}
-			if p.Title != tc.title || !strings.Contains(p.Summary, tc.phrase) || !strings.Contains(p.Summary, "`isolated`") ||
-				!strings.Contains(p.Summary, "Observed by this instance's executor. Evidence, not a verdict.") {
+			// A withdrawn receipt observed nothing, so its summary does not call the results evidence.
+			evidence := strings.Contains(p.Summary, "Observed by this instance's executor. Evidence, not a verdict.")
+			if p.Title != tc.title || !strings.Contains(p.Summary, tc.phrase) || !strings.Contains(p.Summary, "`isolated`") || evidence != (tc.reason != receiptNotApplicable) {
 				t.Fatalf("title %q, summary %q", p.Title, p.Summary)
 			}
 			if got := w.runner.listed; len(got) != 1 || got[0] != fmt.Sprintf("%s %s SuiteWard / Receipt %d", cmtRepo, chkHead, chkAppID) {

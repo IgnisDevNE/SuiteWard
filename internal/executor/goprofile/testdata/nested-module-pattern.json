@@ -1,0 +1,15 @@
+{"ImportPath":"./nested","Action":"build-output","Output":"# ./nested\n"}
+{"ImportPath":"./nested","Action":"build-output","Output":"main module (example.com/fx) does not contain package example.com/fx/nested\n"}
+{"ImportPath":"./nested","Action":"build-fail"}
+{"Time":"2026-10-27T02:03:21.380584493Z","Action":"start","Package":"./nested"}
+{"Time":"2026-10-27T02:03:21.380632095Z","Action":"output","Package":"./nested","Output":"FAIL\t./nested [setup failed]\n","OutputType":"frame"}
+{"Time":"2026-10-27T02:03:21.380641872Z","Action":"fail","Package":"./nested","Elapsed":0,"FailedBuild":"./nested"}
+{"Time":"2026-10-27T02:03:24.610253143Z","Action":"start","Package":"example.com/fx/good"}
+{"Time":"2026-10-27T02:03:24.611684155Z","Action":"output","Package":"example.com/fx/good","Output":"-test.shuffle 1793066604611620145\n"}
+{"Time":"2026-10-27T02:03:24.611759139Z","Action":"run","Package":"example.com/fx/good","Test":"TestGood"}
+{"Time":"2026-10-27T02:03:24.611761896Z","Action":"output","Package":"example.com/fx/good","Test":"TestGood","Output":"=== RUN   TestGood\n","OutputType":"frame"}
+{"Time":"2026-10-27T02:03:24.611768356Z","Action":"output","Package":"example.com/fx/good","Test":"TestGood","Output":"--- PASS: TestGood (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-27T02:03:24.611770291Z","Action":"pass","Package":"example.com/fx/good","Test":"TestGood","Elapsed":0}
+{"Time":"2026-10-27T02:03:24.611773336Z","Action":"output","Package":"example.com/fx/good","Output":"PASS\n","OutputType":"frame"}
+{"Time":"2026-10-27T02:03:24.611987751Z","Action":"output","Package":"example.com/fx/good","Output":"ok  \texample.com/fx/good\t0.001s\n"}
+{"Time":"2026-10-27T02:03:24.61200803Z","Action":"pass","Package":"example.com/fx/good","Elapsed":0.002}

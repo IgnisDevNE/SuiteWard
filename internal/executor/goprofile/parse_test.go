@@ -115,6 +115,19 @@ func TestParseReadsRecordedGoTestOutput(t *testing.T) {
 		{"no-tests-ran", 0,
 			[]TestID{at("good", "TestNothing")},
 			map[TestID]execution.Observation{at("good", "TestNothing"): absent}},
+		// -run '^(TestGood)$' ./good, with go.mod saying `go 1.99`: go refuses with GOTOOLCHAIN=local, and writes no event
+		{"toolchain-refusal", 1,
+			[]TestID{at("good", "TestGood")},
+			map[TestID]execution.Observation{at("good", "TestGood"): buildErr}},
+		// -run '^(TestGood)$' ./good, with a vendor/modules.txt that go.mod does not agree with: go writes no event
+		{"inconsistent-vendor", 1,
+			[]TestID{at("good", "TestGood")},
+			map[TestID]execution.Observation{at("good", "TestGood"): buildErr}},
+		// -run '^(TestGood)$' ./good ./nested, where nested/ has a go.mod of its own: go reports the pattern ./nested as a
+		// setup failure and runs ./good, so the rest of the invocation stands (Command is never given such a package)
+		{"nested-module-pattern", 1,
+			[]TestID{at("good", "TestGood")},
+			map[TestID]execution.Observation{at("good", "TestGood"): pass}},
 	}
 	for _, c := range cases {
 		t.Run(c.fixture, func(t *testing.T) {

@@ -13,6 +13,17 @@ GOCACHE and GOMODCACHE under /work/.suiteward. The invocation of each fixture is
 the panic, timeout and exit-in-test fixtures were run again until the shuffled order put the test that ends the run first,
 and the rest are the first run.
 
+Three fixtures come from smaller trees that hold only the good/ package below, with the go.mod that the sections show
+changed as said:
+  - toolchain-refusal: go.mod says `go 1.99` (go answers on stderr that it needs a newer go, and writes no event: the
+    file is empty);
+  - inconsistent-vendor: go.mod says `go 1.27` and requires nothing, and vendor/modules.txt lists
+    "# example.com/other v1.0.0", "## explicit" and "example.com/other" (go answers "inconsistent vendoring" on stderr and
+    writes no event: the file is empty);
+  - nested-module-pattern: the tree also holds nested/, a copy of good/ with a go.mod of its own (module
+    example.com/nested), and ./nested is named in the invocation. go reports it as a setup failure of the package
+    "./nested" (the pattern, not an import path) and runs the other package.
+
 -- baddep/baddep.go --
 package baddep
 

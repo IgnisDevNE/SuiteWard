@@ -45,7 +45,7 @@ type pgExecutorEnv struct {
 	server      *httptest.Server
 }
 
-func newPGExecutorEnv(t *testing.T) *pgExecutorEnv {
+func newPGExecutorEnv(t *testing.T, options ...func(*executorDeps)) *pgExecutorEnv {
 	t.Helper()
 	databaseURL := newDatabase(t)
 	env := testEnv(serveVars(t, databaseURL))
@@ -61,8 +61,12 @@ func newPGExecutorEnv(t *testing.T) *pgExecutorEnv {
 	enrollExecutionRepository(t, store)
 	e := &pgExecutorEnv{t: t, databaseURL: databaseURL, store: store, artifacts: artifacts, wakes: &wakeLog{}, trees: &fakeTrees{entries: map[string][]treeEntry{}, errs: map[string]error{}}}
 	var stopping atomic.Bool
-	handler, err := newExecutorAPI(executorDeps{token: []byte(execTestToken), store: store.Execution(), liveness: execution.NewLiveness(time.Now()), times: cfg.Executor, content: artifacts,
-		owners: store, trees: e.trees.read, archives: (&fakeArchives{}).read, wake: e.wakes.wake, stopping: stopping.Load, logger: quietLogger(), now: time.Now})
+	deps := executorDeps{token: []byte(execTestToken), store: store.Execution(), liveness: execution.NewLiveness(time.Now()), times: cfg.Executor, treeTimeout: 5 * time.Second, content: artifacts,
+		owners: store, trees: e.trees.read, archives: (&fakeArchives{}).read, wake: e.wakes.wake, stopping: stopping.Load, logger: quietLogger(), now: time.Now}
+	for _, option := range options {
+		option(&deps)
+	}
+	handler, err := newExecutorAPI(deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,5 +224,26 @@ func (e *pgExecutorEnv) wantReplays(path string, result []byte, lease string) {
 	}
 	if n := e.wakes.count.Load(); n != 1 {
 		e.t.Errorf("wake-ups = %d; want one, the first result's", n)
+	}
+}
+
+// A tree read that never answers ends at the deadline of the tree reads, well before the lease request's: the lease answers 502 and the failure is
+// committed, so the GitHub bound can end the job. Before, the one deadline of the request ended the transaction too, and the lease answered 500 with
+// nothing recorded, for the same job again at once.
+func TestExecutorAPILeaseRecordsATreeReadThatRunsOutOfTimeOnPostgreSQL(t *testing.T) {
+	e := newPGExecutorEnv(t, func(d *executorDeps) { d.treeTimeout = 300 * time.Millisecond })
+	job := e.enqueue(1)
+	e.trees.blockUntilDone(execSHA(1))
+
+	code, text := e.send(http.MethodPost, "/lease", nil, "")
+
+	if code != http.StatusBadGateway || text != `{"error":"github"}` {
+		t.Fatalf("lease = %d %s; want 502", code, text)
+	}
+	if got := e.summary(job.ID); got != "pending github-unavailable 0" {
+		t.Errorf("job = %q; want the failure committed with no attempt", got)
+	}
+	if got := scalar(t, e.databaseURL, "SELECT (github_since IS NOT NULL)::text FROM execution_jobs WHERE job_id = $1", job.ID); got != "true" {
+		t.Errorf("github_since set = %s; want the first GitHub failure recorded, which starts the bound", got)
 	}
 }

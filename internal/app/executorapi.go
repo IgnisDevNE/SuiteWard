@@ -63,18 +63,19 @@ type executorContent interface {
 
 // executorDeps is what the executor API is composed from.
 type executorDeps struct {
-	token    []byte // the bearer token
-	store    execution.Store
-	liveness *execution.Liveness
-	times    config.ExecutorTimes
-	content  executorContent
-	owners   ownerReader
-	trees    treeReader
-	archives archiveReader
-	wake     func(ctx context.Context) error // wakes github_checks after a result is committed
-	stopping func() bool                     // the service is shutting down
-	logger   *slog.Logger
-	now      func() time.Time
+	token       []byte // the bearer token
+	store       execution.Store
+	liveness    *execution.Liveness
+	times       config.ExecutorTimes
+	treeTimeout time.Duration // the deadline of the tree reads of one lease, shorter than the lease request's own
+	content     executorContent
+	owners      ownerReader
+	trees       treeReader
+	archives    archiveReader
+	wake        func(ctx context.Context) error // wakes github_checks after a result is committed
+	stopping    func() bool                     // the service is shutting down
+	logger      *slog.Logger
+	now         func() time.Time
 }
 
 // validate reports the dependency that is missing: the composition is the trust boundary of the API.

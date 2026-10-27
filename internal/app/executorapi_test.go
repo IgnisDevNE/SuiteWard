@@ -76,12 +76,14 @@ type fakeTrees struct {
 	mu      sync.Mutex
 	entries map[string][]treeEntry
 	errs    map[string]error
+	blocked map[string]bool // the read of these commits waits until its context ends
 	calls   []treeCall
 }
 
 type treeCall struct {
-	repo, sha string
-	deadline  bool
+	repo, sha  string
+	deadline   bool
+	deadlineAt time.Time
 }
 
 func (f *fakeTrees) set(sha string, entries []treeEntry) {
@@ -96,15 +98,30 @@ func (f *fakeTrees) fail(sha string, err error) {
 	f.errs[sha] = err
 }
 
-func (f *fakeTrees) read(ctx context.Context, repo, sha string) ([]treeEntry, error) {
+// blockUntilDone makes the read of the commit wait until its context ends, as a GitHub that does not answer does.
+func (f *fakeTrees) blockUntilDone(sha string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	_, bounded := ctx.Deadline()
-	f.calls = append(f.calls, treeCall{repo: repo, sha: sha, deadline: bounded})
-	if err := f.errs[sha]; err != nil {
-		return nil, err
+	if f.blocked == nil {
+		f.blocked = map[string]bool{}
 	}
-	if entries, ok := f.entries[sha]; ok {
+	f.blocked[sha] = true
+}
+
+func (f *fakeTrees) read(ctx context.Context, repo, sha string) ([]treeEntry, error) {
+	f.mu.Lock()
+	deadlineAt, bounded := ctx.Deadline()
+	f.calls = append(f.calls, treeCall{repo: repo, sha: sha, deadline: bounded, deadlineAt: deadlineAt})
+	err, blocked, entries, listed := f.errs[sha], f.blocked[sha], f.entries[sha], false
+	_, listed = f.entries[sha]
+	f.mu.Unlock()
+	switch {
+	case blocked:
+		<-ctx.Done()
+		return nil, ctx.Err()
+	case err != nil:
+		return nil, err
+	case listed:
 		return entries, nil
 	}
 	return []treeEntry{{Path: "a.go", Mode: "100644", SHA: strings.Repeat("a", 40)}}, nil
@@ -184,7 +201,7 @@ type execTestEnv struct {
 
 var execOrigin = time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 
-func newExecEnv(t *testing.T) *execTestEnv {
+func newExecEnv(t *testing.T, options ...func(*executorDeps)) *execTestEnv {
 	t.Helper()
 	artifacts, err := filesystem.NewStore(t.TempDir())
 	if err != nil {
@@ -195,9 +212,13 @@ func newExecEnv(t *testing.T) *execTestEnv {
 		times:    config.ExecutorTimes{JobTimeout: 30 * time.Minute, LeaseWait: 5 * time.Minute, GitHubWait: 30 * time.Minute},
 		store:    executiontest.NewMemory(commandstest.NewMemory(ownertest.NewMemory(), githubsynctest.NewMemory())),
 		liveness: execution.NewLiveness(execOrigin.Add(-time.Hour))}
-	handler, err := newExecutorAPI(executorDeps{token: []byte(execTestToken), store: e.store, liveness: e.liveness, times: e.times, content: artifacts,
+	deps := executorDeps{token: []byte(execTestToken), store: e.store, liveness: e.liveness, times: e.times, treeTimeout: 15 * time.Second, content: artifacts,
 		owners: enrolledStore(t, "isolated"), trees: e.trees.read, archives: e.archives.read, wake: e.wakes.wake, stopping: e.stopping.Load,
-		logger: slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug})), now: e.clock.Now})
+		logger: slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug})), now: e.clock.Now}
+	for _, option := range options {
+		option(&deps)
+	}
+	handler, err := newExecutorAPI(deps)
 	if err != nil {
 		t.Fatalf("compose the executor API: %v", err)
 	}
@@ -367,7 +388,7 @@ func TestNewExecutorAPIRefusesAMissingDependency(t *testing.T) {
 	}
 	whole := func() executorDeps {
 		return executorDeps{token: []byte(execTestToken), store: executiontest.NewMemory(commandstest.NewMemory(ownertest.NewMemory(), githubsynctest.NewMemory())),
-			liveness: execution.NewLiveness(execOrigin), times: config.ExecutorTimes{JobTimeout: time.Hour, LeaseWait: time.Hour, GitHubWait: time.Hour}, content: artifacts,
+			liveness: execution.NewLiveness(execOrigin), times: config.ExecutorTimes{JobTimeout: time.Hour, LeaseWait: time.Hour, GitHubWait: time.Hour}, treeTimeout: 15 * time.Second, content: artifacts,
 			owners: ownertest.NewMemory(), trees: (&fakeTrees{}).read, archives: (&fakeArchives{}).read, wake: (&wakeLog{}).wake, stopping: func() bool { return false },
 			logger: quietLogger(), now: time.Now}
 	}
@@ -375,10 +396,12 @@ func TestNewExecutorAPIRefusesAMissingDependency(t *testing.T) {
 		t.Fatalf("a whole composition is refused: %v", err)
 	}
 	for name, mutate := range map[string]func(*executorDeps){
-		"token":    func(d *executorDeps) { d.token = nil },
-		"store":    func(d *executorDeps) { d.store = nil },
-		"liveness": func(d *executorDeps) { d.liveness = nil },
-		"times":    func(d *executorDeps) { d.times = config.ExecutorTimes{} },
+		"token":        func(d *executorDeps) { d.token = nil },
+		"store":        func(d *executorDeps) { d.store = nil },
+		"liveness":     func(d *executorDeps) { d.liveness = nil },
+		"times":        func(d *executorDeps) { d.times = config.ExecutorTimes{} },
+		"tree timeout": func(d *executorDeps) { d.treeTimeout = 0 },
+		"a tree timeout that leaves the lease no margin": func(d *executorDeps) { d.treeTimeout = leaseReadTimeout },
 		"content":  func(d *executorDeps) { d.content = nil },
 		"owners":   func(d *executorDeps) { d.owners = nil },
 		"trees":    func(d *executorDeps) { d.trees = nil },

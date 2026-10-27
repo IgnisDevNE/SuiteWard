@@ -576,3 +576,44 @@ func TestLeaseRefusesATreeEntryWithAPathOver4096Bytes(t *testing.T) {
 		})
 	}
 }
+
+// The tree reads of one lease have a deadline of their own, shared by all of them and shorter than the lease request's: a slow GitHub then ends the reads
+// while the store still has the time to record the failure.
+func TestLeaseGivesTheTreeReadsOneDeadlineOfTheirOwn(t *testing.T) {
+	e := newExecEnv(t, func(d *executorDeps) { d.treeTimeout = 2 * time.Second })
+	e.receiptJob(1, defaultFiles)
+	started := time.Now()
+
+	e.lease()
+
+	asked := e.trees.asked()
+	if len(asked) != 2 {
+		t.Fatalf("tree reads = %+v; want the head and the base", asked)
+	}
+	for _, call := range asked {
+		if !call.deadlineAt.After(started) || call.deadlineAt.After(started.Add(3*time.Second)) {
+			t.Errorf("the read of %s has the deadline %v; want about 2 s after %v, and not the 20 s of the lease request", call.sha, call.deadlineAt, started)
+		}
+	}
+	if !asked[0].deadlineAt.Equal(asked[1].deadlineAt) {
+		t.Errorf("deadlines %v and %v; want one for the reads of the lease", asked[0].deadlineAt, asked[1].deadlineAt)
+	}
+}
+
+// A read that never answers ends at its deadline as a GitHub failure: 502, recorded, and no wait for the lease request's own bound.
+func TestLeaseRecordsAGitHubFailureWhenATreeReadRunsOutOfItsTime(t *testing.T) {
+	e := newExecEnv(t, func(d *executorDeps) { d.treeTimeout = 150 * time.Millisecond })
+	job := e.canonicalJob(1, defaultFiles)
+	e.trees.blockUntilDone(execSHA(1))
+	started := time.Now()
+
+	got := e.lease()
+
+	e.wantError(got, http.StatusBadGateway, "github")
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Errorf("the lease took %v; want it to end at the tree deadline, not at the lease request's", elapsed)
+	}
+	if stored := e.job(job.ID); stored.State != execution.StatePending || stored.Reason != execution.ReasonGitHubUnavailable || stored.GitHubSince.IsZero() || stored.Attempts != 0 {
+		t.Errorf("job = %+v; want pending with github-unavailable recorded and no attempt", stored)
+	}
+}

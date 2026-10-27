@@ -522,15 +522,15 @@ func (c *clock) now() time.Time {
 
 // driver runs an executor against a fake service and a fake runtime.
 type driver struct {
-	t       *testing.T
-	svc     *service
-	rt      *fakeRuntime
-	sleeps  *sleeper
-	ticks   chan time.Time
-	tickFor chan time.Duration
-	swept   atomic.Int32
-	cancel  context.CancelFunc
-	done    chan error
+	t        *testing.T
+	svc      *service
+	patience time.Duration // how long a test waits for the executor before it gives up
+	sleeps   *sleeper
+	ticks    chan time.Time
+	tickFor  chan time.Duration
+	swept    atomic.Int32
+	cancel   context.CancelFunc
+	done     chan error
 }
 
 func discardLog() *slog.Logger { return slog.New(slog.DiscardHandler) }
@@ -543,13 +543,13 @@ func (l testLog) Write(p []byte) (int, error) {
 }
 
 // start builds the executor with the settings of a test, runs it, and stops it when the test ends.
-func start(t *testing.T, svc *service, rt *fakeRuntime, options ...func(*Config, *driver)) *driver {
+func start(t *testing.T, svc *service, rt sandbox.Runtime, options ...func(*Config, *driver)) *driver {
 	t.Helper()
 	api, err := client.New(svc.URL, config.Secret(testToken))
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &driver{t: t, svc: svc, rt: rt, sleeps: &sleeper{}, ticks: make(chan time.Time), tickFor: make(chan time.Duration, 16), done: make(chan error, 1)}
+	d := &driver{t: t, svc: svc, patience: 30 * time.Second, sleeps: &sleeper{}, ticks: make(chan time.Time), tickFor: make(chan time.Duration, 16), done: make(chan error, 1)}
 	cfg := Config{
 		API: api, Runtime: rt, Version: "1.2.3", BinarySHA256: testBinary,
 		Sweep: func(context.Context) error { d.swept.Add(1); return nil },
@@ -575,7 +575,7 @@ func start(t *testing.T, svc *service, rt *fakeRuntime, options ...func(*Config,
 		cancel()
 		select {
 		case <-d.done:
-		case <-time.After(30 * time.Second):
+		case <-time.After(d.patience):
 			t.Error("the executor did not stop")
 		}
 	})
@@ -589,7 +589,7 @@ func (d *driver) stopped() error {
 	case err := <-d.done:
 		d.done <- err
 		return err
-	case <-time.After(30 * time.Second):
+	case <-time.After(d.patience):
 		d.t.Fatal("the executor did not stop")
 		return nil
 	}
@@ -604,7 +604,7 @@ func (d *driver) result() posted {
 	case err := <-d.done:
 		d.done <- err
 		d.t.Fatalf("the executor stopped (%v) before it posted a result", err)
-	case <-time.After(30 * time.Second):
+	case <-time.After(d.patience):
 		d.t.Fatal("no result was posted")
 	}
 	return posted{}
@@ -713,7 +713,7 @@ func wait[T any](d *driver, c <-chan T) T {
 	case err := <-d.done:
 		d.done <- err
 		d.t.Fatalf("the executor stopped (%v) while the test waited for it", err)
-	case <-time.After(30 * time.Second):
+	case <-time.After(d.patience):
 		d.t.Fatal("the test waited for the executor in vain")
 	}
 	var zero T
@@ -728,7 +728,7 @@ func (d *driver) tick() {
 	case err := <-d.done:
 		d.done <- err
 		d.t.Fatalf("the executor stopped (%v) before the heartbeat ticked", err)
-	case <-time.After(30 * time.Second):
+	case <-time.After(d.patience):
 		d.t.Fatal("nothing took the tick")
 	}
 }

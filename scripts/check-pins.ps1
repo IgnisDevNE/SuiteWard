@@ -13,7 +13,8 @@ $copies = @{}
 foreach ($file in $files) {
     $path = Join-Path $Root $file
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
-    foreach ($m in [regex]::Matches((Get-Content -LiteralPath $path -Raw), '(?<name>[\w.\-/]+)(?::(?<tag>[\w.${}\-]+))?@sha256:(?<digest>[a-f0-9]{64})')) {
+    # Get-Content -Raw gives nothing for an empty file, which is no input for a regular expression.
+    foreach ($m in [regex]::Matches([IO.File]::ReadAllText($path), '(?<name>[\w.\-/]+)(?::(?<tag>[\w.${}\-]+))?@sha256:(?<digest>[a-f0-9]{64})')) {
         $key = $m.Groups['name'].Value.Split('/')[-1]
         if (-not $copies.ContainsKey($key)) { $copies[$key] = [Collections.Generic.List[object]]::new() }
         $copies[$key].Add([pscustomobject]@{ File = $file; Tag = $m.Groups['tag'].Value.Replace('${GO_VERSION}', $goVersion); Digest = $m.Groups['digest'].Value })

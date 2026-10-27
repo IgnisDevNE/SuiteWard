@@ -61,13 +61,9 @@ func (j *checksJob) policy(ctx context.Context, p owner.ProjectPolicy) (executio
 	if !found {
 		return executionPolicy{}, nil
 	}
-	canonicalLevel, err := domain.ParseCanonicalLevel(execution.Canonical)
+	canonicalLevel, receiptLevel, err := executionLevels(execution)
 	if err != nil {
 		return executionPolicy{}, fmt.Errorf("the canonical declaration: %w", err) // ParseDeclaration validated it: an impossible state
-	}
-	receiptLevel, err := domain.ParseReceiptLevel(execution.Receipt)
-	if err != nil {
-		return executionPolicy{}, fmt.Errorf("the canonical declaration: %w", err)
 	}
 	return executionPolicy{profile: execution.Profile, canonical: canonicalLevel, receipt: receiptLevel, declaration: artifact.Hash(raw), scope: declaration}, nil
 }
@@ -315,46 +311,22 @@ type headJobs struct {
 func (j *checksJob) readHeadJobs(ctx context.Context, s *pullState, bound revisionBinding, jobs headJobs) (headJobs, error) {
 	var err error
 	if jobs.canonicalPlanned {
-		if jobs.canonical, jobs.hasCanonical, err = j.gateJob(ctx, s, execution.PlanCanonical, artifact.Digest{}); err != nil {
+		if jobs.canonical, jobs.hasCanonical, err = j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical, artifact.Digest{}); err != nil {
 			return headJobs{}, err
 		}
 	}
 	if jobs.receiptApplies {
-		if jobs.receipt, jobs.hasReceipt, err = j.gateJob(ctx, s, execution.PlanReceipt, bound.base.Digest()); err != nil {
+		if jobs.receipt, jobs.hasReceipt, err = j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanReceipt, bound.base.Digest()); err != nil {
 			return headJobs{}, err
 		}
 	}
 	return jobs, nil
 }
 
-// gateJob is the job of a plan that the canonical gate, the Receipt check, the receipt gate of an approve and unblock read for the head of the pull request:
-// the newest job of its pull request, head and plan that is not cancelled (docs/contracts/runtime.md, "The job a gate reads"). For the receipt, expecting is
-// the manifest of the canonical version that the revision expects, and only a job it governs counts; the canonical plan passes the zero digest and takes any.
-// A job created already final counts. found is false for none, which reads as pending.
-func (j *checksJob) gateJob(ctx context.Context, s *pullState, plan execution.Plan, expecting artifact.Digest) (job execution.Job, found bool, err error) {
-	return j.newestJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, plan, func(candidate execution.Job) bool {
-		return expecting.IsZero() || candidate.GoverningDigest == expecting
-	})
-}
-
-// newestJob is the newest job of the head and plan that is not cancelled and that keep accepts.
-func (j *checksJob) newestJob(ctx context.Context, repositoryID int64, pull int, head string, plan execution.Plan, keep func(execution.Job) bool) (execution.Job, bool, error) {
-	jobs, err := j.executions.HeadJobs(ctx, repositoryID, pull, head, plan)
-	if err != nil {
-		return execution.Job{}, false, fmt.Errorf("read the %s jobs of the head: %w", plan, err)
-	}
-	for _, job := range slices.Backward(jobs) {
-		if job.State != execution.StateCancelled && keep(job) {
-			return job, true, nil
-		}
-	}
-	return execution.Job{}, false, nil
-}
-
 // holder is the newest job of the head and plan that is not cancelled and runs under the binding of spec (its governing manifest and the canonical
 // declaration), whatever merge base its key holds: a head's receipt job is looked up without reading its merge base again.
 func (j *checksJob) holder(ctx context.Context, spec execution.Spec) (execution.Job, bool, error) {
-	return j.newestJob(ctx, spec.RepositoryID, spec.PullNumber, spec.HeadSHA, spec.Plan, func(job execution.Job) bool {
+	return j.reads().newestJob(ctx, spec.RepositoryID, spec.PullNumber, spec.HeadSHA, spec.Plan, func(job execution.Job) bool {
 		return job.GoverningDigest == spec.GoverningDigest && job.DeclarationDigest == spec.DeclarationDigest
 	})
 }
@@ -429,35 +401,14 @@ func (j *checksJob) receiptJob(ctx context.Context, s *pullState, x *executionRu
 
 // revisionChanges lists the files that the receipt evaluates (docs/contracts/runtime.md, "Applicable and not applicable"): the files of the revision that the
 // canonical include matches and its exclude does not, and that the manifest of the canonical version it expects lacks or holds with other bytes. It is
-// EvaluatedFiles of the domain, which the receipt gate of the commands job uses too. At most maxExecutionPaths are kept, in path order, and how many there are.
+// the reader's evaluatedFiles, which the receipt gate of the commands job uses too. At most maxExecutionPaths are kept, in path order, and how many there are.
 // None means the receipt is not applicable.
 func (j *checksJob) revisionChanges(ctx context.Context, b revisionBinding, policy executionPolicy) (paths []string, total int, err error) {
-	revision, err := j.revisionManifest(ctx, b.manifest)
+	files, err := j.reads().evaluatedFiles(ctx, b.manifest, b.base, policy.selection())
 	if err != nil {
 		return nil, 0, err
 	}
-	files, err := domain.EvaluatedFiles(revision, b.base, policy.selection())
-	if err != nil {
-		return nil, 0, &opaque{what: "list the files of the receipt", cause: err}
-	}
 	return files[:min(len(files), maxExecutionPaths)], len(files), nil
-}
-
-// revisionManifest reads the manifest of a revision from the content store and checks that it is the one the digest names. The store never deletes, so a manifest
-// that it lacks is an impossible state, and so is one that does not parse: both fail the step with an error that says nothing of the store.
-func (j *checksJob) revisionManifest(ctx context.Context, digest artifact.Digest) (artifact.Manifest, error) {
-	raw, err := j.contents.Read(ctx, digest)
-	if err != nil {
-		return artifact.Manifest{}, &opaque{what: "read the manifest of the revision", cause: err}
-	}
-	manifest, err := artifact.ParseManifest(raw)
-	if err == nil && manifest.Digest() != digest { // the bytes of another manifest than the one the revision names
-		err = fmt.Errorf("%w: the entries are those of %s", artifact.ErrInvalidEncoding, manifest.Digest())
-	}
-	if err != nil {
-		return artifact.Manifest{}, &opaque{what: "parse the manifest of the revision", cause: err}
-	}
-	return manifest, nil
 }
 
 // receiptRead is what the checks job read from GitHub to create the receipt job: the files not evaluated and the merge base. final is the reason

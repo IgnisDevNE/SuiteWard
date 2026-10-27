@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
-	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
@@ -56,10 +55,11 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 	if !x.known || x.policy.canonical != domain.CanonicalLevelRequired || base.State != checks.Success || (base.Reason != reasonUnchanged && base.Reason != reasonReady) {
 		return executionOutcome{}, nil
 	}
-	status, counts, err := j.canonicalRun(ctx, jobs)
+	run, err := j.reads().canonical(ctx, jobs.canonical, jobs.hasCanonical)
 	if err != nil {
 		return executionOutcome{}, err
 	}
+	status, counts := run.status, run.counts
 	unblocked := false
 	if status == domain.RunUnavailable {
 		if unblocked, err = j.executions.Unblocked(ctx, jobs.canonical.ID, s.enrollment.EnrolledAt); err != nil {
@@ -84,37 +84,4 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 	}
 	return executionOutcome{counts: &checkExecution{Tests: counts.Pass + counts.Fail + counts.Skipped + counts.Missing + counts.Flaky, Passed: counts.Pass,
 		Skipped: counts.Skipped, Failed: counts.Fail, Missing: counts.Missing, Flaky: counts.Flaky, Excluded: counts.Excluded}}, nil
-}
-
-// canonicalStates are the canonical states as the store keeps them.
-var canonicalStates = map[string]domain.CanonicalState{"pass": domain.CanonicalPass, "fail": domain.CanonicalFail, "skipped": domain.CanonicalSkipped,
-	"missing": domain.CanonicalMissing, "flaky": domain.CanonicalFlaky, "excluded": domain.CanonicalExcluded}
-
-// canonicalRun is the status of the canonical run of the head and, for a complete one, the count of its tests by state. No job reads as pending.
-func (j *checksJob) canonicalRun(ctx context.Context, jobs headJobs) (domain.RunStatus, domain.CanonicalCounts, error) {
-	if !jobs.hasCanonical {
-		return domain.RunPending, domain.CanonicalCounts{}, nil
-	}
-	switch jobs.canonical.State {
-	case execution.StatePending, execution.StateLeased:
-		return domain.RunPending, domain.CanonicalCounts{}, nil
-	case execution.StateUnavailable:
-		return domain.RunUnavailable, domain.CanonicalCounts{}, nil
-	case execution.StateComplete:
-		tests, err := j.executions.Tests(ctx, jobs.canonical.ID)
-		if err != nil {
-			return 0, domain.CanonicalCounts{}, fmt.Errorf("read the tests of job %d: %w", jobs.canonical.ID, err)
-		}
-		states := make([]domain.CanonicalState, len(tests))
-		for i, t := range tests {
-			state, known := canonicalStates[t.State]
-			if !known {
-				return 0, domain.CanonicalCounts{}, fmt.Errorf("job %d stores the test state %q, which is no state of a canonical run", jobs.canonical.ID, t.State)
-			}
-			states[i] = state
-		}
-		counts, err := domain.CountCanonical(states)
-		return domain.RunComplete, counts, err
-	}
-	return 0, domain.CanonicalCounts{}, fmt.Errorf("the canonical job %d of the head is %s: only a job that is not cancelled is read", jobs.canonical.ID, jobs.canonical.State)
 }

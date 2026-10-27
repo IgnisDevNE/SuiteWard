@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 )
 
 // The checks of the executor of the co-located tier: what an install leaves beside the token copies, what the operating system says of it, and
@@ -59,7 +61,21 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 		notRunning: plan.startHint(),
 		notSeen:    "read the executor's log (" + plan.logWhere() + "), then " + d.installFix() + ", so that the service and the executor hold one token and one port",
 	})
+	d.checkExecutorImage(ctx)
 	d.checkExecutorLoopback(ctx)
+}
+
+// checkExecutorImage asks the engine that runs the sandboxes whether it has the Go image under its digest: the executor starts them with
+// --pull=never, so without it every job is unavailable. The install pulls it.
+func (d *doctor) checkExecutorImage(ctx context.Context) {
+	if !d.needRuntime("executor.image") {
+		return
+	}
+	if !d.rt.ImageExists(ctx, goprofile.Image) {
+		d.fail("executor.image", "the engine has no Go image of the sandboxes ("+goprofile.Image+"): the executor starts them without pulling, so every execution job is unavailable", d.installFix())
+		return
+	}
+	d.pass("executor.image", "the engine has the Go image of the sandboxes, under its digest")
 }
 
 // startHint is how to start the executor by hand where the operating system keeps it, and where to read why it stopped.

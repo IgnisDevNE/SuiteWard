@@ -41,7 +41,7 @@ func (d *doctor) checkExecutorIsolated(ctx context.Context) {
 	d.checkExecutorUnit(ctx)
 	d.checkExecutorBinary(ctx)
 	d.checkExecutorRunning(ctx, d.isolatedProcess, runningFixes{
-		noToken:    d.hostStep() + ", then run `" + d.deps.command() + " install` (or `--upgrade`) as the service account, which gives the service the token",
+		noToken:    d.hostStep() + ", then run `" + d.deps.command() + " install --tier isolated` as the service account, which gives the service the token and restarts it",
 		notRunning: "read why with `sudo journalctl _SYSTEMD_USER_UNIT=" + executorUnitName + " -n 50 --no-pager`; " + d.hostStep() + " starts it",
 		notSeen:    "read the executor's log; " + d.hostStep() + " again, then the install as the service account, so that both hold one token and one port",
 	})

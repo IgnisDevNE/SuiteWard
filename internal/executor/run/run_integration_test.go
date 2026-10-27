@@ -141,7 +141,7 @@ func TestTheGraceAfterTheSignalKillsTheContainerOnRealDocker(t *testing.T) {
 	s.head = repo{"go.mod": tinyModule, "lib.go": "package tiny\n"}
 	s.manifest = repo{".suiteward.yml": declaration, "lib_test.go": sleepingTest}
 	svc := newService(t, s.serve(1))
-	d := start(t, svc, rt, func(_ *Config, d *driver) { d.sleeps.immediate, d.patience = 1, 2*time.Minute })
+	d := start(t, svc, rt, gate(graceWait, closed()), func(_ *Config, d *driver) { d.patience = 2 * time.Minute })
 
 	// The first container asks the image for its Go and ends at once; the container of go test is the one that the signal must stop.
 	deadline := time.Now().Add(2 * time.Minute)

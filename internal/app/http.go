@@ -33,30 +33,30 @@ type store interface {
 	Instance(ctx context.Context) (string, error)
 }
 
-// executionCounter is the part of the execution store /status reads.
-type executionCounter interface {
+// executorJobCounter is the part of the execution store /status reads.
+type executorJobCounter interface {
 	Counts(ctx context.Context) (map[execution.State]int, error)
 }
 
-// executionStatus is what /status reports of execution: whether an executor token is configured, how many jobs are in each state, and when
+// executorStatus is what /status reports of execution: whether an executor token is configured, how many jobs are in each state, and when
 // an executor was last seen (docs/contracts/runtime.md, "HTTP surface").
-type executionStatus struct {
+type executorStatus struct {
 	enabled  bool
-	jobs     executionCounter
+	jobs     executorJobCounter
 	liveness *execution.Liveness
 }
 
-// executionStates are the states /status counts, each even at zero.
-var executionStates = []execution.State{execution.StatePending, execution.StateLeased, execution.StateComplete, execution.StateUnavailable, execution.StateCancelled}
+// executorJobStates are the states /status counts, each even at zero.
+var executorJobStates = []execution.State{execution.StatePending, execution.StateLeased, execution.StateComplete, execution.StateUnavailable, execution.StateCancelled}
 
 // report is the execution block of /status: counts and a time only, never a repository, a path or a test name.
-func (e *executionStatus) report(ctx context.Context) (map[string]any, error) {
+func (e *executorStatus) report(ctx context.Context) (map[string]any, error) {
 	counts, err := e.jobs.Counts(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("count the execution jobs: %w", err)
 	}
-	jobs := make(map[string]int, len(executionStates))
-	for _, state := range executionStates {
+	jobs := make(map[string]int, len(executorJobStates))
+	for _, state := range executorJobStates {
 		jobs[string(state)] = counts[state]
 	}
 	return map[string]any{"enabled": e.enabled, "jobs": jobs, "lastSeenAt": e.liveness.LastSeen().UTC().Format(time.RFC3339)}, nil
@@ -65,14 +65,14 @@ func (e *executionStatus) report(ctx context.Context) (map[string]any, error) {
 // api serves /healthz, /readyz, /status and the change report pages. Only fixed reasons reach a
 // response; the cause of a failure is logged.
 type api struct {
-	store     store
-	logger    *slog.Logger
-	tier      string // the configured installation tier
-	owners    ownerReader
-	github    *githubStatus    // nil when the GitHub settings are not set
-	execution *executionStatus // nil only where an api is built without execution; serve always sets it
-	reports   reportSource     // rebuilds the change report of a revision for the report page
-	stopping  atomic.Bool      // set when shutdown begins: readiness turns 503 first
+	store          store
+	logger         *slog.Logger
+	tier           string // the configured installation tier
+	owners         ownerReader
+	github         *githubStatus   // nil when the GitHub settings are not set
+	executorStatus *executorStatus // nil only where an api is built without execution; serve always sets it
+	reports        reportSource    // rebuilds the change report of a revision for the report page
+	stopping       atomic.Bool     // set when shutdown begins: readiness turns 503 first
 }
 
 func newRouter(a *api) http.Handler {
@@ -140,8 +140,8 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 	if Source != "" {
 		body["source"] = Source
 	}
-	if a.execution != nil {
-		block, err := a.execution.report(ctx)
+	if a.executorStatus != nil {
+		block, err := a.executorStatus.report(ctx)
 		if err != nil {
 			a.storeFailed(w, r, err)
 			return

@@ -37,7 +37,7 @@ func statusOf(t *testing.T, a *api) map[string]any {
 func TestStatusReportsTheExecutionBlock(t *testing.T) {
 	start := time.Date(2026, 10, 27, 9, 30, 0, 0, time.UTC)
 	liveness := execution.NewLiveness(start)
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 21}, execution: &executionStatus{
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 21}, executorStatus: &executorStatus{
 		enabled: true, liveness: liveness, jobs: fakeJobCounts{counts: map[execution.State]int{execution.StatePending: 2, execution.StateUnavailable: 3, execution.StateComplete: 7}},
 	}}
 
@@ -56,7 +56,7 @@ func TestStatusExecutionFollowsTheLivenessAndShowsAMissingToken(t *testing.T) {
 	start := time.Date(2026, 10, 27, 9, 30, 0, 0, time.UTC)
 	liveness := execution.NewLiveness(start)
 	liveness.Saw(start.Add(90 * time.Second))
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 21}, execution: &executionStatus{
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 21}, executorStatus: &executorStatus{
 		liveness: liveness, jobs: fakeJobCounts{counts: map[execution.State]int{execution.StateUnavailable: 1}},
 	}}
 
@@ -72,7 +72,7 @@ func TestStatusExecutionFollowsTheLivenessAndShowsAMissingToken(t *testing.T) {
 
 // A store that cannot count the jobs makes /status unavailable with a fixed reason, never the cause.
 func TestStatusExecutionHidesTheCauseOfAFailedCount(t *testing.T) {
-	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 21}, execution: &executionStatus{
+	a := &api{owners: ownertest.NewMemory(), logger: quietLogger(), store: fakeStore{version: 21}, executorStatus: &executorStatus{
 		liveness: execution.NewLiveness(time.Now()), jobs: fakeJobCounts{err: errors.New("dial tcp db.internal:5432: password=hunter2")},
 	}}
 

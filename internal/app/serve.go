@@ -108,7 +108,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 	liveness := execution.NewLiveness(time.Now()) // one record for the whole process: the executor API (M2.1-T4) writes it, the jobs read it
 	executorConfigured := cfg.ExecutorToken != ""
 	a := &api{store: store, owners: store, logger: logger, tier: tier, reports: reports,
-		execution: &executionStatus{enabled: executorConfigured, jobs: executions, liveness: liveness}}
+		executorStatus: &executorStatus{enabled: executorConfigured, jobs: executions, liveness: liveness}}
 	backend := &mcpBackend{store: store, owners: store, instance: store.Instance, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
 	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
 		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger}, time.Now, logger)

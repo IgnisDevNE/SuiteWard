@@ -23,6 +23,7 @@ type Pacing struct {
 	MaxBackoff time.Duration
 	Heartbeat  time.Duration
 	Grace      time.Duration // how long a job in flight has after the signal that stops the loop
+	Margin     time.Duration // how long before the deadline of an attempt the executor drops it
 }
 
 // DefaultPacing is the contract's: 5 s after a 204, a backoff of 5 s up to 60 s after an error, a heartbeat about every 20 s, and 30 s for a job

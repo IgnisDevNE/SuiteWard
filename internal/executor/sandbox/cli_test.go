@@ -350,6 +350,31 @@ func TestRunStartsTheKillClockWhenItsStandardInputHasEnded(t *testing.T) {
 	}
 }
 
+// A caller that has a deadline of its own, the executor's, passes none: the clock is optional, and a Spec with no KillAfter has no clock.
+func TestRunWithNoKillAfterHasNoClock(t *testing.T) {
+	f := newFake()
+	f.onRun = func(ctx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
+		_, _ = io.Copy(io.Discard, stdin)
+		select {
+		case <-f.killed:
+			return 137, "", nil
+		case <-time.After(150 * time.Millisecond): // long after a clock of any size would have fired
+			return 0, "", nil
+		case <-ctx.Done():
+			return -1, "", ctx.Err()
+		}
+	}
+	s := validSpec()
+	s.Limits.KillAfter = 0
+	out, err := run(t, f, "docker", s)
+	if err != nil || out.Killed || out.ExitCode != 0 {
+		t.Fatalf("Run = %+v, %v; want the container to end by itself", out, err)
+	}
+	if kills := f.commands("kill"); len(kills) != 0 {
+		t.Errorf("no clock, so no kill: %+v", kills)
+	}
+}
+
 func TestRunKillsTheContainerByNameWhenItsContextEnds(t *testing.T) {
 	f := newFake()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -359,8 +384,12 @@ func TestRunKillsTheContainerByNameWhenItsContextEnds(t *testing.T) {
 		<-runCtx.Done()
 		return -1, "", runCtx.Err()
 	}
-	if _, err := newCLI("docker", f.exec).Run(ctx, validSpec()); !errors.Is(err, context.Canceled) {
-		t.Fatalf("want the context's error, got %v", err)
+	// A container that was killed reports the status 137, as the runtime says of any killed container: a run that its context ended is never
+	// reported as that status, which a caller would read as a resource limit. It is the context's error.
+	f.state = `{"Status":"exited","OOMKilled":false,"ExitCode":137,"Error":"","StartedAt":"2026-10-26T21:58:19Z"}`
+	out, err := newCLI("docker", f.exec).Run(ctx, validSpec())
+	if !errors.Is(err, context.Canceled) || out.ExitCode != 0 || out.Killed {
+		t.Fatalf("Run = %+v, %v; want the context's error and no outcome", out, err)
 	}
 	name := f.commands("run")[0].args[2]
 	kills := f.commands("kill")
@@ -454,7 +483,7 @@ func TestRunRefusesAWeakerSpecBeforeAnyCommand(t *testing.T) {
 		"no cpu limit":                          func(s *Spec) { s.Limits.CPUs = 0 },
 		"no pids limit":                         func(s *Spec) { s.Limits.Pids = 0 },
 		"no tmpfs size":                         func(s *Spec) { s.Limits.TmpfsMiB = 0 },
-		"no kill deadline":                      func(s *Spec) { s.Limits.KillAfter = 0 },
+		"a negative kill deadline":              func(s *Spec) { s.Limits.KillAfter = -time.Second },
 		"a negative memory limit":               func(s *Spec) { s.Limits.MemoryMiB = -1 },
 		"no stdout limit":                       func(s *Spec) { s.StdoutLimit = 0 },
 		"no stdin":                              func(s *Spec) { s.Stdin = nil },

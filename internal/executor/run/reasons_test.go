@@ -130,9 +130,8 @@ func TestEveryReasonTheExecutorSetsIsProducedByItsFailure(t *testing.T) {
 
 func TestAnOutOfBandKillIsAResourceLimitWhateverTheReportSays(t *testing.T) {
 	for name, kill := range map[string]func(*sandbox.Outcome){
-		"the memory limit":        func(o *sandbox.Outcome) { o.OOMKilled = true },
-		"the status 137":          func(o *sandbox.Outcome) { o.ExitCode = 137 },
-		"the executor's own kill": func(o *sandbox.Outcome) { o.Killed = true },
+		"the memory limit": func(o *sandbox.Outcome) { o.OOMKilled = true },
+		"the status 137":   func(o *sandbox.Outcome) { o.ExitCode = 137 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			rt := newRuntime(func(c call) (sandbox.Outcome, error) {

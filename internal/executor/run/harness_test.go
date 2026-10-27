@@ -334,6 +334,9 @@ type fakeRuntime struct {
 	skipStdin bool          // fail at once, without reading the standard input
 	gate      chan struct{} // when set, an invocation of go test waits for a receive, or for its context
 	entered   chan struct{} // when set, an invocation tells that it is running before it waits
+	stopped   chan error    // when set, an invocation whose context ended while it waited tells why
+	// onStop, when set, is what such an invocation returns, as a runtime would that reports the state of a killed container as a result.
+	onStop func() (sandbox.Outcome, error)
 	// test answers an invocation of go test.
 	test func(c call) (sandbox.Outcome, error)
 }
@@ -399,6 +402,12 @@ func (f *fakeRuntime) Run(ctx context.Context, spec sandbox.Spec) (sandbox.Outco
 		select {
 		case <-f.gate:
 		case <-ctx.Done():
+			if f.stopped != nil {
+				f.stopped <- ctx.Err()
+			}
+			if f.onStop != nil {
+				return f.onStop()
+			}
 			return sandbox.Outcome{}, ctx.Err()
 		}
 	}

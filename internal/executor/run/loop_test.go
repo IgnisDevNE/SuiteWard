@@ -275,7 +275,7 @@ func TestTheDefaultsReadNoProxySettingAndFollowTheContract(t *testing.T) {
 	if !ok || transport.Proxy != nil {
 		t.Errorf("the prefetch client is %T and has a proxy function: the egress goes direct, and no environment variable moves it", e.cfg.Proxy.Client.Transport)
 	}
-	if DefaultPacing != (Pacing{Idle: 5 * time.Second, Backoff: 5 * time.Second, MaxBackoff: time.Minute, Heartbeat: 20 * time.Second, Grace: 30 * time.Second}) {
+	if DefaultPacing != (Pacing{Idle: 5 * time.Second, Backoff: 5 * time.Second, MaxBackoff: time.Minute, Heartbeat: 20 * time.Second, Grace: 30 * time.Second, Margin: 30 * time.Second}) {
 		t.Errorf("DefaultPacing = %+v", DefaultPacing)
 	}
 }

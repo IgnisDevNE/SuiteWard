@@ -8,3 +8,4 @@
 !deploy/notices.sh
 !deploy/units.go
 !deploy/quadlet
+!deploy/systemd

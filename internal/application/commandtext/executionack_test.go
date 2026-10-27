@@ -226,6 +226,7 @@ func TestAcknowledgePanicsOnAnExecutionFieldThatDoesNotFit(t *testing.T) {
 		"an unknown mode":                                      withMode(notMet(), 99),
 		"a negative count":                                     counts(func(c *execution.ReceiptCounts) { c.Fails = -1 }),
 		"a negative excluded count":                            counts(func(c *execution.ReceiptCounts) { c.Excluded = -1 }),
+		"a negative count of files that do not parse":          counts(func(c *execution.ReceiptCounts) { c.Unparsed = -1 }),
 		"a negative marker count":                              func() commandtext.Ack { a := notMet(); a.Markers = -1; return a }(),
 		"counts on a pending receipt": func() commandtext.Ack {
 			a := refused(execution.ReasonReceiptPending, 0)

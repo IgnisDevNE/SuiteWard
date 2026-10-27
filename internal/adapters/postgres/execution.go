@@ -184,17 +184,20 @@ func (s executionStore) Enqueue(ctx context.Context, n execution.NewJob) (execut
 	return execution.Job{}, false, errors.New("the job key keeps changing hands")
 }
 
-// Lease implements execution.Store in one transaction: the oldest ready job, with SKIP LOCKED so that two leases never take one.
-func (s executionStore) Lease(ctx context.Context, req execution.LeaseRequest, _ execution.Prepare) (execution.Job, bool, error) {
+// Lease implements execution.Store in one transaction: the oldest ready job, with SKIP LOCKED so that two leases never take one. prepare
+// runs with the job locked, so the transaction waits on GitHub for it: a failure of GitHub is recorded and committed, and returned once the
+// transaction is over; any other failure of prepare rolls the whole call back.
+func (s executionStore) Lease(ctx context.Context, req execution.LeaseRequest, prepare execution.Prepare) (execution.Job, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return execution.Job{}, false, err
 	}
-	if err := req.Validate(); err != nil {
+	if err := req.Validate(prepare); err != nil {
 		return execution.Job{}, false, err
 	}
 	now := execution.Stored(req.Now)
 	var granted execution.Job
 	found := false
+	var unreadable error
 	err := inTx(ctx, s.pool, "execution lease", func(transaction pgx.Tx) error {
 		q := dbgen.New(transaction)
 		for {
@@ -215,14 +218,45 @@ func (s executionStore) Lease(ctx context.Context, req execution.LeaseRequest, _
 				}
 				continue
 			}
-			granted, found = job.Granted(req), true
-			return storeJob(ctx, q, granted)
+			switch err := prepare(ctx, job); {
+			case err == nil:
+				granted, found = job.Granted(req), true
+				return storeJob(ctx, q, granted)
+			case errors.Is(err, execution.ErrGitHubUnavailable):
+				unreadable = fmt.Errorf("%w: job %d: %w", execution.ErrGitHubUnavailable, job.ID, err)
+				_, err := recordGitHubFailure(ctx, q, job, now, req.GitHubWait)
+				return err
+			case errors.Is(err, execution.ErrTooLarge):
+				if err := storeJob(ctx, q, job.TooLarge(now)); err != nil {
+					return err
+				}
+			default:
+				return err
+			}
 		}
 	})
 	if err != nil {
 		return execution.Job{}, false, err
 	}
+	if unreadable != nil {
+		return execution.Job{}, false, unreadable
+	}
 	return granted, found, nil
+}
+
+// recordGitHubFailure writes a failed read for a pending job, and the results row of the service when the failure ends the job on the
+// GitHub bound. It returns the state of the job afterwards.
+func recordGitHubFailure(ctx context.Context, q *dbgen.Queries, job execution.Job, now time.Time, githubWait time.Duration) (execution.State, error) {
+	next, serviceRow := job.AfterGitHubFailure(now, githubWait)
+	if err := storeJob(ctx, q, next); err != nil {
+		return "", err
+	}
+	if serviceRow {
+		if err := writeServiceResult(ctx, q, next, now); err != nil {
+			return "", err
+		}
+	}
+	return next.State, nil
 }
 
 // Heartbeat implements execution.Store.
@@ -354,12 +388,8 @@ func (s executionStore) GitHubFailure(ctx context.Context, jobID int64, now time
 		if job.State != execution.StatePending {
 			return fmt.Errorf("%w: job %d is %s, not pending", execution.ErrInvalidRequest, jobID, job.State)
 		}
-		next, serviceRow := job.AfterGitHubFailure(now, githubWait)
-		state = next.State
-		if err := storeJob(ctx, q, next); err != nil || !serviceRow {
-			return err
-		}
-		return writeServiceResult(ctx, q, next, now)
+		state, err = recordGitHubFailure(ctx, q, job, now, githubWait)
+		return err
 	})
 	return state, err
 }

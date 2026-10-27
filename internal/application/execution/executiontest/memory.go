@@ -3,7 +3,9 @@ package executiontest
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -91,16 +93,17 @@ func (m *Memory) oldestReady(now time.Time) (execution.Job, bool) {
 }
 
 // Lease implements execution.Store.
-func (m *Memory) Lease(ctx context.Context, req execution.LeaseRequest, _ execution.Prepare) (execution.Job, bool, error) {
+func (m *Memory) Lease(ctx context.Context, req execution.LeaseRequest, prepare execution.Prepare) (execution.Job, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return execution.Job{}, false, err
 	}
-	if err := req.Validate(); err != nil {
+	if err := req.Validate(prepare); err != nil {
 		return execution.Job{}, false, err
 	}
 	now := execution.Stored(req.Now)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	before := maps.Clone(m.jobs) // a failure of prepare writes nothing, the expiry of earlier candidates included
 	for {
 		candidate, found := m.oldestReady(now)
 		if !found {
@@ -110,9 +113,24 @@ func (m *Memory) Lease(ctx context.Context, req execution.LeaseRequest, _ execut
 			m.jobs[candidate.ID] = candidate.LeaseLapsed(now)
 			continue
 		}
-		granted := candidate.Granted(req)
-		m.jobs[granted.ID] = granted
-		return clone(granted), true, nil
+		switch err := prepare(ctx, clone(candidate)); {
+		case err == nil:
+			granted := candidate.Granted(req)
+			m.jobs[granted.ID] = granted
+			return clone(granted), true, nil
+		case errors.Is(err, execution.ErrGitHubUnavailable):
+			next, serviceRow := candidate.AfterGitHubFailure(now, req.GitHubWait)
+			m.jobs[next.ID] = next
+			if serviceRow {
+				m.results[next.ID] = execution.ServiceResult(next, now)
+			}
+			return execution.Job{}, false, fmt.Errorf("%w: job %d: %w", execution.ErrGitHubUnavailable, next.ID, err)
+		case errors.Is(err, execution.ErrTooLarge):
+			m.jobs[candidate.ID] = candidate.TooLarge(now)
+		default:
+			m.jobs = before
+			return execution.Job{}, false, err
+		}
 	}
 }
 

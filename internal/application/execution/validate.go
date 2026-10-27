@@ -122,15 +122,18 @@ func errorsOf(errs ...error) error {
 	return nil
 }
 
-// Validate reports why the lease request cannot be answered, as ErrInvalidRequest.
-func (r LeaseRequest) Validate() error {
+// Validate reports why the lease request cannot be answered, as ErrInvalidRequest. The prepare function is required: Lease has no way
+// to read the trees of a job without it.
+func (r LeaseRequest) Validate(prepare Prepare) error {
 	switch {
 	case r.Now.IsZero():
 		return invalid("the lease time is required")
 	case !leasePattern.MatchString(r.LeaseID):
 		return invalid("the lease id must be 32 lowercase hexadecimal digits")
-	case r.JobTimeout <= 0:
-		return invalid("the job timeout must be positive")
+	case prepare == nil:
+		return invalid("prepare is required")
+	case r.JobTimeout <= 0 || r.GitHubWait <= 0:
+		return invalid("the job timeout and the GitHub wait must be positive")
 	}
 	return nil
 }

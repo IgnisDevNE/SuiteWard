@@ -173,6 +173,10 @@ func (j Job) githubFailed(now time.Time) Job {
 	return j
 }
 
+// TooLarge is the ready job after prepare found its commit too large to lease: unavailable at once, with no attempt. The service writes
+// no results row for it.
+func (j Job) TooLarge(now time.Time) Job { return j.ended(StateUnavailable, ReasonTooLarge, now) }
+
 // AfterGitHubFailure is the pending job after a read for it failed, and whether the failure ended it on the GitHub bound, in which
 // case the service writes the results row (ServiceResult).
 func (j Job) AfterGitHubFailure(now time.Time, wait time.Duration) (next Job, serviceRow bool) {

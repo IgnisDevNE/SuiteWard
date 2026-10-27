@@ -101,10 +101,12 @@ func notMet(reason Reason) ModeSummary { return ModeSummary{Verdict: VerdictNotM
 // Summarize judges the counts of a receipt against mode. EXCLUDED tests are left out: they neither detect nor block, and
 // a receipt of nothing but EXCLUDED tests is an empty receipt.
 //
-//   - fix is met by at least one DETECTS and no FAILS, MISSING or FLAKY;
-//   - feature is met by at least one DETECTS or NEW_API and no FAILS, MISSING or FLAKY;
-//   - refactor is met when every evaluated test is INERT;
-//   - an empty receipt meets refactor and neither of the other two.
+//   - fix is met by at least one DETECTS and no FAILS, MISSING or FLAKY test and no file that does not parse;
+//   - feature is met by at least one DETECTS or NEW_API and nothing that blocks (as for fix);
+//   - refactor is met when every evaluated test is INERT and nothing blocks;
+//   - an empty receipt meets refactor and neither of the other two;
+//   - a changed test file that go cannot parse (Unparsed) blocks every mode with ReasonBlockingTests, like a FAILS test, even when
+//     it is all the receipt holds.
 func (c ReceiptCounts) Summarize(mode Mode) (ModeSummary, error) {
 	switch mode {
 	case ModeNone:
@@ -121,10 +123,10 @@ func (c ReceiptCounts) Summarize(mode Mode) (ModeSummary, error) {
 
 func (c ReceiptCounts) judgeDetection(detections int) ModeSummary {
 	switch {
+	case c.Blocking() > 0: // first: a file that does not parse blocks over a receipt with no evaluated test
+		return notMet(ReasonBlockingTests)
 	case c.Evaluated() == 0:
 		return notMet(ReasonNoEvaluatedTests)
-	case c.Blocking() > 0:
-		return notMet(ReasonBlockingTests)
 	case detections == 0:
 		return notMet(ReasonNoDetection)
 	}
@@ -146,8 +148,9 @@ func (c ReceiptCounts) judgeRefactor() ModeSummary {
 //   - off and advisory never refuse.
 //   - before-approval refuses only while the receipt is pending: an unavailable one does not refuse, whatever the tests say.
 //   - required refuses unless the receipt is complete, the approve carries a mode, and the summary of that mode is met.
-//   - A receipt that is not applicable, or complete with no evaluated test (empty, or nothing but EXCLUDED tests), never
-//     refuses, and the approve needs no mode. A mode that is given must still be one.
+//   - A receipt that is not applicable, or complete and empty (no evaluated test and no file that does not parse: nothing, or
+//     nothing but EXCLUDED tests), never refuses, and the approve needs no mode. A mode that is given must still be one. A
+//     changed test file that does not parse makes the receipt non-empty and blocks every mode.
 //   - unblocked is the owner's /suiteward unblock for the head. It lifts an unavailable receipt under required: there is
 //     nothing to judge, so the approve goes through with or without a mode. It never lifts a pending receipt, or a summary
 //     that is not met.
@@ -187,7 +190,7 @@ func (c ReceiptCounts) approveRequired(status RunStatus, mode Mode, unblocked bo
 		}
 		return ReasonNone, checkMode(mode) // there is nothing to judge, so the approve needs no mode
 	case RunComplete:
-		if c.Evaluated() == 0 {
+		if c.Empty() {
 			return ReasonNone, checkMode(mode) // an empty receipt, or one of nothing but EXCLUDED tests, has nothing to judge either
 		}
 		if reason, err := modeGiven(mode); err != nil || reason != ReasonNone {
@@ -274,8 +277,9 @@ var conclusionNames = map[Conclusion]string{
 func (c Conclusion) String() string { return conclusionNames[c] }
 
 // ReceiptConclusion is the conclusion of the Receipt check: in progress while the receipt is pending, neutral when it is
-// unavailable, and when it is complete a failure on any FAILS or MISSING test and a success otherwise. A receipt that is not
-// applicable is ConclusionNone, a value and not an error because it is an ordinary outcome: the caller publishes no check.
+// unavailable, and when it is complete a failure on any FAILS or MISSING test or any changed test file that does not parse, and
+// a success otherwise. A receipt that is not applicable is ConclusionNone, a value and not an error because it is an ordinary
+// outcome: the caller publishes no check.
 // It takes no mode: the conclusion never depends on it.
 func ReceiptConclusion(status RunStatus, counts ReceiptCounts) (Conclusion, error) {
 	switch status {
@@ -286,7 +290,7 @@ func ReceiptConclusion(status RunStatus, counts ReceiptCounts) (Conclusion, erro
 	case RunNotApplicable:
 		return ConclusionNone, nil
 	case RunComplete:
-		if counts.Fails+counts.Missing > 0 {
+		if counts.Fails+counts.Missing+counts.Unparsed > 0 {
 			return ConclusionFailure, nil
 		}
 		return ConclusionSuccess, nil

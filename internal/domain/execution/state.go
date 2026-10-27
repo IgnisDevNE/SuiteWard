@@ -164,9 +164,11 @@ func ClassifyCanonical(head Side) (CanonicalState, error) {
 	return CanonicalPass, nil
 }
 
-// ReceiptCounts counts the evaluated tests of a receipt by state. EXCLUDED tests are counted apart and are never a pass.
+// ReceiptCounts counts the evaluated tests of a receipt by state. EXCLUDED tests are counted apart and are never a pass. Unparsed is the
+// number of changed test files that go cannot parse, which list no test: the caller sets it, and each counts as a blocking failure.
 type ReceiptCounts struct {
 	Excluded, Missing, Flaky, Skipped, Fails, NewAPI, Detects, Inert int
+	Unparsed                                                         int
 }
 
 // CountReceipt counts states.
@@ -202,8 +204,13 @@ func (c ReceiptCounts) Evaluated() int {
 	return c.Missing + c.Flaky + c.Skipped + c.Fails + c.NewAPI + c.Detects + c.Inert
 }
 
-// Blocking is the number of tests that block a mode summary and the gates: FAILS, MISSING and FLAKY.
-func (c ReceiptCounts) Blocking() int { return c.Fails + c.Missing + c.Flaky }
+// Blocking is the number of tests and files that block a mode summary and the gates: FAILS, MISSING and FLAKY tests, and the changed
+// test files that go cannot parse. A file that does not parse lists no test, so it is not an evaluated one.
+func (c ReceiptCounts) Blocking() int { return c.Fails + c.Missing + c.Flaky + c.Unparsed }
+
+// Empty reports whether the receipt has nothing to judge: no evaluated test (none, or nothing but EXCLUDED ones) and no file that does not
+// parse, which blocks and so never makes an empty receipt.
+func (c ReceiptCounts) Empty() bool { return c.Evaluated() == 0 && c.Unparsed == 0 }
 
 // CanonicalCounts counts the declared tests of a canonical run by state. EXCLUDED tests are counted apart and are never a pass.
 type CanonicalCounts struct {

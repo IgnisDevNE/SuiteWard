@@ -33,6 +33,7 @@ func canonicalInput() execution.EvidenceInput {
 		ExecutorVersion:   "0.4.0-alpha.3",
 		ExecutorSHA256:    digestOf("executor binary"),
 		ImageDigest:       digestOf("image"),
+		Runtime:           "podman 5.5.0",
 		StartedAt:         started,
 		FinishedAt:        started.Add(90 * time.Second),
 	}
@@ -153,6 +154,14 @@ func TestEvidenceBindingRefusesAnEmptyOrMalformedField(t *testing.T) {
 		{"an executor version that starts with a dash", canonicalInput, func(in *execution.EvidenceInput) { in.ExecutorVersion = "-0.4.0" }},
 		{"an executor version of 65 characters", canonicalInput, func(in *execution.EvidenceInput) { in.ExecutorVersion = long(65) }},
 
+		{"no runtime", canonicalInput, func(in *execution.EvidenceInput) { in.Runtime = "" }},
+		{"a runtime of 65 bytes", canonicalInput, func(in *execution.EvidenceInput) { in.Runtime = long(65) }},
+		{"a runtime with a newline", canonicalInput, func(in *execution.EvidenceInput) { in.Runtime = "podman 5.5.0\n" }},
+		{"a runtime with a tab", canonicalInput, func(in *execution.EvidenceInput) { in.Runtime = "podman\t5.5.0" }},
+		{"a runtime with a control byte", canonicalInput, func(in *execution.EvidenceInput) { in.Runtime = "podman 5.5.0\x01" }},
+		{"a runtime with a delete byte", canonicalInput, func(in *execution.EvidenceInput) { in.Runtime = "podman 5.5.0\x7f" }},
+		{"a runtime that is not ASCII", canonicalInput, func(in *execution.EvidenceInput) { in.Runtime = "podman 5.5.0 é" }},
+
 		{"no start time", canonicalInput, func(in *execution.EvidenceInput) { in.StartedAt = time.Time{} }},
 		{"no end time", canonicalInput, func(in *execution.EvidenceInput) { in.FinishedAt = time.Time{} }},
 		{"an end before the start", canonicalInput, func(in *execution.EvidenceInput) { in.FinishedAt = in.StartedAt.Add(-time.Nanosecond) }},
@@ -184,6 +193,12 @@ func TestEvidenceBindingAcceptsTheEdgesOfTheFieldRules(t *testing.T) {
 		in.ExecutorVersion = version
 		if _, err := execution.NewEvidenceBinding(in); err != nil {
 			t.Errorf("version %q: %v", version, err)
+		}
+	}
+	for _, runtime := range []string{"podman 5.5.0", "docker version 28.0.1, build abc", " ", "~", strings.Repeat("a", 64)} {
+		in.Runtime = runtime // printable ASCII, spaces included, up to 64 bytes
+		if _, err := execution.NewEvidenceBinding(in); err != nil {
+			t.Errorf("runtime %q: %v", runtime, err)
 		}
 	}
 }

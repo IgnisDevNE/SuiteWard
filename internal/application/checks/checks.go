@@ -46,6 +46,7 @@ type Result struct {
 	Change       string // the classification code, or empty when not assessed
 	Revision     int64  // the Suite revision of the verdict, 0 without a Suite
 	CommandID    int64  // the latest owner command on the pull that was considered, 0 for none
+	Unblocked    bool   // the owner unblocked the head's canonical job and that lift decided the outcome (M2.1)
 }
 
 // Record is a stored Result with its publication bookkeeping.
@@ -60,7 +61,7 @@ type Record struct {
 // suite in checkstest.
 type Store interface {
 	Current(ctx context.Context, repositoryID int64, pull int) (Record, bool, error)
-	// Publish stores r for its pull. When the head, State, Reason or Reference differ from the current record
+	// Publish stores r for its pull. When the head, State, Reason, Reference or Unblocked differ from the current record
 	// (or there is none) it advances the generation and writes message(generation) to the outbox in the same
 	// transaction, as a system row. Otherwise it updates Change, Revision, CommandID and DecidedAt only and
 	// writes no message. It also advances the generation and writes a message when the current generation's
@@ -115,9 +116,9 @@ func ValidatePublish(r Result, at time.Time) error {
 }
 
 // Next is the record stored when r is published at time at over current (found false: there is none) and
-// whether it carries a new generation, hence a new message: when the head, state, reason or reference changed,
-// or when the current generation's message ended failed (failedAt, its finished_at; zero when it did not) at
-// least RepublishCooldown before at. Otherwise only Change, Revision, CommandID
+// whether it carries a new generation, hence a new message: when the head, state, reason, reference or unblocked
+// changed, or when the current generation's message ended failed (failedAt, its finished_at; zero when it did not)
+// at least RepublishCooldown before at. Otherwise only Change, Revision, CommandID
 // and the decision time move. Times are kept at microseconds, all PostgreSQL stores.
 func Next(current Record, found bool, r Result, at time.Time, failedAt time.Time) (next Record, advance bool) {
 	at = at.UTC().Truncate(time.Microsecond)
@@ -129,7 +130,7 @@ func Next(current Record, found bool, r Result, at time.Time, failedAt time.Time
 		next.HeadSince = at
 	}
 	lost := !failedAt.IsZero() && !at.Before(failedAt.Add(RepublishCooldown))
-	if lost || r.HeadSHA != current.HeadSHA || r.State != current.State || r.Reason != current.Reason || r.Reference != current.Reference {
+	if lost || r.HeadSHA != current.HeadSHA || r.State != current.State || r.Reason != current.Reason || r.Reference != current.Reference || r.Unblocked != current.Unblocked {
 		next.Generation++
 		advance = true
 	}

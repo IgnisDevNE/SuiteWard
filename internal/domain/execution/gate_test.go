@@ -65,6 +65,9 @@ func TestSummarize(t *testing.T) {
 		{"fix blocked by a failure", execution.ModeFix, execution.ReceiptCounts{Detects: 1, Fails: 1}, notMet(execution.ReasonBlockingTests)},
 		{"fix blocked by a missing test", execution.ModeFix, execution.ReceiptCounts{Detects: 1, Missing: 1}, notMet(execution.ReasonBlockingTests)},
 		{"fix blocked by a flaky test", execution.ModeFix, execution.ReceiptCounts{Detects: 1, Flaky: 1}, notMet(execution.ReasonBlockingTests)},
+		{"fix blocked by a file that does not parse", execution.ModeFix, execution.ReceiptCounts{Detects: 1, Unparsed: 1}, notMet(execution.ReasonBlockingTests)},
+		{"fix over nothing but a file that does not parse: it blocks, the receipt is not empty", execution.ModeFix, execution.ReceiptCounts{Unparsed: 1}, notMet(execution.ReasonBlockingTests)},
+		{"fix over a file that does not parse and EXCLUDED tests", execution.ModeFix, execution.ReceiptCounts{Excluded: 2, Unparsed: 2}, notMet(execution.ReasonBlockingTests)},
 		{"fix with an empty receipt", execution.ModeFix, execution.ReceiptCounts{}, notMet(execution.ReasonNoEvaluatedTests)},
 		{"fix leaves EXCLUDED tests out: an all-EXCLUDED receipt is empty", execution.ModeFix, execution.ReceiptCounts{Excluded: 4}, notMet(execution.ReasonNoEvaluatedTests)},
 		{"fix is met whatever the EXCLUDED count", execution.ModeFix, execution.ReceiptCounts{Detects: 1, Excluded: 4}, met},
@@ -76,6 +79,8 @@ func TestSummarize(t *testing.T) {
 		{"feature with only inert tests: no test detects anything", execution.ModeFeature, execution.ReceiptCounts{Inert: 5}, notMet(execution.ReasonNoDetection)},
 		{"feature blocked by a failure", execution.ModeFeature, execution.ReceiptCounts{NewAPI: 1, Fails: 1}, notMet(execution.ReasonBlockingTests)},
 		{"feature blocked by a flaky test", execution.ModeFeature, execution.ReceiptCounts{Detects: 1, Flaky: 1}, notMet(execution.ReasonBlockingTests)},
+		{"feature blocked by a file that does not parse", execution.ModeFeature, execution.ReceiptCounts{NewAPI: 1, Unparsed: 1}, notMet(execution.ReasonBlockingTests)},
+		{"feature over nothing but a file that does not parse", execution.ModeFeature, execution.ReceiptCounts{Unparsed: 3}, notMet(execution.ReasonBlockingTests)},
 		{"feature with an empty receipt", execution.ModeFeature, execution.ReceiptCounts{}, notMet(execution.ReasonNoEvaluatedTests)},
 		{"feature with only EXCLUDED tests", execution.ModeFeature, execution.ReceiptCounts{Excluded: 1}, notMet(execution.ReasonNoEvaluatedTests)},
 
@@ -90,10 +95,13 @@ func TestSummarize(t *testing.T) {
 		{"refactor blocked by a failure", execution.ModeRefactor, execution.ReceiptCounts{Inert: 1, Fails: 1}, notMet(execution.ReasonBlockingTests)},
 		{"refactor blocked by a missing test", execution.ModeRefactor, execution.ReceiptCounts{Inert: 1, Missing: 1}, notMet(execution.ReasonBlockingTests)},
 		{"refactor blocked by a flaky test", execution.ModeRefactor, execution.ReceiptCounts{Inert: 1, Flaky: 1}, notMet(execution.ReasonBlockingTests)},
+		{"refactor blocked by a file that does not parse", execution.ModeRefactor, execution.ReceiptCounts{Inert: 1, Unparsed: 1}, notMet(execution.ReasonBlockingTests)},
+		{"refactor over nothing but a file that does not parse: not an empty receipt", execution.ModeRefactor, execution.ReceiptCounts{Unparsed: 1}, notMet(execution.ReasonBlockingTests)},
 
 		// no mode: counts only, no judgment.
 		{"no mode over an empty receipt", execution.ModeNone, execution.ReceiptCounts{}, execution.ModeSummary{Verdict: execution.VerdictNotJudged}},
 		{"no mode over failures", execution.ModeNone, execution.ReceiptCounts{Fails: 2, Missing: 1}, execution.ModeSummary{Verdict: execution.VerdictNotJudged}},
+		{"no mode over files that do not parse", execution.ModeNone, execution.ReceiptCounts{Unparsed: 2}, execution.ModeSummary{Verdict: execution.VerdictNotJudged}},
 		{"no mode over detections", execution.ModeNone, execution.ReceiptCounts{Detects: 2}, execution.ModeSummary{Verdict: execution.VerdictNotJudged}},
 	}
 	for _, tt := range tests {
@@ -140,6 +148,7 @@ func TestReceiptApproveGate(t *testing.T) {
 		{"before-approval, not applicable", execution.ReceiptLevelBeforeApproval, execution.RunNotApplicable, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonNone},
 		{"before-approval, complete and failing, no mode", execution.ReceiptLevelBeforeApproval, execution.RunComplete, failing, execution.ModeNone, execution.ReasonNone},
 		{"before-approval, complete and empty", execution.ReceiptLevelBeforeApproval, execution.RunComplete, execution.ReceiptCounts{}, execution.ModeFix, execution.ReasonNone},
+		{"before-approval, complete with a file that does not parse", execution.ReceiptLevelBeforeApproval, execution.RunComplete, execution.ReceiptCounts{Unparsed: 1}, execution.ModeNone, execution.ReasonNone},
 
 		// required: complete, a mode, and that mode's summary met; a complete receipt with no evaluated test needs no mode.
 		{"required, pending", execution.ReceiptLevelRequired, execution.RunPending, execution.ReceiptCounts{Detects: 1}, execution.ModeFix, execution.ReasonReceiptPending},
@@ -160,6 +169,11 @@ func TestReceiptApproveGate(t *testing.T) {
 		{"required, all EXCLUDED, fix: an empty receipt", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Excluded: 3}, execution.ModeFix, execution.ReasonNone},
 		{"required, a skipped test is evaluated: the mode is judged", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Skipped: 1}, execution.ModeFix, execution.ReasonModeNotMet},
 		{"required, a skipped test is evaluated: a mode is needed", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Skipped: 1}, execution.ModeNone, execution.ReasonModeRequired},
+		{"required, a file that does not parse is no empty receipt: a mode is needed", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Unparsed: 1}, execution.ModeNone, execution.ReasonModeRequired},
+		{"required, a file that does not parse blocks fix", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Unparsed: 1}, execution.ModeFix, execution.ReasonModeNotMet},
+		{"required, a file that does not parse blocks refactor", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Unparsed: 1}, execution.ModeRefactor, execution.ReasonModeNotMet},
+		{"required, a file that does not parse blocks feature beside a detection", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{NewAPI: 1, Unparsed: 1}, execution.ModeFeature, execution.ReasonModeNotMet},
+		{"required, EXCLUDED tests and a file that does not parse: not empty", execution.ReceiptLevelRequired, execution.RunComplete, execution.ReceiptCounts{Excluded: 2, Unparsed: 1}, execution.ModeNone, execution.ReasonModeRequired},
 
 		// not applicable: no evaluated file, so no receipt, and the approve needs no mode.
 		{"required, not applicable and no mode", execution.ReceiptLevelRequired, execution.RunNotApplicable, execution.ReceiptCounts{}, execution.ModeNone, execution.ReasonNone},
@@ -304,10 +318,14 @@ func TestReceiptConclusion(t *testing.T) {
 	}{
 		{"pending", execution.RunPending, execution.ReceiptCounts{Fails: 3}, execution.ConclusionInProgress, "in_progress"},
 		{"unavailable, whatever the counts", execution.RunUnavailable, execution.ReceiptCounts{Fails: 3}, execution.ConclusionNeutral, "neutral"},
+		{"unavailable with a file that does not parse", execution.RunUnavailable, execution.ReceiptCounts{Unparsed: 1}, execution.ConclusionNeutral, "neutral"},
 		// Not applicable is no check at all: the caller publishes nothing, and the value has no name so that no caller can send one to GitHub.
 		{"not applicable, whatever the counts", execution.RunNotApplicable, execution.ReceiptCounts{Fails: 3}, execution.ConclusionNone, ""},
 		{"a failing test", execution.RunComplete, execution.ReceiptCounts{Fails: 1, Detects: 4}, execution.ConclusionFailure, "failure"},
 		{"a missing test", execution.RunComplete, execution.ReceiptCounts{Missing: 1, Detects: 4}, execution.ConclusionFailure, "failure"},
+		{"a file that does not parse", execution.RunComplete, execution.ReceiptCounts{Unparsed: 1, Detects: 4}, execution.ConclusionFailure, "failure"},
+		{"a file that does not parse and nothing else: never an empty receipt", execution.RunComplete, execution.ReceiptCounts{Unparsed: 2}, execution.ConclusionFailure, "failure"},
+		{"a file that does not parse beside EXCLUDED tests", execution.RunComplete, execution.ReceiptCounts{Excluded: 2, Unparsed: 1}, execution.ConclusionFailure, "failure"},
 		{"detections", execution.RunComplete, execution.ReceiptCounts{Detects: 2}, execution.ConclusionSuccess, "success"},
 		{"inert tests", execution.RunComplete, execution.ReceiptCounts{Inert: 2}, execution.ConclusionSuccess, "success"},
 		{"flaky tests only", execution.RunComplete, execution.ReceiptCounts{Flaky: 2}, execution.ConclusionSuccess, "success"},

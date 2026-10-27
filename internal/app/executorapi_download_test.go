@@ -220,6 +220,11 @@ func TestArchiveAbortsTheResponseWhenTheStreamFailsAfterTheStatus(t *testing.T) 
 			if err == nil {
 				t.Errorf("stream = %q read to a clean end; want a broken stream, which the executor reads as a failure", body)
 			}
+			// Every byte that was written before the abort reaches the client: the executor tells an archive cut at exactly archiveBytes (too-large) from one
+			// that broke short of it (a GitHub failure) by counting them.
+			if string(body) != "partial archive" {
+				t.Errorf("bytes received before the abort = %q; want %q, all that was written", body, "partial archive")
+			}
 		})
 	}
 }

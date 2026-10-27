@@ -66,9 +66,12 @@ func settleExecutorSecret(ctx context.Context, store SecretStore, token []byte, 
 	return true, true, nil
 }
 
-// noExecutorNote is what an install or an upgrade says when the service runs without the executor's token.
-const noExecutorNote = "The host has no executor token for this account yet, so the service runs without an executor and canonical execution has nothing to run on. " +
-	"The administrator makes the executor and its token with `sudo suiteward install host`; run this again after it.\n"
+// noExecutorNote is what an install or an upgrade says when the service runs without the executor's token. again is the command to run after the host
+// step: an upgrade cannot run again at the release that is installed, so it names the install.
+func noExecutorNote(again string) string {
+	return "The host has no executor token for this account yet, so the service runs without an executor and canonical execution has nothing to run on. " +
+		"The administrator makes the executor and its token with `sudo suiteward install host`; then run " + again + ".\n"
+}
 
 // executorHostNote is what an uninstall says of the executor: it is the administrator's, and the service account cannot reach it.
 func executorHostNote() string {

@@ -226,7 +226,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	params := UnitParamsFrom(g.s, digest)
 	params.NoExecutor = !haveExecutor
 	if !haveExecutor {
-		scr.Warn("%s", noExecutorNote)
+		scr.Warn("%s", noExecutorNote("this install again"))
 	}
 	units, err := prepareUnits(ctx, host, d, scr, params, false)
 	if err != nil {

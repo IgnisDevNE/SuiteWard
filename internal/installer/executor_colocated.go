@@ -332,6 +332,8 @@ func (p executorPlan) start(ctx context.Context, d Deps) error {
 		if err != nil {
 			return err
 		}
+		// A label that is loaded cannot be bootstrapped again, running or not (waiting, throttled): it is booted out first, when it is there.
+		_, _ = d.Exec(ctx, "launchctl", []string{"bootout", "gui/" + uid + "/" + executorLabel}, nil)
 		if _, err := d.Exec(ctx, "launchctl", []string{"bootstrap", "gui/" + uid, p.definition}, nil); err != nil {
 			return fmt.Errorf("load the launch agent: %w", err)
 		}

@@ -57,11 +57,12 @@ func hideEnvironment(list bool, text string) string {
 
 // Adopted is what an adoption carries over from an installed stack.
 type Adopted struct {
-	Settings Settings // tier, runtime, ports, job timeout and, from containers, the GitHub values
-	Image    string   // the release image that is installed
-	EnvFile  string   // units only: the EnvironmentFile path found, which the isolated installer moves
-	DBImage  string   // the PostgreSQL image the installed database runs, when it could be read
-	NoGitHub bool     // units only: the installed service unit has no App key lines, so its stack runs without GitHub
+	Settings   Settings // tier, runtime, ports, job timeout and, from containers, the GitHub values
+	Image      string   // the release image that is installed
+	EnvFile    string   // units only: the EnvironmentFile path found, which the isolated installer moves
+	DBImage    string   // the PostgreSQL image the installed database runs, when it could be read
+	NoGitHub   bool     // units only: the installed service unit has no App key lines, so its stack runs without GitHub
+	NoExecutor bool     // units only: the installed service unit has no executor token lines (an earlier release, or no token yet)
 }
 
 // parseMemory reads a --memory value (k, m or g suffix, or plain bytes) as bytes.
@@ -163,7 +164,7 @@ func adoptUnits(installed, reference map[string][]byte, refreshDB bool) (Adopted
 		Image:    releaseImageRepo + "@" + params.Digest,
 		EnvFile:  params.EnvFile,
 		DBImage:  dbImage,
-		NoGitHub: params.NoGitHub,
+		NoGitHub: params.NoGitHub, NoExecutor: params.NoExecutor,
 	}, nil
 }
 

@@ -81,6 +81,9 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	plan := upgradePlan{oldImage: st.adopted.Image, newImage: image, oldDB: st.adopted.DBImage, newDB: postgres}
 	if _, statErr := os.Stat(host.settingsPath); plan.current() && statErr == nil {
 		say("Nothing to upgrade: already on %s. Check the instance with `%s doctor`.\n", digestOf(image), env.Deps.command())
+		if st.adopted.NoExecutor && executorFound {
+			say("The host step made an executor token that the service does not have yet: run `%s` to give it, which restarts the service.\n", installCommand(env.Deps.command(), r, true))
+		}
 		return holdPage(scr)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
@@ -124,7 +127,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		return withBackup(env.Deps.command(), err, dir, host.unitsDir, scope)
 	}
 	if params.NoExecutor {
-		scr.Warn("%s", noExecutorNote)
+		scr.Warn("%s", noExecutorNote("`"+installCommand(env.Deps.command(), r, true)+"`"))
 	}
 	if err := replaceUnits(ctx, host, d, scr, params, plan.dbChanges()); err != nil {
 		return withBackup(env.Deps.command(), err, dir, host.unitsDir, scope)

@@ -310,12 +310,12 @@ WantedBy=multi-user.target
 `, s.description, nft, s.ruleFile, s.table)
 	onDisk, readErr := h.run(ctx, "cat", s.ruleFile)
 	ruleChanged := readErr != nil || onDisk != strings.TrimSpace(s.rule)
-	if _, err := h.run(ctx, "mkdir", "-p", path.Dir(s.ruleFile)); err != nil {
+	if err := h.makeDir(ctx, path.Dir(s.ruleFile)); err != nil {
 		return err
 	}
 	for file, content := range map[string]string{s.ruleFile: s.rule, "/etc/systemd/system/" + s.unit: unit} {
-		if _, err := h.d.Exec(ctx, "tee", []string{file}, strings.NewReader(content)); err != nil {
-			return fmt.Errorf("write %s: %w", file, err)
+		if err := h.writeReadable(ctx, file, content); err != nil {
+			return err
 		}
 	}
 	steps := [][]string{{"daemon-reload"}, {"enable", "--now", s.unit}}

@@ -20,17 +20,40 @@ import (
 // The executor's part of `suiteward install host` (ADR 0028, section 10; spike S4, sections 4.1, 4.5 and 4.6). Every command goes through
 // Deps.Exec, as the rest of the host step does, so that a fake machine tests it.
 
+// makeDir makes a directory that other accounts read: root's umask may be 077, which sudo keeps, and a directory made under it is 0700.
+func (h *host) makeDir(ctx context.Context, dir string) error {
+	if _, err := h.run(ctx, "mkdir", "-p", dir); err != nil {
+		return err
+	}
+	if _, err := h.run(ctx, "chmod", "0755", dir); err != nil {
+		return fmt.Errorf("make %s readable: %w", dir, err)
+	}
+	return nil
+}
+
+// writeReadable writes a file that other accounts read (the manager of the executor reads its unit, the service account's doctor reads the rest) and
+// makes it 0644, which a root umask of 077 would have made 0600.
+func (h *host) writeReadable(ctx context.Context, file, content string) error {
+	if _, err := h.d.Exec(ctx, "tee", []string{file}, strings.NewReader(content)); err != nil {
+		return fmt.Errorf("write %s: %w", file, err)
+	}
+	if _, err := h.run(ctx, "chmod", "0644", file); err != nil {
+		return fmt.Errorf("make %s readable: %w", file, err)
+	}
+	return nil
+}
+
 // delegation writes the drop-in that gives user managers the cgroup controllers that the executor's limits need (a manager gets only memory
 // and pids on EL9, and `podman run --cpus` fails without cpu), and has systemd read it.
 func (h *host) delegation(ctx context.Context) error {
 	if on, err := h.run(ctx, "cat", executorDropIn); err == nil && on == strings.TrimSpace(executorDropInText) {
 		return nil
 	}
-	if _, err := h.run(ctx, "mkdir", "-p", path.Dir(executorDropIn)); err != nil {
+	if err := h.makeDir(ctx, path.Dir(executorDropIn)); err != nil {
 		return err
 	}
-	if _, err := h.d.Exec(ctx, "tee", []string{executorDropIn}, strings.NewReader(executorDropInText)); err != nil {
-		return fmt.Errorf("write %s: %w", executorDropIn, err)
+	if err := h.writeReadable(ctx, executorDropIn, executorDropInText); err != nil {
+		return err
 	}
 	if _, err := h.run(ctx, "systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
@@ -235,8 +258,8 @@ func (h *host) executorBinary(ctx context.Context) (replaced bool, err error) {
 			return false, fmt.Errorf("the executor binary %s has the SHA-256 %q after the copy, not %s of this program: it is not run", executorBinary, got, sum)
 		}
 	}
-	if _, err := h.d.Exec(ctx, "tee", []string{executorPin}, strings.NewReader(pin+"\n")); err != nil {
-		return false, fmt.Errorf("write %s: %w", executorPin, err)
+	if err := h.writeReadable(ctx, executorPin, pin+"\n"); err != nil {
+		return false, err
 	}
 	h.check("The executor runs %s, a root-owned copy of this program (SHA-256 %s).\n", executorBinary, sum)
 	return replaced, nil
@@ -296,11 +319,11 @@ func (h *host) executorUnit(ctx context.Context, port int, binaryReplaced bool) 
 	on, readErr := h.run(ctx, "cat", executorUnitPath)
 	unitChanged := readErr != nil || on != strings.TrimSpace(string(unit))
 	if unitChanged {
-		if _, err := h.run(ctx, "mkdir", "-p", path.Dir(executorUnitPath)); err != nil {
+		if err := h.makeDir(ctx, path.Dir(executorUnitPath)); err != nil {
 			return err
 		}
-		if _, err := h.d.Exec(ctx, "tee", []string{executorUnitPath}, strings.NewReader(string(unit))); err != nil {
-			return fmt.Errorf("write %s: %w", executorUnitPath, err)
+		if err := h.writeReadable(ctx, executorUnitPath, string(unit)); err != nil {
+			return err
 		}
 	}
 	state, _ := h.userctl(ctx, "show", "--property=ActiveState", "--value", executorUnitName) // an error here is a unit that is not there yet

@@ -1,6 +1,6 @@
 // Package sandbox runs one disposable container through the CLI of a container runtime, with the isolation that ADR 0028
-// section 11 requires, and reports what only the runtime can say: the exit status, an out-of-memory kill and the executor's own
-// kill. It never runs a weaker sandbox: a Spec that asks for less, or a runtime that cannot honor a property, is an error.
+// section 11 requires, and reports what only the runtime can say: the exit status and an out-of-memory kill. It never runs a weaker
+// sandbox: a Spec that asks for less, or a runtime that cannot honor a property, is an error.
 package sandbox
 
 import (
@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
@@ -28,13 +27,13 @@ var (
 	ErrSetupFailed = errors.New("the sandbox failed before the program started")
 )
 
-// Limits are the resource limits of one sandbox. Every one but KillAfter is required: the runtimes read zero as no limit.
+// Limits are the resource limits of one sandbox. Every one is required: the runtimes read zero as no limit. The only time bound of a run
+// is the context of Run.
 type Limits struct {
 	MemoryMiB int // the memory limit; the swap limit is the same, and the tmpfs counts in it
 	CPUs      int
 	Pids      int
-	TmpfsMiB  int           // the size of /work
-	KillAfter time.Duration // the runner kills the container this long after it starts; zero is no clock (the executor passes none: its bound is the context), kept for the tagged integration tests of this package and of source
+	TmpfsMiB  int // the size of /work
 }
 
 // Spec describes one run.
@@ -52,7 +51,6 @@ type Spec struct {
 type Outcome struct {
 	ExitCode  int
 	OOMKilled bool // the runtime's .State.OOMKilled: the memory limit killed a process of the container
-	Killed    bool // the executor's own kill, KillAfter after the start
 	Truncated bool // the output passed StdoutLimit
 	Stdout    []byte
 }
@@ -104,8 +102,8 @@ func (s Spec) validate() error {
 }
 
 func (l Limits) validate() error {
-	if l.MemoryMiB <= 0 || l.CPUs <= 0 || l.Pids <= 0 || l.TmpfsMiB <= 0 || l.KillAfter < 0 {
-		return invalid("every limit is required and positive, and the kill deadline is not negative: %+v", l)
+	if l.MemoryMiB <= 0 || l.CPUs <= 0 || l.Pids <= 0 || l.TmpfsMiB <= 0 {
+		return invalid("every limit is required and positive: %+v", l)
 	}
 	return nil
 }

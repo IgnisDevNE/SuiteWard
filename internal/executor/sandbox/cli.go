@@ -151,7 +151,9 @@ func runArgs(engine, name string, s Spec) []string {
 	memory := strconv.Itoa(l.MemoryMiB) + "m"
 	// --sig-proxy=false: a signal to the attached CLI (systemd stopping the executor's unit) is not forwarded to the container's first process, go
 	// test, which would end with 143 and make every expected test read fail. The executor's grace and its kill by name end a container.
-	args := []string{"run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only"}
+	// --log-driver=none: the runtime keeps no copy of the container's output on the host (Docker on Linux defaults to an unbounded json-file);
+	// the attached CLI still receives it, which is all the runner reads.
+	args := []string{"run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only", "--log-driver=none"}
 	if engine == enginePodman {
 		// Under --read-only Podman still mounts a writable tmpfs on /tmp, /var/tmp, /run and /dev/shm unless it is told not to.
 		args = append(args, "--read-only-tmpfs=false")
@@ -195,7 +197,7 @@ func (c *cli) Run(ctx context.Context, s Spec) (Outcome, error) {
 	}
 	name := namePrefix + rand.Text()
 	stdin, stdout := newGuardedStdin(s.Stdin), &capped{limit: s.StdoutLimit}
-	killed, stderr, runErr := c.execute(ctx, name, runArgs(engine, name, s), s.Limits.KillAfter, stdin, stdout)
+	stderr, runErr := c.execute(ctx, name, runArgs(engine, name, s), stdin, stdout)
 	// The state and the removal do not depend on the caller's context: a cancelled run must still remove its container.
 	cleanup := context.WithoutCancel(ctx)
 	state, stateErr := c.inspect(cleanup, name)
@@ -208,7 +210,7 @@ func (c *cli) Run(ctx context.Context, s Spec) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, errors.Join(err, left)
 	}
-	return Outcome{ExitCode: state.ExitCode, OOMKilled: state.OOMKilled, Killed: killed, Truncated: stdout.truncated(), Stdout: stdout.Bytes()}, left
+	return Outcome{ExitCode: state.ExitCode, OOMKilled: state.OOMKilled, Truncated: stdout.truncated(), Stdout: stdout.Bytes()}, left
 }
 
 // verdict decides whether a run happened: it names the first reason it did not, and is nil when the container started Argv and it
@@ -231,53 +233,47 @@ func verdict(ctx context.Context, stdinErr, runErr error, stderr string, state c
 	return nil
 }
 
-// execute runs the container and watches it. The container is killed by name when the clock runs out (if the caller has one), as soon as
-// the standard input breaks, and when the context ends; it returns whether the clock killed it.
-func (c *cli) execute(ctx context.Context, name string, args []string, after time.Duration, stdin *guardedStdin, stdout io.Writer) (killed bool, stderr string, err error) {
+// execute runs the container and watches it. The container is killed by name as soon as the standard input breaks and when the context
+// ends: the only time bound of a run is its context.
+func (c *cli) execute(ctx context.Context, name string, args []string, stdin *guardedStdin, stdout io.Writer) (stderr string, err error) {
 	done := make(chan struct{})
-	watched := make(chan bool, 1)
-	go func() { watched <- c.killWhen(ctx, name, after, stdin.broken, done) }()
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		c.killWhen(ctx, name, stdin.broken, done)
+	}()
 	_, stderr, err = c.run(ctx, c.binary, args, stdin, stdout)
 	close(done)
-	return <-watched, stderr, err
+	<-watched
+	return stderr, err
 }
 
-// awaitKill waits for a reason to kill the container: the clock, if there is one, which runs from the start of the container, a standard
-// input that broke, or the end of the context. It reports false when the run ended first.
-func awaitKill(ctx context.Context, after time.Duration, broken, done <-chan struct{}) (kill, clock bool) {
-	var clockRuns <-chan time.Time // nil, which no select takes, when the caller has no clock
-	if after > 0 {
-		timer := time.NewTimer(after)
-		defer timer.Stop()
-		clockRuns = timer.C
-	}
+// awaitKill waits for a reason to kill the container: a standard input that broke, or the end of the context. It reports false when the
+// run ended first.
+func awaitKill(ctx context.Context, broken, done <-chan struct{}) bool {
 	select {
 	case <-done:
-		return ctx.Err() != nil, false // a context that ended with the run may have left its container behind
+		return ctx.Err() != nil // a context that ended with the run may have left its container behind
 	case <-ctx.Done():
-		return true, false
+		return true
 	case <-broken:
-		return true, false
-	case <-clockRuns:
-		return true, true
+		return true
 	}
 }
 
 // killWhen kills the container by name when awaitKill says so, because killing the `run` client leaves the container running (spike S0).
-// The container may not exist yet, so a kill that fails is tried again until the run ends. It reports whether the clock was the cause of
-// a kill that landed.
-func (c *cli) killWhen(ctx context.Context, name string, after time.Duration, broken, done <-chan struct{}) bool {
-	kill, clock := awaitKill(ctx, after, broken, done)
-	if !kill {
-		return false
+// The container may not exist yet, so a kill that fails is tried again until the run ends.
+func (c *cli) killWhen(ctx context.Context, name string, broken, done <-chan struct{}) {
+	if !awaitKill(ctx, broken, done) {
+		return
 	}
 	for {
 		if _, err := c.output(context.WithoutCancel(ctx), "kill", name); err == nil {
-			return clock
+			return
 		}
 		select {
 		case <-done:
-			return false
+			return
 		case <-time.After(killRetry):
 		}
 	}

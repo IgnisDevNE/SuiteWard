@@ -97,10 +97,10 @@ func assertSpec(t *testing.T, i int, c call) {
 	if spec.Image != goprofile.Image || spec.Workdir != goprofile.TreeDir {
 		t.Errorf("run %d: image %q workdir %q", i, spec.Image, spec.Workdir)
 	}
-	if l := spec.Limits; l.MemoryMiB != 3072 || l.CPUs != 4 || l.Pids != 512 || l.TmpfsMiB != 1024 || l.KillAfter != 0 {
+	if l := spec.Limits; l.MemoryMiB != 3072 || l.CPUs != 4 || l.Pids != 512 || l.TmpfsMiB != 1024 {
 		// No wall clock bounds an invocation: it holds a cold build and many packages, and go test kills a test binary itself, a minute after
 		// its -timeout. The only time kill is at the deadline of the attempt, which ends the context of the work.
-		t.Errorf("run %d: the limits are %+v; want the job's, and no clock of the executor's own per invocation", i, l)
+		t.Errorf("run %d: the limits are %+v; want the job's", i, l)
 	}
 	if !slices.ContainsFunc(spec.Env, func(e string) bool { return strings.HasPrefix(e, "PATH=") }) {
 		t.Errorf("run %d: no PATH in the environment, which env -i clears", i)
@@ -121,14 +121,18 @@ func testIDs(names, dirs []string) []goprofile.TestID {
 	return ids
 }
 
+const subTest = "package sub\n\nimport \"testing\"\n\nfunc TestSub(t *testing.T) {}\n"
+
+// Only a go.mod that the governing manifest lists makes a nested module, and its tests are excluded: the manifest protects it. The head's
+// own go.mod files are not the manifest's.
 func TestADeclaredTestThatTheSandboxCannotRunIsListedExcludedAndNeverRun(t *testing.T) {
 	s := canonicalScenario()
 	s.head = repo{"go.mod": goMod, "lib.go": "package m\n", "sub/go.mod": "module example.com/sub\n"}
 	s.headExtra = []client.TreeEntry{{Path: "vendored", Mode: "160000", SHA: headSHA}}
 	s.manifest = repo{
-		".suiteward.yml": declaration, "lib_test.go": libTests,
+		".suiteward.yml": declaration, "lib_test.go": libTests, "sub/go.mod": "module example.com/sub\n",
 		"integ_test.go":   "//go:build integration\n\npackage m\n\nimport \"testing\"\n\nfunc TestInteg(t *testing.T) {}\n",
-		"sub/sub_test.go": "package sub\n\nimport \"testing\"\n\nfunc TestSub(t *testing.T) {}\n",
+		"sub/sub_test.go": subTest,
 	}
 	rt := newRuntime(func(c call) (sandbox.Outcome, error) { return goTest(c, pass), nil })
 	d := start(t, newService(t, s.serve(1)), rt)
@@ -146,6 +150,27 @@ func TestADeclaredTestThatTheSandboxCannotRunIsListedExcludedAndNeverRun(t *test
 		if slices.Contains(c.Names, "TestInteg") || slices.Contains(c.Names, "TestSub") || slices.Contains(c.Dirs, "sub") {
 			t.Errorf("an excluded test was run: %v in %v", c.Names, c.Dirs)
 		}
+	}
+}
+
+// A go.mod that the head adds over a test directory of the manifest is the candidate's: it must not turn the manifest's approved tests there
+// into excluded ones, which neither block nor count. The tests run, go cannot resolve their package, and that reads build-error, a failure.
+func TestAGoModThatTheHeadAddsOverATestDirectoryOfTheManifestDoesNotExcludeItsTests(t *testing.T) {
+	s := canonicalScenario()
+	s.head = repo{"go.mod": goMod, "lib.go": "package m\n", "sub/go.mod": "module example.com/sub\n"}
+	s.manifest = repo{".suiteward.yml": declaration, "lib_test.go": libTests, "sub/sub_test.go": subTest}
+	rt := newRuntime(func(c call) (sandbox.Outcome, error) { return goTest(c, pass), nil })
+	d := start(t, newService(t, s.serve(1)), rt)
+	assertBody(t, d.result().body, `{
+		"status": "complete", "head": {"sha": "`+headSHA+`"}, `+commonExecutor+`, `+commonSandbox+`,
+		"tests": [
+			{"package": ".", "name": "TestA", "file": "lib_test.go", "kind": "declared", "head": ["pass"]},
+			{"package": ".", "name": "TestB", "file": "lib_test.go", "kind": "declared", "head": ["pass"]},
+			{"package": "sub", "name": "TestSub", "file": "sub/sub_test.go", "kind": "declared", "head": ["build-error"]}
+		]
+	}`)
+	if !slices.ContainsFunc(rt.invocations(), func(c call) bool { return slices.Contains(c.Dirs, "sub") }) {
+		t.Error("the manifest's test under the head's go.mod was never run")
 	}
 }
 

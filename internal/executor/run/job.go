@@ -2,8 +2,10 @@ package run
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
+	"net/url"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/client"
@@ -14,7 +16,8 @@ import (
 // that stops the loop (30 s) is over, the deadline of the job less 30 s has come (the only time kill: the service then ends the attempt as
 // timeout), or a heartbeat learned that the lease is lost. The two times are waited for through Sleep. Work that ended that way posts
 // nothing, and the service sees the job again once its lease expires or its deadline passes. Ending the context of the work stops the
-// sandbox, which kills its container, and a container that was killed so is never read as a resource limit.
+// sandbox, which kills its container, and a container that was killed so is never read as a resource limit. A result that the service does
+// not take (503, no answer) is posted again until the work ends, so the same two times bound the wait.
 func (e *Executor) handle(ctx context.Context, lease *client.Lease) {
 	log := e.cfg.Log.With("job", lease.JobID, "plan", lease.Plan, "pull", lease.Pull)
 	work, drop := context.WithCancelCause(context.WithoutCancel(ctx))
@@ -44,7 +47,7 @@ func (e *Executor) handle(ctx context.Context, lease *client.Lease) {
 		log.Info("the work was dropped and nothing is posted", "cause", context.Cause(work))
 		return
 	}
-	state, err := lease.Result(work, body)
+	state, err := e.post(work, lease, body, log)
 	switch {
 	case errors.Is(err, client.ErrLeaseLost):
 		log.Info("the lease was lost before the result was posted: the result is discarded")
@@ -53,6 +56,36 @@ func (e *Executor) handle(ctx context.Context, lease *client.Lease) {
 	default:
 		log.Info("the result was posted", "state", state)
 	}
+}
+
+// post sends the result, and sends the same body again while the service does not take it: it answered 503 (stopping or not ready) or
+// gave no answer (it is down). The result is finished work, and losing it costs an attempt. The wait is the lease backoff, doubling, but
+// never longer than a heartbeat interval: the heartbeat stops before the first post and the lease lasts 60 s from the last one, so a
+// service that is back must be found while the lease still holds (a heartbeat could not extend it, since it meets the same outage). The
+// resends end with the context of the work: the deadline less the margin, or the grace after the signal. The body is the same bytes each
+// time, because the service knows a result it has already stored by their digest. Any other answer is the caller's.
+func (e *Executor) post(ctx context.Context, lease *client.Lease, body []byte, log *slog.Logger) (string, error) {
+	wait := min(e.cfg.Pacing.Backoff, e.cfg.Pacing.Heartbeat)
+	for {
+		state, err := lease.Result(ctx, body)
+		if ctx.Err() != nil || !notTaken(err) {
+			return state, err
+		}
+		log.Warn("the service did not take the result: it is sent again", "error", err, "retry_in", wait)
+		if e.cfg.Sleep(ctx, wait) != nil {
+			return state, err
+		}
+		wait = min(2*wait, e.cfg.Pacing.Heartbeat)
+	}
+}
+
+// notTaken says that the service did not take a result and may yet take it: it answered 503, or the call got no answer (net/http returns a
+// *url.Error for a connection that was refused or cut, and for a call that timed out). A certificate that the client cannot verify is a
+// *url.Error too, wrapping the x509 error in a tls.CertificateVerificationError, and no wait changes it.
+func notTaken(err error) bool {
+	var noAnswer *url.Error
+	var untrusted *tls.CertificateVerificationError
+	return errors.Is(err, client.ErrUnavailable) || (errors.As(err, &noAnswer) && !errors.As(err, &untrusted))
 }
 
 // dropAtDeadline waits until the deadline of the attempt less the margin, and then drops the work with the deadline as the cause. An attempt

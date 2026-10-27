@@ -100,8 +100,6 @@ func (a *attempt) invoke(ctx context.Context, s *side, tests []goprofile.TestID)
 		// The work was dropped (its deadline, the grace after the signal, a lost lease): the status of the container that was killed for it
 		// is the executor's own doing, and says nothing of the tests.
 		return nil, fmt.Errorf("the work was dropped: %w", ctx.Err())
-	case out.Killed:
-		return nil, errDropped
 	case out.OOMKilled || out.ExitCode == 137:
 		// Only the out-of-band signals count, and before the report is read: a report of a killed container says nothing.
 		return nil, refuse(reasonResourceLimit, "the container was killed (out of memory %t, status %d)", out.OOMKilled, out.ExitCode)

@@ -210,6 +210,42 @@ func withModules(files map[string][]byte, tree []execution.TreeFile) map[string]
 	return out
 }
 
+// receiptModules is the go.mod files of the head's tree that may make a nested module in a receipt, which are the protected ones:
+//   - a go.mod at a path where the merge base has one;
+//   - a go.mod that the revision's manifest lists. The revision's manifest is the head's files under the approved patterns, and the job
+//     holds the canonical version that the revision expects, not that manifest: a head go.mod counts when the expected canonical's scope
+//     covers its path (the patterns that the canonical approves; a pattern that only the head adds is not approved yet, and covers nothing);
+//   - a go.mod that the expected canonical itself lists (a.governing, which its own scope normally covers too).
+//
+// Any other go.mod of the head is the candidate's, in a directory that it may have chosen, and must not turn a test of the candidate that
+// go would run into an excluded one. A nested module that the base has and the head removed is no module of the head: its tests run, and
+// the base side, which still has it, cannot build their package.
+func (a *attempt) receiptModules(headTree []execution.TreeFile, base artifact.Manifest) ([]execution.TreeFile, error) {
+	known := map[string]bool{}
+	for _, m := range []artifact.Manifest{base, a.governing} {
+		for _, e := range m.Entries() {
+			if path.Base(e.Path) == "go.mod" {
+				known[e.Path] = true
+			}
+		}
+	}
+	approved := scope.NewScope(a.decl)
+	var modules []execution.TreeFile
+	for _, f := range headTree {
+		if path.Base(f.Path) != "go.mod" {
+			continue
+		}
+		covered, err := approved.Covers(f.Path)
+		if err != nil {
+			return nil, err
+		}
+		if covered || known[f.Path] {
+			modules = append(modules, f)
+		}
+	}
+	return modules, nil
+}
+
 // canonical runs the declared tests of the governing manifest on the head with the whole manifest laid over it.
 func (a *attempt) canonical(ctx context.Context) (completion, error) {
 	head, err := a.inspect(ctx, source.SideHead)
@@ -228,7 +264,10 @@ func (a *attempt) canonical(ctx context.Context) (completion, error) {
 	if err != nil {
 		return completion{}, err
 	}
-	declared := goprofile.DeclaredTests(withModules(files, tree), goarch)
+	// Only a go.mod that the governing manifest lists makes a nested module: a go.mod that the head adds in a protected test directory is the
+	// candidate's, and must not turn the manifest's approved tests there into excluded ones. The root go.mod is read above, whoever has it.
+	modules := slices.DeleteFunc(slices.Clone(tree), func(f execution.TreeFile) bool { return f.Source != execution.FromManifest })
+	declared := goprofile.DeclaredTests(withModules(files, modules), goarch)
 	done := completion{tests: declaredRows(declared), submodules: head.Submodules}
 	if err := done.check(); err != nil {
 		return completion{}, err
@@ -320,7 +359,11 @@ func (a *attempt) receipt(ctx context.Context) (completion, error) {
 		return completion{}, err
 	}
 
-	tests := withModules(headRead.tests, headTree)
+	modules, err := a.receiptModules(headTree, base.Files)
+	if err != nil {
+		return completion{}, err
+	}
+	tests := withModules(headRead.tests, modules)
 	added, changed := goprofile.ChangedTests(tests, canonical, goarch)
 	declared := goprofile.DeclaredTests(tests, goarch)
 	rows, runnable, err := receiptRows(added, changed, declared)

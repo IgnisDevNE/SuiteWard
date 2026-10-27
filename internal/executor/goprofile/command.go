@@ -14,6 +14,15 @@ const (
 	modCacheDir = StateDir + "/gomodcache"
 )
 
+// pattern is how an invocation names the package of a directory: ./dir, and . for the root (a dot in front keeps a directory that starts
+// with a dash from reading as a flag). go reports a package it cannot resolve by this pattern, and a resolved one by its import path.
+func pattern(dir string) string {
+	if dir == "." {
+		return dir
+	}
+	return "./" + dir
+}
+
 // Command is the go test invocation of one side, as the argv that the container's process execs (no shell reads it, so
 // the -run pattern has no quotes of its own), and the whole environment of that process: the sandbox inherits nothing.
 // One invocation runs the named tests, sorted and each once, in their packages, sorted and each once (./dir, and . for
@@ -41,10 +50,7 @@ func Command(tests []TestID, timeout time.Duration, vendor bool) (argv, env []st
 	}
 	argv = []string{"go", "test", "-json", "-count=1", "-shuffle=on", "-timeout=" + timeout.String(), "-run", "^(" + strings.Join(names, "|") + ")$"}
 	for _, dir := range dirs {
-		if dir != "." {
-			dir = "./" + dir
-		}
-		argv = append(argv, dir)
+		argv = append(argv, pattern(dir))
 	}
 
 	proxy := "off"

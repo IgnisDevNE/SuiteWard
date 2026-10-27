@@ -123,11 +123,12 @@ func TestParseReadsRecordedGoTestOutput(t *testing.T) {
 		{"inconsistent-vendor", 1,
 			[]TestID{at("good", "TestGood")},
 			map[TestID]execution.Observation{at("good", "TestGood"): buildErr}},
-		// -run '^(TestGood)$' ./good ./nested, where nested/ has a go.mod of its own: go reports the pattern ./nested as a
-		// setup failure and runs ./good, so the rest of the invocation stands (Command is never given such a package)
+		// -run '^(TestGood)$' ./good ./nested, where nested/ has a go.mod of its own: go reports the pattern ./nested (not an import
+		// path) as a setup failure and runs ./good, so the rest of the invocation stands. A test of ./nested reads build-error: the
+		// canonical plan names such a package when a head file adds a go.mod over a test directory of the manifest
 		{"nested-module-pattern", 1,
-			[]TestID{at("good", "TestGood")},
-			map[TestID]execution.Observation{at("good", "TestGood"): pass}},
+			[]TestID{at("good", "TestGood"), at("nested", "TestGood")},
+			map[TestID]execution.Observation{at("good", "TestGood"): pass, at("nested", "TestGood"): buildErr}},
 	}
 	for _, c := range cases {
 		t.Run(c.fixture, func(t *testing.T) {

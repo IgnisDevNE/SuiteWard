@@ -164,3 +164,9 @@ func removeExecutor(ctx context.Context, d Deps, tokenFile string) (existed bool
 	}
 	return true, plan.remove(ctx, d, registered)
 }
+
+// pathExists says whether something is at the path.
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}

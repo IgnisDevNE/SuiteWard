@@ -134,7 +134,7 @@ func removeStack(ctx context.Context, r *Resolver, d Deps, rt Runtime, purge boo
 		if existed {
 			r.say("Stopped the executor and removed its program and its definition.\n")
 		}
-	} else if dir := executorDirOf(token.path); exists(dir) {
+	} else if dir := executorDirOf(token.path); pathExists(dir) {
 		r.say("Kept the executor in %s: it is beside a token file that may belong to another instance.\n", dir)
 	}
 	for _, name := range []string{ContainerServe, ContainerMigrate, ContainerDB} {

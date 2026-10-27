@@ -77,6 +77,7 @@ func TestMainExitCodes(t *testing.T) {
 		{"an unknown command", []string{"frobnicate"}, 2, `unknown command "frobnicate"`, ""},
 		{"install --help", []string{"install", "--help"}, 0, "", "-runtime"},
 		{"install host --help", []string{"install", "host", "--help"}, 0, "", "-metadata-rule"},
+		{"install host --help says the release's sums are required", []string{"install", "host", "--help"}, 0, "", "(required) the verified SHA256SUMS"},
 		{"doctor --help", []string{"doctor", "--help"}, 0, "", "-settings"},
 		{"a flag that does not exist", []string{"install", "--nope"}, 2, "flag provided but not defined", ""},
 		{"a doctor flag that does not exist", []string{"doctor", "--nope"}, 2, "flag provided but not defined", ""},

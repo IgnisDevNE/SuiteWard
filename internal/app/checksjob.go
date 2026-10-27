@@ -314,7 +314,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			executed, d.wait = executionOutcome{}, true
 			j.overrideWait(s, &d)
 			// In the order of the wait path: a wrong code entered since still fails the check, and a restored runner block carries its runner set.
-			if err = j.settle(ctx, s, &d); err != nil {
+			if err := j.settle(ctx, s, &d); err != nil {
 				return "", err
 			}
 		}

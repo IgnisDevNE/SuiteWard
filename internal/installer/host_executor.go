@@ -114,15 +114,17 @@ func (h *host) executor(ctx context.Context) error {
 	if err := h.executorRules(ctx, uid); err != nil {
 		return err
 	}
+	// The image first: it depends on neither the token nor the binary, and a run that stops here has changed nothing. What a run changed before it
+	// stopped is not seen again by the next one (the binary then matches, the unit is unchanged), so a running executor would never be restarted.
+	if err := h.executorImage(ctx, uid); err != nil {
+		return err
+	}
 	tokenMade, err := h.executorToken(ctx)
 	if err != nil {
 		return err
 	}
 	replaced, err := h.executorBinary(ctx)
 	if err != nil {
-		return err
-	}
-	if err := h.executorImage(ctx, uid); err != nil {
 		return err
 	}
 	return h.executorUnit(ctx, port, replaced || tokenMade)

@@ -194,13 +194,9 @@ func (h *executorAPI) side(ctx context.Context, job execution.Job, repo, sha str
 // governing reads the manifest that the job runs against and the declaration it names, from the content store. A declaration over 1 MiB is too
 // large. A manifest or a file that the store cannot give is the service's own fault.
 func (h *executorAPI) governing(ctx context.Context, job execution.Job) (leaseManifest, *string, error) {
-	raw, err := h.content.Read(ctx, job.GoverningDigest)
+	manifest, err := h.manifestOf(ctx, job)
 	if err != nil {
-		return leaseManifest{}, nil, fmt.Errorf("read the manifest %s of job %d: %w", job.GoverningDigest, job.ID, err)
-	}
-	manifest, err := artifact.ParseManifest(raw)
-	if err != nil || manifest.Digest() != job.GoverningDigest {
-		return leaseManifest{}, nil, fmt.Errorf("the manifest %s of job %d is not the encoding of that digest: %v", job.GoverningDigest, job.ID, err)
+		return leaseManifest{}, nil, err
 	}
 	out := leaseManifest{Source: string(job.GoverningSource), Digest: job.GoverningDigest.String(), Files: []manifestFile{}}
 	var declaration *string
@@ -213,6 +209,19 @@ func (h *executorAPI) governing(ctx context.Context, job execution.Job) (leaseMa
 		}
 	}
 	return out, declaration, nil
+}
+
+// manifestOf reads the manifest that the job runs against from the content store. The checks job keeps it there under its own digest.
+func (h *executorAPI) manifestOf(ctx context.Context, job execution.Job) (artifact.Manifest, error) {
+	raw, err := h.content.Read(ctx, job.GoverningDigest)
+	if err != nil {
+		return artifact.Manifest{}, fmt.Errorf("read the manifest %s of job %d: %w", job.GoverningDigest, job.ID, err)
+	}
+	manifest, err := artifact.ParseManifest(raw)
+	if err != nil || manifest.Digest() != job.GoverningDigest {
+		return artifact.Manifest{}, fmt.Errorf("the manifest %s of job %d is not the encoding of that digest: %v", job.GoverningDigest, job.ID, err)
+	}
+	return manifest, nil
 }
 
 // declaration is the base64 of the declaration's bytes, refused before it is read when it is over 1 MiB.

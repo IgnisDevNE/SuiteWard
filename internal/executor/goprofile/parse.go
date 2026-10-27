@@ -15,17 +15,22 @@ import (
 // for each expected test. module is the module path of the tree that was tested: go test names a package by its import
 // path, which is module for the root and module/dir for the others.
 //
-// Only the top-level tests of the expected packages are read, and each line on its own:
+// A line is an event when it decodes as a JSON object that names an Action. Any other line is not trusted and is
+// skipped: it cannot give a pass, and a test that only such a line mentions is absent.
+//
+// An invocation that exits with a failing status and wrote no event at all ran nothing: go refused before it built a
+// package (a vendor/ that does not agree with go.mod, a toolchain that does not suit go.mod, a pattern it rejects), so
+// every expected test reads build-error.
+//
+// Otherwise only the top-level tests of the expected packages are read, and each line on its own:
 //   - a package whose build failed (its package-level fail event names FailedBuild, a compile error, a vet failure or an
 //     import that does not resolve alike) gives build-error to every expected test of it;
+//   - a name with a start that no result ended is fail: a timeout, which go test reports for the package only, or a twin
+//     of a name that hangs after the other passed. A name that has not started has no such start;
 //   - a test's pass, fail and skip give pass, fail and skip. A name that reports twice (an internal and an external test
 //     package may both declare it, and -run selects by name alone) is the worst of its results: fail, then skip, then
 //     pass;
-//   - a test that started and never ended (a timeout, which go test reports for the package only) is fail;
 //   - a test that no event mentions is absent.
-//
-// A line that is not an event (it does not decode, or it is not an object) is not trusted and is skipped: it cannot give
-// a pass, and a test that only such a line mentions is absent.
 //
 // Last, the exit status is read against the report, as go test's own: when they contradict each other, the report was
 // not go test's, and every expected test reads fail. The report shows a failure when any test of the invocation failed
@@ -34,12 +39,22 @@ import (
 // the report, and so does a zero status with one. So a test that was not named but has the name of one that was (go test
 // applies -run to every package) explains a failing status when it fails, and fails the invocation when the status is
 // zero.
+//
+// The rule catches a report that contradicts the status, not one that agrees with it. A package whose init prints the
+// events of go test's own framing (each line starts with the byte \x16) and then exits with status 0 forges any result,
+// and nothing contradicts it: the markers (forged-event and exit-in-init of Markers) are the only sign.
 func Parse(stdout []byte, exitCode int, module string, expected []TestID) (map[TestID]execution.Observation, error) {
 	if module == "" {
 		return nil, errors.New("go test output: no module path to name the packages by")
 	}
 	r := read(stdout)
 	obs := make(map[TestID]execution.Observation, len(expected))
+	if exitCode != 0 && r.events == 0 {
+		for _, id := range expected {
+			obs[id] = execution.ObservedBuildError
+		}
+		return obs, nil
+	}
 	for _, id := range expected {
 		obs[id] = r.observation(importPath(module, id.Package), id.Name)
 	}
@@ -56,11 +71,12 @@ type event struct {
 	Action, Package, Test, FailedBuild string
 }
 
-// report is what the events say: the packages that did not build, the tests that started, their results, and whether any
-// test of any package, a subtest included, failed.
+// report is what the events say: how many there are, the packages that did not build, the starts of each test that no
+// result has ended yet, their results, and whether any test of any package, a subtest included, failed.
 type report struct {
+	events     int
 	notBuilt   map[string]bool
-	started    map[key]bool
+	open       map[key]int
 	results    map[key][]execution.Observation
 	testFailed bool
 }
@@ -72,12 +88,13 @@ var resultOf = map[string]execution.Observation{
 }
 
 func read(stdout []byte) report {
-	r := report{notBuilt: map[string]bool{}, started: map[key]bool{}, results: map[key][]execution.Observation{}}
+	r := report{notBuilt: map[string]bool{}, open: map[key]int{}, results: map[key][]execution.Observation{}}
 	for _, line := range bytes.Split(stdout, []byte("\n")) {
 		var ev event
-		if err := json.Unmarshal(bytes.TrimSpace(line), &ev); err != nil {
+		if err := json.Unmarshal(bytes.TrimSpace(line), &ev); err != nil || ev.Action == "" {
 			continue
 		}
+		r.events++
 		k := key{ev.Package, ev.Test}
 		if ev.Test != "" && ev.Action == "fail" {
 			r.testFailed = true
@@ -89,10 +106,13 @@ func read(stdout []byte) report {
 			}
 		case strings.Contains(ev.Test, "/"): // a subtest: its parent reports for it
 		case ev.Action == "run":
-			r.started[k] = true
+			r.open[k]++
 		default:
 			if o, ok := resultOf[ev.Action]; ok {
 				r.results[k] = append(r.results[k], o)
+				if r.open[k] > 0 {
+					r.open[k]--
+				}
 			}
 		}
 	}
@@ -104,10 +124,10 @@ func (r report) observation(pkg, name string) execution.Observation {
 	switch {
 	case r.notBuilt[pkg]:
 		return execution.ObservedBuildError
+	case r.open[k] > 0:
+		return execution.ObservedFail
 	case len(r.results[k]) > 0:
 		return slices.MaxFunc(r.results[k], func(a, b execution.Observation) int { return cmp.Compare(severity(a), severity(b)) })
-	case r.started[k]:
-		return execution.ObservedFail
 	}
 	return execution.ObservedAbsent
 }
@@ -140,21 +160,21 @@ func (r report) failure(obs map[TestID]execution.Observation) bool {
 	return failed
 }
 
-// Reruns lists, sorted, the tests of obs (their latest results) that failed and may run again: a test is run limit times
-// in all, its first run included, and done is how many it has had. A build error is the same on every run, and an absent
-// test has no result to confirm, so neither is run again.
+// Reruns lists, sorted, the tests of obs (their latest results) that failed or are absent and may run again: a test is
+// run limit times in all, its first run included, and done is how many it has had. A build error is the same on every
+// run, so it is not run again. An absent test may have been cut short by another test that hung or crashed, so it is.
 func Reruns(obs map[TestID]execution.Observation, done, limit int) []TestID {
 	if done >= limit {
 		return nil
 	}
-	var failing []TestID
+	var again []TestID
 	for id, o := range obs {
-		if o == execution.ObservedFail {
-			failing = append(failing, id)
+		if o == execution.ObservedFail || o == execution.ObservedAbsent {
+			again = append(again, id)
 		}
 	}
-	slices.SortFunc(failing, func(a, b TestID) int {
+	slices.SortFunc(again, func(a, b TestID) int {
 		return cmp.Or(cmp.Compare(a.Package, b.Package), cmp.Compare(a.Name, b.Name), cmp.Compare(a.File, b.File))
 	})
-	return failing
+	return again
 }

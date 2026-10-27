@@ -34,20 +34,22 @@ type key struct{ pkg, name string }
 // DeclaredTests lists the test functions of the _test.go files in files (paths relative to the root, with slashes), which
 // also holds the go.mod files of the tree: a directory below the root with a go.mod of its own is another module. A
 // function is a test when it is a top-level func TestXxx(t *testing.T): not TestMain, no benchmark, fuzz target or
-// example, no method, no other signature. The sandbox's build context (linux, goarch, cgo off, no tags) decides which
-// tests it can run: those of the files it leaves out are Excluded with the reason build-constraint, and those under
-// another module are Excluded with the reason nested-module (the root invocation cannot name their packages; this
-// reason comes first). A name is listed once per package, and as excluded only when no runnable file declares it; of
-// several files that declare it, the first by path stands for it.
-// Directories that go does not build (testdata, vendor, and names that start with "." or "_") hold no test. A file
-// that does not parse is an error, whether the context selects it or not.
+// example, no method, no other signature. The sandbox's build context (linux, goarch, cgo off, the release tags of the
+// toolchain, the default level tag of goarch, no other tag; goexperiment tags are not modelled) decides which tests it
+// can run: those of the files it leaves out are Excluded with the reason build-constraint, and those under another
+// module are Excluded with the reason nested-module (the root invocation cannot name their packages; this reason comes
+// first). A name is listed once per package, and as excluded only when no runnable file declares it; of several files
+// that declare it, the first by path stands for it. Directories that go does not build (testdata, vendor, and names
+// that start with "." or "_") hold no test.
+//
+// A file is the candidate's, so none is ever an error. A runnable file that go cannot read (a syntax error, a build
+// constraint that does not parse, a NUL byte) gives no test and is listed in Unparsed: the build of its package fails
+// when the tests run. A file that the context leaves out, or a nested module's, is skipped if it cannot be read, since
+// go reads only the header of such a file. The error is always nil.
 func DeclaredTests(files map[string][]byte, goarch string) (Declared, error) {
-	decls, err := scan(files, goarch)
-	if err != nil {
-		return Declared{}, err
-	}
-	var declared Declared
-	for _, d := range ordered(pick(decls)) {
+	scanned := scan(files, goarch)
+	declared := Declared{Unparsed: scanned.unparsed}
+	for _, d := range ordered(pick(scanned.decls)) {
 		if d.runnable {
 			declared.Tests = append(declared.Tests, d.id)
 		} else {
@@ -62,18 +64,11 @@ func DeclaredTests(files map[string][]byte, goarch string) (Declared, error) {
 // neither. Both lists hold the tests of files that the build context leaves out too: they are not run, and the caller
 // lists them as excluded by looking them up in DeclaredTests. A name that two files of a package declare (an internal
 // and an external test package) is changed when either text differs, and its File is the first of them in the head.
-// Files are read as DeclaredTests reads them, go.mod files included.
+// Files are read as DeclaredTests reads them, go.mod files included, and one that cannot be read gives no test (the
+// caller finds it in the Unparsed of DeclaredTests). The error is always nil.
 func ChangedTests(head, canonical map[string][]byte, goarch string) (added, changed []TestID, err error) {
-	headDecls, err := scan(head, goarch)
-	if err != nil {
-		return nil, nil, fmt.Errorf("head: %w", err)
-	}
-	canonicalDecls, err := scan(canonical, goarch)
-	if err != nil {
-		return nil, nil, fmt.Errorf("canonical: %w", err)
-	}
-	before := pick(canonicalDecls)
-	for _, d := range ordered(pick(headDecls)) {
+	before := pick(scan(canonical, goarch).decls)
+	for _, d := range ordered(pick(scan(head, goarch).decls)) {
 		old, ok := before[key{d.id.Package, d.id.Name}]
 		switch {
 		case !ok:
@@ -85,16 +80,31 @@ func ChangedTests(head, canonical map[string][]byte, goarch string) (added, chan
 	return added, changed, nil
 }
 
+// scanned is what the test files of a tree hold: their test functions, and the runnable files that could not be read.
+type scanned struct {
+	decls    []declaration
+	unparsed []string
+}
+
+// toolTags are the level tags that the go tool sets for the default level of the architecture (GOAMD64=v1, GOARM64=v8.0):
+// one for each level up to the default, which for these is the default itself. The goexperiment tags are not modelled,
+// and another architecture has no tag here.
+var toolTags = map[string][]string{
+	"amd64": {"amd64.v1"},
+	"arm64": {"arm64.v8.0"},
+}
+
 // scan reads the test files of files, in path order.
-func scan(files map[string][]byte, goarch string) ([]declaration, error) {
+func scan(files map[string][]byte, goarch string) scanned {
 	// A Context reads files through OpenFile and joins paths with JoinPath, so these in-memory paths need no disk and
 	// no separator of the host. The release tags are the toolchain's (the executor is built with the sandbox's Go); the
-	// build and tool tags are none, and cgo is off, as the image has no C compiler.
+	// build tags are none, and cgo is off, as the image has no C compiler.
 	ctx := build.Context{
 		GOOS:        "linux",
 		GOARCH:      goarch,
 		Compiler:    "gc",
 		ReleaseTags: build.Default.ReleaseTags,
+		ToolTags:    toolTags[goarch],
 		JoinPath:    path.Join,
 		OpenFile: func(name string) (io.ReadCloser, error) {
 			src, ok := files[name]
@@ -105,32 +115,40 @@ func scan(files map[string][]byte, goarch string) ([]declaration, error) {
 		},
 	}
 	modules := moduleDirs(files)
-	var decls []declaration
+	var out scanned
 	for _, file := range slices.Sorted(maps.Keys(files)) {
 		if !isBuiltTestFile(file) {
 			continue
 		}
+		nested := inNestedModule(path.Dir(file), modules)
 		selected, err := ctx.MatchFile(path.Dir(file), path.Base(file))
 		if err != nil {
-			return nil, fmt.Errorf("build constraints of %s: %w", file, err)
+			// go reads this header too, and fails the package, unless it is another module's.
+			if !nested {
+				out.unparsed = append(out.unparsed, file)
+			}
+			continue
 		}
 		found, err := testFunctions(file, files[file])
 		if err != nil {
-			return nil, err
+			if selected && !nested {
+				out.unparsed = append(out.unparsed, file)
+			}
+			continue
 		}
 		reason := ""
 		switch {
-		case inNestedModule(path.Dir(file), modules):
+		case nested:
 			reason = ReasonNestedModule
 		case !selected:
 			reason = ReasonBuildConstraint
 		}
 		for _, d := range found {
 			d.runnable, d.reason = reason == "", reason
-			decls = append(decls, d)
+			out.decls = append(out.decls, d)
 		}
 	}
-	return decls, nil
+	return out
 }
 
 // moduleDirs are the directories below the root that hold a go.mod of their own.

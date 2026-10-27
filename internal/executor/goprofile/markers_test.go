@@ -145,9 +145,17 @@ func TestMarkersFlagExitsThatInitIsNotNeededFor(t *testing.T) {
 // go test marks the events of a test binary with a SYN byte (\x16). A package that prints such frames in an init and
 // exits with status 0 reports whatever it likes and contradicts nothing: its literal is the only sign.
 func TestMarkersFlagALiteralThatHoldsAFrameByte(t *testing.T) {
-	const source = "package p\n\nvar a = \"\x16=== RUN   TestX\n\"\nvar b = \"\026\"\nvar c = \"\u0016\"\nvar d = `\x16`\nvar e = \"plain \x15 text\"\nvar f = \"\x1b[0m\"\n"
+	// The source has the escapes as text; the last line is a raw string with the byte itself in it.
+	const source = `package p
+
+var a = "\x16=== RUN   TestX\n"
+var b = "\026"
+var c = "\u0016"
+var e = "plain \x15 text"
+var f = "\x1b[0m"
+` + "var d = `\x16`\n"
 	got := Markers(map[string][]byte{"p.go": []byte(source)})
-	want := []Marker{{"forged-event", "p.go", 3}, {"forged-event", "p.go", 4}, {"forged-event", "p.go", 5}, {"forged-event", "p.go", 6}}
+	want := []Marker{{"forged-event", "p.go", 3}, {"forged-event", "p.go", 4}, {"forged-event", "p.go", 5}, {"forged-event", "p.go", 8}}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v\nwant %v", got, want)
 	}

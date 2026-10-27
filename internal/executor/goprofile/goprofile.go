@@ -47,8 +47,9 @@ type ExcludedTest struct {
 	Reason string
 }
 
-// Declared is what a tree declares: the tests the sandbox can run, and the ones it cannot, which are listed with their
-// reason and never run.
+// Declared is what a tree declares: the tests the sandbox can run, the ones it cannot, which are listed with their
+// reason and never run, and the runnable test files that could not be read (a syntax error, a build constraint that does
+// not parse), sorted: they give no test, and the build of their packages fails when the tests run.
 type Declared struct {
 	Tests    []TestID
 	Excluded []ExcludedTest

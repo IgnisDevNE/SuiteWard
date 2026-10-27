@@ -12,7 +12,8 @@ import (
 )
 
 // Marker is a line of a non-test Go file that looks at its test environment. A marker is a line to read, never a
-// verdict. Kind is one of testing-import, testing-testing, flag-lookup-test, exit-in-init, test-file-read, env-read.
+// verdict. Kind is one of testing-import, testing-testing, flag-lookup-test, exit-in-init, test-file-read, env-read,
+// forged-event.
 type Marker struct {
 	Kind, Path string
 	Line       int
@@ -23,9 +24,15 @@ type Marker struct {
 //   - testing-import: the file imports testing, whatever it calls it;
 //   - testing-testing: a call of testing.Testing;
 //   - flag-lookup-test: a call of flag.Lookup with a literal that starts with "test.";
-//   - exit-in-init: a call of os.Exit anywhere inside an init function;
+//   - exit-in-init: a call of os.Exit or syscall.Exit inside an init function or a package-level var declaration, and a
+//     call of syscall.Exit anywhere;
 //   - test-file-read: a string literal that names a _test.go file;
-//   - env-read: a call of os.Getenv or os.LookupEnv with the literal "TESTING" or "CI".
+//   - env-read: a call of os.Getenv or os.LookupEnv with the literal "TESTING" or "CI";
+//   - forged-event: a string literal that holds a SYN byte (\x16), the byte that go test frames the events of a test
+//     binary with. A package whose init prints such frames and exits with status 0 reports any result, and the exit
+//     status contradicts nothing: this marker and exit-in-init are the only signs of it.
+//
+// The line of a marker is the line of the file, whatever //line directives it holds.
 //
 // The packages are found through the file's own imports, so a renamed import is seen, and a dot import is not. A file
 // that does not parse is read as far as it parses: its build failure shows in the run, and a marker is only a hint. The
@@ -49,7 +56,7 @@ type finder struct {
 }
 
 func (m *finder) add(kind string, pos token.Pos) {
-	m.found = append(m.found, Marker{Kind: kind, Path: m.file, Line: m.fset.Position(pos).Line})
+	m.found = append(m.found, Marker{Kind: kind, Path: m.file, Line: m.fset.PositionFor(pos, false).Line})
 }
 
 func fileMarkers(file string, src []byte) []Marker {
@@ -61,6 +68,11 @@ func fileMarkers(file string, src []byte) []Marker {
 			m.add("testing-import", spec.Pos())
 		}
 	}
+	for _, decl := range f.Decls {
+		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.VAR {
+			m.exitsIn(gen)
+		}
+	}
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FuncDecl:
@@ -70,9 +82,7 @@ func fileMarkers(file string, src []byte) []Marker {
 		case *ast.CallExpr:
 			m.call(n)
 		case *ast.BasicLit:
-			if n.Kind == token.STRING && strings.Contains(unquote(n), "_test.go") {
-				m.add("test-file-read", n.Pos())
-			}
+			m.literal(n)
 		}
 		return true
 	})
@@ -82,10 +92,10 @@ func fileMarkers(file string, src []byte) []Marker {
 	return slices.Compact(m.found)
 }
 
-// exitsIn flags every os.Exit inside an init function's body.
-func (m *finder) exitsIn(body *ast.BlockStmt) {
-	ast.Inspect(body, func(n ast.Node) bool {
-		if call, ok := n.(*ast.CallExpr); ok && callee(call, m.names) == "os.Exit" {
+// exitsIn flags every os.Exit and syscall.Exit inside node, which is an init function's body or a package-level var.
+func (m *finder) exitsIn(node ast.Node) {
+	ast.Inspect(node, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok && (callee(call, m.names) == "os.Exit" || callee(call, m.names) == "syscall.Exit") {
 			m.add("exit-in-init", call.Pos())
 		}
 		return true
@@ -94,6 +104,8 @@ func (m *finder) exitsIn(body *ast.BlockStmt) {
 
 func (m *finder) call(call *ast.CallExpr) {
 	switch callee(call, m.names) {
+	case "syscall.Exit":
+		m.add("exit-in-init", call.Pos())
 	case "testing.Testing":
 		m.add("testing-testing", call.Pos())
 	case "flag.Lookup":
@@ -104,6 +116,20 @@ func (m *finder) call(call *ast.CallExpr) {
 		if v := firstString(call); v == "TESTING" || v == "CI" {
 			m.add("env-read", call.Pos())
 		}
+	}
+}
+
+// literal flags a string literal that names a _test.go file, or holds a frame byte.
+func (m *finder) literal(lit *ast.BasicLit) {
+	if lit.Kind != token.STRING {
+		return
+	}
+	value := unquote(lit)
+	if strings.Contains(value, "_test.go") {
+		m.add("test-file-read", lit.Pos())
+	}
+	if strings.Contains(value, "\x16") {
+		m.add("forged-event", lit.Pos())
 	}
 }
 

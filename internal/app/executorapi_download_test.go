@@ -53,62 +53,83 @@ func TestArchiveStreamsTheMergeBaseOfAReceipt(t *testing.T) {
 	}
 }
 
-// The body is bounded by the job's remaining time, and by ten minutes at most.
+// The body is bounded by the job's remaining time, and by ten minutes at most, from now on the wall clock: the injected clock only tells the remaining time.
 func TestArchiveGivesTheReaderADeadline(t *testing.T) {
-	for _, test := range []struct {
-		name       string
-		jobTimeout time.Duration
-		want       time.Duration // from now
-	}{{"ten minutes at most", 30 * time.Minute, 10 * time.Minute}, {"the job's remaining time", 90 * time.Second, 90 * time.Second}} {
-		t.Run(test.name, func(t *testing.T) {
-			e := newExecEnv(t)
-			e.times.JobTimeout = test.jobTimeout
-			e.canonicalJob(1, defaultFiles)
-			leased := e.grant()
+	origins := map[string]time.Time{"the wall clock": time.Now()}
+	for name, origin := range execClockOrigins {
+		origins[name] = origin
+	}
+	for originName, origin := range origins {
+		for _, test := range []struct {
+			name       string
+			jobTimeout time.Duration
+			want       time.Duration // from now
+		}{{"ten minutes at most", 30 * time.Minute, 10 * time.Minute}, {"the job's remaining time", 90 * time.Second, 90 * time.Second}} {
+			t.Run(originName+", "+test.name, func(t *testing.T) {
+				e := newExecEnv(t)
+				e.clock.Set(origin)
+				e.times.JobTimeout = test.jobTimeout
+				e.canonicalJob(1, defaultFiles)
+				leased := e.grant()
 
-			e.send(http.MethodGet, archivePath(leased, "head"), nil, withLease(leased.LeaseID))
+				started := time.Now()
+				got := e.send(http.MethodGet, archivePath(leased, "head"), nil, withLease(leased.LeaseID))
+				ended := time.Now()
 
-			calls := e.archives.asked()
-			if len(calls) != 1 || !calls[0].deadline.Equal(e.clock.Now().Add(test.want)) {
-				t.Errorf("reader calls = %+v; want a deadline %v from now", calls, test.want)
-			}
-		})
+				calls := e.archives.asked()
+				if got.status != http.StatusOK || len(calls) != 1 {
+					t.Fatalf("archive = %d %s with %d reader calls; want 200 and one call", got.status, got.text(), len(calls))
+				}
+				if deadline := calls[0].deadline; deadline.Before(started.Add(test.want)) || deadline.After(ended.Add(test.want)) {
+					t.Errorf("the reader's deadline = %v; want %v from the wall clock, between %v and %v", deadline, test.want, started.Add(test.want), ended.Add(test.want))
+				}
+			})
+		}
 	}
 }
 
-// The listener bounds a response to 30 s; a download extends its own bound, so a stream that outlasts the listener's goes on.
+// The listener bounds a response to 30 s; a download extends its own bound, so a stream that outlasts the listener's goes on, whatever the injected clock says.
 func TestArchiveExtendsTheWriteDeadlineOfItsRequest(t *testing.T) {
-	e := newExecEnv(t)
-	e.canonicalJob(1, defaultFiles)
-	leased := e.grant()
-	e.archives.set(func(_ context.Context, dst io.Writer) (int64, error) {
-		if _, err := io.WriteString(dst, "first"); err != nil {
-			return 0, err
-		}
-		time.Sleep(400 * time.Millisecond) // past the 150 ms that this listener allows a response
-		n, err := io.WriteString(dst, "second")
-		return int64(5 + n), err
-	})
-	server := httptest.NewUnstartedServer(e.server.Config.Handler)
-	server.Config.WriteTimeout = 150 * time.Millisecond
-	server.Start()
-	t.Cleanup(server.Close)
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/executor/v1"+archivePath(leased, "head"), nil)
-	if err != nil {
-		t.Fatal(err)
+	origins := map[string]time.Time{"the clock of the tests": execOrigin}
+	for name, origin := range execClockOrigins {
+		origins[name] = origin
 	}
-	req.Header.Set("Authorization", "Bearer "+execTestToken)
-	req.Header.Set(leaseHeader, leased.LeaseID)
+	for name, origin := range origins {
+		t.Run(name, func(t *testing.T) {
+			e := newExecEnv(t)
+			e.clock.Set(origin)
+			e.canonicalJob(1, defaultFiles)
+			leased := e.grant()
+			e.archives.set(func(_ context.Context, dst io.Writer) (int64, error) {
+				if _, err := io.WriteString(dst, "first"); err != nil {
+					return 0, err
+				}
+				time.Sleep(400 * time.Millisecond) // past the 150 ms that this listener allows a response
+				n, err := io.WriteString(dst, "second")
+				return int64(5 + n), err
+			})
+			server := httptest.NewUnstartedServer(e.server.Config.Handler)
+			server.Config.WriteTimeout = 150 * time.Millisecond
+			server.Start()
+			t.Cleanup(server.Close)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/executor/v1"+archivePath(leased, "head"), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Authorization", "Bearer "+execTestToken)
+			req.Header.Set(leaseHeader, leased.LeaseID)
 
-	resp, err := server.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = resp.Body.Close() }() // the body is read to its end
-	body, err := io.ReadAll(resp.Body)
+			resp, err := server.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = resp.Body.Close() }() // the body is read to its end
+			body, err := io.ReadAll(resp.Body)
 
-	if err != nil || string(body) != "firstsecond" {
-		t.Errorf("stream = %q, %v; want the whole of it past the listener's write bound", body, err)
+			if err != nil || string(body) != "firstsecond" {
+				t.Errorf("stream = %q, %v; want the whole of it past the listener's write bound", body, err)
+			}
+		})
 	}
 }
 
@@ -353,5 +374,49 @@ func TestFileIsNotTheExecutorBeingSeen(t *testing.T) {
 
 	if _, requested := e.liveness.LastRequest(); requested {
 		t.Error("a file request counts as an executor seen; only a lease request and a heartbeat do")
+	}
+}
+
+// A file is served whatever the injected clock says: its write deadline is a real one.
+func TestFileIsServedWhateverTheClockSays(t *testing.T) {
+	for name, origin := range execClockOrigins {
+		t.Run(name, func(t *testing.T) {
+			e := newExecEnv(t)
+			e.clock.Set(origin)
+			e.canonicalJob(1, defaultFiles)
+			leased := e.grant()
+			content := defaultFiles["contract.go"]
+
+			got := e.send(http.MethodGet, filePath(leased, execDigest(content)), nil, withLease(leased.LeaseID))
+
+			if got.status != http.StatusOK || got.text() != content {
+				t.Errorf("file = %d %q; want 200 with its bytes", got.status, got.body)
+			}
+		})
+	}
+}
+
+// The tree reads of a lease end at a real instant too, a deadline from the wall clock, whatever the injected clock says.
+func TestLeaseTreeReadsHaveARealDeadlineWhateverTheClockSays(t *testing.T) {
+	for name, origin := range execClockOrigins {
+		t.Run(name, func(t *testing.T) {
+			e := newExecEnv(t, func(d *executorDeps) { d.treeTimeout = 2 * time.Second })
+			e.clock.Set(origin)
+			e.receiptJob(1, defaultFiles)
+
+			started := time.Now()
+			got := e.lease()
+			ended := time.Now()
+
+			asked := e.trees.asked()
+			if got.status != http.StatusOK || len(asked) != 2 {
+				t.Fatalf("lease = %d %s with %d tree reads; want 200 and two reads", got.status, got.text(), len(asked))
+			}
+			for _, call := range asked {
+				if call.deadlineAt.Before(started.Add(2*time.Second)) || call.deadlineAt.After(ended.Add(2*time.Second)) {
+					t.Errorf("the read of %s has the deadline %v; want 2 s from the wall clock, between %v and %v", call.sha, call.deadlineAt, started.Add(2*time.Second), ended.Add(2*time.Second))
+				}
+			}
+		})
 	}
 }

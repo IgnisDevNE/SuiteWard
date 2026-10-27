@@ -88,6 +88,9 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	if err != nil {
 		return plan, err
 	}
+	if !pathExists(plan.tokenFile) {
+		return plan, fmt.Errorf("the executor's token copy %s is not there, so an executor would not start: `%s install` makes it and gives the service the token", plan.tokenFile, d.command())
+	}
 	registered, running, err := plan.state(ctx, d)
 	if err != nil {
 		return plan, err

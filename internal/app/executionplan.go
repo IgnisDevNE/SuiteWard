@@ -41,6 +41,11 @@ func (p executionPolicy) canonicalOn() bool { return p.canonical > domain.Canoni
 func (p executionPolicy) receiptOn() bool   { return p.receipt > domain.ReceiptLevelOff }
 func (p executionPolicy) wants() bool       { return p.canonicalOn() || p.receiptOn() }
 
+// selection is what the canonical declaration selects: its include less its exclude.
+func (p executionPolicy) selection() domain.Selection {
+	return domain.Selection{Include: p.scope.Include(), Exclude: p.scope.Exclude()}
+}
+
 // policy reads the execution policy from the declaration of the canonical (docs/contracts/runtime.md, "The effective policy"). The canonical
 // declaration governs every pull request, the one that changes it included.
 func (j *checksJob) policy(ctx context.Context, p owner.ProjectPolicy) (executionPolicy, error) {
@@ -418,7 +423,7 @@ func (j *checksJob) revisionChanges(ctx context.Context, b revisionBinding, poli
 	if err != nil {
 		return nil, 0, err
 	}
-	files, err := domain.EvaluatedFiles(revision, b.base, domain.Selection{Include: policy.scope.Include(), Exclude: policy.scope.Exclude()})
+	files, err := domain.EvaluatedFiles(revision, b.base, policy.selection())
 	if err != nil {
 		return nil, 0, &opaque{what: "list the files of the receipt", cause: err}
 	}
@@ -440,14 +445,6 @@ func (j *checksJob) revisionManifest(ctx context.Context, digest artifact.Digest
 		return artifact.Manifest{}, &opaque{what: "parse the manifest of the revision", cause: err}
 	}
 	return manifest, nil
-}
-
-// matchesAny reports whether a pattern matches the path. A path that is no valid path (artifact.ErrInvalidPath) matches none: no manifest holds it.
-func matchesAny(patterns []scope.Pattern, path string) bool {
-	return slices.ContainsFunc(patterns, func(p scope.Pattern) bool {
-		matched, err := p.Match(path)
-		return err == nil && matched
-	})
 }
 
 // receiptRead is what the checks job read from GitHub to create the receipt job: the files not evaluated and the merge base. final is the reason
@@ -567,17 +564,33 @@ func (j *checksJob) readUnapproved(ctx context.Context, s *pullState, x *executi
 	if err != nil {
 		return nil, githubRead(err)
 	}
-	return unapprovedFiles(changed, declaration.Include(), x.policy.scope.Include()), nil
+	return unapprovedFiles(changed, domain.Selection{Include: declaration.Include(), Exclude: declaration.Exclude()}, x.policy.selection())
 }
 
-// unapprovedFiles is the files of changed that were not removed and that include matches and approved does not, sorted and cut at maxExecutionPaths.
-func unapprovedFiles(changed []github.PullFile, include, approved []scope.Pattern) []string {
+// unapprovedFiles is the files of changed that were not removed, that the head's declaration selects and that the canonical's does not ("not evaluated: pattern
+// not approved yet"), sorted and cut at maxExecutionPaths. The files of a pull request that the head holds are valid paths, so a path that no selection can
+// match is an impossible state, and an error.
+func unapprovedFiles(changed []github.PullFile, head, approved domain.Selection) ([]string, error) {
 	var paths []string
 	for _, f := range changed {
-		if f.Status != "removed" && f.Status != "unchanged" && matchesAny(include, f.Path) && !matchesAny(approved, f.Path) {
+		if f.Status == "removed" || f.Status == "unchanged" {
+			continue
+		}
+		selected, err := head.Matches(f.Path)
+		if err != nil {
+			return nil, &opaque{what: "match a file of the pull request", cause: err}
+		}
+		if !selected {
+			continue
+		}
+		covered, err := approved.Matches(f.Path)
+		if err != nil {
+			return nil, &opaque{what: "match a file of the pull request", cause: err}
+		}
+		if !covered {
 			paths = append(paths, f.Path)
 		}
 	}
 	slices.Sort(paths)
-	return paths[:min(len(paths), maxExecutionPaths)]
+	return paths[:min(len(paths), maxExecutionPaths)], nil
 }

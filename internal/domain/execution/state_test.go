@@ -197,6 +197,43 @@ func TestCountReceiptKeepsExcludedApartFromEveryPass(t *testing.T) {
 	}
 }
 
+// A changed test file that go cannot parse lists no test, so it is no evaluated test, and it blocks like a failing one: a broken file never
+// makes an empty receipt.
+func TestUnparsedFilesBlockAndAreNoEvaluatedTest(t *testing.T) {
+	tests := []struct {
+		name                string
+		counts              execution.ReceiptCounts
+		evaluated, blocking int
+		empty               bool
+	}{
+		{"nothing", execution.ReceiptCounts{}, 0, 0, true},
+		{"EXCLUDED tests only", execution.ReceiptCounts{Excluded: 3}, 0, 0, true},
+		{"one file", execution.ReceiptCounts{Unparsed: 1}, 0, 1, false},
+		{"files beside EXCLUDED tests", execution.ReceiptCounts{Excluded: 3, Unparsed: 2}, 0, 2, false},
+		{"files beside the blocking states", execution.ReceiptCounts{Fails: 1, Missing: 1, Flaky: 1, Unparsed: 2}, 3, 5, false},
+		{"files beside passing tests", execution.ReceiptCounts{Detects: 2, Inert: 1, Unparsed: 1}, 3, 1, false},
+		{"a test that ran", execution.ReceiptCounts{Skipped: 1}, 1, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.counts.Evaluated(); got != tt.evaluated {
+				t.Errorf("Evaluated() = %d, want %d: a file that does not parse is no test", got, tt.evaluated)
+			}
+			if got := tt.counts.Blocking(); got != tt.blocking {
+				t.Errorf("Blocking() = %d, want %d", got, tt.blocking)
+			}
+			if got := tt.counts.Empty(); got != tt.empty {
+				t.Errorf("Empty() = %v, want %v: nothing evaluated and nothing unparsed", got, tt.empty)
+			}
+		})
+	}
+	// Counting states never invents one: the caller sets Unparsed.
+	counts, err := execution.CountReceipt([]execution.ReceiptState{execution.ReceiptDetects})
+	if err != nil || counts.Unparsed != 0 {
+		t.Errorf("CountReceipt = %+v, %v; want no unparsed file", counts, err)
+	}
+}
+
 func TestCountCanonicalNeverCountsExcludedAsAPass(t *testing.T) {
 	counts, err := execution.CountCanonical([]execution.CanonicalState{
 		execution.CanonicalPass, execution.CanonicalExcluded, execution.CanonicalExcluded, execution.CanonicalFail,

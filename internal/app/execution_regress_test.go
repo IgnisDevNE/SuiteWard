@@ -323,3 +323,42 @@ func TestTheReceiptCheckMessageKnowsEveryReasonOfTheCheckAndNoOther(t *testing.T
 		t.Error("a reason that the check does not have was accepted")
 	}
 }
+
+// enqueueFails is an execution store that cannot create a job while err is set.
+type enqueueFails struct {
+	execution.Store
+	err error
+}
+
+func (s *enqueueFails) Enqueue(ctx context.Context, n execution.NewJob) (execution.Job, bool, error) {
+	if s.err != nil {
+		return execution.Job{}, false, s.err
+	}
+	return s.Store.Enqueue(ctx, n)
+}
+
+// Creating a job ends the clock of the GitHub failures of its head, so a job that could not be created leaves the clock where it was (docs/contracts/runtime.md,
+// "What the checks job does for execution", step 5).
+func TestChecksKeepTheGitHubClockOfAHeadWhenItsJobCouldNotBeCreated(t *testing.T) {
+	decl := execDeclaration("off", "required")
+	w := newExecWorld(t, decl)
+	w.reader.mergeErrs = map[string]error{cjHead2: errors.New("github: 502")}
+	w.execPullFive(execHeadFiles(decl, "v2")) // the clock of the head starts at its first failure
+	w.noJobs(5, cjHead2, execution.PlanReceipt)
+
+	store := &enqueueFails{Store: w.jobs, err: errors.New("the store is down")}
+	w.check.executions = store
+	delete(w.reader.mergeErrs, cjHead2) // GitHub is back, so the job is to be created, and the store refuses it
+	w.clock = w.clock.Add(25 * time.Minute)
+	w.check.liveness.Saw(w.clock.Add(time.Minute))
+	if err := w.runChecks(); err == nil {
+		t.Fatal("the run succeeded though the store could not create the job")
+	}
+
+	store.err = nil
+	w.reader.mergeErrs[cjHead2] = errors.New("github: 502") // GitHub fails again, a whole wait after the first failure
+	w.clock = w.clock.Add(6 * time.Minute)
+	w.execRun()
+
+	requireFinal(t, w.onlyJob(5, cjHead2, execution.PlanReceipt), execution.ReasonGitHubUnavailable)
+}

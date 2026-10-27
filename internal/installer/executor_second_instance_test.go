@@ -62,16 +62,28 @@ func installOfAnotherInstance(u *upgradeHarness, args ...string) error {
 	return Install(context.Background(), all, u.env())
 }
 
-func assertAsksForATokenFile(t *testing.T, err error) {
+// assertAsksForATokenFile wants the refusal: it names --token-file, says that nothing was changed, and gives the way out of a sole instance with a settings
+// file of its own: --token-file with the default token file, which is its own.
+func assertAsksForATokenFile(t *testing.T, u *upgradeHarness, err error) {
 	t.Helper()
-	if err == nil || !strings.Contains(err.Error(), "--token-file") || !strings.Contains(err.Error(), "nothing was changed") {
-		t.Errorf("got %v, want a refusal that names --token-file and says that nothing was changed", err)
+	defaultFile, pathErr := defaultTokenFile(u.f.deps())
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Errorf("got %v, want a refusal that says that nothing was changed", err)
+		return
+	}
+	for _, want := range []string{"--token-file", "the only instance on this computer", "--token-file " + defaultFile} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal lacks %q: %v", want, err)
+		}
 	}
 }
 
 func TestAnInstallOfAnotherSettingsFileWithoutATokenFileLeavesTheMainInstancesExecutorAlone(t *testing.T) {
 	u, unit, content := secondInstance(t)
-	assertAsksForATokenFile(t, installOfAnotherInstance(u, "--image", oldImage))
+	assertAsksForATokenFile(t, u, installOfAnotherInstance(u, "--image", oldImage))
 	assertMainExecutorUntouched(t, u.harness, unit, content)
 	u.mustNotMutate()
 }
@@ -80,7 +92,7 @@ func TestAnUpgradeOfAnotherSettingsFileWithoutATokenFileLeavesTheMainInstancesEx
 	for name, image := range map[string]string{"at the installed release": oldImage, "to another release": testImage} {
 		t.Run(name, func(t *testing.T) {
 			u, unit, content := secondInstance(t)
-			assertAsksForATokenFile(t, installOfAnotherInstance(u, "--upgrade", "--backup-dir", u.backups, "--image", image))
+			assertAsksForATokenFile(t, u, installOfAnotherInstance(u, "--upgrade", "--backup-dir", u.backups, "--image", image))
 			assertMainExecutorUntouched(t, u.harness, unit, content)
 			u.mustNotMutate()
 			if files, _ := filepath.Glob(filepath.Join(u.backups, "*")); len(files) != 0 {

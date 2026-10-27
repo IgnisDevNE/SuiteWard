@@ -210,6 +210,22 @@ func withModules(files map[string][]byte, tree []execution.TreeFile) map[string]
 	return out
 }
 
+// receiptModules is the go.mod files of the head's tree that may make a nested module in a receipt: those at a path where the merge base has a
+// go.mod, or where the revision's manifest lists one. A go.mod that only the head has is the candidate's, and must not turn a test of the
+// candidate that go would run into an excluded one. A nested module that the base has and the head removed is no module of the head: its
+// tests run, and the base side, which still has it, cannot build their package.
+func (a *attempt) receiptModules(headTree []execution.TreeFile, base artifact.Manifest) []execution.TreeFile {
+	known := map[string]bool{}
+	for _, m := range []artifact.Manifest{base, a.governing} {
+		for _, e := range m.Entries() {
+			if path.Base(e.Path) == "go.mod" {
+				known[e.Path] = true
+			}
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(headTree), func(f execution.TreeFile) bool { return !known[f.Path] })
+}
+
 // canonical runs the declared tests of the governing manifest on the head with the whole manifest laid over it.
 func (a *attempt) canonical(ctx context.Context) (completion, error) {
 	head, err := a.inspect(ctx, source.SideHead)
@@ -323,7 +339,7 @@ func (a *attempt) receipt(ctx context.Context) (completion, error) {
 		return completion{}, err
 	}
 
-	tests := withModules(headRead.tests, headTree)
+	tests := withModules(headRead.tests, a.receiptModules(headTree, base.Files))
 	added, changed := goprofile.ChangedTests(tests, canonical, goarch)
 	declared := goprofile.DeclaredTests(tests, goarch)
 	rows, runnable, err := receiptRows(added, changed, declared)

@@ -9,8 +9,13 @@ import (
 )
 
 // SuiteWard publishes `SuiteWard / Contract` itself: it is never the project's test check, whichever way setup is reached.
-func TestSetupRefusesTheContractCheckAsATestCheck(t *testing.T) {
-	contract := protection.ContractCheck
+func TestSetupRefusesTheContractCheckAsATestCheck(t *testing.T) { setupRefusesItsOwnCheck(t, protection.ContractCheck) }
+
+// `SuiteWard / Receipt` is SuiteWard's own as well, and typed by hand it is refused like the contract check.
+func TestSetupRefusesTheReceiptCheckAsATestCheck(t *testing.T) { setupRefusesItsOwnCheck(t, receiptCheck) }
+
+func setupRefusesItsOwnCheck(t *testing.T, contract string) {
+	t.Helper()
 	t.Run("enroll, from the flag", func(t *testing.T) {
 		h := enrollHarness(t, statusNoOwner)
 		code, stderr := h.enroll("", "--owner", "alice", "--test-check", "Acme/api="+contract)

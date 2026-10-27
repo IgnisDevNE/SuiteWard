@@ -380,13 +380,15 @@ func TestResolveGitHubTestChecks(t *testing.T) {
 			t.Fatalf("error = %v", err)
 		}
 	})
-	t.Run("the contract check is not a test check", func(t *testing.T) {
-		g := newFakeGitHub(t)
-		env, _ := flowEnv(t, g, existingFlags(t, map[string]string{"test-check": protection.ContractCheck}), strings.NewReader(""), false)
-		if _, err := resolve(t, env); err == nil {
-			t.Fatal("the contract check was accepted as the test check")
-		}
-	})
+	for _, own := range []string{protection.ContractCheck, receiptCheck} {
+		t.Run(own+" is not a test check", func(t *testing.T) {
+			g := newFakeGitHub(t)
+			env, _ := flowEnv(t, g, existingFlags(t, map[string]string{"test-check": own}), strings.NewReader(""), false)
+			if _, err := resolve(t, env); err == nil {
+				t.Fatalf("%s was accepted as the test check", own)
+			}
+		})
+	}
 	t.Run("a repository chooses its own with the repository key", func(t *testing.T) {
 		g := newFakeGitHub(t)
 		g.repos = manyRepos(2)

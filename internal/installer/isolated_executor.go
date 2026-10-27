@@ -118,3 +118,40 @@ func (e executorSetup) currentNote(serviceWithout bool, install string) string {
 	}
 	return fmt.Sprintf("The host step made an executor token that the service does not have yet: run %#q to give it, which restarts the service.\n", install)
 }
+
+// rotated is whether the service has an executor token secret that is not the host step's copy: the administrator removed the token and the host
+// step made a new one, and the executor, which reads the new one, is locked out by the service's old one.
+func (e executorSetup) rotated(ctx context.Context, store SecretStore) (bool, error) {
+	if !e.found {
+		return false, nil
+	}
+	have, err := store.Exists(ctx, SecretExecutorAuth)
+	if err != nil || !have {
+		return false, err
+	}
+	stored, err := store.Read(ctx, SecretExecutorAuth)
+	if err != nil {
+		return false, err
+	}
+	return !bytes.Equal(bytes.TrimSpace(stored), e.token), nil
+}
+
+// settleCurrent is what an upgrade at the installed release does about a rotated token instead of saying that there is nothing to upgrade: the
+// secret becomes the host step's, and the service restarts, as it reads its secrets only when it starts. settled is false when nothing was rotated.
+func (e executorSetup) settleCurrent(ctx context.Context, env Env, scr *ui.Screen, host isolatedHost, httpPort int) (settled bool, err error) {
+	rotated, err := e.rotated(ctx, host.rt.Secrets())
+	if err != nil || !rotated {
+		return false, err
+	}
+	if _, _, err := settleExecutorSecret(ctx, host.rt.Secrets(), e.token, e.found); err != nil {
+		return false, err
+	}
+	if _, err := startStack(ctx, host.rt, env.Deps, scr, true); err != nil {
+		return false, err
+	}
+	if err := waitStable(ctx, env, scr, httpPort); err != nil {
+		return false, err
+	}
+	_, err = fmt.Fprintf(env.Term.Out, "The host step made a new executor token: it replaced the service's, and the service was restarted to read it. The release is current already.\n")
+	return true, err
+}

@@ -351,7 +351,7 @@ func (h *harness) writeExecutorFiles() {
 	for path, content := range map[string]string{
 		filepath.Join(h.executorDir(), "suiteward-executor"):                             "a program",
 		filepath.Join(h.executorDir(), "executor.pin"):                                   strings.Repeat("a", 64) + "  suiteward-executor\n",
-		filepath.Join(h.dir, ".config", "systemd", "user", "suiteward-executor.service"): "[Service]\n",
+		filepath.Join(h.dir, ".config", "systemd", "user", "suiteward-executor.service"): "[Service]\nExecStart=\"" + unitValue(filepath.Join(h.executorDir(), "suiteward-executor")) + "\" execute\n", // this instance's
 		executorTokenPath(h): strings.Repeat("b", 64),
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -490,5 +490,62 @@ func TestUninstallWarnsAndGoesOnWhenTheUserManagerCannotBeAskedAboutAnExecutorTh
 	out := un.out.String()
 	if !strings.Contains(out, "executor was not removed") || !strings.Contains(out, un.executorDir()) || !strings.Contains(out, "disable --now suiteward-executor.service") {
 		t.Errorf("the output must say that the executor is still there, where, and how to remove it:\n%s", out)
+	}
+}
+
+// A computer has one executor: the unit, the launch agent and the task have one name for each user. An executor that is registered for another
+// instance's token file (its program is in another directory) is not repointed by an install, and an uninstall does not remove it.
+const anotherInstancesUnit = "[Service]\nExecStart=\"/elsewhere/executor/suiteward-executor\" execute\n"
+
+func writeAnotherInstancesUnit(t *testing.T, h *harness) string {
+	t.Helper()
+	path := filepath.Join(h.dir, ".config", "systemd", "user", "suiteward-executor.service")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(anotherInstancesUnit), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.f.on("--user show -p LoadState -p ActiveState -p SubState suiteward-executor.service", "LoadState=loaded\nActiveState=active\nSubState=running\n")
+	return path
+}
+
+func TestInstallDoesNotRepointTheExecutorOfAnotherInstance(t *testing.T) {
+	h := newHarness(t, "linux")
+	path := writeAnotherInstancesUnit(t, h)
+	if err := h.podman(); err != nil {
+		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
+	}
+	if raw, err := os.ReadFile(path); err != nil || string(raw) != anotherInstancesUnit {
+		t.Errorf("the unit of the other instance was rewritten: %q (%v)", raw, err)
+	}
+	if len(h.f.find("enable --now suiteward-executor.service")) != 0 || len(h.f.find("--user stop")) != 0 {
+		t.Errorf("the executor of the other instance was stopped or started: %v", h.f.calls)
+	}
+	if out := h.out.String(); !strings.Contains(out, "another instance") || !strings.Contains(out, "one executor") {
+		t.Errorf("the output must say that the computer has one executor and that it is another instance's:\n%s", out)
+	}
+	if _, err := os.Stat(h.executorDir()); !os.IsNotExist(err) {
+		t.Errorf("the install made a directory for an executor that it did not set up: %v", err)
+	}
+}
+
+func TestUninstallKeepsTheExecutorThatIsRegisteredForAnotherInstance(t *testing.T) {
+	un := newHarness(t, "linux")
+	podmanStackExists(un)
+	un.writeFiles()
+	un.writeExecutorFiles()
+	path := writeAnotherInstancesUnit(t, un)
+	if err := un.uninstall("--runtime", "podman", "--connection", "pm", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(path); err != nil || string(raw) != anotherInstancesUnit {
+		t.Errorf("the unit of the other instance was removed or rewritten: %q (%v)", raw, err)
+	}
+	if len(un.f.find("disable --now suiteward-executor.service")) != 0 {
+		t.Errorf("the executor of the other instance was stopped: %v", un.f.calls)
+	}
+	if out := un.out.String(); !strings.Contains(out, "another instance") {
+		t.Errorf("the output must say that the executor is another instance's:\n%s", out)
 	}
 }

@@ -99,7 +99,8 @@ func TestAReceiptRunsATinyModuleOnRealDocker(t *testing.T) {
 		t.Errorf("the runtime is %q; want docker and its version", runtimeName)
 	}
 	// The image says its Go, and the pinned reference names it: the two are the same release.
-	if !strings.Contains(goprofile.Image, "golang:"+strings.TrimPrefix(toolchain, "go")+"-") {
+	pinned, releaseTag := goprofile.Image, "golang:"+strings.TrimPrefix(toolchain, "go")+"-" // locals: argOrder reads a constant first as a reversed pair
+	if !strings.Contains(pinned, releaseTag) {
 		t.Errorf("the image answered %q for its Go; the pinned reference is %s", toolchain, goprofile.Image)
 	}
 	assertBody(t, body, `{

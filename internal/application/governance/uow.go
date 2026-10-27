@@ -14,7 +14,8 @@ import (
 
 // UnitOfWork runs fn while holding the lock of one Suite. Writes made through
 // the Tx commit only if fn returns nil; any error rolls back every write.
-// Do returns ErrNotFound when the Suite does not exist.
+// Do returns ErrNotFound when the Suite does not exist, and answers it before it runs fn: a caller that sets a flag when fn starts tells that answer from an
+// ErrNotFound that fn returned for something else it read (a proposal or a version), which is no statement about the Suite.
 type UnitOfWork interface {
 	Do(ctx context.Context, project contract.ProjectID, suite contract.SuiteID, fn func(context.Context, Tx) error) error
 	// CreateSuite creates a Suite with no canonical, governed by policy (which must exist for the project) and

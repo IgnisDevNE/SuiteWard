@@ -159,6 +159,9 @@ func removeExecutor(ctx context.Context, d Deps, tokenFile string) (existed bool
 	}
 	registered, _, err := plan.state(ctx, d)
 	if err != nil {
+		if !pathExists(plan.dir) && !pathExists(plan.definition) {
+			return false, nil // nothing of the executor was made here, so an operating system that cannot be asked has nothing to say of it
+		}
 		return false, err
 	}
 	if !registered && !pathExists(plan.dir) {

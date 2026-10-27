@@ -29,6 +29,18 @@ func coloStatus(sinceLastSeen time.Duration) string {
 // coloExecFiles are the files of the executor of the fake's operating system, in the directories of the test.
 type coloExecFiles struct{ token, dir, binary, pin string }
 
+// coloTokenFile is the default token file of the fake computer, beside which colocated.build puts down the files of a healthy executor. The settings
+// files of these tests are temporary ones, which doctor takes for another instance's, so a test that checks the executor names this token file as
+// --token-file.
+func coloTokenFile(t *testing.T, f *fakeEngine) string {
+	t.Helper()
+	file, err := defaultTokenFile(f.deps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
 func coloExecFilesOf(t *testing.T, f *fakeEngine) coloExecFiles {
 	t.Helper()
 	tokenFile, err := defaultTokenFile(f.deps())
@@ -201,7 +213,7 @@ func TestDoctorColocatedLoopbackOfAPodmanMachineThatDoesNotAnswerFromThisCompute
 				t.Fatal(err)
 			}
 			unreachable := func(context.Context, string) ([]byte, error) { return nil, errors.New("connection refused") }
-			results := doctorChecks(context.Background(), f.deps(), unreachable, path, "")
+			results := doctorChecks(context.Background(), f.deps(), unreachable, path, coloTokenFile(t, f))
 			var got doctorResult
 			for _, r := range results {
 				if r.Name == "executor.loopback" {

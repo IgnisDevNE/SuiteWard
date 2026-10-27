@@ -27,16 +27,36 @@ func (d *doctor) anotherInstanceFix() string {
 	return "a computer has one executor, and it is registered for another instance: remove that instance (`" + cmd + " uninstall`, with that instance's --settings and --token-file (none for the default instance)), then run `" + cmd + " install` again for this one; until then the install leaves the registered executor as it is"
 }
 
-// checkExecutorColocated runs the checks of the executor on this computer. Doctor finds its files beside the token file that --token-file names, else
-// beside the default place of this user's token file.
+// executorTokenFile is the token file that the files of the executor are beside: the one --token-file names, else the default place of this user's
+// token file, which is this instance's only with the default settings file (the rule of the install). When there is none it says why, as the one result
+// of the executor: no other row is checked, because it would read the main instance's folder.
+func (d *doctor) executorTokenFile() (string, bool) {
+	if d.tokenFile != "" {
+		return d.tokenFile, true
+	}
+	file, err := defaultTokenFile(d.deps)
+	if err != nil {
+		d.fail("executor.token", err.Error(), "this is where doctor looks for the files of the executor: set the variable it names, or pass --token-file")
+		return "", false
+	}
+	isDefault, err := isDefaultSettings(d.deps.GOOS, d.settingsPath, !d.settingsNamed)
+	if err != nil {
+		d.fail("executor.token", err.Error(), "pass --token-file with the token file of this instance")
+		return "", false
+	}
+	if !isDefault {
+		d.fail("executor.token", "--settings names "+d.settingsPath+", which is not the default settings file, so this is a second instance, and without --token-file the files of its executor are not known: the default token file "+file+" is the main instance's, and its executor is not checked as this one's",
+			"pass --token-file with the token file of this instance (the one its install was given); if this is the only instance on this computer and "+file+" is its token file, pass --token-file "+quoteArg(file))
+		return "", false
+	}
+	return file, true
+}
+
+// checkExecutorColocated runs the checks of the executor on this computer, beside the token file that executorTokenFile finds.
 func (d *doctor) checkExecutorColocated(ctx context.Context) {
-	tokenFile := d.tokenFile
-	if tokenFile == "" {
-		var err error
-		if tokenFile, err = defaultTokenFile(d.deps); err != nil {
-			d.fail("executor.token", err.Error(), "this is where doctor looks for the files of the executor: set the variable it names, or pass --token-file")
-			return
-		}
+	tokenFile, ok := d.executorTokenFile()
+	if !ok {
+		return
 	}
 	plan, err := planExecutor(d.deps, tokenFile, d.s, engineBinDir(d.rt))
 	if err != nil {

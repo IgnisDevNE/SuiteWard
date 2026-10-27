@@ -170,17 +170,19 @@ type machineEntry struct {
 }
 
 type doctor struct {
-	deps      Deps
-	fetch     func(context.Context, string) ([]byte, error) // GET of an address of the local service
-	s         Settings
-	rt        Runtime
-	why       string // the check that failed when rt is nil
-	machine   machineInfo
-	viaSSH    bool   // co-located Podman off Linux: the instance lives in a Podman machine
-	tokenFile string // --token-file: where the instance keeps the copy of its MCP token, and the executor its files beside it; empty for the default place
-	raw       map[string][]byte
-	units     map[string]map[string]string // isolated: `systemctl show` of each unit
-	results   []doctorResult
+	deps          Deps
+	fetch         func(context.Context, string) ([]byte, error) // GET of an address of the local service
+	s             Settings
+	rt            Runtime
+	why           string // the check that failed when rt is nil
+	machine       machineInfo
+	viaSSH        bool   // co-located Podman off Linux: the instance lives in a Podman machine
+	tokenFile     string // --token-file: where the instance keeps the copy of its MCP token, and the executor its files beside it; empty for the default place
+	settingsPath  string // the settings file that is read: --settings, else the default path
+	settingsNamed bool   // --settings was given (it may name the default file)
+	raw           map[string][]byte
+	units         map[string]map[string]string // isolated: `systemctl show` of each unit
+	results       []doctorResult
 }
 
 func (d *doctor) pass(name, detail string) {
@@ -212,6 +214,7 @@ func (d *doctor) needMachine(name string) bool {
 }
 
 func (d *doctor) run(ctx context.Context, settingsPath string) {
+	d.settingsNamed = settingsPath != ""
 	if settingsPath == "" {
 		var err error
 		if settingsPath, err = DefaultSettingsPath(); err != nil {
@@ -228,7 +231,7 @@ func (d *doctor) run(ctx context.Context, settingsPath string) {
 		d.fail("settings", err.Error(), fix)
 		return
 	}
-	d.s = s
+	d.s, d.settingsPath = s, settingsPath
 	d.pass("settings", settingsPath)
 	isolated := s.Tier == config.TierIsolated
 	d.viaSSH = !isolated && s.Runtime == RuntimePodman && d.deps.GOOS != "linux"

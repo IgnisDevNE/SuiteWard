@@ -490,3 +490,23 @@ func TestTheExecutorUnitIsNotAQuadlet(t *testing.T) {
 		}
 	}
 }
+
+// A host whose administrator has umask 077 makes every file that root writes 0600, and sudo keeps the umask: the files that another account reads
+// (the executor's manager reads its unit, the service account's doctor reads the rest) are made readable on purpose.
+func TestPrepareHostMakesTheFilesThatOtherAccountsReadReadable(t *testing.T) {
+	h := newHostFake()
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{execDropIn, execRuleFile, execUnitFile, execPinFile} {
+		write, mode := hostCallIndex(h, "tee", path), hostCallIndex(h, "chmod", "0644 "+path)
+		if write < 0 || mode < write {
+			t.Errorf("%s must be made 0644 after it is written (tee at %d, chmod at %d)\n%v", path, write, mode, h.lines())
+		}
+	}
+	for _, dir := range []string{"/etc/suiteward", "/etc/systemd/user", "/etc/systemd/system/user@.service.d"} {
+		if !h.has("chmod", "0755 "+dir) {
+			t.Errorf("%s is not made 0755: the token of the executor lives in the first, and the others are read by other accounts' managers: %v", dir, h.lines())
+		}
+	}
+}

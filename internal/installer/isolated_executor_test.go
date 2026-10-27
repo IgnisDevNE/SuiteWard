@@ -247,3 +247,27 @@ func TestUninstallIsolatedPurgeRemovesTheCopyOfTheExecutorToken(t *testing.T) {
 		t.Error("an uninstall without --purge removed the copy of the token")
 	}
 }
+
+// An upgrade at the release that is installed has nothing to upgrade, and a host step that ran after the install has made a token that the service
+// does not have: the way to give it is a re-run of the install, which the output names.
+func TestUpgradeIsolatedAtTheInstalledReleaseNamesTheReRunThatGivesTheServiceTheExecutorToken(t *testing.T) {
+	u := newIsoUpgrade(t, func(p *UnitParams) { p.NoExecutor = true })
+	writeHandover(t, u.home, executorTokenValue)
+	if err := u.upgrade("--image", oldImage, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	out := u.out.String()
+	if !strings.Contains(out, "Nothing to upgrade") || !strings.Contains(out, "install --tier isolated") || !strings.Contains(out, "executor") {
+		t.Errorf("the output must say that there is nothing to upgrade, and name the re-run that gives the service the token:\n%s", out)
+	}
+}
+
+func TestUpgradeIsolatedWithoutAnExecutorTokenNamesTheReRunToo(t *testing.T) {
+	u := newIsoUpgrade(t, func(p *UnitParams) { p.NoExecutor = true })
+	if err := u.upgrade("--image", testDigest, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if out := u.out.String(); !strings.Contains(out, "install --tier isolated") {
+		t.Errorf("an upgrade cannot run again at this release: the output must name the re-run of the install:\n%s", out)
+	}
+}

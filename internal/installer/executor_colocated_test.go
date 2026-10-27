@@ -421,3 +421,25 @@ func TestTheInstallsSayThatAnEngineHasOneExecutor(t *testing.T) {
 		t.Errorf("the host step must say that an engine has one executor, and why:\n%s", out)
 	}
 }
+
+// A launch agent that is loaded but not running (waiting, throttled) cannot be bootstrapped again: launchctl refuses a label that is loaded.
+func TestInstallBootsOutALoadedLaunchAgentBeforeItLoadsTheNewDefinition(t *testing.T) {
+	h := machineHarnessOn(t, "darwin")
+	h.f.on("=-u", "501\n")
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	newer := filepath.Join(t.TempDir(), "suiteward")
+	if err := os.WriteFile(newer, []byte("the next release"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	again := machineHarnessOn(t, "darwin")
+	again.dir = h.dir
+	again.exe = newer
+	again.have(kindSecret, SecretMCPAuth, SecretExecutorAuth)
+	again.f.on("=-u", "501\n").on("=print gui/501/"+executorLabel, "state = waiting\n")
+	if err := again.podman(); err != nil {
+		t.Fatal(err)
+	}
+	again.assertOrder("bootout gui/501/"+executorLabel, "bootstrap gui/501 ", "kickstart -k gui/501/"+executorLabel)
+}

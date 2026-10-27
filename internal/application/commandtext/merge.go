@@ -72,7 +72,7 @@ func MergeComment(m Merge) string {
 		parts = append(parts, coLocatedNotice)
 	}
 	if m.Kind != MergeBlocked {
-		return paragraphs(append(parts, "SuiteWard checked the approval and the integrity of the protected files at that commit. It did not run the tests.")...)
+		return paragraphs(append(parts, "SuiteWard checked the approval and the integrity of the protected files at that commit.")...)
 	}
 	return paragraphs(append(parts, mergeRecovery(m, reason))...)
 }

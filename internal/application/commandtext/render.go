@@ -318,10 +318,10 @@ func bootstrapAck(a Ack) string {
 	case NothingUncovered:
 		subject, _ := baseNames(a.Base)
 		return paragraphs("`/suiteward suggest`: every test-like path in this pull request's head is covered by " + subject + " already, so there is nothing to suggest. Nothing changed.\n" +
-			"This answer is not an approval, and SuiteWard does not run tests.")
+			"This answer is not an approval.")
 	case BootstrapPromoted:
 		return paragraphs(fmt.Sprintf("Bootstrap complete: %s, approved by %s, is now canonical version V%d.\n", ref, who, a.Version) +
-			"SuiteWard recorded an integrity assessment of the approved files at the pinned origin commit; it did not run any tests.\n" +
+			"SuiteWard recorded an integrity assessment of the approved files at the pinned origin commit.\n" +
 			"Later changes to the protected files need a new proposal and your approval.")
 	}
 	return notInGroup(a.Outcome)
@@ -697,7 +697,7 @@ func RevisionComment(r Revision) string {
 		parts = append(parts, coLocatedNotice)
 	}
 	parts = append(parts,
-		"This comment is a record, not an approval. SuiteWard compares the protected files only; it does not run tests. To approve this exact revision, comment:",
+		"This comment is a record, not an approval. To approve this exact revision, comment:",
 		codeCommand("approve", ref),
 	)
 	if r.Previous != "" {

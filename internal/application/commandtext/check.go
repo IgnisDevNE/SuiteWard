@@ -132,7 +132,7 @@ func CheckSummary(c Check) (title, summary string) {
 	if c.Reason == "approval-missing" {
 		parts = append(parts, codeCommand("approve", ref))
 	}
-	parts = append(parts, "This check reports on the protected contract only. It does not run tests.")
+	parts = append(parts, "This check reports on the protected contract only.")
 	return reason.title, paragraphs(parts...)
 }
 

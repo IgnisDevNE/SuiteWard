@@ -7,13 +7,14 @@ import (
 	"strings"
 )
 
-// CheckState is the conclusion of the SuiteWard / Contract check (D-CHECKS).
+// CheckState is the conclusion of the SuiteWard / Contract check (D-CHECKS) and of the SuiteWard / Receipt check.
 type CheckState uint8
 
 const (
 	CheckSuccess CheckState = iota + 1
 	CheckInProgress
 	CheckFailure
+	CheckNeutral // the Receipt check alone: a receipt that was not run, or that no longer applies
 )
 
 // Check is what the output of a check run states. Reason is the stable code the check job stored, and State must
@@ -273,4 +274,4 @@ func checkCheckReference(c Check) error {
 	return nil
 }
 
-var checkStateName = map[CheckState]string{CheckSuccess: "success", CheckInProgress: "in_progress", CheckFailure: "failure"}
+var checkStateName = map[CheckState]string{CheckSuccess: "success", CheckInProgress: "in_progress", CheckFailure: "failure", CheckNeutral: "neutral"}

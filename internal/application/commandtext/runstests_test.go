@@ -72,6 +72,20 @@ func everyBody(t *testing.T) map[string]string {
 			_, s := commandtext.CheckSummary(c)
 			return s
 		})
+		for _, tc := range receiptReasons {
+			add("receipt "+tc.reason+" "+tier, func() string {
+				c := receiptOf(tc.reason)
+				c.Tier = value
+				_, s := commandtext.ReceiptCheckSummary(c)
+				return s
+			})
+		}
+		add("receipt not run, unblocked "+tier, func() string {
+			c := receiptOf("receipt-not-run")
+			c.Tier, c.Unblocked = value, true
+			_, s := commandtext.ReceiptCheckSummary(c)
+			return s
+		})
 		add("revision "+tier, func() string { return commandtext.RevisionComment(revision(value)) })
 		add("revision that reduces the scope "+tier, func() string {
 			r := revision(value)

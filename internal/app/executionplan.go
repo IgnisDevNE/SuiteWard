@@ -234,7 +234,7 @@ func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, 
 	ready, known := executionBasis(assessed)
 	receiptWanted := x.policy.receiptOn() && assessed.Reference != ""
 	if !known && !receiptWanted {
-		return headJobs{}, nil
+		return headJobs{receiptDecided: !x.policy.receiptOn()}, nil // a receipt level that is off decides the receipt whatever the check says of the head
 	}
 	var bound revisionBinding
 	if assessed.Reference != "" && ((known && ready) || receiptWanted) {

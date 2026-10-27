@@ -5,6 +5,7 @@ package run
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"slices"
@@ -80,6 +81,21 @@ func sandboxContainers(t *testing.T) []string {
 	return strings.Fields(string(out))
 }
 
+// watchContainers gives the sandbox containers that exist now, and fails the test, at its end, for each one that it left behind.
+func watchContainers(t *testing.T) []string {
+	t.Helper()
+	before := sandboxContainers(t)
+	t.Cleanup(func() {
+		for _, name := range sandboxContainers(t) {
+			if !slices.Contains(before, name) {
+				t.Errorf("the sandbox container %s was left behind", name)
+				_ = engineCommand(t, "rm", "--force", name).Run()
+			}
+		}
+	})
+	return before
+}
+
 const tinyModule = "module example.com/tiny\n\ngo 1.21\n"
 
 const tinyTests = `package tiny
@@ -103,15 +119,7 @@ func TestInert(t *testing.T) {
 // base is run three times there, as the reruns of the job say.
 func TestAReceiptRunsATinyModuleOnARealEngine(t *testing.T) {
 	rt := engineRuntime(t)
-	before := sandboxContainers(t)
-	t.Cleanup(func() {
-		for _, name := range sandboxContainers(t) {
-			if !slices.Contains(before, name) {
-				t.Errorf("the sandbox container %s was left behind", name)
-				_ = engineCommand(t, "rm", "--force", name).Run()
-			}
-		}
-	})
+	watchContainers(t)
 
 	s := receiptScenario()
 	s.head = repo{"go.mod": tinyModule, "lib.go": "package tiny\n\nfunc Add(a, b int) int { return a + b }\n", "lib_test.go": tinyTests}
@@ -156,15 +164,7 @@ func TestSleeps(t *testing.T) { time.Sleep(time.Hour) }
 // and stops cleanly. The test's sleeper ends the grace at once, and the test then looks for the container that the job made.
 func TestTheGraceAfterTheSignalKillsTheContainerOnARealEngine(t *testing.T) {
 	rt := engineRuntime(t)
-	before := sandboxContainers(t)
-	t.Cleanup(func() {
-		for _, name := range sandboxContainers(t) {
-			if !slices.Contains(before, name) {
-				t.Errorf("the sandbox container %s was left behind", name)
-				_ = engineCommand(t, "rm", "--force", name).Run()
-			}
-		}
-	})
+	before := watchContainers(t)
 
 	s := canonicalScenario()
 	s.head = repo{"go.mod": tinyModule, "lib.go": "package tiny\n"}
@@ -203,4 +203,32 @@ func runsGoTest(t *testing.T, before, now []string) bool {
 		}
 	}
 	return false
+}
+
+const oneTest = "package %s\n\nimport \"testing\"\n\nfunc TestOne(t *testing.T) {}\n"
+
+// A go.mod that the head adds over a test directory of the manifest is the candidate's, and go cannot resolve the package under it: it reports
+// a setup failure of the pattern, runs the rest of the invocation, and the manifest's test there reads build-error, which blocks, and not
+// excluded, which does not.
+func TestAHeadGoModOverATestDirectoryOfTheManifestIsABuildErrorOnARealEngine(t *testing.T) {
+	rt := engineRuntime(t)
+	watchContainers(t)
+
+	s := canonicalScenario()
+	s.head = repo{"go.mod": tinyModule, "lib.go": "package tiny\n", "sub/go.mod": "module example.com/sub\n\ngo 1.21\n"}
+	s.manifest = repo{".suiteward.yml": declaration, "lib_test.go": fmt.Sprintf(oneTest, "tiny"), "sub/sub_test.go": fmt.Sprintf(oneTest, "sub")}
+	d := start(t, newService(t, s.serve(1)), rt, func(_ *Config, d *driver) { d.patience = 5 * time.Minute })
+
+	body := d.result().body
+	sb, _ := decode(t, body)["sandbox"].(map[string]any)
+	toolchain, _ := sb["toolchain"].(string)
+	runtimeName, _ := sb["runtime"].(string)
+	assertBody(t, body, `{
+		"status": "complete", "head": {"sha": "`+headSHA+`"}, `+commonExecutor+`,
+		"sandbox": {"imageDigest": "sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd", "toolchain": "`+toolchain+`", "runtime": "`+runtimeName+`"},
+		"tests": [
+			{"package": ".", "name": "TestOne", "file": "lib_test.go", "kind": "declared", "head": ["pass"]},
+			{"package": "sub", "name": "TestOne", "file": "sub/sub_test.go", "kind": "declared", "head": ["build-error"]}
+		]
+	}`)
 }

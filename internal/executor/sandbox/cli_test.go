@@ -242,7 +242,8 @@ func TestRunReportsALegitimateExitStatusThatLooksLikeARuntimeError(t *testing.T)
 
 func TestRunKillsTheContainerAfterKillAfter(t *testing.T) {
 	f := newFake()
-	f.onRun = func(ctx context.Context, _ io.Reader, _ io.Writer) (int, string, error) {
+	f.onRun = func(ctx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
+		_, _ = io.Copy(io.Discard, stdin) // the CLI copies the standard input to the container; the clock runs from its end
 		select {
 		case <-f.killed:
 			return 137, "", nil
@@ -282,7 +283,8 @@ func TestRunKeepsKillingUntilTheContainerExists(t *testing.T) {
 		}
 		return 0
 	}
-	f.onRun = func(ctx context.Context, _ io.Reader, _ io.Writer) (int, string, error) {
+	f.onRun = func(ctx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
+		_, _ = io.Copy(io.Discard, stdin)
 		select {
 		case <-f.killed:
 			return 137, "", nil
@@ -298,6 +300,78 @@ func TestRunKeepsKillingUntilTheContainerExists(t *testing.T) {
 	}
 	if n := len(f.commands("kill")); n != 3 {
 		t.Errorf("want 3 kill attempts, got %d", n)
+	}
+}
+
+// The kill clock is the bound of the program, so it starts when the program can start: when the tar has been written to the standard
+// input, and not when the container does, because the tree and the module files stream in while it runs.
+func TestRunStartsTheKillClockWhenItsStandardInputHasEnded(t *testing.T) {
+	f := newFake()
+	f.onRun = func(ctx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
+		_, _ = io.Copy(io.Discard, stdin)
+		select {
+		case <-f.killed:
+			return 137, "", nil
+		case <-ctx.Done():
+			return -1, "", ctx.Err()
+		}
+	}
+	input, write := io.Pipe()
+	s := validSpec()
+	s.Stdin, s.Limits.KillAfter = input, 20*time.Millisecond
+	type result struct {
+		out Outcome
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := run(t, f, "docker", s)
+		done <- result{out, err}
+	}()
+	// The tar is still being written, for ten times as long as KillAfter: nothing is killed.
+	select {
+	case <-f.killed:
+		t.Fatal("the container was killed while its standard input was still being written")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, err := write.Write([]byte("a tar")); err != nil {
+		t.Fatal(err)
+	}
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-f.killed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the container was not killed KillAfter after its standard input ended")
+	}
+	if r := <-done; r.err != nil || !r.out.Killed {
+		t.Errorf("Run = %+v, %v; want the executor's own kill reported", r.out, r.err)
+	}
+}
+
+func TestRunKillsTheContainerByNameWhenItsContextEnds(t *testing.T) {
+	f := newFake()
+	ctx, cancel := context.WithCancel(context.Background())
+	f.onRun = func(runCtx context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
+		_, _ = io.Copy(io.Discard, stdin)
+		cancel() // the shutdown has run out of grace: the CLI is stopped with the context, and the container must not outlive it
+		<-runCtx.Done()
+		return -1, "", runCtx.Err()
+	}
+	if _, err := newCLI("docker", f.exec).Run(ctx, validSpec()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("want the context's error, got %v", err)
+	}
+	name := f.commands("run")[0].args[2]
+	kills := f.commands("kill")
+	if len(kills) == 0 || !slices.Equal(kills[0].args, []string{"kill", name}) {
+		t.Fatalf("the container must be killed by name when the context ends: %q", f.verbs())
+	}
+	if kills[0].ctx != nil {
+		t.Errorf("the kill must not run under the cancelled context")
+	}
+	if len(f.commands("rm")) != 1 {
+		t.Errorf("the container must still be removed: %q", f.verbs())
 	}
 }
 

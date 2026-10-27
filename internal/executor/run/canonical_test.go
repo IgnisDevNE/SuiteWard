@@ -97,8 +97,9 @@ func assertSpec(t *testing.T, i int, c call) {
 	if spec.Image != goprofile.Image || spec.Workdir != goprofile.TreeDir {
 		t.Errorf("run %d: image %q workdir %q", i, spec.Image, spec.Workdir)
 	}
-	if l := spec.Limits; l.MemoryMiB != 3072 || l.CPUs != 4 || l.Pids != 512 || l.TmpfsMiB != 1024 || l.KillAfter < 660*time.Second {
-		t.Errorf("run %d: the limits are %+v; want the job's, and a kill no sooner than 60 s after the test timeout", i, l)
+	if l := spec.Limits; l.MemoryMiB != 3072 || l.CPUs != 4 || l.Pids != 512 || l.TmpfsMiB != 1024 || l.KillAfter != 660*time.Second {
+		// The sandbox starts the clock when the standard input has ended, so it is the test timeout and the 60 s, with no allowance for streaming.
+		t.Errorf("run %d: the limits are %+v; want the job's, and a kill 60 s after the test timeout of 600 s", i, l)
 	}
 	if !slices.ContainsFunc(spec.Env, func(e string) bool { return strings.HasPrefix(e, "PATH=") }) {
 		t.Errorf("run %d: no PATH in the environment, which env -i clears", i)

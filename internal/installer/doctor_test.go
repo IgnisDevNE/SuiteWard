@@ -85,12 +85,22 @@ func readOnlyViolation(c call) string {
 		}
 	case "pgrep":
 		return ""
+	case "schtasks": // the scheduled task of the executor on Windows: asked about, never changed
+		if len(args) >= 1 && args[0] == "/Query" {
+			return ""
+		}
+	case "tasklist":
+		return ""
+	case "launchctl":
+		if len(args) >= 1 && args[0] == "print" {
+			return ""
+		}
 	case "loginctl":
 		if len(args) >= 1 && args[0] == "show-user" {
 			return ""
 		}
 	case "id":
-		if slices.Equal(args, []string{"-un"}) || len(args) == 2 && args[0] == "-u" && (args[1] == ServiceAccount || args[1] == ExecutorAccount) {
+		if slices.Equal(args, []string{"-un"}) || len(args) == 2 && args[0] == "-u" && (args[1] == ServiceAccount || args[1] == ExecutorAccount) || slices.Equal(args, []string{"-u"}) {
 			return ""
 		}
 	}
@@ -245,7 +255,7 @@ func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 		c.health = `{"status":"ok"}`
 	}
 	if c.status == "" {
-		c.status = okStatus
+		c.status = coloStatus(5 * time.Second)
 	}
 	if c.checkOut == "" {
 		c.checkOut = okCheck
@@ -295,6 +305,7 @@ func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 		f.on("machine list", machineList)
 		f.on("/healthz", c.health).on("/readyz", `{"status":"ready"}`).on("/status", c.status)
 	}
+	healthyColocatedExecutor(t, f)
 	return f, s
 }
 

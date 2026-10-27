@@ -36,6 +36,7 @@ type fakeEngine struct {
 	rules []rule
 	goos  string
 	env   map[string]string
+	exe   string // the program of this run for Deps.Executable; empty means the test binary
 }
 
 func newFake(goos string) *fakeEngine { return &fakeEngine{goos: goos, env: map[string]string{}} }
@@ -64,7 +65,12 @@ func (f *fakeEngine) deps() Deps {
 		Getenv:  func(k string) string { return f.env[k] },
 		UserSID: func() (string, error) { return testSID, nil },
 		// The test binary: a file that exists, for the commands that hash this program (doctor, the executor's copy).
-		Executable: os.Executable,
+		Executable: func() (string, error) {
+			if f.exe != "" {
+				return f.exe, nil
+			}
+			return os.Executable()
+		},
 		Exec: func(_ context.Context, name string, args []string, stdin io.Reader) ([]byte, error) {
 			c := call{name: name, args: append([]string(nil), args...)}
 			if stdin != nil {

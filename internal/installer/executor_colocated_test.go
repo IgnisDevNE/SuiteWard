@@ -97,7 +97,7 @@ func TestInstallStartsTheExecutorAsASystemdUserUnitOnLinux(t *testing.T) {
 		`Environment="SUITEWARD_EXECUTOR_RUNTIME=podman"`,
 		`Environment="CONTAINER_CONNECTION=pm"`, // the executor must reach the engine the installer chose, and its CLI inherits this
 		`Environment="PATH=/opt/podman/bin:/usr/bin"`,
-		"TimeoutStopSec=45", "Restart=always", "WantedBy=default.target", // the executor gives a job 30 s after SIGTERM: the stop timeout exceeds it
+		"KillMode=mixed", "TimeoutStopSec=45", "Restart=always", "WantedBy=default.target", // the executor gives a job 30 s after SIGTERM: the stop timeout exceeds it
 	} {
 		if !slices.Contains(lines, want) {
 			t.Errorf("the unit lacks %s:\n%s", want, unit)

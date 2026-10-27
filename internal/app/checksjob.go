@@ -327,7 +327,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		}
 	}
 	countsErr := j.restoreCounts(ctx, s, x, &d, &executed)
-	if cancelled := ctx.Err(); cancelled != nil {
+	if cancelled := ctx.Err(); cancelled != nil { // restoreCounts left the check as it was; a stopping run publishes nothing
 		return "", cancelled
 	}
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {

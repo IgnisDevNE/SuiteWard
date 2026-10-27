@@ -113,3 +113,11 @@ func (l Limits) validate() error {
 // CompleteMarker is the file, relative to /work, that must be the last entry of the standard input tar: the container refuses to
 // start Argv when tar has not extracted it, so a stream that was cut short is never run, wherever the cut falls.
 const CompleteMarker = ".suiteward/complete"
+
+// CLIEnv is the environment of the runtime's CLI, which the executor starts: the executor's own, without a SUITEWARD_ variable. The
+// executor token is in it when it is not given as a file, and a CLI has no use for it. The other variables stay: the engine's address
+// and its config, and the proxy variables, which a rootless engine may need to pull an image (the no-proxy rule is for the executor's own
+// HTTP clients).
+func CLIEnv(environ []string) []string {
+	return environ
+}

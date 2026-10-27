@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -84,5 +86,44 @@ func TestSweepReportsAListingOrARemovalThatFails(t *testing.T) {
 	r := &recorder{listing: "suiteward-sandbox-ABC\n", rmErr: boom}
 	if _, err := sweep(context.Background(), r.run, "docker"); !errors.Is(err, boom) {
 		t.Errorf("a failed removal gave %v", err)
+	}
+}
+
+// TestHelperPrintEnv is not a test: osRun starts the test binary as the runtime's CLI, and this prints the environment that it got.
+func TestHelperPrintEnv(t *testing.T) {
+	if !slices.Contains(os.Args, "print-env") {
+		return
+	}
+	for _, entry := range os.Environ() {
+		fmt.Println(entry)
+	}
+	os.Exit(0)
+}
+
+// The runtime's CLI is started without the executor's settings: the token is in the environment when it is not given as a file.
+func TestTheSweepStartsTheRuntimeCLIWithoutTheExecutorsSettings(t *testing.T) {
+	t.Setenv("SUITEWARD_EXECUTOR_TOKEN", "a-secret-that-must-not-leak")
+	t.Setenv("SUITEWARD_ANYTHING", "1")
+	t.Setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+	t.Setenv("DOCKER_HOST", "unix:///run/test-docker.sock")
+	previous := commandContext
+	commandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperPrintEnv$", "--", "print-env")
+	}
+	t.Cleanup(func() { commandContext = previous })
+	out, err := osRun(context.Background(), "docker", "ps")
+	if err != nil {
+		t.Fatalf("osRun: %v", err)
+	}
+	// Only the names of the variables that leaked are reported: the rest of the environment is not for a test log.
+	for _, line := range strings.Split(string(out), "\n") {
+		if name, _, _ := strings.Cut(line, "="); strings.HasPrefix(strings.ToUpper(name), "SUITEWARD_") {
+			t.Errorf("the CLI got the variable %s", name)
+		}
+	}
+	for _, want := range []string{"HTTPS_PROXY=http://proxy.invalid:3128", "DOCKER_HOST=unix:///run/test-docker.sock"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("the CLI did not get %s", want)
+		}
 	}
 }

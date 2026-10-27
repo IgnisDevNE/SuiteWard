@@ -1,9 +1,13 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"sync"
@@ -156,7 +160,10 @@ func TestRunBuildsTheIsolationOfADR0028ForBothEngines(t *testing.T) {
 			}
 			// Exactly these arguments: nothing else (no --rm, no mount, no published port, no extra capability, no --env: the image's
 			// own environment must not reach Argv) may creep in. The environment of Argv is the assignments after the work directory.
-			want := []string{"run", "--name", name, "-i", "--pull=never", "--network=none", "--read-only"}
+			// --sig-proxy=false: a signal to the CLI (systemd stopping the executor's unit reaches it) is never forwarded to go test, which is
+			// the container's first process: it would end with 143, and every expected test would read fail. The executor's grace and its
+			// kill by name decide how a container ends.
+			want := []string{"run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only"}
 			if tc.podman {
 				// Podman keeps /tmp, /var/tmp, /run and /dev/shm writable under --read-only unless it is told not to.
 				want = append(want, "--read-only-tmpfs=false")
@@ -640,5 +647,56 @@ func TestInfoRefusesWhatItCannotRead(t *testing.T) {
 				t.Errorf("want ErrUnavailable, got %v", err)
 			}
 		})
+	}
+}
+
+// TestHelperPrintEnv is not a test: osExec starts the test binary as the runtime's CLI, and this prints the environment that it got.
+func TestHelperPrintEnv(t *testing.T) {
+	if !slices.Contains(os.Args, "print-env") {
+		return
+	}
+	for _, entry := range os.Environ() {
+		fmt.Println(entry)
+	}
+	os.Exit(0)
+}
+
+func TestCLIEnvKeepsTheEnvironmentButTheSuitewardVariables(t *testing.T) {
+	got := CLIEnv([]string{
+		"PATH=/usr/bin", "SUITEWARD_EXECUTOR_TOKEN=leak", "HTTPS_PROXY=http://proxy.invalid", "SUITEWARD_EXECUTOR_URL=https://x",
+		"DOCKER_HOST=unix:///run/docker.sock", "suiteward_lower=leak", "SUITEWARD=leak", "NOT_SUITEWARD_X=kept", "SUITEWARD_=leak",
+	})
+	want := []string{"PATH=/usr/bin", "HTTPS_PROXY=http://proxy.invalid", "DOCKER_HOST=unix:///run/docker.sock", "SUITEWARD=leak", "NOT_SUITEWARD_X=kept"}
+	if !slices.Equal(got, want) {
+		t.Errorf("CLIEnv = %q; want %q (every variable that starts with SUITEWARD_, in any case, is dropped)", got, want)
+	}
+}
+
+// The children that osExec starts get that environment, not the executor's own.
+func TestTheRuntimeCLIIsStartedWithoutTheExecutorsSettings(t *testing.T) {
+	t.Setenv("SUITEWARD_EXECUTOR_TOKEN", "a-secret-that-must-not-leak")
+	t.Setenv("SUITEWARD_ANYTHING", "1")
+	t.Setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+	t.Setenv("DOCKER_HOST", "unix:///run/test-docker.sock")
+	previous := commandContext
+	commandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperPrintEnv$", "--", "print-env")
+	}
+	t.Cleanup(func() { commandContext = previous })
+	var out bytes.Buffer
+	if exit, stderr, err := osExec(context.Background(), "docker", []string{"version"}, nil, &out); err != nil || exit != 0 {
+		t.Fatalf("osExec = %d, %q, %v", exit, stderr, err)
+	}
+	printed := out.String()
+	// Only the names of the variables that leaked are reported: the rest of the environment is not for a test log.
+	for _, line := range strings.Split(printed, "\n") {
+		if name, _, _ := strings.Cut(line, "="); strings.HasPrefix(strings.ToUpper(name), "SUITEWARD_") {
+			t.Errorf("the CLI got the variable %s", name)
+		}
+	}
+	for _, want := range []string{"HTTPS_PROXY=http://proxy.invalid:3128", "DOCKER_HOST=unix:///run/test-docker.sock"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("the CLI did not get %s", want)
+		}
 	}
 }

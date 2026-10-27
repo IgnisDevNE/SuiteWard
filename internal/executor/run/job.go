@@ -58,11 +58,13 @@ func (e *Executor) handle(ctx context.Context, lease *client.Lease) {
 }
 
 // post sends the result, and sends the same body again while the service does not take it: it answered 503 (stopping or not ready) or
-// gave no answer (it is down). The result is finished work, and losing it costs an attempt. The wait is the lease backoff, doubling, and
-// it ends with the context of the work: the deadline less the margin, or the grace after the signal. The body is the same bytes each time,
-// because the service knows a result it has already stored by their digest. Any other answer is the caller's.
+// gave no answer (it is down). The result is finished work, and losing it costs an attempt. The wait is the lease backoff, doubling, but
+// never longer than a heartbeat interval: the heartbeat stops before the first post and the lease lasts 60 s from the last one, so a
+// service that is back must be found while the lease still holds (a heartbeat could not extend it, since it meets the same outage). The
+// resends end with the context of the work: the deadline less the margin, or the grace after the signal. The body is the same bytes each
+// time, because the service knows a result it has already stored by their digest. Any other answer is the caller's.
 func (e *Executor) post(ctx context.Context, lease *client.Lease, body []byte, log *slog.Logger) (string, error) {
-	wait := e.cfg.Pacing.Backoff
+	wait := min(e.cfg.Pacing.Backoff, e.cfg.Pacing.Heartbeat)
 	for {
 		state, err := lease.Result(ctx, body)
 		if ctx.Err() != nil || !notTaken(err) {
@@ -72,7 +74,7 @@ func (e *Executor) post(ctx context.Context, lease *client.Lease, body []byte, l
 		if e.cfg.Sleep(ctx, wait) != nil {
 			return state, err
 		}
-		wait = min(2*wait, e.cfg.Pacing.MaxBackoff)
+		wait = min(2*wait, e.cfg.Pacing.Heartbeat)
 	}
 }
 

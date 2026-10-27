@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 )
@@ -358,8 +360,8 @@ func TestPrepareHostInstallsTheExecutorBinaryRootOwnedAndRecordsItsPin(t *testin
 		t.Fatalf("the binary is a root-owned copy of this program: %v", h.lines())
 	}
 	sum := sha256File(t, h.exe)
-	if got := writeOf(h, execPinFile); got != sum+"  suiteward-executor\n" {
-		t.Errorf("the pin is %q, want the hash of the program under the name of the copy", got)
+	if got := writeOf(h, execPinFile); got != sum+"  suiteward_v0.4.0_linux_amd64\n" {
+		t.Errorf("the pin is %q, want the line of the release's SHA256SUMS that lists the program", got)
 	}
 }
 
@@ -410,16 +412,39 @@ func TestPrepareHostRefusesABinaryThatTheSumsDoNotList(t *testing.T) {
 	if h.has("install", "-m 0755 -o root -g root") || h.has("systemctl", "suiteward-executor.service") {
 		t.Errorf("nothing of the executor is installed or started: %v", h.lines())
 	}
+	for _, c := range h.calls { // the refusal comes before every step: podman, the accounts, the rules, the token
+		if c.name != "id" && c.name != "cat" {
+			t.Errorf("a step ran before the refusal: %v", h.lines())
+		}
+	}
 }
 
-func TestPrepareHostSaysWhenTheBinaryWasNotCheckedAgainstTheReleaseSums(t *testing.T) {
+func TestPrepareHostRefusesWithoutTheReleasesSHA256SUMSBeforeChangingAnything(t *testing.T) {
 	h := newHostFake()
-	out, err := runHost(t, h, declineMetadataRule, false, "")
-	if err != nil {
-		t.Fatal(err)
+	h.exe = writeProgram(t)
+	_, err := runHostAsGiven(t, h, declineMetadataRule, false, "")
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("the step refuses a command line that lacks --sha256sums as a usage error, got %v", err)
 	}
-	if !strings.Contains(out, "SHA256SUMS") {
-		t.Errorf("the output must say that the executor's binary is not checked against the release's SHA256SUMS:\n%s", out)
+	for _, want := range []string{"--sha256sums", "SHA256SUMS", "release"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q lacks %q: it names the flag and says where the file comes from", err, want)
+		}
+	}
+	for _, c := range h.calls {
+		if c.name != "id" {
+			t.Errorf("a command ran before the refusal: %v", h.lines())
+		}
+	}
+}
+
+func TestInstallHostWithoutTheSHA256SUMSExitsWithTheUsageCode(t *testing.T) {
+	h := newHostFake()
+	h.exe = writeProgram(t)
+	var out, stderr bytes.Buffer
+	env := Env{Deps: h.deps(), Term: Terminal{In: strings.NewReader(""), Out: &out}, OpenScreen: openScreenOn(&out, nil), PortFree: func(int) error { return nil }, Sleep: func(time.Duration) {}}
+	if code := Main(liveContext(t), []string{"install", "host", "--plain", "--metadata-rule", "no"}, env, &stderr); code != 2 || !strings.Contains(stderr.String(), "--sha256sums") {
+		t.Errorf("exit %d, stderr %q: want 2 and the flag named", code, stderr.String())
 	}
 }
 

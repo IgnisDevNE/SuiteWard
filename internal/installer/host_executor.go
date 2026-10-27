@@ -203,22 +203,29 @@ func (h *host) executorToken(ctx context.Context) (made bool, err error) {
 	return made, nil
 }
 
-// releaseAsset is the name of a Linux binary in the release's SHA256SUMS.
-var releaseAsset = regexp.MustCompile(`^suiteward_v[0-9][^_\s]*_linux_(amd64|arm64)$`)
+// releaseAssetOf is the pattern of the name of a binary of goos in the release's SHA256SUMS: suiteward_<tag>_<os>_<arch>, with .exe on Windows.
+func releaseAssetOf(goos string) *regexp.Regexp {
+	suffix := ""
+	if goos == "windows" {
+		suffix = `\.exe`
+	}
+	return regexp.MustCompile(`^suiteward_v[0-9][^_\s]*_` + regexp.QuoteMeta(goos) + `_(amd64|arm64)` + suffix + `$`)
+}
 
-// pinFromSums is the line of the release's SHA256SUMS that lists sum as a Linux binary, which is the pin of the executor's binary. The
-// program must be listed exactly once: one that is not is not the release's.
-func pinFromSums(sums, sum, sumsFile string) (string, error) {
+// pinFromSums is the line of the release's SHA256SUMS that lists sum as a binary of goos, which is the pin of the executor's binary. The program
+// must be listed exactly once: one that is not is not the release's.
+func pinFromSums(sums, sum, sumsFile, goos string) (string, error) {
+	asset := releaseAssetOf(goos)
 	var found []string
 	for _, line := range strings.Split(sums, "\n") {
 		hash, name, ok := strings.Cut(strings.TrimSpace(line), " ")
 		name = strings.TrimPrefix(strings.TrimSpace(name), "*")
-		if ok && hash == sum && releaseAsset.MatchString(name) {
+		if ok && hash == sum && asset.MatchString(name) {
 			found = append(found, hash+"  "+name)
 		}
 	}
 	if len(found) != 1 {
-		return "", fmt.Errorf("this program (SHA-256 %s) is not listed exactly once as a Linux binary in %s, so it is not the release's and is not installed as the executor: verify the download as the install guide says, and give the SHA256SUMS of that release", sum, sumsFile)
+		return "", fmt.Errorf("this program (SHA-256 %s) is not listed exactly once as a %s binary in %s, so it is not the release's and is not installed as the executor: verify the download as the install guide says, and give the SHA256SUMS of that release", sum, goos, sumsFile)
 	}
 	return found[0], nil
 }
@@ -250,33 +257,47 @@ func (h *host) installedHash(ctx context.Context, file string) string {
 	return fields[0]
 }
 
-// executorBinary installs the copy of this program that the executor runs: root's, in a directory only root writes, so the executor cannot
-// change it. It records the pin beside it. replaced says that a binary that was there is not this program's. With --sha256sums the program
-// must be the release's, which that file lists; without it the copy is of the program as it is, and the output says that nothing checked it.
-func (h *host) executorBinary(ctx context.Context) (replaced bool, err error) {
+// releaseProgram is this program as the release's SHA256SUMS lists it: where it is, its SHA-256, and the line of the sums that is the executor's pin.
+type releaseProgram struct{ exe, sum, pin string }
+
+// verifyRelease requires the release's SHA256SUMS (--sha256sums) and checks, before the step changes anything, that it lists this program exactly once
+// as a Linux binary: the executor's pin is the signed release's line, not only the hash of the program that happened to be copied. A missing flag is
+// a mistake of the command line (ErrUsage).
+func (h *host) verifyRelease(ctx context.Context) (releaseProgram, error) {
+	sumsFile, ok := h.r.given("sha256sums")
+	if ok && strings.TrimSpace(sumsFile) == "" {
+		return releaseProgram{}, fmt.Errorf("%w: --sha256sums is empty (an unset variable?): install host requires the SHA256SUMS file of the release this program was downloaded from", ErrUsage)
+	}
+	if !ok {
+		return releaseProgram{}, fmt.Errorf("%w: install host requires --sha256sums FILE, the SHA256SUMS of the release this program was downloaded from (a file beside the binaries of that GitHub Release, verified as the install guide says): the executor runs code that pull requests bring, so its binary must be the release's, which that file lists", ErrUsage)
+	}
 	if h.d.Executable == nil {
-		return false, errors.New("the installer cannot find its own program to copy it as the executor")
+		return releaseProgram{}, errors.New("the installer cannot find its own program to copy it as the executor")
 	}
 	exe, err := h.d.Executable()
 	if err != nil {
-		return false, fmt.Errorf("find this program: %w", err)
+		return releaseProgram{}, fmt.Errorf("find this program: %w", err)
 	}
 	sum, err := hashFile(exe)
 	if err != nil {
-		return false, err
+		return releaseProgram{}, err
 	}
-	pin := sum + "  " + executorPinName
-	if sumsFile, ok := h.r.given("sha256sums"); ok {
-		sums, err := h.run(ctx, "cat", sumsFile)
-		if err != nil {
-			return false, fmt.Errorf("read %s: %w", sumsFile, err)
-		}
-		if pin, err = pinFromSums(sums, sum, sumsFile); err != nil {
-			return false, err
-		}
-	} else {
-		h.warn("The executor's binary is a copy of this program, which nothing checked against the SHA256SUMS of its release: verify the download as the install guide says, or give --sha256sums FILE.\n")
+	sums, err := h.run(ctx, "cat", sumsFile)
+	if err != nil {
+		return releaseProgram{}, fmt.Errorf("read %s: %w", sumsFile, err)
 	}
+	pin, err := pinFromSums(sums, sum, sumsFile, "linux")
+	if err != nil {
+		return releaseProgram{}, err
+	}
+	return releaseProgram{exe: exe, sum: sum, pin: pin}, nil
+}
+
+// executorBinary installs the copy of this program that the executor runs: root's, in a directory only root writes, so the executor cannot
+// change it. It records the pin beside it, which is the release's line of SHA256SUMS that verifyRelease found. replaced says that a binary that was
+// there is not this program's.
+func (h *host) executorBinary(ctx context.Context) (replaced bool, err error) {
+	exe, sum, pin := h.release.exe, h.release.sum, h.release.pin
 	if _, err := h.run(ctx, "install", "-d", "-m", "0755", "-o", "root", "-g", "root", executorLibDir); err != nil {
 		return false, fmt.Errorf("create %s: %w", executorLibDir, err)
 	}

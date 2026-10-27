@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -195,8 +196,42 @@ func (h *hostFake) lines() []string {
 	return out
 }
 
-// runHost runs PrepareHost and returns everything it printed.
+// runHost runs PrepareHost and returns everything it printed. The step requires the release's SHA256SUMS: unless a test gives its own file, the
+// one that lists the program of the run is given.
 func runHost(t *testing.T, h *hostFake, flags map[string]string, tty bool, input string) (string, error) {
+	t.Helper()
+	return runHostAsGiven(t, h, withReleaseSums(t, h, flags), tty, input)
+}
+
+// withReleaseSums is flags with --sha256sums added, unless they have it: the file lists the program of the run as a release binary.
+func withReleaseSums(t *testing.T, h *hostFake, flags map[string]string) map[string]string {
+	t.Helper()
+	if _, ok := flags["sha256sums"]; ok {
+		return flags
+	}
+	if h.exe == "" {
+		h.exe = writeProgram(t)
+	}
+	flags = maps.Clone(flags)
+	if flags == nil {
+		flags = map[string]string{}
+	}
+	flags["sha256sums"] = execSums
+	if _, ok := h.files[execSums]; !ok {
+		h.files[execSums] = sha256File(t, h.exe) + "  suiteward_v0.4.0_linux_amd64\n"
+	}
+	return flags
+}
+
+// hostSumsArgs is the --sha256sums argument of a command line that runs the host step, with the file made on h.
+func hostSumsArgs(t *testing.T, h *hostFake) []string {
+	t.Helper()
+	withReleaseSums(t, h, nil)
+	return []string{"--sha256sums", execSums}
+}
+
+// runHostAsGiven runs PrepareHost with exactly the flags it is given.
+func runHostAsGiven(t *testing.T, h *hostFake, flags map[string]string, tty bool, input string) (string, error) {
 	t.Helper()
 	if h.exe == "" {
 		h.exe = writeProgram(t)
@@ -439,7 +474,7 @@ func TestPrepareHostInstallsNftablesOnlyWithConsent(t *testing.T) {
 	}
 	run := func(h *hostFake, flags map[string]string) error {
 		term, _ := fakeTerminal(false, "")
-		return PrepareHost(context.Background(), newTestResolver(t, flags, nil, term), missingNft(h), io.Discard)
+		return PrepareHost(context.Background(), newTestResolver(t, withReleaseSums(t, h, flags), nil, term), missingNft(h), io.Discard)
 	}
 	h := newHostFake()
 	h.metadata = "200"

@@ -170,7 +170,7 @@ func TestInstallIsolatedNamesTheHostStepWhenTheHTTPPortChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "install host --http-port 19081") {
+	if !strings.Contains(out, "install host --sha256sums <the SHA256SUMS of the release> --http-port 19081") {
 		t.Errorf("the executor is pointed at the old port by the administrator's step: the output must name the re-run with the new port:\n%s", out)
 	}
 }

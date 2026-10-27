@@ -36,7 +36,7 @@ func readExecutorHandover(configDir string) (token []byte, found bool, err error
 	}
 	token = bytes.TrimSpace(raw)
 	if len(token) < minExecutorTokenBytes {
-		return nil, false, fmt.Errorf("%s holds a token of fewer than %d bytes, which the service refuses: as the administrator, remove %s and run `sudo suiteward install host` again, which makes a new one", file, minExecutorTokenBytes, executorAuthEtc)
+		return nil, false, fmt.Errorf("%s holds a token of fewer than %d bytes, which the service refuses: as the administrator, remove %s and run `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>` again, which makes a new one", file, minExecutorTokenBytes, executorAuthEtc)
 	}
 	return token, true, nil
 }
@@ -72,7 +72,7 @@ func settleExecutorSecret(ctx context.Context, store SecretStore, token []byte, 
 // step: an upgrade cannot run again at the release that is installed, so it names the install.
 func noExecutorNote(again string) string {
 	return "The host has no executor token for this account yet, so the service runs without an executor and canonical execution has nothing to run on. " +
-		"The administrator makes the executor and its token with `sudo suiteward install host`; then run " + again + ".\n"
+		"The administrator makes the executor and its token with `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>`; then run " + again + ".\n"
 }
 
 // executorHostNote is what an uninstall says of the executor: it is the administrator's, and the service account cannot reach it.

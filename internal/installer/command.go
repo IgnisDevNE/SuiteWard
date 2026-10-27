@@ -34,7 +34,7 @@ const Usage = `usage: suiteward install [flags]
        suiteward backup [--to DIR] [--settings PATH] [--tier isolated] [--plain]
        suiteward restore <backup.tar.age> [--kit PATH] [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
        suiteward restore --plaintext-dir DIR [--yes --instance ID] [--settings PATH] [--tier isolated] [--plain]
-       suiteward doctor [--json] [--settings PATH] [--plain]
+       suiteward doctor [--json] [--settings PATH] [--token-file PATH] [--plain]
        suiteward version
 `
 
@@ -197,6 +197,7 @@ var installFlags = []struct{ name, usage string }{
 	{"runtime", "podman (recommended) or docker"},
 	{"connection", "the Podman connection, or the Docker context (default: the rootless Podman machine, or Docker Desktop's)"},
 	{"image", "the release image pinned by digest, ghcr.io/ignisdevne/suiteward@sha256:<64 hex> (default: the installed image, else the release this binary carries; a development build needs it)"},
+	{"sha256sums", "co-located tier, optional: the verified SHA256SUMS of the release this program was downloaded from; this program must be listed in it, and its line is the executor's pin (without it the pin is the hash of the program as copied, and doctor warns)"},
 	{"http-port", "loopback port of the HTTP listener (default 27081)"},
 	{"mcp-port", "loopback port of the MCP listener (default 27091)"},
 	{"job-timeout", "a Go duration for SUITEWARD_JOB_TIMEOUT (serve only)"},
@@ -387,6 +388,9 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 	}
 	switch config.Tier(tier) {
 	case config.TierIsolated:
+		if _, given := r.given("sha256sums"); given {
+			return fmt.Errorf("%w: --sha256sums is not used by the isolated install: the executor is made by the administrator's host step, which takes it: `sudo %s install host --sha256sums <the SHA256SUMS of the release>`", ErrUsage, env.Deps.command())
+		}
 		isolated := saved
 		isolated.Tier, isolated.Runtime = config.TierIsolated, RuntimePodman
 		if upgrade {
@@ -413,7 +417,7 @@ func installHost(ctx context.Context, args []string, env Env) (err error) {
 	fs.Bool("yes", false, "answer yes to installing Podman (dnf)")
 	fs.String("metadata-rule", "", "yes or no: refuse the cloud metadata address for the service account")
 	fs.String("http-port", "", "the loopback port of the service's HTTP listener, which the executor is pointed at (default: the port of the installed stack, else 27081)")
-	fs.String("sha256sums", "", "the verified SHA256SUMS of the release: this program must be listed in it to be installed as the executor")
+	fs.String("sha256sums", "", "(required) the verified SHA256SUMS of the release this program was downloaded from: it must list this program, which is installed as the executor")
 	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)
 	if err != nil {

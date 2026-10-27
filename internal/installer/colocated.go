@@ -87,7 +87,11 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	s.Image = image
-	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(env.Deps.command(), r, false)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
+	pin, err := releasePin(r, env.Deps) // before anything is changed
+	if err != nil {
+		return err
+	}
+	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(env.Deps.command(), r, false)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous, executorPin: pin}
 	if c.tokenFile == "" {
 		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
 			return err
@@ -392,6 +396,7 @@ type colocatedInstall struct {
 	copyRows summaryRows // what the offer of the copy of the program says in the summary (installSelf)
 
 	executorRow string // what the summary says of the executor: how it is kept running, or why it is not
+	executorPin string // the release's line of --sha256sums that lists this program, which is the executor's pin; empty without the flag
 }
 
 // secretState is what the stack already has of its database secrets, read before anything is changed.

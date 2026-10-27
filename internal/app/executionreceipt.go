@@ -68,62 +68,6 @@ type receiptDecision struct {
 	unavailable execution.Reason
 }
 
-// receiptStateOf are the receipt states as the store keeps them.
-var receiptStateOf = map[string]domain.ReceiptState{"excluded": domain.ReceiptExcluded, "missing": domain.ReceiptMissing, "flaky": domain.ReceiptFlaky, "skipped": domain.ReceiptSkipped,
-	"fails": domain.ReceiptFails, "new_api": domain.ReceiptNewAPI, "detects": domain.ReceiptDetects, "inert": domain.ReceiptInert}
-
-// receiptRunOf is the status of the receipt run of the head and, for a complete one, its counts. No job reads as pending.
-type receiptRunOf struct {
-	status  domain.RunStatus
-	counts  domain.ReceiptCounts
-	markers int
-}
-
-// readReceiptRun reads the receipt run of the head: the status of its job and, for a complete one, the tests by state, the marker lines and the files that
-// do not parse.
-func (j *checksJob) readReceiptRun(ctx context.Context, jobs headJobs) (receiptRunOf, error) {
-	if !jobs.hasReceipt {
-		return receiptRunOf{status: domain.RunPending}, nil
-	}
-	switch jobs.receipt.State {
-	case execution.StatePending, execution.StateLeased:
-		return receiptRunOf{status: domain.RunPending}, nil
-	case execution.StateUnavailable:
-		return receiptRunOf{status: domain.RunUnavailable}, nil
-	case execution.StateComplete:
-		return j.readCompleteReceipt(ctx, jobs.receipt)
-	}
-	return receiptRunOf{}, fmt.Errorf("the receipt job %d of the head is %s: only a job that is not cancelled is read", jobs.receipt.ID, jobs.receipt.State)
-}
-
-func (j *checksJob) readCompleteReceipt(ctx context.Context, job execution.Job) (receiptRunOf, error) {
-	tests, err := j.executions.Tests(ctx, job.ID)
-	if err != nil {
-		return receiptRunOf{}, fmt.Errorf("read the tests of job %d: %w", job.ID, err)
-	}
-	states := make([]domain.ReceiptState, len(tests))
-	for i, t := range tests {
-		state, known := receiptStateOf[t.State]
-		if !known {
-			return receiptRunOf{}, fmt.Errorf("job %d stores the test state %q, which is no state of a receipt", job.ID, t.State)
-		}
-		states[i] = state
-	}
-	counts, err := domain.CountReceipt(states)
-	if err != nil {
-		return receiptRunOf{}, err
-	}
-	result, found, err := j.executions.Result(ctx, job.ID)
-	if err != nil {
-		return receiptRunOf{}, fmt.Errorf("read the result of job %d: %w", job.ID, err)
-	}
-	if !found {
-		return receiptRunOf{}, fmt.Errorf("the complete job %d has no results row", job.ID)
-	}
-	counts.Unparsed = len(result.Unparsed)
-	return receiptRunOf{status: domain.RunComplete, counts: counts, markers: len(result.Markers)}, nil
-}
-
 // receiptReasons are the reasons of the Receipt check, which its message accepts and no other.
 var receiptReasons = []string{receiptRunning, receiptFailing, receiptComplete, receiptNotRun, receiptNotApplicable}
 
@@ -152,7 +96,7 @@ func (j *checksJob) receiptCheck(ctx context.Context, s *pullState, jobs headJob
 	if !jobs.receiptApplies {
 		return j.withdrawnReceipt(ctx, s, jobs)
 	}
-	run, err := j.readReceiptRun(ctx, jobs)
+	run, err := j.reads().receipt(ctx, jobs.receipt, jobs.hasReceipt)
 	if err != nil {
 		return receiptDecision{}, err
 	}

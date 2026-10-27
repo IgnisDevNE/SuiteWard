@@ -238,6 +238,7 @@ func TestInstallStopsAScheduledTaskBeforeItReplacesTheProgramItHolds(t *testing.
 	again.dir = h.dir
 	again.exe = newer
 	again.have(kindSecret, SecretMCPAuth, SecretExecutorAuth)
+	again.first("/Query /TN SuiteWard Executor", "") // the task of the first install is registered
 	again.f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`)
 	if err := again.podman(); err != nil {
 		t.Fatal(err)
@@ -552,7 +553,8 @@ func TestUninstallKeepsTheExecutorThatIsRegisteredForAnotherInstance(t *testing.
 
 func TestInstallDoesNotRepointAScheduledTaskOfAnotherInstance(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
-	h.f.on("/Query /TN SuiteWard Executor /XML", `<Actions><Exec><Command>D:\elsewhere\executor\run.cmd</Command></Exec></Actions>`)
+	h.first("/Query /TN SuiteWard Executor", "") // a task is registered, and this instance has no executor files: it is another instance's
+	h.first("/Query /TN SuiteWard Executor /XML", `<Actions><Exec><Command>D:/elsewhere/executor/run.cmd</Command></Exec></Actions>`)
 	if err := h.podman(); err != nil {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
 	}

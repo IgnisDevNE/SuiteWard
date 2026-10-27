@@ -58,6 +58,9 @@ func newHarness(t *testing.T, goos string) *harness {
 	h := &harness{t: t, f: newFake(goos), dir: t.TempDir(), busy: map[int]bool{}, atServe: map[string]bool{}}
 	h.f.env["USERNAME"] = "tester"
 	h.f.fail("image inspect", errors.New("no such image")) // pulled unless a test says the image is here
+	if goos == "windows" {
+		h.f.fail("/Query /TN", errors.New("ERROR: The system cannot find the file specified.")) // no task of the executor yet: a test that has one says so first
+	}
 	h.f.on("info --format {{.Host.Security.Rootless}}", "true\n")
 	h.f.on("--format {{json .State}} suiteward-db", `{"Status":"running","Health":{"Status":"healthy"}}`)
 	return h
@@ -68,6 +71,9 @@ func dockerHarness(t *testing.T, goos string) *harness {
 	h := &harness{t: t, f: newFake(goos), dir: t.TempDir(), busy: map[int]bool{}, atServe: map[string]bool{}}
 	h.f.env["USERNAME"] = "tester"
 	h.f.fail("image inspect", errors.New("no such image"))
+	if goos == "windows" {
+		h.f.fail("/Query /TN", errors.New("ERROR: The system cannot find the file specified."))
+	}
 	h.f.on("version --format", dockerDesktopServer).on("info --format", `["name=seccomp,profile=builtin"]`)
 	h.f.on("--format {{json .State}} suiteward-db", `{"Status":"running","Health":{"Status":"healthy"}}`)
 	return h

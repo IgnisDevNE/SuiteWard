@@ -232,3 +232,26 @@ func TestAHeadGoModOverATestDirectoryOfTheManifestIsABuildErrorOnARealEngine(t *
 		]
 	}`)
 }
+
+// A go.mod that only the head has, over a test that the revision adds, is the candidate's: go cannot resolve the package under it on the head
+// side (build-error: FAILS), and the test is not excluded. On the base side, which has no such go.mod, the package resolves.
+func TestAHeadOnlyGoModOverAnAddedTestIsABuildErrorOnARealEngine(t *testing.T) {
+	rt := engineRuntime(t)
+	watchContainers(t)
+
+	s := receiptScenario()
+	s.head = repo{"go.mod": tinyModule, "lib.go": "package tiny\n", "sub/go.mod": "module example.com/sub\n\ngo 1.21\n", "sub/sub_test.go": fmt.Sprintf(oneTest, "sub")}
+	s.base = repo{"go.mod": tinyModule, "lib.go": "package tiny\n"}
+	s.manifest = repo{".suiteward.yml": declaration}
+	d := start(t, newService(t, s.serve(1)), rt, func(_ *Config, d *driver) { d.patience = 5 * time.Minute })
+
+	body := d.result().body
+	sb, _ := decode(t, body)["sandbox"].(map[string]any)
+	toolchain, _ := sb["toolchain"].(string)
+	runtimeName, _ := sb["runtime"].(string)
+	assertBody(t, body, `{
+		"status": "complete", "head": {"sha": "`+headSHA+`"}, "base": {"sha": "`+baseSHA+`"}, `+commonExecutor+`,
+		"sandbox": {"imageDigest": "sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd", "toolchain": "`+toolchain+`", "runtime": "`+runtimeName+`"},
+		"tests": [{"package": "sub", "name": "TestOne", "file": "sub/sub_test.go", "kind": "added", "head": ["build-error"], "base": ["pass"]}]
+	}`)
+}

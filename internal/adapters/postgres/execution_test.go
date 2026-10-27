@@ -11,8 +11,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution/executiontest"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
@@ -69,4 +71,43 @@ func TestExecutionConformance(t *testing.T) {
 			},
 		}
 	})
+}
+
+// A lease reads GitHub through prepare while it holds the job, and the sweep holds the open jobs: neither may keep an approve that names the
+// job from being recorded. The record of the approve checks its foreign key against the row, which a lock FOR UPDATE would make it wait for.
+func TestALeaseHoldingAJobDoesNotBlockAnApprovalThatNamesIt(t *testing.T) {
+	w := newPGWorld(t)
+	store := w.store.Execution()
+	at := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	digest := artifact.Hash([]byte("governing"))
+	job, _, err := store.Enqueue(t.Context(), execution.NewJob{At: at, Spec: execution.Spec{RepositoryID: 10, PullNumber: 1, Plan: execution.PlanCanonical, Profile: "go", HeadSHA: execSHA(1),
+		GoverningDigest: digest, GoverningSource: "V1", DeclarationDigest: digest, CanonicalLevel: domain.CanonicalLevelRequired, ReceiptLevel: domain.ReceiptLevelOff}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	holding, release, leased := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		_, _, err := store.Lease(t.Context(), execution.LeaseRequest{Now: at, LeaseID: execLease(1), JobTimeout: time.Minute, GitHubWait: time.Hour},
+			func(context.Context, execution.Job) error {
+				close(holding) // the job is held while GitHub is read
+				<-release
+				return nil
+			})
+		leased <- err
+	}()
+	<-holding
+	approve := commands.Entry{RepositoryID: 10, CommentID: 100, PullNumber: 1, AuthorID: 7, CreatedAt: at, BodyDigest: artifact.Hash([]byte("body")), Disposition: commands.Processed,
+		Operation: "consent-operation", DecidedAt: at}
+	gate := execution.ApprovalGate{HeadSHA: job.HeadSHA, ReceiptLevel: domain.ReceiptLevelRequired, RunState: execution.RunPending, JobID: job.ID}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second) // a blocked record fails the test instead of hanging it
+	defer cancel()
+	recorded := store.RecordApproval(ctx, approve, nil, gate)
+	close(release)
+	if err := <-leased; err != nil {
+		t.Fatalf("Lease = %v", err)
+	}
+	if recorded != nil {
+		t.Fatalf("RecordApproval while a lease holds the job = %v; want it recorded without waiting for the lease", recorded)
+	}
 }

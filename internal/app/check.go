@@ -49,7 +49,26 @@ type checkPayload struct {
 	// A runner-uncovered check lists its runner files: at most 20, each cut to maxSummaryText bytes, and how many there are. No other reason has them.
 	Paths      []string `json:"paths,omitempty"`
 	PathsTotal int      `json:"pathsTotal,omitempty"`
+	// Execution counts the tests of a complete canonical run under canonical: required, and no other check has it (docs/contracts/runtime.md, "The canonical gate").
+	Execution *checkExecution `json:"execution,omitempty"`
+	// Unblocked marks a check that the owner's unblock of an unavailable canonical run lifted.
+	Unblocked bool `json:"unblocked,omitempty"`
 }
+
+// checkExecution are the counts of a complete canonical run: the tests that ran (every declared test but the excluded ones) and how many of them passed, were
+// skipped, failed, were missing or flaky, and how many are excluded and were not run.
+type checkExecution struct {
+	Tests    int `json:"tests"`
+	Passed   int `json:"passed"`
+	Skipped  int `json:"skipped"`
+	Failed   int `json:"failed"`
+	Missing  int `json:"missing"`
+	Flaky    int `json:"flaky"`
+	Excluded int `json:"excluded"`
+}
+
+// gateReasons are the reasons of a check that the canonical gate holds, whose summary is the one of canonical: required (the texts are those of the publisher).
+var gateReasons = []string{reasonCanonicalPending, reasonCanonicalUnavailable, reasonCanonicalFailing}
 
 // output validates the payload and renders the title and the summary of its check run; key only names the
 // message in an error, which never quotes the payload.
@@ -117,13 +136,25 @@ func newCheckMessage(repo string, r checks.Result, tier, version string, generat
 // newCheckMessageWithPaths is newCheckMessage for a runner-uncovered result: paths are its runner files and total how many there are. The
 // payload keeps at most 20, each cut to maxSummaryText bytes.
 func newCheckMessageWithPaths(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int) (governance.OutboxMessage, error) {
+	return newCheckMessageOf(repo, r, tier, version, generation, paths, total, nil)
+}
+
+// newCheckMessageOf is newCheckMessageWithPaths for a result that the canonical gate decided: counts are those of a complete canonical run, nil for none. The
+// payload of such a check is validated and not rendered here: its text is the publisher's (the summary of canonical: required).
+func newCheckMessageOf(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int, counts *checkExecution) (governance.OutboxMessage, error) {
 	p := checkPayload{commentTarget: commentTarget{RepositoryID: r.RepositoryID, Repo: repo, Pull: r.PullNumber}, HeadSHA: r.HeadSHA, Generation: generation,
-		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version, PathsTotal: total}
+		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version, PathsTotal: total, Execution: counts, Unblocked: r.Unblocked}
 	if len(paths) > 0 {
 		p.Paths = boundedText(paths)
 	}
 	key := fmt.Sprintf("%s:%d:%d:%d", checkKey, r.RepositoryID, r.PullNumber, generation)
-	if _, _, err := p.output(key); err != nil {
+	var err error
+	if slices.Contains(gateReasons, p.Reason) || p.Execution != nil || p.Unblocked {
+		_, err = p.check(key)
+	} else {
+		_, _, err = p.output(key)
+	}
+	if err != nil {
 		return governance.OutboxMessage{}, err
 	}
 	payload, err := json.Marshal(p)

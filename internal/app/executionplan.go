@@ -86,6 +86,7 @@ func (w wantedJob) holds(job execution.Job) bool {
 type executionRun struct {
 	policy executionPolicy
 	known  bool // the policy was read: a run that could not read it plans nothing and cancels nothing as unwanted
+	failed bool // the policy could not be read: no check of the project is decided as success while it cannot say whether the canonical run gates it
 }
 
 // executionRunOf reads the policy of the project, once for the run. Before the first canonical, and for a canonical that failed its integrity
@@ -97,6 +98,7 @@ func (j *checksJob) executionRunOf(ctx context.Context, p owner.ProjectPolicy, s
 	}
 	policy, err := j.policy(ctx, p)
 	if err != nil {
+		x.failed = true
 		return x, err
 	}
 	x.policy, x.known = policy, true
@@ -210,26 +212,27 @@ func (x *executionRun) baseSpec(s *pullState, plan execution.Plan) execution.Spe
 // execute decides what execution wants of the head of a pull request, whose check was decided as assessed before another rule held it back, and
 // creates the jobs (docs/contracts/runtime.md, "What the checks job does for execution", steps 2 to 5). A head whose check says nothing of its
 // revision wants nothing yet, and its open jobs stay.
-func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, assessed checks.Result) error {
+func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, assessed checks.Result) (headJobs, error) {
 	if !x.known {
-		return nil
+		return headJobs{}, nil
 	}
 	if isFork(s.pull.HeadRepo, s.p.Repo) || !x.policy.wants() {
-		return j.cancelObsolete(ctx, s, nil)
+		return headJobs{}, j.cancelObsolete(ctx, s, nil)
 	}
 	ready, known := executionBasis(assessed)
 	if !known {
-		return nil
+		return headJobs{}, nil
 	}
 	var bound revisionBinding
 	if assessed.Reference != "" && (ready || x.policy.receiptOn()) {
 		var current bool
 		var err error
 		if bound, current, err = j.bindingOf(ctx, s, assessed.Reference); err != nil || !current {
-			return err
+			return headJobs{}, err
 		}
 	}
 	var wants []wantedJob
+	jobs := headJobs{reference: assessed.Reference}
 	if x.policy.canonicalOn() {
 		spec := x.baseSpec(s, execution.PlanCanonical)
 		spec.GoverningDigest, spec.GoverningSource = s.suite.manifest, domain.ManifestSource(s.suite.canonical)
@@ -237,37 +240,81 @@ func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, 
 			spec.GoverningDigest, spec.GoverningSource = bound.manifest, domain.ManifestSource(assessed.Reference)
 		}
 		if _, err := j.canonicalJob(ctx, spec); err != nil {
-			return err
+			return headJobs{}, err
 		}
 		wants = append(wants, wantedOf(spec))
 	}
 	if x.policy.receiptOn() && assessed.Reference != "" {
 		spec := x.baseSpec(s, execution.PlanReceipt)
 		spec.GoverningDigest, spec.GoverningSource = bound.base.Digest(), domain.ManifestSource(bound.version)
-		_, _, applies, err := j.receiptJob(ctx, s, x, spec, bound)
-		if err != nil {
-			return err
+		var err error
+		if _, _, jobs.receiptApplies, err = j.receiptJob(ctx, s, x, spec, bound); err != nil {
+			return headJobs{}, err
 		}
-		if applies {
+		if jobs.receiptApplies {
 			wants = append(wants, wantedOf(spec))
 		}
 	}
-	return j.cancelObsolete(ctx, s, wants)
+	if err := j.cancelObsolete(ctx, s, wants); err != nil {
+		return headJobs{}, err
+	}
+	return j.readHeadJobs(ctx, s, x, bound, jobs)
 }
 
-// holder is the latest job of the head and plan that is not cancelled and runs under the binding of spec (its governing manifest and the
-// canonical declaration), whatever merge base its key holds: a head's receipt job is looked up without reading its merge base again.
-func (j *checksJob) holder(ctx context.Context, spec execution.Spec) (execution.Job, bool, error) {
-	jobs, err := j.executions.HeadJobs(ctx, spec.RepositoryID, spec.PullNumber, spec.HeadSHA, spec.Plan)
+// headJobs are the jobs of a head that the canonical gate and the Receipt check read. A plan with no job reads as pending.
+type headJobs struct {
+	canonical, receipt       execution.Job
+	hasCanonical, hasReceipt bool
+	receiptApplies           bool   // the receipt applies to the revision of the head: its job may not exist yet
+	reference                string // the revision of the head: P<n>-R<m>, empty for none
+}
+
+// readHeadJobs reads the job of each wanted plan that the gates and the Receipt check read.
+func (j *checksJob) readHeadJobs(ctx context.Context, s *pullState, x *executionRun, bound revisionBinding, jobs headJobs) (headJobs, error) {
+	var err error
+	if x.policy.canonicalOn() {
+		if jobs.canonical, jobs.hasCanonical, err = j.gateJob(ctx, s, execution.PlanCanonical, artifact.Digest{}); err != nil {
+			return headJobs{}, err
+		}
+	}
+	if jobs.receiptApplies {
+		if jobs.receipt, jobs.hasReceipt, err = j.gateJob(ctx, s, execution.PlanReceipt, bound.base.Digest()); err != nil {
+			return headJobs{}, err
+		}
+	}
+	return jobs, nil
+}
+
+// gateJob is the job of a plan that the canonical gate, the Receipt check, the receipt gate of an approve and unblock read for the head of the pull request:
+// the newest job of its pull request, head and plan that is not cancelled (docs/contracts/runtime.md, "The job a gate reads"). For the receipt, expecting is
+// the manifest of the canonical version that the revision expects, and only a job it governs counts; the canonical plan passes the zero digest and takes any.
+// A job created already final counts. found is false for none, which reads as pending.
+func (j *checksJob) gateJob(ctx context.Context, s *pullState, plan execution.Plan, expecting artifact.Digest) (job execution.Job, found bool, err error) {
+	return j.newestJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, plan, func(candidate execution.Job) bool {
+		return expecting.IsZero() || candidate.GoverningDigest == expecting
+	})
+}
+
+// newestJob is the newest job of the head and plan that is not cancelled and that keep accepts.
+func (j *checksJob) newestJob(ctx context.Context, repositoryID int64, pull int, head string, plan execution.Plan, keep func(execution.Job) bool) (execution.Job, bool, error) {
+	jobs, err := j.executions.HeadJobs(ctx, repositoryID, pull, head, plan)
 	if err != nil {
-		return execution.Job{}, false, fmt.Errorf("read the %s jobs of the head: %w", spec.Plan, err)
+		return execution.Job{}, false, fmt.Errorf("read the %s jobs of the head: %w", plan, err)
 	}
 	for _, job := range slices.Backward(jobs) {
-		if job.State != execution.StateCancelled && job.GoverningDigest == spec.GoverningDigest && job.DeclarationDigest == spec.DeclarationDigest {
+		if job.State != execution.StateCancelled && keep(job) {
 			return job, true, nil
 		}
 	}
 	return execution.Job{}, false, nil
+}
+
+// holder is the newest job of the head and plan that is not cancelled and runs under the binding of spec (its governing manifest and the canonical
+// declaration), whatever merge base its key holds: a head's receipt job is looked up without reading its merge base again.
+func (j *checksJob) holder(ctx context.Context, spec execution.Spec) (execution.Job, bool, error) {
+	return j.newestJob(ctx, spec.RepositoryID, spec.PullNumber, spec.HeadSHA, spec.Plan, func(job execution.Job) bool {
+		return job.GoverningDigest == spec.GoverningDigest && job.DeclarationDigest == spec.DeclarationDigest
+	})
 }
 
 // replaceable reports whether a fresh job may replace the job that holds a binding: only one that is unavailable for executor-not-configured

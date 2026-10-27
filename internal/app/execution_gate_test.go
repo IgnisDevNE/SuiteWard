@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -269,4 +270,34 @@ func TestChecksStateTheCanonicalRunInTheSameRunThatSweptIt(t *testing.T) {
 		t.Fatalf("job %+v, want pending after one failure", got)
 	}
 	w.want(4, checks.InProgress, "canonical-pending", 1)
+}
+
+// unreadableContents is a content store that cannot be read.
+type unreadableContents struct{}
+
+func (unreadableContents) Read(context.Context, artifact.Digest) ([]byte, error) {
+	return nil, errors.New("the content store is down")
+}
+
+func TestChecksNeverDecideASuccessWhileTheExecutionPolicyCannotBeRead(t *testing.T) {
+	w := gateWorld(t)
+	w.execRun()
+	w.want(4, checks.InProgress, "canonical-pending", 1)
+	w.tree(cjHead2, execHeadFiles(gateDecl, "v2"))
+	w.sync(map[int]string{4: bootHead, 5: cjHead2}) // a protected pull request writes a proposal: the Suite moves, and pull 4 is decided again
+	w.execRun()
+	w.finish(w.onlyJob(4, bootHead, execution.PlanCanonical), canonicalTests("pass")) // the run is complete: the check would pass
+	w.want(4, checks.InProgress, "canonical-pending", 1)
+
+	good := w.check.contents
+	w.check.contents = unreadableContents{} // the canonical declaration, which holds the policy, cannot be read
+	w.clock = w.clock.Add(time.Minute)
+	if err := w.check.run(t.Context()); err == nil {
+		t.Fatal("the run succeeded while the policy could not be read")
+	}
+
+	w.want(4, checks.InProgress, "canonical-pending", 1) // the stored check stays, and no success is published
+	w.check.contents = good
+	w.execRun()
+	w.want(4, checks.Success, "unchanged", 2)
 }

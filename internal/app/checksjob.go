@@ -23,6 +23,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
@@ -42,6 +43,11 @@ const (
 	reasonForkUnsupported   = "fork-unsupported"
 	reasonOwnerCommand      = "owner-command-rejected"
 	reasonRunnerUncovered   = "runner-uncovered"
+
+	// The reasons of the canonical gate (docs/contracts/runtime.md, "The canonical gate"), the names of internal/domain/execution.
+	reasonCanonicalPending     = string(domain.ReasonCanonicalPending)
+	reasonCanonicalUnavailable = string(domain.ReasonCanonicalUnavailable)
+	reasonCanonicalFailing     = string(domain.ReasonCanonicalFailing)
 
 	problemReadFailed = "read-failed" // a GitHub read failed; the next run tries again
 	problemConflict   = "conflict"    // the canonical moved under the assessment; the next run tries again
@@ -248,7 +254,7 @@ func (j *checksJob) suite(ctx context.Context, p owner.ProjectPolicy) (suiteView
 // (integrity-failed, a fork, a skip, a carrier that was none), and any reason the renderer no longer knows, such as the
 // bootstrap-pending of an installation from before the M1.7b rework.
 var keptReasons = []string{reasonUnchanged, reasonReady, reasonBootstrapReady, reasonApprovalMissing, reasonNotCurrent, reasonAssessmentPending,
-	reasonSourceUnavailable, reasonInvalidSource, reasonOwnerCommand, reasonRunnerUncovered}
+	reasonSourceUnavailable, reasonInvalidSource, reasonOwnerCommand, reasonRunnerUncovered, reasonCanonicalPending, reasonCanonicalUnavailable, reasonCanonicalFailing}
 
 // pullState is what the decision of one open pull request reads: the Suite, the stored check and the owner's latest command.
 type pullState struct {
@@ -285,10 +291,11 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err != nil {
 		return "", err
 	}
-	if d.wait {
+	if d.wait || x.failed { // a policy that cannot be read cannot say whether the canonical run gates the check: it is never decided as success
+		d.wait = true
 		j.overrideWait(s, &d)
 	}
-	assessed := d.result // what execution plans from: the check before a wrong code or the runner block holds it back
+	assessed := ungated(d.result) // what execution plans from: the check before the canonical gate, a wrong code or the runner block holds it back
 	if err := j.applyWrongCode(ctx, s, &d); err != nil {
 		return "", err
 	}
@@ -298,15 +305,16 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			return "", err
 		}
 	}
+	var executed executionOutcome
 	if !d.wait { // a head that could not be assessed is planned for once it is
-		if err := j.execute(ctx, s, x, assessed); err != nil {
+		if executed, err = j.executionStep(ctx, s, x, assessed, &d); err != nil {
 			return "", err
 		}
 	}
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
 		return "", err
 	}
-	if err := j.publishCheck(ctx, s, d.result, runners); err != nil {
+	if err := j.publishCheck(ctx, s, d.result, runners, executed.counts); err != nil {
 		return "", err
 	}
 	if err := j.commentAfterCheck(ctx, s, d.result, runners); err != nil {
@@ -424,7 +432,7 @@ func (j *checksJob) commentBeforeCheck(ctx context.Context, s *pullState, d pull
 }
 
 // publishCheck publishes every run, also an unchanged result, which lets the ledger resend a message that ended failed.
-func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result checks.Result, runners *runnerSet) error {
+func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result checks.Result, runners *runnerSet, counts *checkExecution) error {
 	_, _, err := j.ledger.Publish(ctx, result, j.now(), func(generation int64) (governance.OutboxMessage, error) {
 		if result.Reason == reasonRunnerUncovered { // applyRunnerBlock decided it from a runner set, so a republish has the files too
 			if runners == nil {
@@ -432,7 +440,7 @@ func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result check
 			}
 			return newCheckMessageWithPaths(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, runners.paths, len(runners.paths))
 		}
-		return newCheckMessage(s.p.Repo, result, s.tier, string(s.suite.canonical), generation)
+		return newCheckMessageOf(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, nil, 0, counts)
 	})
 	if err != nil {
 		return fmt.Errorf("publish the check: %w", err)

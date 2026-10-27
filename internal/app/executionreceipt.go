@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
@@ -23,6 +24,9 @@ const (
 	receiptFailing  = "receipt-failing"
 	receiptComplete = "receipt-complete"
 	receiptNotRun   = "receipt-not-run"
+
+	// receiptNotApplicable is the reason of the last run of a head whose published receipt no longer applies, or whose level turned off.
+	receiptNotApplicable = "receipt-not-applicable"
 )
 
 // receiptCheckCounts are the counts of the receipt that a check carries, every key always present: the tests by state, the excluded ones, the marker lines
@@ -120,12 +124,33 @@ func (j *checksJob) readCompleteReceipt(ctx context.Context, job execution.Job) 
 	return receiptRunOf{status: domain.RunComplete, counts: counts, markers: len(result.Markers)}, nil
 }
 
+// receiptReasons are the reasons of the Receipt check, which its message accepts and no other.
+var receiptReasons = []string{receiptRunning, receiptFailing, receiptComplete, receiptNotRun, receiptNotApplicable}
+
+// withdrawnReceipt is the one last run of a head whose receipt does not apply (it changes no file that the canonical include matches, or the level is off) but that
+// already has a published Receipt check: neutral, with the counts at zero, and nothing after it while that stays so. A head that never had one gets none, and a
+// head whose receipt the run did not decide (its policy could not be read, its revision expects another canonical) keeps the check it has.
+func (j *checksJob) withdrawnReceipt(ctx context.Context, s *pullState, jobs headJobs) (receiptDecision, error) {
+	if !jobs.receiptDecided {
+		return receiptDecision{}, nil
+	}
+	record, found, err := j.receipts.Current(ctx, s.p.RepositoryID, s.pull.Number)
+	if err != nil {
+		return receiptDecision{}, fmt.Errorf("read the Receipt check: %w", err)
+	}
+	if !found || record.HeadSHA != s.pull.HeadSHA {
+		return receiptDecision{}, nil
+	}
+	return receiptDecision{publish: true, check: execution.ReceiptCheck{RepositoryID: s.p.RepositoryID, PullNumber: s.pull.Number, HeadSHA: s.pull.HeadSHA,
+		State: execution.CheckNeutral, Reason: receiptNotApplicable, Reference: record.Reference}}, nil
+}
+
 // receiptCheck decides the Receipt check of the head from its receipt job: in progress while it is pending or has no job yet, a failure when it is complete
 // with a failing or missing test or a file that does not parse, a success otherwise, and neutral when it is unavailable, which the owner's unblock marks
 // without changing it.
 func (j *checksJob) receiptCheck(ctx context.Context, s *pullState, jobs headJobs) (receiptDecision, error) {
 	if !jobs.receiptApplies {
-		return receiptDecision{}, nil
+		return j.withdrawnReceipt(ctx, s, jobs)
 	}
 	run, err := j.readReceiptRun(ctx, jobs)
 	if err != nil {
@@ -175,6 +200,8 @@ func newReceiptCheckMessage(repo string, d receiptDecision, tier string, generat
 		return governance.OutboxMessage{}, keyError(receiptCheckKind, key, "the head or the generation is invalid")
 	case tier != owner.TierIsolated && tier != owner.TierCoLocated:
 		return governance.OutboxMessage{}, keyError(receiptCheckKind, key, "the tier is unknown")
+	case !slices.Contains(receiptReasons, p.Reason):
+		return governance.OutboxMessage{}, keyError(receiptCheckKind, key, "the reason is unknown")
 	}
 	payload, err := json.Marshal(p)
 	if err != nil {

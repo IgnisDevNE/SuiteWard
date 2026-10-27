@@ -227,8 +227,9 @@ func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, 
 		return headJobs{}, nil
 	}
 	both := []execution.Plan{execution.PlanCanonical, execution.PlanReceipt}
-	if isFork(s.pull.HeadRepo, s.p.Repo) || !x.policy.wants() {
-		return headJobs{}, j.cancelObsolete(ctx, s, nil, both)
+	fork := isFork(s.pull.HeadRepo, s.p.Repo)
+	if fork || !x.policy.wants() {
+		return headJobs{receiptDecided: !fork}, j.cancelObsolete(ctx, s, nil, both) // nothing is wanted: a Receipt check that was published is withdrawn
 	}
 	ready, known := executionBasis(assessed)
 	receiptWanted := x.policy.receiptOn() && assessed.Reference != ""
@@ -244,7 +245,7 @@ func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, 
 		}
 	}
 	var wants []wantedJob
-	jobs := headJobs{reference: assessed.Reference}
+	jobs := headJobs{reference: assessed.Reference, receiptDecided: true}
 	plans := []execution.Plan{execution.PlanReceipt}
 	if known {
 		plans = both
@@ -302,6 +303,7 @@ type headJobs struct {
 	hasCanonical, hasReceipt bool
 	canonicalPlanned         bool   // a canonical job is wanted for the head, which the canonical gate reads
 	receiptApplies           bool   // the receipt applies to the revision of the head: its job may not exist yet
+	receiptDecided           bool   // the run decided whether the receipt applies: when it does not, a Receipt check that was published is withdrawn
 	reference                string // the revision of the head: P<n>-R<m>, empty for none
 }
 

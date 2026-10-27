@@ -294,6 +294,7 @@ type PrCheck struct {
 	Generation   int64
 	MessageKey   string
 	DecidedAt    pgtype.Timestamptz
+	Unblocked    bool
 }
 
 type PrCommand struct {

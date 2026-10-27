@@ -341,3 +341,7 @@ ALTER TABLE pr_commands
         'receipt-refused', 'mode-set', 'mode-refused', 'unblocked', 'unblock-refused')),
     ADD CONSTRAINT pr_commands_mode_check CHECK (mode IS NULL OR mode IN ('fix', 'feature', 'refactor')),
     ADD CONSTRAINT pr_commands_mode_set_check CHECK (disposition <> 'mode-set' OR mode IS NOT NULL);
+
+-- The owner's lift of the canonical job decided the check's outcome (the canonical gate would have withheld the check). pr_checks is updated in
+-- place, so a row from before this migration reads false: the owner had no lift to record.
+ALTER TABLE pr_checks ADD COLUMN unblocked boolean NOT NULL DEFAULT false;

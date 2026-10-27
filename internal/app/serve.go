@@ -107,7 +107,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 	executions := store.Execution()
 	liveness := execution.NewLiveness(time.Now()) // one record for the whole process: the executor API (M2.1-T4) writes it, the jobs read it
 	executorConfigured := cfg.ExecutorToken != ""
-	a := &api{store: store, owners: store, logger: logger, tier: tier, reports: reports,
+	a := &api{store: store, owners: store, logger: logger, tier: tier, reports: reports, receipts: newReceiptPages(store, artifacts, executions, store, store, tier),
 		executorStatus: &executorStatus{enabled: executorConfigured, jobs: executions, liveness: liveness}}
 	backend := &mcpBackend{store: store, owners: store, instance: store.Instance, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
 	trees, archives := treeReader(noTrees), archiveReader(noArchives) // the executor API reads GitHub through these: without the settings they fail

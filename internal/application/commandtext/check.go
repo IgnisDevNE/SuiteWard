@@ -183,7 +183,7 @@ func CheckSummary(c Check) (title, summary string) {
 		parts = append(parts, unblockedText)
 	}
 	if c.Tier == CoLocated {
-		parts = append(parts, coLocatedNotice)
+		parts = append(parts, CoLocatedNotice)
 	}
 	parts = append(parts, reason.next)
 	switch c.Reason {
@@ -275,3 +275,6 @@ func checkCheckReference(c Check) error {
 }
 
 var checkStateName = map[CheckState]string{CheckSuccess: "success", CheckInProgress: "in_progress", CheckFailure: "failure", CheckNeutral: "neutral"}
+
+// ExecutionText states the counts of a complete canonical run in the words of the Contract check summary, for the receipt page, which says the same.
+func ExecutionText(e CheckExecution) string { return executionText(e) }

@@ -83,18 +83,16 @@ func ReceiptCheckSummary(c ReceiptCheck) (title, summary string) {
 	if c.Proposal != 0 {
 		facts = append(facts, "- Proposal revision: "+Reference(c.Proposal, c.Revision))
 	}
-	n := c.Counts
-	facts = append(facts, tierLine(c.Tier),
-		fmt.Sprintf("- Tests by state: %d DETECTS, %d INERT, %d NEW API, %d FAILS, %d MISSING, %d FLAKY, %d SKIPPED", n.Detects, n.Inert, n.NewAPI, n.Fails, n.Missing, n.Flaky, n.Skipped),
-		fmt.Sprintf("- Excluded tests: %d", n.Excluded),
-		fmt.Sprintf("- Marker lines seen: %d", c.Markers),
-		fmt.Sprintf("- Changed test files that do not parse: %d", n.Unparsed))
+	facts = append(facts, tierLine(c.Tier))
+	for _, fact := range ReceiptFacts(c.Counts, c.Markers) {
+		facts = append(facts, "- "+fact)
+	}
 	parts = append(parts, strings.Join(facts, "\n"), evidenceSentence)
 	if c.Unblocked {
 		parts = append(parts, receiptUnblockedSentence)
 	}
 	if c.Tier == CoLocated {
-		parts = append(parts, coLocatedNotice)
+		parts = append(parts, CoLocatedNotice)
 	}
 	return reason.title, paragraphs(parts...)
 }
@@ -133,4 +131,34 @@ func validateReceiptCheck(c ReceiptCheck) (receiptReason, error) {
 		}
 	}
 	return reason, nil
+}
+
+// UnavailableReason says in words why a job is unavailable, for a reason code of the closed set; ok is false for any other.
+func UnavailableReason(code string) (words string, ok bool) {
+	words, ok = unavailableWords[code]
+	return words, ok
+}
+
+// ReceiptFacts are the counts of a receipt as the Receipt check summary states them, one line each: the tests by state, the excluded tests, the marker lines seen and
+// the changed test files that do not parse. The receipt page states the same.
+func ReceiptFacts(n execution.ReceiptCounts, markers int) []string {
+	return []string{
+		fmt.Sprintf("Tests by state: %d DETECTS, %d INERT, %d NEW API, %d FAILS, %d MISSING, %d FLAKY, %d SKIPPED", n.Detects, n.Inert, n.NewAPI, n.Fails, n.Missing, n.Flaky, n.Skipped),
+		fmt.Sprintf("Excluded tests: %d", n.Excluded),
+		fmt.Sprintf("Marker lines seen: %d", markers),
+		fmt.Sprintf("Changed test files that do not parse: %d", n.Unparsed),
+	}
+}
+
+// ModeReason says in words why the summary of a mode is not met, for a reason of the domain; ok is false for any other.
+func ModeReason(reason execution.Reason) (words string, ok bool) {
+	words, ok = modeReasons[reason]
+	return words, ok
+}
+
+var modeReasons = map[execution.Reason]string{
+	execution.ReasonNoEvaluatedTests: "no test ran, so nothing detects the change",
+	execution.ReasonBlockingTests:    "a test fails, is missing or is flaky, or a changed test file does not parse",
+	execution.ReasonNoDetection:      "no test detects anything",
+	execution.ReasonNotInert:         "a test is not inert",
 }

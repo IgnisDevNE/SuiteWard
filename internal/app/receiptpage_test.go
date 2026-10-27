@@ -90,7 +90,7 @@ func (w *pageWorld) wantText(page string, phrases ...string) {
 // completed opens pull 5 with a change to a protected test, and completes its two jobs: the canonical run first, which is the older.
 func (w *pageWorld) completed(canonical, receipt []execution.Test, edit ...func(*execution.Result)) (canonicalJob, receiptJob execution.Job) {
 	w.t.Helper()
-	w.execPull(execHeadFiles(receiptDecl, "v2"))
+	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
 	canonicalJob, receiptJob = w.onlyJob(5, cjHead2, execution.PlanCanonical), w.onlyJob(5, cjHead2, execution.PlanReceipt)
 	w.finish(canonicalJob, canonical)
 	w.finish(receiptJob, receipt, edit...)
@@ -99,7 +99,7 @@ func (w *pageWorld) completed(canonical, receipt []execution.Test, edit ...func(
 
 func TestReceiptPageIsServedToALoopbackHostOnly(t *testing.T) {
 	w := newPageWorld(t)
-	w.execPull(execHeadFiles(receiptDecl, "v2"))
+	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
 	for _, host := range []string{"127.0.0.1:8080", "localhost:8080", "[::1]:8080", "LOCALHOST", "127.0.0.1"} {
 		if got := w.get(host, receiptPath).Code; got != http.StatusOK {
 			t.Errorf("Host %q: status %d, want 200", host, got)
@@ -115,7 +115,7 @@ func TestReceiptPageIsServedToALoopbackHostOnly(t *testing.T) {
 
 func TestReceiptPageSetsTheFourHeadersOnEveryAnswer(t *testing.T) {
 	w := newPageWorld(t)
-	w.execPull(execHeadFiles(receiptDecl, "v2"))
+	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
 	want := map[string]string{
 		"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cache-Control": "no-store",
 	}
@@ -141,7 +141,7 @@ func TestReceiptPageSetsTheFourHeadersOnEveryAnswer(t *testing.T) {
 
 func TestReceiptPageIs404ForWhatIsNotKnown(t *testing.T) {
 	w := newPageWorld(t)
-	w.execPull(execHeadFiles(receiptDecl, "v2"))
+	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
 	for name, path := range map[string]string{
 		"an unknown pull request":           "/receipts/acme/widgets/99",
 		"a repository that is not enrolled": "/receipts/acme/gadgets/5",
@@ -176,7 +176,7 @@ func TestReceiptPageOfAPullRequestWithNoJobSaysThatThereAreNoResultsYet(t *testi
 
 func TestReceiptPageOfARevisionWithNoFileOfTheApprovedPatternsSaysItHasNoReceipt(t *testing.T) {
 	w := newPageWorld(t)
-	w.execPull(execHeadFiles(receiptDecl+"# a comment\n", "v1")) // the declaration changes: a revision, and no file of the include
+	w.execPullFive(execHeadFiles(receiptDecl+"# a comment\n", "v1")) // the declaration changes: a revision, and no file of the include
 	if jobs := w.headJobs(5, cjHead2, execution.PlanReceipt); len(jobs) != 0 {
 		t.Fatalf("a receipt job exists for a revision whose receipt does not apply: %+v", jobs)
 	}
@@ -211,7 +211,7 @@ func TestReceiptPageStatesTheEvidenceBindingOfEachRunAndTheReceiptOfThePullReque
 func TestReceiptPageStatesAJobThatWasNotRunWithItsReasonAndNoEvidence(t *testing.T) {
 	w := newPageWorld(t)
 	w.check.executorConfigured = false // the jobs are created already unavailable, and no results row exists
-	w.execPull(execHeadFiles(receiptDecl, "v2"))
+	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
 	page := w.text()
 	w.wantText(page, "Not run: no executor is configured for this instance (executor-not-configured).")
 	if strings.Contains(page, "Executor: ") || strings.Contains(page, "Governing manifest") && strings.Contains(page, "Image digest") {
@@ -221,7 +221,7 @@ func TestReceiptPageStatesAJobThatWasNotRunWithItsReasonAndNoEvidence(t *testing
 
 func TestReceiptPageStatesWhatARunThatWasTriedAgainSaw(t *testing.T) {
 	w := newPageWorld(t)
-	w.execPull(execHeadFiles(receiptDecl, "v2"))
+	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
 	canonical := w.onlyJob(5, cjHead2, execution.PlanCanonical) // the older job: it is leased first
 	leased, found, err := w.jobs.Lease(t.Context(), execution.LeaseRequest{Now: w.clock, LeaseID: fmt.Sprintf("%032x", 7), JobTimeout: time.Hour, GitHubWait: time.Hour},
 		func(context.Context, execution.Job) error { return nil })
@@ -245,12 +245,12 @@ func TestReceiptPageListsTheChangedFilesAtMostOneHundredAndHowManyThereAre(t *te
 	for i := range 150 {
 		files[fmt.Sprintf("tests/n%03d_test.go", i)] = "package a\n"
 	}
-	w.execPull(files)
+	w.execPullFive(files)
 	w.finish(w.onlyJob(5, cjHead2, execution.PlanCanonical), canonicalTests("pass"))
 	w.finish(w.onlyJob(5, cjHead2, execution.PlanReceipt), receiptTests("detects"))
 	page := w.text()
-	w.wantText(page, "Files that this revision adds or changes under the approved patterns: 151 (100 listed)", "tests/a_test.go", "tests/n097_test.go")
-	if strings.Contains(page, "tests/n098_test.go") {
+	w.wantText(page, "Files that this revision adds or changes under the approved patterns: 151 (100 listed)", "tests/a_test.go", "tests/n098_test.go")
+	if strings.Contains(page, "tests/n099_test.go") {
 		t.Errorf("more than 100 files are listed:\n%s", page)
 	}
 }
@@ -262,7 +262,7 @@ func TestReceiptPageListsWhatIsNotEvaluatedTheSubmodulesTheMarkersAndTheFilesTha
 	files := execHeadFiles(head, "v2")
 	files["e2e/x_test.go"] = "package e2e\n"
 	w.reader.files = map[int][]github.PullFile{5: {{Path: "e2e/x_test.go", Status: "added"}, {Path: "tests/a_test.go", Status: "modified"}}}
-	w.execPull(files)
+	w.execPullFive(files)
 	w.finish(w.onlyJob(5, cjHead2, execution.PlanCanonical), canonicalTests("pass"))
 	w.finish(w.onlyJob(5, cjHead2, execution.PlanReceipt), receiptTests("detects"), func(r *execution.Result) {
 		r.Submodules = []string{"vendor/sub"}
@@ -326,7 +326,7 @@ func TestReceiptPageStatesWhatARunOfNothingRanAndTheExcludedTests(t *testing.T) 
 func TestReceiptPageStatesWhichJobsTheOwnerUnblocked(t *testing.T) {
 	w := newPageWorld(t)
 	w.check.executorConfigured = false
-	w.execPull(execHeadFiles(receiptDecl, "v2"))
+	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
 	canonical, receipt := w.onlyJob(5, cjHead2, execution.PlanCanonical), w.onlyJob(5, cjHead2, execution.PlanReceipt)
 	w.wantText(w.text(), "Not run:")
 	if strings.Contains(w.text(), "The owner unblocked") {

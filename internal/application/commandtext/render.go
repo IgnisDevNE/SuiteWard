@@ -420,14 +420,14 @@ func BootstrapSummary(s Summary) string {
 	parts = append(parts, listing("Inventory", s.Paths, len(s.Paths)), listing("Scope include rules", s.Include, s.IncludeTotal),
 		listing("Scope runner rules", s.Runner, s.RunnerTotal), listing("Scope exclude rules", s.Exclude, s.ExcludeTotal))
 	if s.Tier == CoLocated {
-		parts = append(parts, coLocatedNotice)
+		parts = append(parts, CoLocatedNotice)
 	}
 	parts = append(parts, review, codeCommand("approve", ref), after)
 	return paragraphs(parts...)
 }
 
-// coLocatedNotice is what a body says when the instance runs beside the coding agent (ADR 0027).
-const coLocatedNotice = "This SuiteWard instance runs beside the coding agent (co-located tier), so its assurance is reduced: " +
+// CoLocatedNotice is what a body says when the instance runs beside the coding agent (ADR 0027).
+const CoLocatedNotice = "This SuiteWard instance runs beside the coding agent (co-located tier), so its assurance is reduced: " +
 	"the agent can reach SuiteWard's credentials, database and confirmation secret."
 
 // tierName is the name of a tier; a value that is not one is an impossible state.
@@ -703,7 +703,7 @@ func RevisionComment(r Revision) string {
 		parts = append(parts, reductionParts(r)...)
 	}
 	if r.Tier == CoLocated {
-		parts = append(parts, coLocatedNotice)
+		parts = append(parts, CoLocatedNotice)
 	}
 	parts = append(parts, approvalParts(r, ref)...)
 	if r.Previous != "" {

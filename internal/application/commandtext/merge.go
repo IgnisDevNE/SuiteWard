@@ -69,7 +69,7 @@ func MergeComment(m Merge) string {
 	lead, body := mergeLead(m, reason)
 	parts := []string{lead, body, strings.Join(mergeFacts(m), "\n")}
 	if m.Tier == CoLocated {
-		parts = append(parts, coLocatedNotice)
+		parts = append(parts, CoLocatedNotice)
 	}
 	if m.Kind != MergeBlocked {
 		return paragraphs(append(parts, "SuiteWard checked the approval and the integrity of the protected files at that commit.")...)

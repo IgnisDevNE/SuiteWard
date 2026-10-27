@@ -93,8 +93,3 @@ type receiptPages struct {
 func newReceiptPages(suites governance.UnitOfWork, contents governance.ContentReader, executions execution.Store, pulls pullLister, previews previewReader, tier string) *receiptPages {
 	return &receiptPages{suites: suites, contents: contents, executions: executions, pulls: pulls, previews: previews, tier: tier, gate: make(chan struct{}, 1)}
 }
-
-// page builds the page of a pull request of project, waiting for its turn until ctx ends.
-func (p *receiptPages) page(ctx context.Context, state owner.State, project owner.ProjectPolicy, pull int) ([]byte, error) {
-	return nil, errors.New("not implemented")
-}

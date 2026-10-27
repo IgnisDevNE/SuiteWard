@@ -129,6 +129,8 @@ func newExecutorAPI(d executorDeps) (http.Handler, error) {
 	r.MethodNotAllowed(h.notFound) // the fixed codes of the contract have no 405
 	r.Post("/lease", h.lease)
 	r.Route("/jobs/{id}", func(r chi.Router) {
+		r.Get("/archive/{side}", h.archive)
+		r.Get("/files/{digest}", h.file)
 		r.Post("/heartbeat", h.heartbeat)
 	})
 	return r, nil

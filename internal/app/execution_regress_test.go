@@ -14,6 +14,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
 
@@ -168,4 +169,28 @@ func TestChecksListAsNotEvaluatedTheFilesTheHeadSelectsAndTheCanonicalDoesNot(t 
 			}
 		})
 	}
+}
+
+// A canonical that failed its integrity check governs nothing, so the open jobs of its repository are cancelled as obsolete (docs/contracts/runtime.md, "What the
+// checks job does for execution", step 1).
+func TestChecksCancelTheOpenJobsOfARepositoryWhoseCanonicalFailedItsIntegrityCheck(t *testing.T) {
+	w := newExecWorld(t, execDecl)
+	w.execPull(execHeadFiles(execDecl, "v2"))
+	open := w.openJobs()
+	if len(open) != 3 {
+		t.Fatalf("%d open jobs before the failure, want the canonical job of each pull request and the receipt job of pull 5", len(open))
+	}
+
+	w.verdict("V1", integrity.Failed)
+	w.execRun()
+
+	if left := w.openJobs(); len(left) != 0 {
+		t.Fatalf("open jobs %+v after the integrity failure, want none", left)
+	}
+	for _, job := range open {
+		if got := w.jobByID(job.ID); got.State != execution.StateCancelled || got.Reason != execution.ReasonObsolete {
+			t.Errorf("job %d is %s/%s, want cancelled/obsolete", job.ID, got.State, got.Reason)
+		}
+	}
+	w.want(4, checks.Failure, "integrity-failed", 2)
 }

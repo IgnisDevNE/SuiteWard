@@ -18,6 +18,9 @@ const (
 	receiptUnblockedText = "The owner unblocked this head: its receipt was unavailable, so the tests did not run."
 )
 
+// receiptBanned matches what a public summary never holds: a mode, a link, a path, a test name, an HTML comment, a mention or a command.
+var receiptBanned = regexp.MustCompile(`(?i)\b(mode|link|paths?|https?|tests? names?)\b|<!--|@|#issuecomment|/suiteward`)
+
 // receiptReasons are the reasons of the Receipt check, each with its state, its title and a phrase only its text holds.
 var receiptReasons = []struct {
 	state  commandtext.CheckState
@@ -214,7 +217,6 @@ func TestReceiptCheckSummaryOfAnUnblockedHeadSaysThatTheTestsDidNotRun(t *testin
 }
 
 func TestReceiptCheckSummaryStatesTheTierAndHoldsNoRepositoryTextNoPathNoLinkAndNoMode(t *testing.T) {
-	banned := regexp.MustCompile(`(?i)\b(mode|link|paths?|https?|tests? names?)\b|<!--|@|#issuecomment|/suiteward`)
 	for _, tc := range receiptReasons {
 		for _, tier := range []commandtext.Tier{commandtext.Isolated, commandtext.CoLocated} {
 			c := receiptOf(tc.reason)
@@ -230,9 +232,26 @@ func TestReceiptCheckSummaryStatesTheTierAndHoldsNoRepositoryTextNoPathNoLinkAnd
 				t.Errorf("%s: the isolated summary states a reduced assurance:\n%s", tc.reason, summary)
 			}
 			for _, s := range []string{title, summary} {
-				if s == "" || banned.MatchString(s) || len(s) > 4096 {
-					t.Errorf("%s: the output is empty, long or holds %q: %q", tc.reason, banned.FindString(s), s)
+				if s == "" || receiptBanned.MatchString(s) || len(s) > 4096 {
+					t.Errorf("%s: the output is empty, long or holds %q: %q", tc.reason, receiptBanned.FindString(s), s)
 				}
+			}
+		}
+	}
+}
+
+// The summary of an empty receipt is a text of its own: it holds the same nothing, and none of the phrases that the owner's rule removes.
+func TestReceiptCheckSummaryOfAnEmptyReceiptHoldsNoRepositoryTextAndDoesNotSayThatNoTestsRan(t *testing.T) {
+	c := receiptOf("receipt-complete")
+	c.Counts, c.Markers = execution.ReceiptCounts{}, 0
+	title, summary := receiptText(t, c)
+	for _, s := range []string{title, summary} {
+		if receiptBanned.MatchString(s) {
+			t.Errorf("the output holds %q: %q", receiptBanned.FindString(s), s)
+		}
+		for _, phrase := range notRunPhrases {
+			if strings.Contains(s, phrase) {
+				t.Errorf("the output says %q: %q", phrase, s)
 			}
 		}
 	}

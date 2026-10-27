@@ -24,6 +24,16 @@ import (
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
+// enrollExecutionRepository enrolls an owner with the repository of the executor tests.
+func enrollExecutionRepository(t *testing.T, store *postgres.Store) {
+	t.Helper()
+	enrollment := owner.Enrollment{Owner: owner.Owner{AccountID: bootOwnerID, Login: "owner"}, Secret: make([]byte, 20), Step: 1, Tier: owner.TierIsolated, EnrolledAt: bootTime,
+		Projects: []owner.ProjectPolicy{{RepositoryID: execRepoID, Repo: execRepoName, TestCheck: "ci"}}}
+	if err := store.Enroll(t.Context(), enrollment); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // pgExecutorEnv is the executor API over the real execution store, with fakes for what GitHub answers.
 type pgExecutorEnv struct {
 	t           *testing.T
@@ -48,11 +58,7 @@ func newPGExecutorEnv(t *testing.T) *pgExecutorEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	enrollment := owner.Enrollment{Owner: owner.Owner{AccountID: bootOwnerID, Login: "owner"}, Secret: make([]byte, 20), Step: 1, Tier: owner.TierIsolated, EnrolledAt: bootTime,
-		Projects: []owner.ProjectPolicy{{RepositoryID: execRepoID, Repo: execRepoName, TestCheck: "ci"}}}
-	if err := store.Enroll(t.Context(), enrollment); err != nil {
-		t.Fatal(err)
-	}
+	enrollExecutionRepository(t, store)
 	e := &pgExecutorEnv{t: t, databaseURL: databaseURL, store: store, artifacts: artifacts, wakes: &wakeLog{}, trees: &fakeTrees{entries: map[string][]treeEntry{}, errs: map[string]error{}}}
 	var stopping atomic.Bool
 	handler, err := newExecutorAPI(executorDeps{token: []byte(execTestToken), store: store.Execution(), liveness: execution.NewLiveness(time.Now()), times: cfg.Executor, content: artifacts,
@@ -93,26 +99,33 @@ func (e *pgExecutorEnv) summary(id int64) string {
 // enqueue creates a pending canonical job for the head numbered n, over a manifest that the content store holds.
 func (e *pgExecutorEnv) enqueue(n int) execution.Job {
 	e.t.Helper()
+	return enqueueExecutionJob(e.t, e.store, e.artifacts, n)
+}
+
+// enqueueExecutionJob creates a pending canonical job of the enrolled repository for the head numbered n, with the manifest and the files that it names in
+// the content store, as the checks job leaves them.
+func enqueueExecutionJob(t *testing.T, store *postgres.Store, artifacts *filesystem.Store, n int) execution.Job {
+	t.Helper()
 	files := map[string]string{"contract.go": fmt.Sprintf("package contract // %d\n", n), declarationPath: "execution:\n  canonical: required\n  profile: go\n"}
 	var entries []artifact.Entry
 	for path, content := range files {
-		if err := e.artifacts.Put(e.t.Context(), execDigest(content), strings.NewReader(content)); err != nil {
-			e.t.Fatal(err)
+		if err := artifacts.Put(t.Context(), execDigest(content), strings.NewReader(content)); err != nil {
+			t.Fatal(err)
 		}
 		entries = append(entries, artifact.Entry{Path: path, Content: execDigest(content)})
 	}
 	m, err := artifact.NewManifest(entries)
 	if err != nil {
-		e.t.Fatal(err)
+		t.Fatal(err)
 	}
-	if err := storeManifest(e.t.Context(), e.artifacts, m); err != nil {
-		e.t.Fatal(err)
+	if err := storeManifest(t.Context(), artifacts, m); err != nil {
+		t.Fatal(err)
 	}
-	job, created, err := e.store.Execution().Enqueue(e.t.Context(), execution.NewJob{At: time.Now(), Spec: execution.Spec{RepositoryID: execRepoID, PullNumber: 3, Plan: execution.PlanCanonical, Profile: "go",
+	job, created, err := store.Execution().Enqueue(t.Context(), execution.NewJob{At: time.Now(), Spec: execution.Spec{RepositoryID: execRepoID, PullNumber: 3, Plan: execution.PlanCanonical, Profile: "go",
 		HeadSHA: execSHA(n), GoverningDigest: m.Digest(), GoverningSource: "V1", DeclarationDigest: execDigest(files[declarationPath]),
 		CanonicalLevel: domain.CanonicalLevelRequired, ReceiptLevel: domain.ReceiptLevelOff}})
 	if err != nil || !created {
-		e.t.Fatalf("enqueue = %v, created %v", err, created)
+		t.Fatalf("enqueue = %v, created %v", err, created)
 	}
 	return job
 }

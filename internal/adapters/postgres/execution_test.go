@@ -96,7 +96,11 @@ func TestALeaseHoldingAJobDoesNotBlockAnApprovalThatNamesIt(t *testing.T) {
 			})
 		leased <- err
 	}()
-	<-holding
+	select { // a Lease that fails, or finds no job, before it calls prepare must fail the test and not hang it
+	case <-holding:
+	case err := <-leased:
+		t.Fatalf("Lease ended before it held the job: %v", err)
+	}
 	approve := commands.Entry{RepositoryID: 10, CommentID: 100, PullNumber: 1, AuthorID: 7, CreatedAt: at, BodyDigest: artifact.Hash([]byte("body")), Disposition: commands.Processed,
 		Operation: "consent-operation", DecidedAt: at}
 	gate := execution.ApprovalGate{HeadSHA: job.HeadSHA, ReceiptLevel: domain.ReceiptLevelRequired, RunState: execution.RunPending, JobID: job.ID}

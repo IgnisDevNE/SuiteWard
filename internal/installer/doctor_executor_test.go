@@ -190,3 +190,15 @@ func TestDoctorIsolatedExecutorSaysWhenItWasLastSeen(t *testing.T) {
 		t.Errorf("the detail must report when the service last saw the executor: %q", d)
 	}
 }
+
+// The service of an isolated host that has no executor token gets it from an install of the service account's, not from an upgrade, which at the
+// installed release only says that there is nothing to upgrade and names the install: the fix says `install --tier isolated`.
+func TestDoctorIsolatedNoTokenFixNamesTheInstallOfTheIsolatedTier(t *testing.T) {
+	f, s := isolatedRig{executionOff: true}.build(t)
+	_, res, _ := runDoctor(t, f, s)
+	wantFail(t, res, "executor.running", "EXECUTOR_TOKEN")
+	fix := res["executor.running"].Fix
+	if !strings.Contains(fix, "install --tier isolated") || strings.Contains(fix, "--upgrade") {
+		t.Errorf("the fix %q must name `install --tier isolated`, and not an upgrade that does nothing here", fix)
+	}
+}

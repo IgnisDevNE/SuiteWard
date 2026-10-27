@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net/url"
@@ -78,11 +79,13 @@ func (e *Executor) post(ctx context.Context, lease *client.Lease, body []byte, l
 	}
 }
 
-// notTaken says that the service did not take a result and may be asked again: it answered 503, or the call got no answer (net/http
-// returns a *url.Error for a connection that was refused or cut, and for a call that timed out).
+// notTaken says that the service did not take a result and may yet take it: it answered 503, or the call got no answer (net/http returns a
+// *url.Error for a connection that was refused or cut, and for a call that timed out). A certificate that the client cannot verify is a
+// *url.Error too, wrapping the x509 error in a tls.CertificateVerificationError, and no wait changes it.
 func notTaken(err error) bool {
 	var noAnswer *url.Error
-	return errors.Is(err, client.ErrUnavailable) || errors.As(err, &noAnswer)
+	var untrusted *tls.CertificateVerificationError
+	return errors.Is(err, client.ErrUnavailable) || (errors.As(err, &noAnswer) && !errors.As(err, &untrusted))
 }
 
 // dropAtDeadline waits until the deadline of the attempt less the margin, and then drops the work with the deadline as the cause. An attempt

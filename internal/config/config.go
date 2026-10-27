@@ -77,10 +77,21 @@ type Config struct {
 	Tier                 Tier
 	// ReportBaseURL is the loopback origin of the instance (http://127.0.0.1:<port> or http://localhost:<port>) that the change report links name; empty for no link.
 	ReportBaseURL string
+	// ExecutorToken is the bearer token of the executor API; empty when EXECUTOR_TOKEN is unset: the executor routes are not served.
+	ExecutorToken Secret
+	// Executor holds the durations of the executor settings, with or without a token.
+	Executor ExecutorTimes
 	// GitHub is nil when the synchronization settings are not configured.
 	GitHub *GitHub
 	// MCP is nil when MCP_TOKEN is unset: no local MCP listener.
 	MCP *MCP
+}
+
+// ExecutorTimes are the durations of the executor settings (see docs/contracts/runtime.md, "Settings" and "Execution").
+type ExecutorTimes struct {
+	JobTimeout time.Duration // how long one attempt may run once an executor leased it
+	LeaseWait  time.Duration // how long the service may go without seeing an executor before its pending jobs are unavailable
+	GitHubWait time.Duration // how long a job may keep failing to read GitHub before it is unavailable
 }
 
 // MCP holds the settings of the local MCP listener (see docs/contracts/runtime.md, "Local MCP").

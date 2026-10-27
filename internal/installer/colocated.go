@@ -57,15 +57,15 @@ func guardDefaultSettings(t installTarget, runtimeName, connection string) error
 func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget) error {
 	scr := r.screen
 	scr.Steps(colocatedInstallSteps...)
-	tokenFile, err := instanceTokenFile(r, env, t) // before anything is asked: a second instance names its own
-	if err != nil {
-		return err
-	}
 	rt, connection, err := openRuntime(ctx, r, env, t.saved, true)
 	if err != nil {
 		return err
 	}
 	if err := guardDefaultSettings(t, rt.Name(), connection); err != nil {
+		return err
+	}
+	tokenFile, err := instanceTokenFile(r, env, t) // before any change: a second instance names its own
+	if err != nil {
 		return err
 	}
 	base, previous, err := existingStack(ctx, rt, t.saved, t.haveSaved)

@@ -150,10 +150,6 @@ func (c *colocatedInstall) readStatus(ctx context.Context) ([]byte, error) {
 func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget) error {
 	scr := r.screen
 	scr.Steps("Plan", "Backup", "Images", "Replace", "Check")
-	tokenFile, err := instanceTokenFile(r, env, t) // before anything else: a second instance names its own, or the executor of the main one is touched
-	if err != nil {
-		return err
-	}
 	image, err := upgradeTarget(r)
 	if err != nil {
 		return err
@@ -163,6 +159,10 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	if err := guardDefaultSettings(t, rt.Name(), connection); err != nil {
+		return err
+	}
+	tokenFile, err := instanceTokenFile(r, env, t) // before any change: a second instance names its own, or the executor of the main one is touched
+	if err != nil {
 		return err
 	}
 	base, previous, err := existingStackFor(ctx, rt, t.saved, t.haveSaved, true)

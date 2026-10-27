@@ -466,6 +466,13 @@ func goTest(c call, results func(dir, name string) string) sandbox.Outcome {
 	}
 	module := moduleOf(c.Files["src/go.mod"])
 	for _, dir := range c.Dirs {
+		if _, nested := c.Files["src/"+dir+"/go.mod"]; nested && dir != "." {
+			// go cannot resolve a package of another module: it reports the pattern of the invocation as a setup failure, exits 1 and runs
+			// the other packages.
+			event("fail", "./"+dir, "", "./"+dir)
+			exit = 1
+			continue
+		}
 		pkg := module
 		if dir != "." {
 			pkg += "/" + dir

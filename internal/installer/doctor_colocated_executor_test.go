@@ -55,11 +55,15 @@ func healthyColocatedExecutor(t *testing.T, f *fakeEngine) {
 	f.exe = program
 	files := coloExecFilesOf(t, f)
 	sum := sha256.Sum256([]byte(coloProgramText))
-	for path, content := range map[string]string{
+	made := map[string]string{
 		files.token:  strings.Repeat("c", 64),
 		files.binary: coloProgramText,
 		files.pin:    hex.EncodeToString(sum[:]) + "  " + testReleaseAsset(f.goos) + "\n", // made from a release's sums
-	} {
+	}
+	if f.goos == "windows" { // a registered task is this instance's when this instance made the two files of it
+		made[filepath.Join(files.dir, executorWrapperName)], made[filepath.Join(files.dir, "task.xml")] = "the wrapper", "the task"
+	}
+	for path, content := range made {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}

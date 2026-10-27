@@ -533,3 +533,31 @@ func TestPrepareHostMakesTheFilesThatOtherAccountsReadReadable(t *testing.T) {
 		}
 	}
 }
+
+// The executor reads its token only when it starts, so a running executor that the step gives a new token is restarted, with nothing else changed.
+func TestPrepareHostRestartsARunningExecutorOnlyWhenItMakesANewToken(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		tokenThere bool
+		restarted  bool
+	}{{"a new token", false, true}, {"a token that exists", true, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHostFake()
+			h.exe = writeProgram(t)
+			unit, err := RenderExecutorUnit(DefaultHTTPPort)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.files[execUnitFile] = string(unit) // the unit and the binary are those of this release already
+			h.hashes[execBinaryPath] = sha256File(t, h.exe)
+			h.execRunning = true
+			h.paths[execAuthEtc] = tc.tokenThere
+			if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.has("systemctl", execUserSystemd+" restart suiteward-executor.service"); got != tc.restarted {
+				t.Errorf("restarted %v, want %v: %v", got, tc.restarted, h.lines())
+			}
+		})
+	}
+}

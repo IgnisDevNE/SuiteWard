@@ -28,13 +28,13 @@ var (
 	ErrSetupFailed = errors.New("the sandbox failed before the program started")
 )
 
-// Limits are the resource limits of one sandbox. Every one is required: the runtimes read zero as no limit.
+// Limits are the resource limits of one sandbox. Every one but KillAfter is required: the runtimes read zero as no limit.
 type Limits struct {
 	MemoryMiB int // the memory limit; the swap limit is the same, and the tmpfs counts in it
 	CPUs      int
 	Pids      int
 	TmpfsMiB  int           // the size of /work
-	KillAfter time.Duration // the executor kills the container this long after its standard input has ended
+	KillAfter time.Duration // the runner kills the container this long after its standard input has ended; zero is no clock, for a caller whose context is the bound
 }
 
 // Spec describes one run.
@@ -104,8 +104,8 @@ func (s Spec) validate() error {
 }
 
 func (l Limits) validate() error {
-	if l.MemoryMiB <= 0 || l.CPUs <= 0 || l.Pids <= 0 || l.TmpfsMiB <= 0 || l.KillAfter <= 0 {
-		return invalid("every limit is required and positive: %+v", l)
+	if l.MemoryMiB <= 0 || l.CPUs <= 0 || l.Pids <= 0 || l.TmpfsMiB <= 0 || l.KillAfter < 0 {
+		return invalid("every limit is required and positive, and the kill deadline is not negative: %+v", l)
 	}
 	return nil
 }

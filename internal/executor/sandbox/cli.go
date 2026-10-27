@@ -238,7 +238,7 @@ func (c *cli) execute(ctx context.Context, name string, args []string, after tim
 	return <-watched, stderr, err
 }
 
-// awaitKill waits for a reason to kill the container: the clock, which runs from the end of the standard input (the tree and the module
+// awaitKill waits for a reason to kill the container: the clock, if there is one, which runs from the end of the standard input (the tree and the module
 // files stream in while the container runs, and the program cannot start before they have), a standard input that broke, or the end of
 // the context. It reports false when the run ended first.
 func awaitKill(ctx context.Context, after time.Duration, ended, broken, done <-chan struct{}) (kill, clock bool) {
@@ -251,8 +251,12 @@ func awaitKill(ctx context.Context, after time.Duration, ended, broken, done <-c
 		return true, false
 	case <-ended:
 	}
-	timer := time.NewTimer(after)
-	defer timer.Stop()
+	var clockRuns <-chan time.Time // nil, which no select takes, when the caller has no clock
+	if after > 0 {
+		timer := time.NewTimer(after)
+		defer timer.Stop()
+		clockRuns = timer.C
+	}
 	select {
 	case <-done:
 		return ctx.Err() != nil, false
@@ -260,7 +264,7 @@ func awaitKill(ctx context.Context, after time.Duration, ended, broken, done <-c
 		return true, false
 	case <-broken:
 		return true, false
-	case <-timer.C:
+	case <-clockRuns:
 		return true, true
 	}
 }

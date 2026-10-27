@@ -267,11 +267,11 @@ func unavailableNote(reason execution.Reason, ran bool) (string, error) {
 	if ran {
 		lead = "Unavailable: "
 	}
-	code := commandtext.Visible(string(reason))
-	if words, known := commandtext.UnavailableReason(string(reason)); known {
-		return lead + words + " (" + code + ").", nil
+	words, known := commandtext.UnavailableReason(string(reason))
+	if !known { // the store keeps only the reasons of the closed set: another is an impossible state, not a word to show
+		return "", fmt.Errorf("a job is unavailable for the reason %q, which no text knows", reason)
 	}
-	return lead + code + ".", nil
+	return lead + words + " (" + string(reason) + ").", nil
 }
 
 // evidenceLines are the evidence binding of a run: the manifest that governed it and where it came from, the levels of the policy, the profile, the executor and its
@@ -322,10 +322,14 @@ func modeLine(mode domain.Mode, summary domain.ModeSummary) (string, error) {
 	switch summary.Verdict {
 	case domain.VerdictMet:
 		return mode.String() + ": met", nil
-	default:
-		words, _ := commandtext.ModeReason(summary.Reason)
+	case domain.VerdictNotMet:
+		words, known := commandtext.ModeReason(summary.Reason)
+		if !known { // a reason of the domain that the page has no words for: an impossible state, not a word to show
+			return "", fmt.Errorf("the summary of the %s mode is not met for the reason %q, which no text knows", mode, summary.Reason)
+		}
 		return mode.String() + ": not met: " + words + " (" + string(summary.Reason) + ")", nil
 	}
+	return "", fmt.Errorf("the summary of the %s mode has the verdict %d, which no mode summary has", mode, summary.Verdict)
 }
 
 // testLines show each test as its state, its package, its name and its file, and for an excluded one its reason.

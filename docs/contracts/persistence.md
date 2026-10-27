@@ -1288,7 +1288,7 @@ The ledger of the `SuiteWard / Receipt` check. It mirrors `pr_checks` (migration
 | `head_sha` | `text NOT NULL` | `^[0-9a-f]{40}$` |
 | `head_since` | `timestamptz NOT NULL` | when this head was first recorded |
 | `state` | `text NOT NULL` | `success`, `in_progress`, `failure` or `neutral` |
-| `reason` | `text NOT NULL` | not blank: `receipt-running`, `receipt-failing`, `receipt-complete`, `receipt-not-run` or `receipt-not-applicable` (the last is the one `neutral` run that withdraws a published check when the receipt of the head stops applying; the names differ from the gate reasons of the domain, `receipt-pending` and `receipt-unavailable`, which are the reasons of a refused approve) |
+| `reason` | `text NOT NULL` | not blank: `receipt-running`, `receipt-failing`, `receipt-complete`, `receipt-not-run` or `receipt-not-applicable` (the last is the one `neutral` run that withdraws a published check when the receipt of the head stops applying or the `receipt` level becomes `off`; the names differ from the gate reasons of the domain, `receipt-pending` and `receipt-unavailable`, which are the reasons of a refused approve) |
 | `reference` | `text NOT NULL` | `^(P[0-9]+-R[0-9]+)?$` |
 | `job_id` | `bigint NOT NULL` | `>= 0`; the receipt job that the state shows, `0` for none; no foreign key, as `pr_checks` has none to the outbox |
 | `unblocked` | `boolean NOT NULL DEFAULT false` | true when the owner unblocked the head's receipt job and it is `unavailable` |

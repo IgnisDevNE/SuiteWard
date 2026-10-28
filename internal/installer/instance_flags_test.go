@@ -204,7 +204,7 @@ func TestNoHintWritesACommandOfThisProgramWithoutTheFlagsOfTheInstance(t *testin
 	spelled := map[string]*regexp.Regexp{
 		"command.go":            regexp.MustCompile(`^usage: suiteward install \[flags\]\n`),                               // the usage text
 		"selfinstall.go":        regexp.MustCompile(`^SuiteWard prints commands such as suiteward doctor, but a terminal`), // the prose of the page that offers the copy
-		"executor_colocated.go": regexp.MustCompile("rem Written by `suiteward install`: the environment of the SuiteWard executor"),
+		"executor_colocated.go": regexp.MustCompile("rem Written by `suiteward install`: the environment of the SuiteWard test runner"),
 		"summary.go":            regexp.MustCompile(`^suiteward enroll$`), // setupInstructionMark, which the summary matches in a sentence of the service's own check
 	}
 	reads := map[string]bool{"command.go": true, "selfinstall.go": true} // OSEnv and commandName set the name, and suggest reads it

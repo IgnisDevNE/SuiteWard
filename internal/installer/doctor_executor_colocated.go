@@ -31,7 +31,9 @@ func (d *doctor) installFix() string {
 // The token copy and the Go image are made by an install whatever becomes of the test runner, so their rows keep installFix.
 func (d *doctor) executorFix() string {
 	if d.refusedFolder != nil {
-		return "An install cannot set up the test runner in this folder, because of the percent sign (%) in its path. Run `" + d.deps.suggest("uninstall") + "` to remove it (your data stays), then run `" + d.deps.suggest("install") + "` with `--token-file` set to a file in a folder that has no percent sign."
+		fresh := d.deps // the install of the other folder names this instance's settings, and a token file to fill in: the old one is the refused one
+		fresh.instance.tokenFile = ""
+		return "An install cannot set up the test runner in this folder, because of the percent sign (%) in its path. Run `" + d.deps.suggest("uninstall") + "` to remove it (your data stays), then run `" + fresh.suggest("install", "--token-file <a file in a folder without a percent sign>") + "` to set it up again."
 	}
 	return d.installFix()
 }

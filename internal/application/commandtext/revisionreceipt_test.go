@@ -35,12 +35,15 @@ func TestRevisionCommentWithoutAReceiptHasNoReceiptLine(t *testing.T) {
 func TestRevisionCommentStatesTheReceiptAfterTheChangesAndBeforeTheApproveCommand(t *testing.T) {
 	for _, level := range []string{"advisory", "before-approval", "required"} {
 		body := revisionText(t, receiptRevision(t, level))
-		line := receiptLead + "Results: [" + receiptURL + "](" + receiptURL + "). " + receiptTail
+		line := receiptLead + "Results: [Receipt page](" + receiptURL + "). " + receiptTail
 		report := strings.Index(body, "[Full change report]")
 		at := strings.Index(body, line)
 		approve := strings.Index(body, "/suiteward approve P7-R3")
 		if report < 0 || at <= report || approve <= at {
 			t.Errorf("%s: the receipt line is not between the change report and the approve command (%d, %d, %d):\n%s", level, report, at, approve, body)
+		}
+		if strings.Count(body, receiptURL) != 1 {
+			t.Errorf("%s: the address of the receipt page is link text as well as the target:\n%s", level, body)
 		}
 		if strings.Count(body, "Receipt:") != 1 {
 			t.Errorf("%s: the receipt line is not stated once:\n%s", level, body)

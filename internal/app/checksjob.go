@@ -326,14 +326,14 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			}
 		}
 	}
-	countsErr := j.restoreCounts(ctx, s, x, &d, &executed)
+	countsErr := errors.Join(j.restoreCounts(ctx, s, x, &d, &executed), j.approvalCounts(ctx, s, x, &d, &executed))
 	if cancelled := ctx.Err(); cancelled != nil { // restoreCounts left the check as it was; a stopping run publishes nothing
 		return "", cancelled
 	}
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
 		return "", err
 	}
-	if err := j.publishCheck(ctx, s, d.result, d.runners, executed.counts); err != nil {
+	if err := j.publishCheck(ctx, s, d.result, d.runners, executed.counts, x.namesMode(d.result)); err != nil {
 		return "", err
 	}
 	if err := j.publishReceipt(ctx, s, executed.receipt); err != nil {
@@ -343,6 +343,50 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		return "", err
 	}
 	return d.problem, errors.Join(stepErr, countsErr)
+}
+
+// namesMode says whether the approve that the check of r shows names a mode: an approval that is missing does under a required receipt, as the comment of the revision does,
+// because the receipt gate refuses an approve with no mode and consumes its code. A receipt that turns out empty or not applicable accepts a mode all the same. The first
+// contract has no policy, so its approve names none.
+func (x *executionRun) namesMode(r checks.Result) bool {
+	return x.known && r.Reason == reasonApprovalMissing && x.policy.receipt == domain.ReceiptLevelRequired
+}
+
+// approvalCounts gives the check of a head whose approval is missing, under canonical: required, the counts of the complete canonical run of the head, and records the job it
+// counted in the decision (CountedJob). The run does not decide the check: the approval is what is missing, and the reason keeps its precedence. The owner reads the counts
+// before approving, because a head can fail the approved tests that its own change edits. A run that is pending, unavailable or not wanted adds nothing and counts no job.
+// The ledger writes a check again when the counted job changes: the first message goes out while the run is pending and the reason does not change when it completes, so the
+// job that completes is what gives the check its counts. Only a complete job that the manifest of the canonical governs is counted, never a job of another version. What this
+// pass cannot read keeps the stored value of the same head, so a store that fails for a moment does not flip the check and write two messages. The failure of the read is
+// returned, once the check is published.
+func (j *checksJob) approvalCounts(ctx context.Context, s *pullState, x *executionRun, d *pullDecision, executed *executionOutcome) error {
+	d.result.CountedJob = 0 // no reason but an approval that is missing counts a job, and no pass but this one sets it
+	if d.result.Reason != reasonApprovalMissing {
+		return nil
+	}
+	if s.sameHead && s.record.Reason == reasonApprovalMissing {
+		d.result.CountedJob = s.record.CountedJob // kept unless this pass reads the run
+	}
+	if !x.known {
+		return nil
+	}
+	if x.policy.canonical != domain.CanonicalLevelRequired {
+		d.result.CountedJob = 0
+		return nil
+	}
+	job, found, err := j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical, s.suite.manifest)
+	var run canonicalRun
+	if err == nil {
+		run, err = j.reads().canonical(ctx, job, found)
+	}
+	if err != nil {
+		return err
+	}
+	d.result.CountedJob = 0
+	if run.status == domain.RunComplete {
+		executed.counts, d.result.CountedJob = checkCountsOf(run.counts), job.ID
+	}
+	return nil
 }
 
 // restoreCounts gives a check that a wait restored the counts of the canonical run it was decided with. The stored result of the head goes out again when the ledger
@@ -498,7 +542,7 @@ func (j *checksJob) commentBeforeCheck(ctx context.Context, s *pullState, d pull
 }
 
 // publishCheck publishes every run, also an unchanged result, which lets the ledger resend a message that ended failed.
-func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result checks.Result, runners *runnerSet, counts *checkExecution) error {
+func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result checks.Result, runners *runnerSet, counts *checkExecution, approveMode bool) error {
 	_, _, err := j.ledger.Publish(ctx, result, j.now(), func(generation int64) (governance.OutboxMessage, error) {
 		if result.Reason == reasonRunnerUncovered { // applyRunnerBlock decided it from a runner set, so a republish has the files too
 			if runners == nil {
@@ -506,7 +550,7 @@ func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result check
 			}
 			return newCheckMessageWithPaths(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, runners.paths, len(runners.paths))
 		}
-		return newCheckMessageOf(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, nil, 0, counts)
+		return newCheckMessageOf(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, nil, 0, counts, approveMode)
 	})
 	if err != nil {
 		return fmt.Errorf("publish the check: %w", err)

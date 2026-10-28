@@ -32,9 +32,12 @@ type Check struct {
 	PathsTotal int
 	Changes    *Changes
 	// Execution and Unblocked mark the summary of canonical: required (docs/contracts/runtime.md, "The canonical gate"): the counts of a complete canonical run, and the
-	// owner's unblock of an unavailable one. The reasons canonical-pending, canonical-unavailable and canonical-failing mark it too.
+	// owner's unblock of an unavailable one. The reasons canonical-pending, canonical-unavailable and canonical-failing mark it too. An approval that is missing against a canonical states the counts too.
 	Execution *CheckExecution
 	Unblocked bool
+	// ApproveMode marks an approval-missing check whose approve names a mode: the repository requires a receipt (docs/contracts/runtime.md, "The revision comment"), as the
+	// comment of the revision shows. It is false for the first contract, which has no canonical and so no receipt policy.
+	ApproveMode bool
 }
 
 // CheckExecution are the counts of a complete canonical run: the tests that ran, how many passed, were skipped, failed, were missing or flaky, and how many are
@@ -135,6 +138,10 @@ func executionText(e CheckExecution) string {
 	return line
 }
 
+// blockingEditText is what an approval that is missing says of a test that fails, is missing or is flaky on the head: the canonical gate does not hold this check, but the owner
+// should read the change before approving, because a change that edits a test can make it pass by checking less.
+const blockingEditText = "At least one approved test fails, is missing or is flaky on this head. If this change edits that test, read the change before you approve: an edited test can pass by checking less."
+
 // closingText ends a summary: the usual one reports on the protected contract only, and the one of canonical: required reports on the run of the approved tests too.
 func closingText(c Check) string {
 	if c.Execution != nil || c.Unblocked || slices.Contains(canonicalReasons, c.Reason) {
@@ -178,6 +185,9 @@ func CheckSummary(c Check) (title, summary string) {
 	}
 	if c.Execution != nil {
 		parts = append(parts, executionText(*c.Execution))
+		if c.Reason == "approval-missing" && c.Execution.Failed+c.Execution.Missing+c.Execution.Flaky > 0 {
+			parts = append(parts, blockingEditText)
+		}
 	}
 	if c.Unblocked {
 		parts = append(parts, unblockedText)
@@ -185,19 +195,26 @@ func CheckSummary(c Check) (title, summary string) {
 	if c.Tier == CoLocated {
 		parts = append(parts, CoLocatedNotice)
 	}
-	parts = append(parts, reason.next)
-	switch c.Reason {
-	case "approval-missing":
-		parts = append(parts, codeCommand("approve", ref))
-	case "canonical-unavailable":
-		parts = append(parts, copyable("/suiteward unblock <code>"))
+	next, command := reason.next, ""
+	switch {
+	case c.Reason == "approval-missing" && c.ApproveMode: // the receipt gate refuses an approve with no mode under a required receipt, and consumes its code
+		next, command = "To approve this exact revision, say what kind of change it is (its mode) and comment:", modeApproveCommand(ref)
+	case c.Reason == "approval-missing":
+		command = codeCommand("approve", ref)
+	case c.Reason == "canonical-unavailable":
+		command = copyable("/suiteward unblock <code>")
+	}
+	parts = append(parts, next)
+	if command != "" {
+		parts = append(parts, command)
 	}
 	parts = append(parts, closingText(c))
 	return reason.title, paragraphs(parts...)
 }
 
 // checkRequired reports why the counts, the unblock and the canonical reasons of c do not fit together: the counts of a complete run go with a success (which no
-// test blocks) or with canonical-failing (which one does), the unblock with a success and nothing else, and a pending or unavailable run has no counts.
+// test blocks), with canonical-failing (which one does) or with an approval that is missing against a canonical (which a test may block: the approval is what is missing), the
+// unblock with a success and nothing else, and a pending or unavailable run has no counts.
 func checkRequired(c Check) error {
 	success := c.Reason == "ready" || c.Reason == "unchanged"
 	var blocking int
@@ -209,8 +226,10 @@ func checkRequired(c Check) error {
 		blocking = e.Failed + e.Missing + e.Flaky
 	}
 	switch {
-	case c.Execution != nil && !success && c.Reason != "canonical-failing":
+	case c.Execution != nil && !success && c.Reason != "canonical-failing" && c.Reason != "approval-missing":
 		return fmt.Errorf("commandtext: reason %q has no counts of a canonical run", c.Reason)
+	case c.Execution != nil && c.Reason == "approval-missing" && c.Version == 0:
+		return errors.New("commandtext: a head with no canonical version has no canonical run to count")
 	case c.Unblocked && (!success || c.Execution != nil):
 		return fmt.Errorf("commandtext: reason %q does not fit an unblocked run, which is lifted only to a success and has no counts", c.Reason)
 	case success && blocking > 0:
@@ -254,6 +273,9 @@ func checkCheckReference(c Check) error {
 	}
 	if c.Reason == "approval-missing" && c.Proposal == 0 {
 		return errors.New("commandtext: approval is missing for no revision")
+	}
+	if c.ApproveMode && (c.Reason != "approval-missing" || c.Version == 0) {
+		return fmt.Errorf("commandtext: reason %q with version V%d has no approve with a mode: only an approval that is missing against a canonical has one", c.Reason, c.Version)
 	}
 	if c.Changes != nil {
 		if c.Proposal == 0 {

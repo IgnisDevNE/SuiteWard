@@ -210,22 +210,20 @@ func TestChecksKeepEveryOtherReasonOverTheCanonicalGate(t *testing.T) {
 
 	w.execRun()
 
-	w.want(5, checks.InProgress, "approval-missing", 1)
-	if _, found := w.lastCheckPayload(5)["execution"]; found {
-		t.Error("a check that the gate does not decide carries counts")
-	}
+	w.want(5, checks.InProgress, "approval-missing", 2) // the failing run does not hold the check: the approval is still what is missing, and the check states the counts of the run
+	wantExecution(t, w.lastCheckPayload(5), 1, 0, 0, 1, 0, 0, 0)
 
 	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
 	w.execRun()
 	jobs := w.headJobs(5, cjHead2, execution.PlanCanonical)
 	w.finish(jobs[len(jobs)-1], canonicalTests("pass"))
 	w.execRun()
-	w.want(5, checks.Success, "ready", 3)
+	w.want(5, checks.Success, "ready", 4)
 
 	w.entry(5, 302, bootOwnerID, commands.InvalidCode, "") // a wrong code
 	w.execRun()
 
-	w.want(5, checks.Failure, "owner-command-rejected", 4)
+	w.want(5, checks.Failure, "owner-command-rejected", 5)
 }
 
 func TestChecksGateOnlyUnderRequired(t *testing.T) {

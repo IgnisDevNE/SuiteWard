@@ -296,6 +296,7 @@ type PrCheck struct {
 	MessageKey   string
 	DecidedAt    pgtype.Timestamptz
 	Unblocked    bool
+	CountedJob   int64
 }
 
 type PrCommand struct {

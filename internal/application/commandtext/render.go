@@ -719,7 +719,7 @@ var receiptLevels = []string{"advisory", "before-approval", "required"}
 func receiptLine(r Revision) string {
 	results := "Results: see the `SuiteWard / Receipt` check."
 	if r.ReceiptURL != "" {
-		results = "Results: [" + r.ReceiptURL + "](" + r.ReceiptURL + ")."
+		results = "Results: [Receipt page](" + r.ReceiptURL + ")."
 	}
 	return "Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. " +
 		"It is evidence, not a verdict. " + results + " The `SuiteWard / Receipt` check carries the counts."

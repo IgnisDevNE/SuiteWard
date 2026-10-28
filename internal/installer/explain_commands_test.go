@@ -158,12 +158,12 @@ func TestTheEndOfAnUpgradeSaysHowToGoBackOnItsTier(t *testing.T) {
 		if err := u.upgradeAt(false, "", "--yes"); err != nil {
 			t.Fatal(err)
 		}
-		text, path, settings := goBackLine(u.out.String()), quoteArg(oneArchive(t, u.backups)), " --settings "+quoteArg(u.settingsPath()) // as a hint quotes a path
+		text, path, d := goBackLine(u.out.String()), quoteArg(oneArchive(t, u.backups)), Deps{instance: u.named()} // as a hint quotes a path
 		// Every command is scoped to this instance, as the engine of the start command and the doctor hint are: copied on a PC with a second
 		// instance, an unscoped `volume rm` or `uninstall` would reach the default one.
 		for _, want := range []string{
-			"`suiteward uninstall --yes" + settings + "`", "`podman --connection pm volume rm " + VolumeData + " " + VolumeDBData + "`",
-			"`suiteward install --image " + oldImage + settings + "`", "`suiteward restore " + path + settings + "` with that kit", "database updates only go forward", pointer,
+			"`" + d.suggest("uninstall", "--yes") + "`", "`podman --connection pm volume rm " + VolumeData + " " + VolumeDBData + "`",
+			"`" + d.suggest("install", "--image "+oldImage) + "`", "`" + d.suggest("restore", path) + "` with that kit", "database updates only go forward", pointer,
 		} {
 			if !strings.Contains(text, want) {
 				t.Errorf("the line that says how to go back lacks %q:\n%s", want, text)
@@ -181,7 +181,7 @@ func TestTheEndOfAnUpgradeSaysHowToGoBackOnItsTier(t *testing.T) {
 		text, archive := goBackLine(u.out.String()), oneArchive(t, u.backups)
 		for _, want := range []string{
 			unitsKeptBeside(archive), "`systemctl --user daemon-reload`", "`systemctl --user stop suiteward.service`",
-			"`suiteward restore " + quoteArg(archive) + " --tier isolated --settings " + quoteArg(settingsFile(u.home)) + "` with that kit", "database updates only go forward", pointer,
+			"`" + (Deps{instance: u.named()}).suggest("restore", quoteArg(archive)) + "` with that kit", "database updates only go forward", pointer,
 		} {
 			if !strings.Contains(text, want) {
 				t.Errorf("the line that says how to go back lacks %q:\n%s", want, text)
@@ -196,7 +196,7 @@ func TestTheEndOfAnUpgradeSaysHowToGoBackOnItsTier(t *testing.T) {
 // Every message that pointed to a section of a document says what to do, and keeps the document as a reference for the details.
 func TestAMessageThatPointedToASectionOfADocumentSaysWhatToDo(t *testing.T) {
 	t.Run("a migration that failed after the backup", func(t *testing.T) {
-		err := withBackup("suiteward", migratingError{errors.New("migrate failed")}, "/b/backup.tar.age", "", "")
+		err := withBackup(Deps{}, migratingError{errors.New("migrate failed")}, "/b/backup.tar.age", "")
 		text := err.Error()
 		// The steps of the way back are those of the tier: the message points to them instead of saying them in one line.
 		for _, want := range []string{"install the previous release and run `suiteward restore /b/backup.tar.age`", "Everything after the backup is lost", "The steps are in docs/backup.md, under Going back after an upgrade"} {

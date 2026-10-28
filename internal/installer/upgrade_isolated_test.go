@@ -575,7 +575,7 @@ func TestUpgradeIsolatedFailingToStopTheServiceDoesNotClaimItIsStopped(t *testin
 	u := newIsoUpgrade(t, nil)
 	u.f.failOn["systemctl --user stop suiteward.service"] = errors.New("stop failed")
 	err := u.upgrade("--image", testDigest, "--yes")
-	if err == nil || !strings.Contains(err.Error(), "did not run, so your data is unchanged") || !strings.Contains(err.Error(), "suiteward install --upgrade") || strings.Contains(err.Error(), "is stopped") || strings.Contains(err.Error(), "restore") {
+	if err == nil || !strings.Contains(err.Error(), "did not run, so your data is unchanged") || !strings.Contains(err.Error(), (Deps{instance: u.named()}).suggest("install", "--upgrade")) || strings.Contains(err.Error(), "is stopped") || strings.Contains(err.Error(), "restore") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -661,7 +661,7 @@ func TestUpgradeIsolatedFailsWhenTheServiceIsNotStableAndKeepsTheBackupAdvice(t 
 			t.Fatalf("the upgrade must fail naming %q and %q, got %v", want, journal, err)
 		}
 		// Migrate ran by now: the advice is the restore of the backup, which withBackup gives.
-		if !strings.Contains(err.Error(), "The backup is in "+u.backups) || !strings.Contains(err.Error(), "suiteward restore "+quoteArg(oneArchive(t, u.backups))) {
+		if !strings.Contains(err.Error(), "The backup is in "+u.backups) || !strings.Contains(err.Error(), (Deps{instance: u.named()}).suggest("restore", quoteArg(oneArchive(t, u.backups)))) {
 			t.Errorf("the error lacks the backup advice: %v", err)
 		}
 		if strings.Contains(u.out.String(), "Upgraded") || strings.Contains(u.out.String(), "is running") {

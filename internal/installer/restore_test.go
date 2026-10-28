@@ -655,7 +655,7 @@ func TestRestoreThatFailsAfterTheStopNamesTheSafetyBackupAndHowToGoOn(t *testing
 				t.Fatal("the restore reported success")
 			}
 			safety := oneArchive(t, u.backups)
-			for _, want := range append(tc.want, safety, "suiteward restore "+quoteArg(safety)) {
+			for _, want := range append(tc.want, safety, (Deps{instance: u.named()}).suggest("restore", quoteArg(safety))) {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the error lacks %q:\n%v", want, err)
 				}
@@ -766,7 +766,7 @@ func TestRestoreOnTheIsolatedTierNamesTheUnitToStartWhenItFails(t *testing.T) {
 	file := aBackup(t, func(b *backup, _ *backupEngine) { b.tier = "isolated" })
 	args := []string{file, "--tier", "isolated", "--settings", settingsFile(u.home), "--backup-dir", u.backups, "--kit", writeTestKit(t, t.TempDir()), "--yes", "--instance", testInstance}
 	err := Restore(context.Background(), args, u.env())
-	if err == nil || !strings.Contains(err.Error(), errInjected.Error()) || !strings.Contains(err.Error(), "suiteward restore "+quoteArg(oneArchive(t, u.backups))) {
+	if err == nil || !strings.Contains(err.Error(), errInjected.Error()) || !strings.Contains(err.Error(), (Deps{instance: u.named()}).suggest("restore", quoteArg(oneArchive(t, u.backups)))) {
 		t.Fatalf("got %v", err)
 	}
 }

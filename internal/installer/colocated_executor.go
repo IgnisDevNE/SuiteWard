@@ -86,7 +86,7 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 		return plan, err
 	}
 	if !pathExists(plan.tokenFile) {
-		return plan, fmt.Errorf("the test runner's token file `%s` is missing, so the test runner could not start. Run `%s install`: it creates the token file and gives the service the same token", plan.tokenFile, d.command())
+		return plan, fmt.Errorf("the test runner's token file `%s` is missing, so the test runner could not start. Run `%s`: it creates the token file and gives the service the same token", plan.tokenFile, d.suggest("install"))
 	}
 	registered, running, err := plan.state(ctx, d)
 	if err != nil {
@@ -95,7 +95,7 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	if other, err := plan.foreign(registered); err != nil {
 		return plan, err
 	} else if other {
-		return plan, fmt.Errorf("a computer has one test runner, and yours belongs to another instance. This instance left it as it is. To use this instance's own, remove the other instance with `%[1]s uninstall`, then run `%[1]s install` again", d.command())
+		return plan, fmt.Errorf("a computer has one test runner, and yours belongs to another instance. This instance left it as it is. To use this instance's own, remove the other instance with %s, then run `%s` again", d.removeOtherInstance(), d.suggest("install"))
 	}
 	// state lists the programs when a task is there; a first install has not yet. An executor that the installer can never list again can never be
 	// updated or removed by it (PowerShell in constrained language mode), so it is not set up.
@@ -171,14 +171,14 @@ func filesDiffer(files map[string][]byte) bool {
 func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 	scr := screenOn(c.out)
 	plan, err := c.installExecutor(ctx)
-	cmd := c.env.Deps.command()
+	d := c.env.Deps
 	if err != nil {
 		c.executorRow = "not set up: " + oneLine(err.Error())
-		fix := fmt.Sprintf(" Fix the cause, then run `%s install` again.", cmd)
+		fix := " Fix the cause, then run `" + d.suggest("install") + "` again."
 		if errors.Is(err, errProcessesNotListed) {
 			fix = "" // the install cannot fix a restricted PowerShell, and the error says who can
 		}
-		scr.Warn("Note: the test runner (the executor) could not be set up: %v. SuiteWard itself runs, but it cannot run tests until the test runner works.%s `%s doctor` lists what is missing.\n", err, fix, cmd)
+		scr.Warn("Note: the test runner (the executor) could not be set up: %v. SuiteWard itself runs, but it cannot run tests until the test runner works.%s `%s` lists what is missing.\n", err, fix, d.suggest("doctor"))
 		return
 	}
 	c.executorRow = executorMechanism(plan.goos) + "; " + plan.binary
@@ -192,7 +192,7 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 	scr.Say("The test runner has one credential, its own token (%s), and it reaches SuiteWard at http://127.0.0.1:%d.\n", plan.tokenFile, c.s.HTTPPort)
 	scr.Say("Keep only one test runner (the executor) for each container program. When it starts, it removes every container of its container program whose name starts with %s, so a second test runner (one started by hand, say) would remove the sandboxes of the first.\n", sandboxNamePrefix)
 	if c.executorPin == "" {
-		scr.Say("The test runner has not been checked against an official release. This is normal for a development build. To check it, run `%s install --upgrade --sha256sums <the release's SHA256SUMS file>` with the program from that release.\n", c.env.Deps.command())
+		scr.Say("The test runner has not been checked against an official release. This is normal for a development build. To check it, run `%s` with the program from that release.\n", d.suggest("install", "--upgrade --sha256sums <the release's SHA256SUMS file>"))
 	}
 }
 
@@ -298,9 +298,9 @@ func releasePin(r *Resolver, d Deps) (string, error) {
 
 // upgradeColocatedCurrent is an upgrade of a stack that runs the release already: it says so, and sets the executor up as an install does, so that a
 // program that was replaced since, or a pin of the release's sums that was given now, reaches the executor.
-func upgradeColocatedCurrent(ctx context.Context, r *Resolver, env Env, rt Runtime, s Settings, t installTarget, tokenFile, image, pin string) error {
+func upgradeColocatedCurrent(ctx context.Context, r *Resolver, env Env, rt Runtime, s Settings, tokenFile, image, pin string) error {
 	d := refreshCopy(ctx, env) // first: the hint names the program as the refreshed copy answers
-	r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), colocatedDoctorHint(d, t, tokenFile))
+	r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), d.suggest("doctor"))
 	env.Deps = d
 	refreshExecutor(ctx, env, rt, s, tokenFile, pin)
 	return holdPage(r.screen)

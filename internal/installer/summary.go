@@ -210,7 +210,7 @@ func (c *colocatedInstall) installSummary(ctx context.Context, t installTarget) 
 	rows.add("Test runner", c.executorRow)
 	rows.add("Settings file", t.settingsPath)
 	rows = append(rows, c.copyRows...)
-	rows.addDoctor(ctx, c.env, t.settingsPath, c.tokenFile, c.doctorAgain(t))
+	rows.addDoctor(ctx, c.env, t.settingsPath, c.tokenFile, c.env.Deps.suggest("doctor"))
 	return rows
 }
 
@@ -225,7 +225,7 @@ func (c *colocatedInstall) upgradeSummary(ctx context.Context, t installTarget) 
 	rows.add("Test runner", c.executorRow)
 	rows.add("Settings file", t.settingsPath)
 	rows = append(rows, c.copyRows...)
-	rows.addDoctor(ctx, c.env, t.settingsPath, c.tokenFile, c.doctorAgain(t))
+	rows.addDoctor(ctx, c.env, t.settingsPath, c.tokenFile, c.env.Deps.suggest("doctor"))
 	return rows
 }
 
@@ -244,25 +244,6 @@ func isolatedSummary(ctx context.Context, env Env, host isolatedHost, s Settings
 	}
 	rows.add("Status", address)
 	rows.add("Settings file", host.settingsPath)
-	rows.addDoctor(ctx, env, host.settingsPath, "", env.Deps.command()+" doctor")
+	rows.addDoctor(ctx, env, host.settingsPath, "", env.Deps.suggest("doctor"))
 	return rows
-}
-
-// doctorAgain is the command that checks the instance again, as an install or an upgrade names it.
-func (c *colocatedInstall) doctorAgain(t installTarget) string {
-	return colocatedDoctorHint(c.env.Deps, t, c.tokenFile)
-}
-
-// colocatedDoctorHint is the command that checks a co-located instance: doctor finds the files of the executor beside the token file, and takes the
-// default token file for the default settings file only. It names the token file in use whenever the settings file is another one, and when the
-// token file is another than the default one, so that the doctor it leads to checks this instance's executor and not the main instance's.
-func colocatedDoctorHint(d Deps, t installTarget, tokenFile string) string {
-	hint := doctorHint(d.command(), t.settingsPath, t.defaultPath)
-	def, defErr := defaultTokenFile(d)
-	isDefault, settingsErr := isDefaultSettings(d.GOOS, t.settingsPath, t.defaultPath)
-	// A default that cannot be found, or a settings path that cannot be resolved, is not known to be the default: the token file is named, which is never wrong.
-	if settingsErr != nil || !isDefault || defErr != nil || tokenFile != def {
-		hint += " --token-file " + quoteArg(tokenFile)
-	}
-	return hint
 }

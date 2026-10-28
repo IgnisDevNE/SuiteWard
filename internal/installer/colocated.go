@@ -84,7 +84,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 			return err
 		}
 		if !sameImage(want, previous.Image) {
-			return fmt.Errorf("--image names %s, but %s is installed. Changing the release is an upgrade, which makes a backup first, so nothing was changed; run `%s install --upgrade`", want, previous.Image, env.Deps.command())
+			return fmt.Errorf("--image names %s, but %s is installed. Changing the release is an upgrade, which makes a backup first, so nothing was changed; run `%s`", want, previous.Image, env.Deps.suggest("install", "--upgrade"))
 		}
 	}
 	s, err := chooseSettings(r, base, rt.Name(), connection)
@@ -100,7 +100,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err != nil {
 		return err
 	}
-	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(env.Deps.command(), r, false)}, image: image, tokenFile: tokenFile, previous: previous, executorPin: pin}
+	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: env.Deps.suggest("enroll")}, image: image, tokenFile: tokenFile, previous: previous, executorPin: pin}
 	scr.Step(2)
 	if err := c.preflight(ctx); err != nil {
 		return err
@@ -928,7 +928,7 @@ func (c *colocatedInstall) finish(ctx context.Context, scr *ui.Screen, t install
 			return err
 		}
 		c.say("Service status: %s\n", c.statusHint(ctx)) // after the enrollment, which waited for the service to answer
-		c.say("Then check that everything works with `%s`.\n", c.doctorAgain(t))
+		c.say("Then check that everything works with `%s`.\n", c.env.Deps.suggest("doctor"))
 	}
 	if !scr.FullScreen() { // a full screen says it in the summary: a plain run has none
 		c.say("%s\n", reducedAssuranceNotice)

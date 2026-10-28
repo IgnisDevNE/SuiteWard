@@ -1,7 +1,6 @@
 package installer
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -280,8 +279,8 @@ type githubEnv struct {
 	InstallWait     time.Duration // the installation, 10 minutes
 	PollEvery       time.Duration // 5 seconds
 
-	// Command is how a message names this program (Deps.command()); empty reads suiteward.
-	Command string
+	// Deps names this program and the instance in the commands a message suggests (Deps.suggest); its zero value names suiteward.
+	Deps Deps
 
 	// StoreKey puts a key the flow created into the secret store, right after the conversion and before anything else can fail.
 	StoreKey func(ctx context.Context, key []byte) error
@@ -326,7 +325,6 @@ func (e githubEnv) withDefaults() (githubEnv, error) {
 	if e.PollEvery == 0 {
 		e.PollEvery = 5 * time.Second
 	}
-	e.Command = cmp.Or(e.Command, selfName)
 	e.WebURL = strings.TrimSuffix(e.WebURL, "/")
 	return e, nil
 }
@@ -1118,11 +1116,11 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		return nil, fmt.Errorf("compose the GitHub reader: %w", err)
 	}
 	if pausing {
-		return pauseForImport(ctx, scr, env.Command, env.WebURL, reader, res, repos, files)
+		return pauseForImport(ctx, scr, env.Deps, env.WebURL, reader, res, repos, files)
 	}
 	results, lines := readProtections(ctx, reader, res, repos)
 	dropImported(scr, repos, files, results)
-	keepProtection(scr, env.Command, lines)
+	keepProtection(scr, env.Deps, lines)
 	return results, nil
 }
 
@@ -1210,7 +1208,7 @@ func rulesPageURL(webURL string, r repoInfo) string { return webURL + "/" + r.na
 // offered again; enforcement that is unavailable ends it, as no import can change that. Skipping goes on with a warning: the
 // results are what the last check found, or unknown when there was none, and what the last check found stays with it. What is left to
 // do, the file and the rules page of each repository that is not protected, is kept when the pause is over.
-func pauseForImport(ctx context.Context, scr *ui.Screen, cmd, webURL string, reader *github.Reader, res GitHubResult, repos []repoInfo, files map[string]string) (map[string]protection.Result, error) {
+func pauseForImport(ctx context.Context, scr *ui.Screen, d Deps, webURL string, reader *github.Reader, res GitHubResult, repos []repoInfo, files map[string]string) (map[string]protection.Result, error) {
 	choices := []ui.Choice{
 		{Name: "I imported it, check now", Desc: "reads the protection from GitHub"},
 		{Name: "Skip, import later", Desc: "go on; nothing is protected until you import"},
@@ -1228,7 +1226,7 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, cmd, webURL string, rea
 		}
 		if results, lines = readProtections(ctx, reader, res, repos); !awaitingImport(results) {
 			keepImports(scr, webURL, repos, files, results)
-			keepProtection(scr, cmd, lines)
+			keepProtection(scr, d, lines)
 			return results, nil
 		}
 		missing := make(map[string]string, len(repos))
@@ -1244,7 +1242,7 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, cmd, webURL string, rea
 	results = unchecked(repos, results)
 	keepImports(scr, webURL, repos, files, results)
 	if lines != nil { // what the last check found stays with it
-		keepProtection(scr, cmd, lines)
+		keepProtection(scr, d, lines)
 	}
 	var open []string
 	for _, r := range repos {
@@ -1252,7 +1250,7 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, cmd, webURL string, rea
 			open = append(open, r.name)
 		}
 	}
-	scr.Warn("The rulesets of %s are not imported or not checked yet, so these repositories are not protected. Import the files named above on GitHub, then run `%s doctor` to check the protection.\n", strings.Join(open, ", "), cmd)
+	scr.Warn("The rulesets of %s are not imported or not checked yet, so these repositories are not protected. Import the files named above on GitHub, then run `%s` to check the protection.\n", strings.Join(open, ", "), d.suggest("doctor"))
 	return results, nil
 }
 
@@ -1344,19 +1342,19 @@ func readProtections(ctx context.Context, reader *github.Reader, res GitHubResul
 }
 
 // keepProtection prints the protection the user must act on as lines that stay.
-func keepProtection(scr *ui.Screen, cmd string, lines []string) {
+func keepProtection(scr *ui.Screen, d Deps, lines []string) {
 	scr.Keep("\nProtection as GitHub reports it now:\n")
 	for _, line := range lines {
 		scr.Keep("%s", line)
 	}
-	scr.Keep("To check again at any time, run `%s doctor`.\n", cmd)
+	scr.Keep("To check again at any time, run `%s`.\n", d.suggest("doctor"))
 }
 
 // runSetup runs `suiteward setup` in the serving container on a real terminal. Setup prints the TOTP enrollment URI and secret there,
 // so nothing is captured or logged, and the user is told to stop session recording first. A full screen explains what happens before,
 // and says how it went after. On Windows and macOS, outside an SSH session, setup runs in a window of its own while the installer waits
 // on its screen; everywhere else it takes the terminal of the installer.
-func runSetup(ctx context.Context, cmd string, rt Runtime, owner string, checks map[string]string, out io.Writer) error {
+func runSetup(ctx context.Context, d Deps, rt Runtime, owner string, checks map[string]string, out io.Writer) error {
 	argv, err := setupArgv(owner, checks)
 	if err != nil {
 		return err
@@ -1377,11 +1375,11 @@ func runSetup(ctx context.Context, cmd string, rt Runtime, owner string, checks 
 	if window != nil {
 		started, err := setupInWindow(ctx, rt, scr, window, argv, closes)
 		if started {
-			return afterSetup(scr, cmd, err)
+			return afterSetup(scr, d, err)
 		}
 		note = fmt.Sprintf("Setup could not open a window of its own (%v), so it runs in this terminal.\n", err)
 	}
-	return setupHere(ctx, cmd, rt, scr, out, argv, note)
+	return setupHere(ctx, d, rt, scr, out, argv, note)
 }
 
 // setupArgv is the command line of setup for the owner and the test check of each repository, in the order of the repositories, after
@@ -1459,7 +1457,7 @@ func setupInWindow(ctx context.Context, rt Runtime, scr *ui.Screen, open windowS
 
 // setupHere hands the terminal to setup. The child needs the real terminal, and what it prints is not the screen's to keep or to draw
 // again: the screen is left, and the warning is the first thing the user reads there.
-func setupHere(ctx context.Context, cmd string, rt Runtime, scr *ui.Screen, out io.Writer, argv []string, note string) error {
+func setupHere(ctx context.Context, d Deps, rt Runtime, scr *ui.Screen, out io.Writer, argv []string, note string) error {
 	scr.Suspend()
 	if note != "" {
 		ghSay(out, "\n%s", note)
@@ -1475,7 +1473,7 @@ func setupHere(ctx context.Context, cmd string, rt Runtime, scr *ui.Screen, out 
 		_, waitErr = scr.Prompt("\nPress Enter to return to the installer: ")
 	}
 	scr.Resume() // the page that follows draws nothing on a screen that is still suspended
-	if err := afterSetup(scr, cmd, execErr); err != nil {
+	if err := afterSetup(scr, d, execErr); err != nil {
 		return err // whatever became of the wait
 	}
 	// The owner is enrolled: Ctrl-C or the end of the input at the wait only skips it, and must not report the enrollment as failed.
@@ -1487,11 +1485,11 @@ func setupHere(ctx context.Context, cmd string, rt Runtime, scr *ui.Screen, out 
 
 // afterSetup is the page the screen comes back to, so that it is not the question that was asked before setup ran, and the error of a
 // setup that did not end well.
-func afterSetup(scr *ui.Screen, cmd string, err error) error {
+func afterSetup(scr *ui.Screen, d Deps, err error) error {
 	if err != nil {
-		scr.Page("Setup did not finish", ui.Para("Setup did not finish. If the owner is not enrolled yet, run `"+cmd+" enroll` to try again."))
+		scr.Page("Setup did not finish", ui.Para("Setup did not finish. If the owner is not enrolled yet, run `"+d.suggest("enroll")+"` to try again."))
 		if errors.Is(err, errSetupTimeout) {
-			err = fmt.Errorf("%w: finish it in its window, or run %s enroll again", err, cmd)
+			err = fmt.Errorf("%w: finish it in its window, or run %s again", err, d.suggest("enroll"))
 		}
 		return fmt.Errorf("setup failed: %w", err)
 	}

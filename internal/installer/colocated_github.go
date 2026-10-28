@@ -30,7 +30,7 @@ type githubInstall struct {
 	githubKey   []byte // the App key to store, nil when its secret exists or GitHub is off
 	setupOwner  string // the instance owner, when the GitHub flow ran: the login setup enrolls
 	setupChecks map[string]string
-	enrollHint  string // the command the messages name to enroll the owner (enrollCommand)
+	enrollHint  string // the command the messages name to enroll the owner
 	owner       string // how the summary says the owner stands, as enroll found it
 	statusDead  bool   // enroll waited for /status and could not read it: the summary does not wait for it again
 }
@@ -147,7 +147,7 @@ func (g *githubInstall) githubFlow(ctx context.Context, r *Resolver, settingsDir
 	stored, recorded := false, false
 	existing := g.s.GitHub
 	res, err := g.env.githubFlow()(ctx, githubEnv{
-		R: r, Out: g.out, Command: g.env.Deps.command(), Tier: g.s.Tier, SettingsDir: settingsDir, ManifestPort: port, Existing: &existing, Pending: g.pending,
+		R: r, Out: g.out, Deps: g.env.Deps, Tier: g.s.Tier, SettingsDir: settingsDir, ManifestPort: port, Existing: &existing, Pending: g.pending,
 		RecordApp: func(_ context.Context, app PendingApp) error {
 			if err := savePendingApp(g.pendingPath, app); err != nil {
 				return err
@@ -297,19 +297,6 @@ func parseEnrolledOwner(body []byte) (string, error) {
 	return parsed.Owner.Login, nil
 }
 
-// enrollCommand is the command that enrolls the owner again, as the messages of the installer name it: the tier and the
-// settings file are named when they are not the defaults.
-func enrollCommand(cmd string, r *Resolver, isolated bool) string {
-	command := cmd + " enroll"
-	if isolated {
-		command += " --tier isolated"
-	}
-	if path, ok := r.flags["settings"]; ok { // the command line of this run, as doctorHint takes it, not the answers file
-		command += " --settings " + quoteArg(path)
-	}
-	return command
-}
-
 // enroll runs setup on a real terminal, and otherwise prints the command to run on one. It never runs setup over an owner that is
 // enrolled, nor when it cannot tell: setup enrolls again, which replaces the owner's TOTP secret.
 func (g *githubInstall) enroll(ctx context.Context, status func(context.Context) ([]byte, error)) error {
@@ -329,7 +316,7 @@ func (g *githubInstall) enroll(ctx context.Context, status func(context.Context)
 		g.owner = notEnrolled
 		scr.Warn("No owner is enrolled yet, and this run does not know the owner's GitHub username or the test checks. Turn off any screen recording, then enroll the owner on a real terminal:\n  %s\n", command)
 	case setupTerminal():
-		if err := runSetup(ctx, g.env.Deps.command(), g.rt, g.setupOwner, g.setupChecks, g.out); err != nil {
+		if err := runSetup(ctx, g.env.Deps, g.rt, g.setupOwner, g.setupChecks, g.out); err != nil {
 			return fmt.Errorf("the service is running, but enrolling the owner failed: %w", err)
 		}
 		g.owner = g.setupOwner + " (enrolled now)"

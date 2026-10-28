@@ -78,6 +78,7 @@ func Restore(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	env.Deps.instance = r.instance()
 	inst, err := locateInstance(ctx, r, env, flags)
 	if err != nil {
 		return err
@@ -388,7 +389,7 @@ func (x *restoreRun) checkRelease(ctx context.Context) error {
 func (x *restoreRun) otherRelease(running string) error {
 	install := ""
 	if x.info.ImageDigest != "" {
-		install = " (`" + x.env.Deps.command() + " install --image " + releaseImageRepo + "@" + x.info.ImageDigest + "`)"
+		install = " (`" + x.env.Deps.suggest("install", "--image "+releaseImageRepo+"@"+x.info.ImageDigest) + "`)"
 	}
 	madeBy := "SuiteWard " + x.info.SuitewardVersion
 	if x.doc.Unavailable {
@@ -592,7 +593,7 @@ func (x *restoreRun) chooseSafetyKey() (string, error) {
 	case x.identity != nil:
 		recipient = x.identity.Recipient().String()
 	default:
-		return "", errors.New("this instance has no recovery key, and the restore first makes an encrypted backup of the current state (an unencrypted backup folder has no key to borrow). Run `" + x.env.Deps.command() + " backup init` first, then run the restore again. Nothing was changed")
+		return "", errors.New("this instance has no recovery key, and the restore first makes an encrypted backup of the current state (an unencrypted backup folder has no key to borrow). Run `" + x.env.Deps.suggest("backup init") + "` first, then run the restore again. Nothing was changed")
 	}
 	key, err := archive.ParseRecipient(recipient)
 	if err != nil {
@@ -709,7 +710,7 @@ func (x *restoreRun) waitForService(ctx context.Context) (statusDoc, error) {
 // is a restore that did not take; an integrity check that failed means the artifacts and the database do not come from one moment.
 func (x *restoreRun) compare(context.Context) error {
 	x.stage = stageCheck
-	problems, notes := compareStatus(x.env.Deps.command(), x.doc, x.after)
+	problems, notes := compareStatus(x.env.Deps, x.doc, x.after)
 	for _, note := range notes {
 		x.scr.Warn("%s\n", note)
 	}
@@ -724,7 +725,7 @@ func (x *restoreRun) compare(context.Context) error {
 	return nil
 }
 
-func compareStatus(cmd string, backup, after statusDoc) (problems, notes []string) {
+func compareStatus(d Deps, backup, after statusDoc) (problems, notes []string) {
 	if !backup.Unavailable { // a backup that records no status has nothing to be compared with but the integrity
 		if after.Version != backup.Version {
 			problems = append(problems, fmt.Sprintf("the service runs %s, the backup is of %s", after.Version, backup.Version))
@@ -742,7 +743,7 @@ func compareStatus(cmd string, backup, after statusDoc) (problems, notes []strin
 		case "failed":
 			problems = append(problems, g.Repo+": the integrity check failed, so the saved files and the database are not from the same moment")
 		default:
-			notes = append(notes, g.Repo+": the integrity check has not passed yet. It runs when the service starts, after each promotion and every hour: run `"+cmd+" doctor` in a moment")
+			notes = append(notes, g.Repo+": the integrity check has not passed yet. It runs when the service starts, after each promotion and every hour: run `"+d.suggest("doctor")+"` in a moment")
 		}
 	}
 	return problems, notes
@@ -757,9 +758,10 @@ func (x *restoreRun) failed(err error) error {
 		stageStart:     "the database and the saved files are the backup's, but the service did not start",
 		stageCheck:     "the database and the saved files are the backup's and the service runs, but it does not match the backup",
 	}[x.stage]
-	advice := fmt.Sprintf("The restore stopped here: %s.\nTo start the service again: %s.\nTo run the restore again: `%s restore %s`.", state, x.inst.restore.recovery, x.env.Deps.command(), x.source())
+	advice := fmt.Sprintf("The restore stopped here: %s.\nTo start the service again: %s.\n", state, x.inst.restore.recovery) +
+		"To run the restore again: `" + x.env.Deps.suggest("restore", x.source()) + "`."
 	if x.safety != "" {
-		advice += fmt.Sprintf("\nTo go back to the state before the restore: `%s restore %s`, with the recovery kit of that backup.", x.env.Deps.command(), quoteArg(x.safety))
+		advice += "\nTo go back to the state before the restore: `" + x.env.Deps.suggest("restore", quoteArg(x.safety)) + "`, with the recovery kit of that backup."
 	}
 	return fmt.Errorf("%w\n%s", err, advice)
 }
@@ -785,9 +787,9 @@ func (x *restoreRun) finish() {
 	if !x.scr.FullScreen() && x.mayHaveRepositories() { // a full screen has it on the summary page, which Close keeps
 		x.scr.Keep("%s\n", canonicalBehind)
 	}
-	x.scr.Say("Check the instance with `%s doctor`.\n", x.env.Deps.command())
+	x.scr.Say("Check the instance with `%s`.\n", x.env.Deps.suggest("doctor"))
 	if x.inst.s.BackupRecipient == "" {
-		x.scr.Warn("This instance has no recovery key yet: run `%s backup init` so that it can be backed up.\n", x.env.Deps.command())
+		x.scr.Warn("This instance has no recovery key yet: run `%s` so that it can be backed up.\n", x.env.Deps.suggest("backup init"))
 	}
 }
 

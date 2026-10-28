@@ -86,7 +86,11 @@ func TestEnrollCommandNamesTheSettingsFlagOnlyAndQuotesIt(t *testing.T) {
 		"the answers file":   {nil, map[string]string{"settings": "/elsewhere/s.yaml"}, false, "suiteward enroll"}, // the command line of the run is the flags'
 	} {
 		r := newTestResolver(t, c.flags, c.answers, term)
-		if got := enrollCommand("suiteward", r, c.isolated); got != c.want {
+		d := Deps{instance: r.instance()}
+		if c.isolated {
+			d = d.onIsolated()
+		}
+		if got := d.suggest("enroll"); got != c.want {
 			t.Errorf("%s: got %q, want %q", name, got, c.want)
 		}
 	}

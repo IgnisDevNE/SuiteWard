@@ -18,6 +18,7 @@ import (
 // and restart the migration, which migrates and restarts the service; last, wait for the service to be stable. The ports and the
 // job timeout stay as installed, and a run that is asked for others stops first.
 func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) error {
+	env.Deps = env.Deps.onIsolated()
 	d, out, scr := env.Deps, env.Term.Out, r.screen
 	scr.Steps("Plan", "Backup", "Images", "Replace", "Check")
 	image, err := upgradeTarget(r)
@@ -39,9 +40,9 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 		return err
 	}
 	if !st.found {
-		return nothingInstalled(env.Deps.command())
+		return nothingInstalled(env.Deps)
 	}
-	err = refuseUnfinishedInstall(env.Deps.command(), pendingAppPath(host.settingsPath), func() (GitHub, error) {
+	err = refuseUnfinishedInstall(env.Deps, pendingAppPath(host.settingsPath), func() (GitHub, error) {
 		if s.GitHub.AppID != 0 {
 			return s.GitHub, nil
 		}
@@ -57,7 +58,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	if err != nil {
 		return err
 	}
-	if err := refuseChangedSettings(asked, s, installCommand(env.Deps.command(), r, true)); err != nil {
+	if err := refuseChangedSettings(asked, s, env.Deps); err != nil {
 		return err
 	}
 	say := func(format string, args ...any) { _, _ = fmt.Fprintf(out, format, args...) }
@@ -75,7 +76,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	}
 	plan := upgradePlan{oldImage: st.adopted.Image, newImage: image, oldDB: st.adopted.DBImage, newDB: postgres}
 	if _, statErr := os.Stat(host.settingsPath); plan.current() && statErr == nil {
-		return upgradeCurrent(ctx, env, r, scr, host, executor, st.adopted.NoExecutor, image, s.HTTPPort)
+		return upgradeCurrent(ctx, env, scr, host, executor, st.adopted.NoExecutor, image, s.HTTPPort)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
 	agreed, err := settleRecipient(r, env, &s)
@@ -108,50 +109,36 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	}
 	s.BackupRecipient = inst.s.BackupRecipient
 	say("Backup written to %s.\n", dir)
-	scope := scopeFlags(r, true) // the tier and the settings file of this run, for the commands that a message names
 	scr.Step(3)
 	if err := pullMissing(ctx, scr, host.rt, postgres, image); err != nil {
 		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	scr.Step(4)
-	if _, err := executor.settle(ctx, host.rt.Secrets(), scr, &params, "`"+installCommand(env.Deps.command(), r, true)+"`", false); err != nil {
-		return withBackup(env.Deps.command(), err, dir, host.unitsDir, scope)
+	if _, err := executor.settle(ctx, host.rt.Secrets(), scr, &params, "`"+env.Deps.suggest("install")+"`", false); err != nil {
+		return withBackup(env.Deps, err, dir, host.unitsDir)
 	}
 	if err := replaceUnits(ctx, host, d, scr, params, plan.dbChanges()); err != nil {
-		return withBackup(env.Deps.command(), err, dir, host.unitsDir, scope)
+		return withBackup(env.Deps, err, dir, host.unitsDir)
 	}
 	// Migrate ran: a release that crash-loops now gets the advice of a failure after the migration, the restore of the backup.
 	scr.Step(5)
 	if err := waitStable(ctx, env, scr, s.HTTPPort); err != nil {
-		return withBackup(env.Deps.command(), migratingError{err}, dir, host.unitsDir, scope)
+		return withBackup(env.Deps, migratingError{err}, dir, host.unitsDir)
 	}
 	s.Image = image
 	if err := SaveSettings(host.settingsPath, s); err != nil {
-		return withBackup(env.Deps.command(), migratingError{err}, dir, host.unitsDir, scope)
+		return withBackup(env.Deps, migratingError{err}, dir, host.unitsDir)
 	}
-	upgraded(scr, image, dir, goBackIsolated(env.Deps.command(), dir, host.unitsDir, scope), env.Deps.command()+" doctor")
+	upgraded(scr, image, dir, goBackIsolated(env.Deps, dir, host.unitsDir), env.Deps.suggest("doctor"))
 	sayOldEnvFile(out, host.envPath, st.oldEnv, false)
 	return showSummary(scr, func() []ui.KV {
 		return isolatedSummary(ctx, env, host, s, ui.KV{Key: "Image", Value: fmt.Sprintf("%s (was %s)", digestOf(image), digestOf(st.adopted.Image))})
 	})
 }
 
-// installCommand is the command that installs again, as the messages of the installer name it: the tier and the settings file
-// are named when they are not the defaults (see enrollCommand).
-func installCommand(cmd string, r *Resolver, isolated bool) string {
-	command := cmd + " install"
-	if isolated {
-		command += " --tier isolated"
-	}
-	if path, ok := r.flags["settings"]; ok { // the command line of this run, not the answers file
-		command += " --settings " + quoteArg(path)
-	}
-	return command
-}
-
 // refuseChangedSettings refuses an upgrade that is asked for other ports or another job timeout than the installed ones: the
-// upgrade keeps them, and the re-run of the install (command), which takes the values it is given, is how to change them.
-func refuseChangedSettings(asked, installed Settings, command string) error {
+// upgrade keeps them, and the re-run of the install, which takes the values it is given, is how to change them.
+func refuseChangedSettings(asked, installed Settings, d Deps) error {
 	var flags []string
 	if asked.HTTPPort != installed.HTTPPort {
 		flags = append(flags, "--http-port "+strconv.Itoa(asked.HTTPPort))
@@ -165,8 +152,8 @@ func refuseChangedSettings(asked, installed Settings, command string) error {
 	if len(flags) == 0 {
 		return nil
 	}
-	return fmt.Errorf("an upgrade keeps the installed ports and job timeout (HTTP port %d, MCP port %d, job timeout %q), but this run asks for others (%s). Nothing was changed. To change them, run `%s %s` first, then upgrade without those flags",
-		installed.HTTPPort, installed.MCPPort, installed.JobTimeout, strings.Join(flags, " "), command, strings.Join(flags, " "))
+	return fmt.Errorf("an upgrade keeps the installed ports and job timeout (HTTP port %d, MCP port %d, job timeout %q), but this run asks for others (%s). Nothing was changed. To change them, run `%s` first, then upgrade without those flags",
+		installed.HTTPPort, installed.MCPPort, installed.JobTimeout, strings.Join(flags, " "), d.suggest("install", strings.Join(flags, " ")))
 }
 
 // replaceUnits does the steps after the backup: stop the service, then prepare the new units, then migrate and start. An error

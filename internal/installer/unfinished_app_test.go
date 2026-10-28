@@ -161,11 +161,11 @@ func TestUpgradeIsolatedRefusesWhileAnInstallIsUnfinished(t *testing.T) {
 // ---- the settings path in the commands the installer prints ----
 
 func TestTheCommandsTheInstallerPrintsQuoteTheSettingsPath(t *testing.T) {
-	if got := doctorHint("suiteward", "/home/me/My Settings/s.yaml", false); got != "suiteward doctor --settings '/home/me/My Settings/s.yaml'" {
-		t.Errorf("doctorHint = %q", got)
+	if got := (Deps{instance: instanceArgs{settings: "/home/me/My Settings/s.yaml"}}).suggest("doctor"); got != "suiteward doctor --settings '/home/me/My Settings/s.yaml'" {
+		t.Errorf("the doctor command = %q", got)
 	}
-	if got := doctorHint("suiteward", "/home/me/s.yaml", false); got != "suiteward doctor --settings /home/me/s.yaml" {
-		t.Errorf("doctorHint = %q", got)
+	if got := (Deps{instance: instanceArgs{settings: "/home/me/s.yaml"}}).suggest("doctor"); got != "suiteward doctor --settings /home/me/s.yaml" {
+		t.Errorf("the doctor command = %q", got)
 	}
 	h := newHarness(t, "linux")
 	h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }

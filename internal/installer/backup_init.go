@@ -48,11 +48,12 @@ func BackupInit(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	env.Deps.instance = r.instance()
 	inst, err := locateInstance(ctx, r, env, flags)
 	if err != nil {
 		return err
 	}
-	if err := inst.needSettings(env.Deps.command()); err != nil {
+	if err := inst.needSettings(env.Deps); err != nil {
 		return err
 	}
 	k := &keyInit{r: r, env: env, inst: &inst, kit: flags["kit"], replace: flags["replace"] == "true", yes: flags["yes"] == "true"}
@@ -91,7 +92,7 @@ type keyInit struct {
 func (k *keyInit) keys(ctx context.Context) error {
 	if old := k.inst.s.BackupRecipient; old != "" {
 		if !k.replace {
-			return fmt.Errorf("this instance already has a recovery key (%s), and backups made with it need its kit. To replace it with a new key, run `%s backup init --replace`", archive.Fingerprint(old), k.env.Deps.command())
+			return fmt.Errorf("this instance already has a recovery key (%s), and backups made with it need its kit. To replace it with a new key, run `%s`", archive.Fingerprint(old), k.env.Deps.suggest("backup init", "--replace"))
 		}
 		k.replaced = archive.Fingerprint(old)
 	}
@@ -180,7 +181,7 @@ func (k *keyInit) kept() {
 	if k.replaced != "" {
 		scr.Keep("The backups made with the key %s still need its kit: keep that one too.\n", k.replaced)
 	}
-	scr.Say("From now on, `%s backup` and `%s install --upgrade` lock their backups with this key.\n", k.env.Deps.command(), k.env.Deps.command())
+	scr.Say("From now on, `%s` and `%s` lock their backups with this key.\n", k.env.Deps.suggest("backup"), k.env.Deps.suggest("install", "--upgrade"))
 }
 
 func (k *keyInit) summary() []ui.KV {

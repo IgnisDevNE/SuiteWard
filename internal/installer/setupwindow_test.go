@@ -55,7 +55,7 @@ func setupOnFullScreen(t *testing.T, ctx context.Context, typed io.Reader, rt Ru
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = runSetup(ctx, "suiteward", rt, "alice", setupChecks, scr)
+	err = runSetup(ctx, Deps{}, rt, "alice", setupChecks, scr)
 	if closeErr := scr.Close(); closeErr != nil {
 		t.Fatal(closeErr)
 	}
@@ -90,7 +90,7 @@ func TestSetupRunsInAWindowOnlyOnWindowsAndMacOnAFullScreenOutsideSSH(t *testing
 			rt := &ttyRuntime{}
 			var err error
 			if tc.plain {
-				err = runSetup(context.Background(), "suiteward", rt, "alice", setupChecks, io.Discard)
+				err = runSetup(context.Background(), Deps{}, rt, "alice", setupChecks, io.Discard)
 			} else {
 				_, err = setupOnFullScreen(t, liveContext(t), strings.NewReader("\n\n"), rt)
 			}
@@ -275,7 +275,7 @@ func TestSetupInAWindowStillNeedsARealTerminal(t *testing.T) {
 	win := newFakeWindow()
 	withSetupMachine(t, "windows", nil, win.start)
 	rt := &ttyRuntime{}
-	if err := runSetup(context.Background(), "suiteward", rt, "alice", setupChecks, io.Discard); err == nil || !strings.Contains(err.Error(), "terminal") || len(win.started) != 0 || rt.calls != 0 {
+	if err := runSetup(context.Background(), Deps{}, rt, "alice", setupChecks, io.Discard); err == nil || !strings.Contains(err.Error(), "terminal") || len(win.started) != 0 || rt.calls != 0 {
 		t.Fatalf("runSetup = %v after %d windows and %d runs; want the refusal that names the terminal", err, len(win.started), rt.calls)
 	}
 }
@@ -286,7 +286,7 @@ func TestPlainSetupIsUnchangedOnWindows(t *testing.T) {
 	win := newFakeWindow()
 	withSetupMachine(t, "windows", nil, win.start)
 	var out strings.Builder
-	if err := runSetup(context.Background(), "suiteward", &ttyRuntime{}, "alice", setupChecks, &out); err != nil {
+	if err := runSetup(context.Background(), Deps{}, &ttyRuntime{}, "alice", setupChecks, &out); err != nil {
 		t.Fatal(err)
 	}
 	want := "\nSetup makes you the owner and shows an authenticator secret (the TOTP secret, as a link and a key), only on this terminal. Stop any screen recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log what setup prints.\n"

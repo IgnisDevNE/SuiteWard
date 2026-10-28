@@ -248,7 +248,7 @@ func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 	}
 	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}}
 	rows.warn(reducedAssuranceNotice) // commonSummary adds it before the checks run, so it is the first warning of a real summary
-	rows.addDoctor(context.Background(), env, path, coloTokenFile(t, f), doctorHint("suiteward", path, true))
+	rows.addDoctor(context.Background(), env, path, coloTokenFile(t, f), env.Deps.suggest("doctor"))
 
 	c := sizedConsole{termConsole: newTermConsole(&bytes.Buffer{}), w: 80, h: 24}
 	scr, err := c.open(liveContext(t), strings.NewReader("\n"), "v0", false)

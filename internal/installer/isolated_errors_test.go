@@ -269,7 +269,7 @@ func TestReportAdoptedSaysOnlyWhichTierReplacesTheOneAskedFor(t *testing.T) {
 
 func TestChooseImageStopsWhenItCannotTellWhetherTheStackEverStarted(t *testing.T) {
 	r := newTestResolver(t, map[string]string{"image": "sha256:" + strings.Repeat("b", 64)}, nil, Terminal{In: strings.NewReader(""), Out: &syncBuffer{}})
-	_, err := chooseImage("suiteward", r, strings.Repeat("a", 64), func() (bool, error) { return false, errInjected }, func(string, ...any) {})
+	_, err := chooseImage(Deps{}, r, strings.Repeat("a", 64), func() (bool, error) { return false, errInjected }, func(string, ...any) {})
 	if !errors.Is(err, errInjected) {
 		t.Fatalf("chooseImage = %v", err)
 	}

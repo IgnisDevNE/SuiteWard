@@ -226,9 +226,9 @@ func (d *doctor) run(ctx context.Context, settingsPath string) {
 	}
 	s, err := LoadSettings(settingsPath)
 	if err != nil {
-		fix := "Fix the file named above, or write it again with `" + d.deps.command() + " install`."
+		fix := "Fix the file named above, or write it again with `" + d.deps.suggest("install") + "`."
 		if errors.Is(err, ErrNoSettings) {
-			fix = "Run `" + d.deps.command() + " install` first: it writes the settings file that doctor reads."
+			fix = "Run `" + d.deps.suggest("install") + "` first: it writes the settings file that doctor reads."
 		}
 		d.fail("settings", err.Error(), fix)
 		return
@@ -497,7 +497,7 @@ func (d *doctor) checkRestart(ctx context.Context) {
 		}
 	}
 	if len(problems) > 0 {
-		fix := "Remove the containers with `" + d.deps.command() + " uninstall` (your data stays), then run `" + d.deps.command() + " install`: it creates them so that they restart by themselves. Uninstall comes first because an install leaves a running, healthy container as it is."
+		fix := "Remove the containers with `" + d.deps.suggest("uninstall") + "` (your data stays), then run `" + d.deps.suggest("install") + "`: it creates them so that they restart by themselves. Uninstall comes first because an install leaves a running, healthy container as it is."
 		if d.s.Runtime == RuntimePodman {
 			fix = restartEnableFix
 			if d.viaSSH {
@@ -622,7 +622,7 @@ func (d *doctor) checkPins(ctx context.Context) {
 		image, err = dockerPins(d.raw)
 	}
 	if err != nil {
-		d.fail("pins", err.Error(), "Run `"+d.deps.command()+" install --upgrade` to put the release's images back, or undo the edit that the message names.")
+		d.fail("pins", err.Error(), "Run `"+d.deps.suggest("install", "--upgrade")+"` to put the release's images back, or undo the edit that the message names.")
 		return
 	}
 	d.pass("pins", detail+image)

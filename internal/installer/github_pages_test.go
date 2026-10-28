@@ -338,7 +338,7 @@ func startRulesetRunCtx(t *testing.T, ctx context.Context, g *fakeGitHub, flags 
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pw.Close() })
 	env, _ := flowEnv(t, g, flags, pr, true)
-	env.Command = flags["_command"] // the name that the messages of the flow give the program: empty, suiteward
+	env.Deps.Command = flags["_command"] // the name that the messages of the flow give the program: empty, suiteward
 	// Where the ruleset files go, when the test needs a folder that is not a temp directory.
 	if dir := flags["_settings-dir"]; dir != "" {
 		env.SettingsDir = dir

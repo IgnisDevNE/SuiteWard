@@ -13,14 +13,67 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/config"
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // selfName is what a command of the installer is called where the shell finds the program by name.
 const selfName = "suiteward"
 
-// command is how a hint names this program: Deps.Command, or suiteward when the run did not work it out.
-func (d Deps) command() string { return cmp.Or(d.Command, selfName) }
+// instanceArgs are the flags of the running command that name the instance it works on. A command that a hint suggests repeats them: on a
+// computer with a second instance, a command without them reaches the default one, and an upgrade, an uninstall or a purge of the wrong
+// instance is not undone. The ports, the runtime and the connection are not carried: the settings file of the instance holds them.
+type instanceArgs struct{ tier, settings, tokenFile string }
+
+// instance reads them from the run: --settings only of the command line (settingsPathFrom reads it nowhere else), and --token-file and
+// --tier of the command line or the answers file, as the commands resolve them.
+func (r *Resolver) instance() instanceArgs {
+	return instanceArgs{tier: r.preset("tier", ""), settings: r.flags["settings"], tokenFile: r.preset("token-file", "")}
+}
+
+// flags are the ones that subcommand defines, as a person pastes them: a command takes a flag only if it defines it (enroll has no --token-file,
+// doctor no --tier), and `install host`, the administrator's step on a server, names no instance.
+func (a instanceArgs) flags(sub string) []string {
+	tier, tokenFile := a.tier, a.tokenFile
+	switch sub {
+	case "install", "uninstall", "backup", "backup init", "restore":
+	case "enroll":
+		tokenFile = ""
+	case "doctor":
+		tier = ""
+	default:
+		return nil
+	}
+	var words []string
+	for _, f := range []struct{ name, value string }{{"tier", tier}, {"settings", a.settings}, {"token-file", tokenFile}} {
+		if f.value != "" {
+			words = append(words, "--"+f.name, quoteArg(f.value))
+		}
+	}
+	return words
+}
+
+// suggest is a command of this program as a hint writes it, the only way the installer writes the program's name into one: Deps.Command, or
+// suiteward when the run did not work it out, then sub (the subcommand, "install" or "backup init"), then the flags of the running command
+// that name the instance (Deps.instance), then args. The flags come right after the subcommand because the flag package stops at the first
+// argument that is not a flag, so they would not be read after a file or a placeholder.
+func (d Deps) suggest(sub string, args ...string) string {
+	words := append([]string{cmp.Or(d.Command, selfName), sub}, d.instance.flags(sub)...)
+	return strings.Join(append(words, args...), " ")
+}
+
+// onIsolated is d for the install and the upgrade of the isolated tier, whose hints name it with --tier isolated: a host that was set up by
+// hand has no settings file to say it.
+func (d Deps) onIsolated() Deps {
+	d.instance.tier = string(config.TierIsolated)
+	return d
+}
+
+// otherInstance is d for a hint about another instance than the one the run works on, which has none of its flags: the person adds those.
+func (d Deps) otherInstance() Deps {
+	d.instance = instanceArgs{}
+	return d
+}
 
 // commandName is the Deps.Command of the running program: executable is os.Executable and lookPath is exec.LookPath. A hint that says
 // `suiteward doctor` is a command only where the shell finds this program by that name, as it does after the release is installed on the

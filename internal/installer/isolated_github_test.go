@@ -74,7 +74,7 @@ func (g *isoGitHub) run() error {
 	term.Out = &g.out
 	r := newTestResolver(g.t, nil, answers, term)
 	// What Install does: the saved settings of an earlier run, as the isolated tier.
-	s, _, err := loadSaved("suiteward", settingsFile(g.home), false)
+	s, _, err := loadSaved(Deps{}, settingsFile(g.home), false)
 	if err != nil {
 		g.t.Fatal(err)
 	}

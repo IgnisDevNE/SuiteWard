@@ -318,13 +318,13 @@ func settingsPathFrom(flags map[string]string) (path string, isDefault bool, err
 
 // loadSaved reads the settings of an earlier install. None yet is not an error for the default file, but a file the command line
 // names (named) must exist: a mistyped path would otherwise run the command on defaults, which are not an instance.
-func loadSaved(cmd, path string, named bool) (Settings, bool, error) {
+func loadSaved(d Deps, path string, named bool) (Settings, bool, error) {
 	saved, err := LoadSettings(path)
 	switch {
 	case err == nil:
 		return saved, true, nil
 	case errors.Is(err, ErrNoSettings) && named:
-		return Settings{}, false, fmt.Errorf("--settings names %s, which does not exist: %w (nothing was changed; check the path: only `%s install` makes a settings file)", path, ErrNoSettings, cmd)
+		return Settings{}, false, fmt.Errorf("--settings names %s, which does not exist: %w (nothing was changed; check the path: only `%s` makes a settings file)", path, ErrNoSettings, d.suggest("install"))
 	case errors.Is(err, ErrNoSettings):
 		return DefaultSettings(), false, nil
 	}
@@ -365,17 +365,18 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	env.Deps.instance = r.instance()
 	settingsPath, defaultPath, err := settingsPathFrom(flags)
 	if err != nil {
 		return err
 	}
 	upgrade := flags["upgrade"] == "true"
-	saved, haveSaved, err := loadSaved(env.Deps.command(), settingsPath, upgrade && !defaultPath) // an install makes the file: only an upgrade needs it to be there
+	saved, haveSaved, err := loadSaved(env.Deps, settingsPath, upgrade && !defaultPath) // an install makes the file: only an upgrade needs it to be there
 	if err != nil {
 		return err
 	}
 	if _, given := r.given("backup-recipient"); given && !upgrade {
-		return fmt.Errorf("--backup-recipient (backup_recipient) is for --upgrade: to set the recovery key of this instance, run `%s backup init`", env.Deps.command())
+		return fmt.Errorf("--backup-recipient (backup_recipient) is for --upgrade: to set the recovery key of this instance, run `%s`", env.Deps.suggest("backup init"))
 	}
 	var tier string
 	if upgrade { // an upgrade works on what is installed: it never asks which tier
@@ -389,7 +390,7 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 	switch config.Tier(tier) {
 	case config.TierIsolated:
 		if _, given := r.given("sha256sums"); given {
-			return fmt.Errorf("%w: --sha256sums does not apply to the isolated install, and nothing was changed: the administrator's host step sets up the test runner and takes this flag instead (`sudo %s install host --sha256sums <the release's SHA256SUMS file>`)", ErrUsage, env.Deps.command())
+			return fmt.Errorf("%w: --sha256sums does not apply to the isolated install, and nothing was changed: the administrator's host step sets up the test runner and takes this flag instead (`sudo %s`)", ErrUsage, env.Deps.suggest("install host", "--sha256sums <the release's SHA256SUMS file>"))
 		}
 		isolated := saved
 		isolated.Tier, isolated.Runtime = config.TierIsolated, RuntimePodman
@@ -462,6 +463,7 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n%s", err, Usage)
 		return 2
 	}
+	env.Deps.instance = instanceArgs{settings: flags["settings"], tokenFile: flags["token-file"]}
 	if flags["json"] == "true" { // JSON is for a program: it is never drawn on a screen that vanishes
 		return Doctor(ctx, env.Deps, flags["settings"], flags["token-file"], env.Term.Out, true)
 	}

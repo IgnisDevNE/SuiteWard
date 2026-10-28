@@ -506,7 +506,7 @@ func checkACopyThatWasAcceptedBy(t *testing.T, answer string) {
 	if got := strings.Count(o.run.console.tail(), `$env:Path +=`); got != 0 {
 		t.Errorf("the line for this terminal is in the scrollback %d times, want only its row:\n%s", got, o.run.console.tail())
 	}
-	if o.d.Command != "suiteward" || o.d.command() != "suiteward" {
+	if o.d.Command != "suiteward" || o.d.suggest("doctor") != "suiteward doctor" {
 		t.Errorf("the hints after the copy use %q, want suiteward", o.d.Command)
 	}
 	if len(o.warnings()) != 0 {

@@ -16,7 +16,7 @@ import (
 func TestTheEndOfSetupSaysTheInstallerDidNotSeeKeepOrLogTheSecret(t *testing.T) {
 	scr, _, out := fullScreenOn(t, liveContext(t), strings.NewReader(""))
 	t.Cleanup(func() { _ = scr.Close() })
-	if err := afterSetup(scr, "suiteward", nil); err != nil {
+	if err := afterSetup(scr, Deps{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !shows(out.String(), "the installer did not see, keep or log it") || shows(out.String(), "see it, keep it") {

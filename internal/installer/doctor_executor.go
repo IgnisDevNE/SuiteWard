@@ -31,7 +31,7 @@ func (d *doctor) out(ctx context.Context, name string, args ...string) (string, 
 // hostStep is the command that makes the executor on an isolated host, as the fix of most of its results names it. A fix wraps it in code
 // formatting, so that it can add a flag inside.
 func (d *doctor) hostStep() string {
-	return "sudo " + d.deps.command() + " install host --sha256sums <the release's SHA256SUMS file>"
+	return "sudo " + d.deps.suggest("install host", "--sha256sums <the release's SHA256SUMS file>")
 }
 
 // checkExecutorIsolated runs the checks of the executor on an isolated host.
@@ -42,7 +42,7 @@ func (d *doctor) checkExecutorIsolated(ctx context.Context) {
 	d.checkExecutorUnit(ctx)
 	d.checkExecutorBinary(ctx)
 	d.checkExecutorRunning(ctx, d.isolatedProcess, runningFixes{
-		noToken:    "As the administrator, run `" + d.hostStep() + "`. Then run `" + d.deps.command() + " install --tier isolated` as the service account: it gives the service the test runner's token and restarts it.",
+		noToken:    "As the administrator, run `" + d.hostStep() + "`. Then run `" + d.deps.onIsolated().suggest("install") + "` as the service account: it gives the service the test runner's token and restarts it.",
 		notRunning: "To see why, run `sudo journalctl _SYSTEMD_USER_UNIT=" + executorUnitName + " -n 50 --no-pager`. To start it, run `" + d.hostStep() + "` as the administrator.",
 		notSeen:    "Read the test runner's log. Then, as the administrator, run `" + d.hostStep() + "` again and run the install as the service account, so that both use one token and one port.",
 	})
@@ -302,7 +302,7 @@ func (d *doctor) checkExecutorRunning(ctx context.Context, process func(context.
 		d.fail("executor.running", "doctor could not read the test runner part of /status: "+err.Error(), "Read the service's log to find out why.")
 		return
 	}
-	upgrade := "Run `" + d.deps.command() + " install --upgrade` with this release's program."
+	upgrade := "Run `" + d.deps.suggest("install", "--upgrade") + "` with this release's program."
 	switch {
 	case doc.Execution == nil:
 		d.fail("executor.running", "this service is older than the version that added the test runner, so it cannot use one (its /status has no test runner information)", upgrade)

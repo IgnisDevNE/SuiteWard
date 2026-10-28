@@ -18,14 +18,12 @@ import (
 
 // installFix is the fix of a result that an install of this release makes right.
 func (d *doctor) installFix() string {
-	cmd := d.deps.command()
-	return fmt.Sprintf("Run `%[1]s install --upgrade` if the service is from an earlier release. Otherwise run `%[1]s install` again. Either one sets up the test runner again.", cmd)
+	return "Run `" + d.deps.suggest("install", "--upgrade") + "` if the service is from an earlier release. Otherwise run `" + d.deps.suggest("install") + "` again. Either one sets up the test runner again."
 }
 
 // anotherInstanceFix is the fix of an executor that is registered for another instance: an install of this one skips it, so it is that instance's removal that frees the place.
 func (d *doctor) anotherInstanceFix() string {
-	cmd := d.deps.command()
-	return "A computer has one test runner, and it belongs to another instance. Remove that instance with `" + cmd + " uninstall` (pass that instance's `--settings` and `--token-file`; the default instance needs neither). Then run `" + cmd + " install` again for this one. Until then the install leaves the other test runner alone."
+	return "A computer has one test runner, and it belongs to another instance. Remove that instance with `" + d.deps.otherInstance().suggest("uninstall") + "` (pass that instance's `--settings` and `--token-file`; the default instance needs neither). Then run `" + d.deps.suggest("install") + "` again for this one. Until then the install leaves the other test runner alone."
 }
 
 // executorTokenFile is the token file that the files of the executor are beside: the one --token-file names, else the default place of this user's
@@ -61,7 +59,7 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	}
 	plan, err := planExecutor(d.deps, tokenFile, d.s, engineBinDir(d.rt))
 	if err != nil {
-		d.fail("executor.lifecycle", err.Error(), "Do what the message says, then run `"+d.deps.command()+" doctor` again.")
+		d.fail("executor.lifecycle", err.Error(), "Do what the message says, then run `"+d.deps.suggest("doctor")+"` again.")
 		return
 	}
 	registered, running, stateErr := plan.state(ctx, d.deps)
@@ -107,7 +105,7 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	}, runningFixes{
 		noToken:    d.installFix(),
 		notRunning: notRunning,
-		notSeen:    "Read the test runner's log (" + plan.logWhere() + ") to see why. Then run `" + d.deps.command() + " install` again: it makes the service and the test runner use the same token and port.",
+		notSeen:    "Read the test runner's log (" + plan.logWhere() + ") to see why. Then run `" + d.deps.suggest("install") + "` again: it makes the service and the test runner use the same token and port.",
 	})
 	d.checkExecutorImage(ctx)
 	d.checkExecutorLoopback(ctx)
@@ -194,7 +192,7 @@ func (d *doctor) checkExecutorColocatedBinary(plan executorPlan, fix string) {
 		d.pass("executor.binary", "The test runner's program matches the official release: its fingerprint (SHA-256 "+sum+") is listed in the release's SHA256SUMS as "+fields[1]+".")
 	default:
 		d.warn("executor.binary", "The test runner has not been checked against an official release. This is normal for a development build.",
-			"To check it, run `"+d.deps.command()+" install --upgrade --sha256sums <the release's SHA256SUMS file>` with the program from that release.")
+			"To check it, run `"+d.deps.suggest("install", "--upgrade --sha256sums <the release's SHA256SUMS file>")+"` with the program from that release.")
 	}
 }
 

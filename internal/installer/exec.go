@@ -35,6 +35,9 @@ type Deps struct {
 	// Command is how a command of the installer names this program in a hint: "suiteward" where the shell finds the program by that name,
 	// else the quoted path of the executable (commandName). Empty reads "suiteward". OSEnv sets it; a test that does not care leaves it out.
 	Command string
+	// instance is what the running command was given that names the instance it works on: a command that a hint suggests repeats it
+	// (suggest). Each command sets it from its own flags once they are parsed; empty is the default instance.
+	instance instanceArgs
 }
 
 // validate refuses a Deps with a missing function: a nil one would fail later, at the first container command.

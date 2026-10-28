@@ -158,14 +158,14 @@ func (e executorSetup) settleCurrent(ctx context.Context, env Env, scr *ui.Scree
 
 // upgradeCurrent is an upgrade of an instance that is on the release already: it settles an executor token that the host step rotated, and
 // otherwise says that there is nothing to upgrade, and what is left to do for the executor.
-func upgradeCurrent(ctx context.Context, env Env, r *Resolver, scr *ui.Screen, host isolatedHost, e executorSetup, serviceWithout bool, image string, httpPort int) error {
+func upgradeCurrent(ctx context.Context, env Env, scr *ui.Screen, host isolatedHost, e executorSetup, serviceWithout bool, image string, httpPort int) error {
 	settled, err := e.settleCurrent(ctx, env, scr, host, httpPort)
 	if err != nil {
 		return err
 	}
 	if !settled {
-		_, _ = fmt.Fprintf(env.Term.Out, "Nothing to upgrade: this instance is already on %s. To check that everything works, run `%s doctor`.\n", digestOf(image), env.Deps.command())
-		_, _ = fmt.Fprint(env.Term.Out, e.currentNote(serviceWithout, installCommand(env.Deps.command(), r, true)))
+		_, _ = fmt.Fprintf(env.Term.Out, "Nothing to upgrade: this instance is already on %s. To check that everything works, run `%s`.\n", digestOf(image), env.Deps.suggest("doctor"))
+		_, _ = fmt.Fprint(env.Term.Out, e.currentNote(serviceWithout, env.Deps.suggest("install")))
 	}
 	return holdPage(scr)
 }

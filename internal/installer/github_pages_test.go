@@ -62,7 +62,7 @@ func TestGitHubQuestionIsExplainedOnAFullScreen(t *testing.T) {
 	if err != nil || yes {
 		t.Fatalf("wantsGitHub = %v, %v", yes, err)
 	}
-	for _, want := range []string{"What SuiteWard needs on GitHub", "GitHub App", "browser", "without GitHub", "later"} {
+	for _, want := range []string{"What SuiteWard needs on GitHub", "GitHub App", "browser", "without GitHub", "again"} {
 		if !shows(out.String(), want) {
 			t.Errorf("the page lacks %q:\n%s", want, out.String())
 		}
@@ -217,7 +217,7 @@ func TestTheOwnerLoginQuestionIsTheSameInPlainMode(t *testing.T) {
 	if err != nil || res.OwnerLogin != "alice" {
 		t.Fatalf("resolveGitHub = %q, %v", res.OwnerLogin, err)
 	}
-	if want := "GitHub login of the instance owner, the only account whose approvals count [alice]: "; !strings.Contains(out.String(), want) {
+	if want := "GitHub username of the owner, the only account that can approve changes [alice]: "; !strings.Contains(out.String(), want) {
 		t.Errorf("the plain question changed:\n%s", out.String())
 	}
 }

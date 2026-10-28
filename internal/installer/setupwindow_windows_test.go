@@ -133,8 +133,8 @@ func TestWindowClosedBeforeSetupLeftACodeIsAFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := wait(); err == nil || !strings.Contains(err.Error(), "closed before setup ended") {
-		t.Errorf("wait = %v, want the report that the window was closed before setup ended", err)
+	if err := wait(); err == nil || !strings.Contains(err.Error(), "closed before setup finished") {
+		t.Errorf("wait = %v, want the report that the window was closed before setup finished", err)
 	}
 	if _, err := os.Stat(filepath.Dir(*exitFile)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the directory of the exit file is still there: %v", err)

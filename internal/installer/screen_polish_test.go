@@ -36,7 +36,7 @@ func TestTheSummaryNamesTheInstanceByItsIdAndTheReleaseByItsVersion(t *testing.T
 		t.Fatal(err)
 	}
 	tail := c.tail()
-	for _, want := range []string{"Instance: " + testInstance + "\n", "Release: v0.2.0\n"} {
+	for _, want := range []string{"Instance ID: " + testInstance + "\n", "Version: v0.2.0\n"} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, tail)
 		}
@@ -54,12 +54,12 @@ func TestTheSummaryOfAnUpgradeHasOneReleaseRowAndAnImageRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	tail := c.tail()
-	for _, want := range []string{"Instance: " + testInstance + "\n", "Release: v0.2.0\n", "Image: " + digestOf(testImage) + " (was "} {
+	for _, want := range []string{"Instance ID: " + testInstance + "\n", "Version: v0.2.0\n", "Image: " + digestOf(testImage) + " (was "} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, tail)
 		}
 	}
-	if got := len(regexp.MustCompile(`(?m)^Release: `).FindAllString(tail, -1)); got != 1 {
+	if got := len(regexp.MustCompile(`(?m)^Version: `).FindAllString(tail, -1)); got != 1 {
 		t.Errorf("the summary has %d Release rows, want 1:\n%s", got, tail)
 	}
 }
@@ -76,12 +76,12 @@ func TestTheSummaryOfAnIsolatedUpgradeHasTheSameRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	tail := c.tail()
-	for _, want := range []string{"Instance: " + testInstance + "\n", "Release: v0.2.0\n", "Image: " + testDigest + " (was " + oldDigest + ")\n"} {
+	for _, want := range []string{"Instance ID: " + testInstance + "\n", "Version: v0.2.0\n", "Image: " + testDigest + " (was " + oldDigest + ")\n"} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, tail)
 		}
 	}
-	if got := len(regexp.MustCompile(`(?m)^Release: `).FindAllString(tail, -1)); got != 1 {
+	if got := len(regexp.MustCompile(`(?m)^Version: `).FindAllString(tail, -1)); got != 1 {
 		t.Errorf("the summary has %d Release rows, want 1:\n%s", got, tail)
 	}
 }
@@ -212,11 +212,11 @@ func TestTheDockerPageFitsTheSmallestWindowAndItsPointsHangUnderTheirText(t *tes
 	if strings.Contains(v.text(), trimmed) {
 		t.Errorf("the Docker page is trimmed at 60x20:\n%s", v.dump())
 	}
-	mustSay(t, v, "This is a confirmation: typing yes accepts the risks below.")
-	if row := v.row("- Docker's daemon"); !strings.HasPrefix(row, "    - Docker") {
+	mustSay(t, v, "Type yes to accept the risks below.")
+	if row := v.row("- Docker's service"); !strings.HasPrefix(row, "    - Docker") {
 		t.Errorf("the first point is %q, want it under the head's text, behind its dash:\n%s", row, v.dump())
 	}
-	if row := v.row("its containers are not isolated"); !strings.HasPrefix(row, "      its containers") {
+	if row := v.row("whoever controls it can reach"); !strings.HasPrefix(row, "      whoever") {
 		t.Errorf("what the first point wraps to is %q, want it under the text after the dash:\n%s", row, v.dump())
 	}
 }
@@ -258,7 +258,7 @@ func TestTheImageQuestionOfAFullScreenKeepsItsAnswers(t *testing.T) {
 		if got, err := askImage(r, stackInstalled{}); err != nil || got != testImage {
 			t.Fatalf("askImage = %q, %v, want the typed image", got, err)
 		}
-		if !shows(out.String(), "Release image (pinned by digest)") || shows(out.String(), "Default "+releaseImageRepo) {
+		if !shows(out.String(), "Release image (with its digest)") || shows(out.String(), "Default "+releaseImageRepo) {
 			t.Errorf("a question with no default is not the one it was:\n%s", out.String())
 		}
 	})

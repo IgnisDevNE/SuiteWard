@@ -271,10 +271,10 @@ func TestInstallNotesAMachineItCannotLookInto(t *testing.T) {
 			t.Fatalf("install = %v", err)
 		}
 		out := h.out.String()
-		if !strings.Contains(out, "ports could not be checked inside the Podman machine") || !strings.Contains(out, "list the Podman connections") {
+		if !strings.Contains(out, "Could not check the ports inside the Podman machine") || !strings.Contains(out, "list the Podman connections") {
 			t.Errorf("the failure is not reported:\n%s", out)
 		}
-		if !strings.Contains(out, "podman-restart.service could not be enabled") {
+		if !strings.Contains(out, "Could not turn on podman-restart.service") {
 			t.Errorf("the restart failure is not reported:\n%s", out)
 		}
 	})
@@ -321,7 +321,7 @@ func TestInstallDoesNotRunSetupWhenStatusCannotBeRead(t *testing.T) {
 		t.Fatalf("install = %v", err)
 	}
 	out := h.out.String()
-	if !strings.Contains(out, "Setup was not run") || !strings.Contains(out, "connection refused") {
+	if !strings.Contains(out, "The owner setup did not run") || !strings.Contains(out, "connection refused") {
 		t.Errorf("the output does not say why setup was not run: %s", out)
 	}
 	if len(h.f.tty) != 0 {

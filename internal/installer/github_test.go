@@ -418,7 +418,7 @@ func TestResolveGitHubWarnsAboutPrivateRepositoriesOnFree(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := out.String()
-	for _, want := range []string{"GitHub Free", "acme/app", "public repository"} {
+	for _, want := range []string{"GitHub Free", "acme/app", "is public or the account is on a paid plan"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the warning lacks %q:\n%s", want, text)
 		}

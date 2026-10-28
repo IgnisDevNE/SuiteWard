@@ -16,7 +16,7 @@ func TestTheDoctorCommandOfAnInstallNamesTheTokenFileOfAnInstanceWithItsOwnSetti
 	if err := Install(context.Background(), colocatedArgs(h), h.newEnv()); err != nil {
 		t.Fatal(err)
 	}
-	want := "Then check the instance with `suiteward doctor --settings " + quoteArg(h.settingsPath()) + " --token-file " + quoteArg(h.tokenPath()) + "`."
+	want := "Then check that everything works with `suiteward doctor --settings " + quoteArg(h.settingsPath()) + " --token-file " + quoteArg(h.tokenPath()) + "`."
 	if !strings.Contains(h.out.String(), want) {
 		t.Errorf("the output lacks %q:\n%s", want, h.out.String())
 	}
@@ -61,7 +61,7 @@ func TestTheDoctorCommandOfTheDefaultInstanceNamesNeitherTheSettingsNorTheTokenF
 	if err := Install(context.Background(), args, h.newEnv()); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Then check the instance with `suiteward doctor`."; !strings.Contains(h.out.String(), want) {
+	if want := "Then check that everything works with `suiteward doctor`."; !strings.Contains(h.out.String(), want) {
 		t.Errorf("the output lacks %q:\n%s", want, h.out.String())
 	}
 }

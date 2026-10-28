@@ -257,7 +257,7 @@ func TestUpgradeIsolatedAtTheInstalledReleaseNamesTheReRunThatGivesTheServiceThe
 		t.Fatal(err)
 	}
 	out := u.out.String()
-	if !strings.Contains(out, "Nothing to upgrade") || !strings.Contains(out, "install --tier isolated") || !strings.Contains(out, "executor") {
+	if !strings.Contains(out, "Nothing to upgrade") || !strings.Contains(out, "install --tier isolated") || !strings.Contains(out, "test runner") {
 		t.Errorf("the output must say that there is nothing to upgrade, and name the re-run that gives the service the token:\n%s", out)
 	}
 }
@@ -287,7 +287,7 @@ func TestUpgradeIsolatedAtTheInstalledReleaseSettlesATokenThatTheHostStepRotated
 	if !u.f.has("systemctl --user restart suiteward.service") {
 		t.Errorf("the service reads its secrets when it starts: %v", u.f.lines())
 	}
-	if out := u.out.String(); strings.Contains(out, "Nothing to upgrade") || !strings.Contains(out, "executor token") {
+	if out := u.out.String(); strings.Contains(out, "Nothing to upgrade") || !strings.Contains(out, "test runner token") {
 		t.Errorf("the output must say that the token was replaced and not that there is nothing to do:\n%s", out)
 	}
 }

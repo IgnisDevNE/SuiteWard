@@ -82,7 +82,7 @@ func FlagsSet(fs *flag.FlagSet) map[string]string {
 func LoadAnswers(path string) (map[string]string, error) {
 	// The file may hold the App key or passwords, so on systems with POSIX modes it must be private to its owner.
 	if info, err := os.Stat(path); err == nil && runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("the answers file %s is readable by others (mode %o); run chmod 600 on it", path, info.Mode().Perm())
+		return nil, fmt.Errorf("the answers file %s can be read by other users (mode %o) and may hold secrets: run chmod 600 on it", path, info.Mode().Perm())
 	}
 	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
@@ -113,7 +113,7 @@ func (r *Resolver) Value(key, label, def string) (string, error) {
 		if def != "" {
 			return def, nil
 		}
-		return "", fmt.Errorf("%s is required: pass --%s or set %q in the answers file (stdin is not a terminal, so it cannot be asked)", label, key, key)
+		return "", fmt.Errorf("%s is required: pass --%s or set %q in the answers file (there is no terminal to ask you)", label, key, key)
 	}
 	line, err := r.screen.Ask(label, def) // an empty answer is the default
 	if err != nil {

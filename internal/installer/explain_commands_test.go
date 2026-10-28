@@ -362,7 +362,7 @@ func TestTheEnrollOwnerQuestionHasAPageOfItsOwn(t *testing.T) {
 	if !strings.HasPrefix(v.rows[0], "Instance owner") {
 		t.Errorf("the page of the owner question is titled %q, want \"Instance owner\":\n%s", v.rows[0], v.dump())
 	}
-	mustSay(t, v, "github.com/<username>", "/suiteward", "cannot be an organization", "GitHub login of the instance owner")
+	mustSay(t, v, "github.com/<username>", "/suiteward", "cannot be an organization", "GitHub username of the owner")
 }
 
 // No page where nothing asks the owner: --owner answers it, and a plain screen asks the one question it always asked.
@@ -385,7 +385,7 @@ func TestTheEnrollOwnerPageIsOnlyDrawnWhereTheQuestionIsAsked(t *testing.T) {
 			t.Fatalf("exit %d: %s", code, stderr)
 		}
 		out := h.out.String()
-		if want := "GitHub login of the instance owner, the only account whose approvals count [bob]: "; !strings.Contains(out, want) {
+		if want := "GitHub username of the owner, the only account that can approve changes [bob]: "; !strings.Contains(out, want) {
 			t.Errorf("the plain question changed:\n%s", out)
 		}
 		if strings.Contains(out, page) {
@@ -405,7 +405,7 @@ func TestTheEnrollAgainPageSaysWhatItReplacesAndThatTheTypedWordIsAConfirmation(
 	if !strings.HasPrefix(v.rows[0], "Enroll the owner again") {
 		t.Errorf("the page is titled %q, want \"Enroll the owner again\"", v.rows[0])
 	}
-	mustSay(t, v, "An owner (bob) is already enrolled", "the old authenticator entry stops working", "you add the new secret that setup shows to your authenticator", "This is a confirmation", `Type "enroll" to confirm`)
+	mustSay(t, v, "An owner (bob) is already enrolled", "the old entry in your authenticator app stops working", "you add the new secret that setup shows to your app", "Nothing changes until you type enroll", `Type "enroll" to confirm`)
 }
 
 // The plain prompt is the question it was, with one clause changed on purpose: setup shows a secret and an otpauth:// URI, never a code to
@@ -415,7 +415,7 @@ func TestThePlainEnrollAgainPromptIsWhatItWas(t *testing.T) {
 	if code, stderr := h.enroll("enroll\n", "--owner", "alice"); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	want := "An owner (bob) is already enrolled. Enrolling again replaces the owner bob with alice and the TOTP secret: the old authenticator entry stops working, and you add the new secret that setup shows to your authenticator.\nType \"enroll\" to replace it: "
+	want := "An owner (bob) is already enrolled. Enrolling again replaces the owner bob with alice and the authenticator secret: the old entry in your authenticator app stops working, and you add the new secret that setup shows to your app.\nType \"enroll\" to replace it: "
 	if !strings.Contains(h.out.String(), want) {
 		t.Errorf("the plain prompt changed:\n%s", h.out.String())
 	}

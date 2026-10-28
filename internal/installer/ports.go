@@ -38,7 +38,7 @@ func checkPortsFree(ctx context.Context, d Deps, s Settings, own []int, say func
 	out, err := d.Exec(ctx, "ss", []string{"-ltn"}, nil)
 	switch {
 	case errors.Is(err, exec.ErrNotFound):
-		say("Note: the ports could not be checked (ss is not installed); a port that is in use shows up when the service starts.\n")
+		say("The ports could not be checked, because ss is not installed. If a port is busy, the service will not start and the install will say so.\n")
 		return nil
 	case err != nil:
 		return fmt.Errorf("list the ports something listens on (ss -ltn): %w", err)
@@ -49,7 +49,7 @@ func checkPortsFree(ctx context.Context, d Deps, s Settings, own []int, say func
 		port int
 	}{{"--http-port", s.HTTPPort}, {"--mcp-port", s.MCPPort}} {
 		if listening[p.port] && !slices.Contains(own, p.port) {
-			return fmt.Errorf("port %d is in use on this machine (something listens on it; WSL2 distributions and the Podman machine share one network): choose another with %s", p.port, p.flag)
+			return fmt.Errorf("port %d is already in use on this machine, so nothing was changed (something listens on it; WSL2 distributions and the Podman machine share one network): choose another port with %s", p.port, p.flag)
 		}
 	}
 	return nil

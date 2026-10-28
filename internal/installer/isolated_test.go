@@ -993,7 +993,7 @@ func TestInstallIsolatedWithoutGitHubRunsWithoutTheKeyLines(t *testing.T) {
 		if g.f.has("secret create " + SecretGitHubAppKey) {
 			t.Errorf("%s: a key secret was created without a key", name)
 		}
-		if !strings.Contains(g.out.String(), "GitHub is not configured") {
+		if !strings.Contains(g.out.String(), "GitHub is not set up yet") {
 			t.Errorf("%s: the output must say GitHub is off:\n%s", name, g.out.String())
 		}
 		if raw := readFileOrFail(t, envFile(g.home)); len(raw) != 0 {

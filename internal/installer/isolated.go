@@ -259,7 +259,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	scr.Step(6)
 	say("\nSuiteWard %s is running on this account. Settings are saved in %s.\n\n", digest, settingsPath)
 	if gh.AppID == 0 {
-		say("GitHub is not configured in the settings of this run: if the service should reach GitHub, run the install again with --github yes (or the GitHub values).\n")
+		say("GitHub is not set up yet, so nothing is protected. To set it up, run the install again with --github yes (or the GitHub values).\n")
 	} else {
 		status := func(ctx context.Context) ([]byte, error) {
 			return env.httpGet()(ctx, "http://127.0.0.1:"+strconv.Itoa(g.s.HTTPPort)+"/status")
@@ -268,7 +268,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 			return err
 		}
 	}
-	say("Then run `%s doctor`.\n", env.Deps.command())
+	say("Then check that everything works with `%s doctor`.\n", env.Deps.command())
 	sayOldEnvFile(out, filepath.Join(configDir, "github.env"), oldEnvFile, leftRunning)
 	scr.Step(7)
 	return showSummary(scr, func() []ui.KV { return isolatedSummary(ctx, env, host, g.s, ui.KV{Key: "Owner", Value: g.owner}) })
@@ -285,7 +285,7 @@ func (g *githubInstall) checkEnvFileHoldsNoApp(envPath string) error {
 		return err
 	}
 	if held.AppID != 0 {
-		return fmt.Errorf("GitHub is off in this run, but %s still holds the App %d and the service reads that file: remove its three SUITEWARD_GITHUB_ lines (or the file) first, or run again without --github-app-id none", envPath, held.AppID)
+		return fmt.Errorf("GitHub is off in this run, but %s still holds the App %d and the service reads that file, so nothing was changed: remove its three SUITEWARD_GITHUB_ lines (or the file) first, or run again without --github-app-id none", envPath, held.AppID)
 	}
 	return nil
 }
@@ -320,7 +320,7 @@ func (g *githubInstall) checkAppKey(ctx context.Context, envPath string) error {
 		if held.AppID != 0 {
 			withoutGitHub = "remove the three SUITEWARD_GITHUB_ lines from " + envPath + " (the service reads that file) and pass --github-app-id none to run without GitHub"
 		}
-		return fmt.Errorf("the service mounts the secret %s for the App %d and it does not exist: pass --github-app-key-file with the App's private key, or %s", SecretGitHubAppKey, g.s.GitHub.AppID, withoutGitHub)
+		return fmt.Errorf("the service needs the secret %s for the App %d, and it does not exist, so nothing was changed: pass --github-app-key-file with the App's private key, or %s", SecretGitHubAppKey, g.s.GitHub.AppID, withoutGitHub)
 	}
 	return nil
 }
@@ -416,7 +416,7 @@ func userSystemctl(d Deps) func(ctx context.Context, args ...string) (string, er
 func checkUnitsActive(ctx context.Context, systemctl func(ctx context.Context, args ...string) (string, error)) error {
 	for _, unit := range []string{"suiteward-db.service", "suiteward-migrate.service", "suiteward.service"} {
 		if state, err := systemctl(ctx, "show", "--property=ActiveState", "--value", unit); err != nil || state != "active" {
-			return fmt.Errorf("%s is %q after the start, want active: read `journalctl --user -u %s -n 50 --no-pager`", unit, state, unit)
+			return fmt.Errorf("%s is %q after the start, but it should be active: to see why, read `journalctl --user -u %s -n 50 --no-pager`", unit, state, unit)
 		}
 	}
 	return nil
@@ -481,7 +481,7 @@ func waitStable(ctx context.Context, env Env, scr *ui.Screen, httpPort int) erro
 			env.Sleep(stableEvery)
 		}
 	}
-	return fmt.Errorf("%s did not answer 200 %d times in a row within %d polls (last answer: %v): %s", address, stablePolls, stableTries, lastErr, journal)
+	return fmt.Errorf("the service did not answer OK at %s %d times in a row within %d tries (last answer: %v): %s", address, stablePolls, stableTries, lastErr, journal)
 }
 
 // checkAccount refuses a run by root, by another user than the service account, or with a HOME that is not the account's
@@ -539,7 +539,7 @@ func checkUserManager(run func(string, ...string) (string, error)) error {
 		return fmt.Errorf("ask the systemd user manager for its state (open the shell as `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>` prints it, with XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS set): %w", err)
 	}
 	if state != "running" && state != "degraded" {
-		return fmt.Errorf("the systemd user manager is %q, want running or degraded: wait a few seconds and run again", state)
+		return fmt.Errorf("the systemd user manager is %q, but it should be running or degraded: wait a few seconds and run again", state)
 	}
 	user, err := run("id", "-un")
 	if err != nil {
@@ -547,7 +547,7 @@ func checkUserManager(run func(string, ...string) (string, error)) error {
 	}
 	linger, err := run("loginctl", "show-user", user, "--property=Linger", "--value")
 	if err != nil || linger != "yes" {
-		return fmt.Errorf("linger is not enabled for %s, so its services would stop at logout: an administrator runs `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>`", user)
+		return fmt.Errorf("linger is not enabled for %s, so SuiteWard would stop when the account logs out: an administrator fixes this with `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>`", user)
 	}
 	return nil
 }
@@ -595,13 +595,13 @@ func installedWithGiven(r *Resolver, installed, asked Settings) Settings {
 // sayChanges says which installed port or job timeout this run changes.
 func sayChanges(say func(string, ...any), installed, now Settings) {
 	if now.HTTPPort != installed.HTTPPort {
-		say("Changing the HTTP port of the installed stack from %d to %d, as asked. The executor is pointed at the old one by the administrator's step: run `sudo suiteward install host --sha256sums <the SHA256SUMS of the release> --http-port %d` so that it finds the service.\n", installed.HTTPPort, now.HTTPPort, now.HTTPPort)
+		say("Changing the HTTP port of the installed service from %d to %d, as asked. The test runner still uses the old port: an administrator runs `sudo suiteward install host --sha256sums <the SHA256SUMS of the release> --http-port %d` so that it finds the service.\n", installed.HTTPPort, now.HTTPPort, now.HTTPPort)
 	}
 	if now.MCPPort != installed.MCPPort {
-		say("Changing the MCP port of the installed stack from %d to %d, as asked.\n", installed.MCPPort, now.MCPPort)
+		say("Changing the MCP port of the installed service from %d to %d, as asked.\n", installed.MCPPort, now.MCPPort)
 	}
 	if now.JobTimeout != installed.JobTimeout {
-		say("Changing the job timeout of the installed stack from %q to %q, as asked.\n", installed.JobTimeout, now.JobTimeout)
+		say("Changing the job timeout of the installed service from %q to %q, as asked.\n", installed.JobTimeout, now.JobTimeout)
 	}
 }
 
@@ -664,7 +664,7 @@ func adoptUnitsDir(unitsDir, homeEnvFile string, refreshDB bool) (installedStack
 	if st.adopted.EnvFile != DefaultEnvFile {
 		st.oldEnv = st.adopted.EnvFile
 		if _, err := os.Stat(homeEnvFile); err != nil {
-			return installedStack{}, fmt.Errorf("the installed units read the GitHub env file at %s; an administrator runs `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>`, which copies it to %s, then run this again", st.adopted.EnvFile, homeEnvFile)
+			return installedStack{}, fmt.Errorf("the installed service reads its GitHub settings from %s, and %s does not exist yet, so nothing was changed: an administrator runs `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>`, which copies the file; then run this again", st.adopted.EnvFile, homeEnvFile)
 		}
 	}
 	return st, nil
@@ -675,7 +675,7 @@ func adoptUnitsDir(unitsDir, homeEnvFile string, refreshDB bool) (installedStack
 // and is said by sayChanges.
 func reportAdopted(say func(string, ...any), asked, installed Settings) {
 	if asked.Tier != installed.Tier {
-		say("Keeping the installed tier %s (you asked for %s).\n", installed.Tier, asked.Tier)
+		say("Keeping the installation type that is installed (%s), although you asked for %s.\n", installed.Tier, asked.Tier)
 	}
 }
 
@@ -688,7 +688,7 @@ func chooseImage(cmd string, r *Resolver, installedDigest string, neverStarted f
 		if embedded, ok := ReleaseImage(); ok {
 			return strings.TrimPrefix(embedded, releaseImageRepo+"@"), nil
 		}
-		return "", errors.New("this binary carries no release image (a development build), so --image is required: pass --image sha256:<signed index digest> (the release notes name it; verify it first as the install guide says)")
+		return "", errors.New("this program is a development build and carries no release image, so --image is required: pass --image sha256:<signed index digest> (the release notes name it; verify it first, as the install guide says)")
 	case asked == "":
 		return installedDigest, nil
 	}
@@ -706,7 +706,7 @@ func chooseImage(cmd string, r *Resolver, installedDigest string, neverStarted f
 			return "", err
 		}
 		if !never {
-			return "", fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `%s install --upgrade`", digest, installedDigest, cmd)
+			return "", fmt.Errorf("--image names %s, but %s is installed. Changing the release is an upgrade, which makes a backup first, so nothing was changed; run `%s install --upgrade`", digest, installedDigest, cmd)
 		}
 		say("Replacing the installed image %s with %s: this stack never completed a start, so this is a retry, not an upgrade.\n", installedDigest, digest)
 	}
@@ -760,7 +760,7 @@ func ensureSecrets(ctx context.Context, store SecretStore, appKey []byte) error 
 	switch {
 	case havePassword && haveOwnerURL:
 	case haveOwnerURL:
-		return fmt.Errorf("the secret %s exists but %s does not: the password cannot be recovered from the URL safely; if the database never started, remove %s and run again", SecretDatabaseOwnerURL, SecretDBAuth, SecretDatabaseOwnerURL)
+		return fmt.Errorf("the secret %s exists but %s does not, and the password cannot be safely read back from the address, so nothing was changed. If the database never started, remove %s and run again", SecretDatabaseOwnerURL, SecretDBAuth, SecretDatabaseOwnerURL)
 	case havePassword:
 		stored, err := store.Read(ctx, SecretDBAuth)
 		if err != nil {
@@ -867,11 +867,11 @@ func waitHealthy(ctx context.Context, rt Runtime, bar waitBar) error {
 			last = err.Error()
 		}
 		if err == nil && state.Health == "healthy" {
-			bar.set(1, "healthy")
+			bar.set(1, "ready")
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("the database was not healthy within %s (last: %q): read `journalctl --user -u suiteward-db.service -n 50 --no-pager`", dbHealthTimeout, last)
+			return fmt.Errorf("the database was not healthy within %s (last: %q): to see why, read `journalctl --user -u suiteward-db.service -n 50 --no-pager`", dbHealthTimeout, last)
 		}
 		bar.set(float64(time.Since(start))/float64(dbHealthTimeout), "starting")
 		select {

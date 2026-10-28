@@ -75,7 +75,7 @@ func TestResolveGitHubStopsAtTheStepThatFails(t *testing.T) {
 		}, "which is not owned by acme"},
 		{"a repository that is not covered", func(_ *testing.T, _ *fakeGitHub, f map[string]string) { f["repositories"] = "acme/elsewhere" }, "is not one of the repositories the installation covers"},
 		{"no repository chosen", func(_ *testing.T, _ *fakeGitHub, f map[string]string) { f["repositories"] = " , " }, "0 repositories chosen"},
-		{"no owner for an organization", func(_ *testing.T, _ *fakeGitHub, f map[string]string) { delete(f, "owner") }, "instance owner"},
+		{"no owner for an organization", func(_ *testing.T, _ *fakeGitHub, f map[string]string) { delete(f, "owner") }, "username of the owner"},
 		{"an owner that is not a login", func(_ *testing.T, _ *fakeGitHub, f map[string]string) { f["owner"] = "not a login!" }, `owner "not a login!" is not a GitHub login`},
 		{"a repository that cannot be read", func(_ *testing.T, g *fakeGitHub, _ map[string]string) {
 			g.answer("GET /repos/acme/app", http.StatusInternalServerError, "")
@@ -125,7 +125,7 @@ func TestResolveGitHubTypesTheCheckWhenTheRunsCannotBeRead(t *testing.T) {
 			if res.TestChecks["acme/app"] != "CI / test" {
 				t.Errorf("the typed check was not used: %v", res.TestChecks)
 			}
-			if !strings.Contains(out.String(), "Could not read the check runs of acme/app") {
+			if !strings.Contains(out.String(), "Could not read the checks of acme/app") {
 				t.Errorf("the failure was not said:\n%s", out.String())
 			}
 		})

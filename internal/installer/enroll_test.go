@@ -78,7 +78,7 @@ func TestEnrollNeedsATerminal(t *testing.T) {
 	h := enrollHarness(t, statusNoOwner)
 	withTerminal(t, false)
 	code, stderr := h.enroll("", "--owner", "alice")
-	if code != 1 || !strings.Contains(stderr, "enroll needs a terminal: setup prints the TOTP secret") {
+	if code != 1 || !strings.Contains(stderr, "enroll needs a real terminal") {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	if len(h.f.tty) != 0 || len(h.mutations()) != 0 {
@@ -108,7 +108,7 @@ func TestEnrollOfAnEnrolledOwnerWarnsAndNeedsTheTypedWord(t *testing.T) {
 		if len(h.f.tty) != 0 {
 			t.Errorf("%s: setup ran without the confirmation", name)
 		}
-		for _, want := range []string{"bob", "the TOTP secret", "old authenticator entry stops working", `Type "enroll"`} {
+		for _, want := range []string{"bob", "the authenticator secret", "old entry in your authenticator app stops working", `Type "enroll"`} {
 			if !strings.Contains(h.out.String(), want) {
 				t.Errorf("%s: the warning lacks %q:\n%s", name, want, h.out.String())
 			}
@@ -130,10 +130,10 @@ func TestEnrollWithNoOwnerEnrolledNeedsNoConfirmation(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q\n%s", code, stderr, h.out.String())
 	}
 	h.setupArgs()
-	if strings.Contains(h.out.String(), "Type \"enroll\"") || strings.Contains(h.out.String(), "replaces the TOTP secret") {
+	if strings.Contains(h.out.String(), "Type \"enroll\"") || strings.Contains(h.out.String(), "replaces the authenticator secret") {
 		t.Errorf("a first enrollment was warned about a replacement:\n%s", h.out.String())
 	}
-	if !strings.Contains(h.out.String(), "Stop any session recording") {
+	if !strings.Contains(h.out.String(), "Stop any screen recording") {
 		t.Errorf("the recording warning of setup is missing:\n%s", h.out.String())
 	}
 	if !strings.Contains(h.out.String(), "alice is enrolled as the owner.\n") {

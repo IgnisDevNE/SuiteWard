@@ -284,7 +284,7 @@ func TestManifestPageOfTheIsolatedTierHasThePortForward(t *testing.T) {
 	done := startManifest(env, "acme")
 	base := waitForListener(t, out)
 	port := strings.TrimSuffix(strings.TrimPrefix(base, "http://127.0.0.1:"), "/")
-	for _, want := range []string{"forward the port from your computer first, then open the address on the computer", "AWS-StartPortForwardingSession", `"portNumber":["` + port + `"]`} {
+	for _, want := range []string{"first forward the port from your computer, then open the address on that computer", "AWS-StartPortForwardingSession", `"portNumber":["` + port + `"]`} {
 		if !shows(out.String(), want) {
 			t.Errorf("the page lacks %q:\n%s", want, out.String())
 		}
@@ -300,7 +300,7 @@ func TestManifestPlainOutputKeepsItsInstructions(t *testing.T) {
 	await(t, done)
 	text := out.String()
 	name := appNamePattern.FindString(text)
-	want := "Create the GitHub App: open this address in the browser of this machine and approve the App on GitHub. The App is named " + name + " unless you rename it there; note the name, in case the installer cannot finish and the App has to be deleted.\n  http://"
+	want := "Create the GitHub App: open this address in your browser and approve the App on GitHub. The App is named " + name + " unless you rename it there. Note the name: if the installer cannot finish, you delete the App on GitHub by that name.\n  http://"
 	if name == "" || !strings.Contains(text, want) {
 		t.Errorf("the instructions of a plain run changed:\n%s", text)
 	}

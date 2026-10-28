@@ -39,8 +39,8 @@ func TestTheTierQuestionHasAPageThatExplainsBothTiers(t *testing.T) {
 	if !strings.HasPrefix(v.rows[0], "Where SuiteWard runs") {
 		t.Errorf("the page of the tier question is titled %q, want \"Where SuiteWard runs\"", v.rows[0])
 	}
-	mustSay(t, v, "On this computer, next to the coding agent", "reduced assurance", "can reach SuiteWard's key, its database and its secret",
-		"separate Linux host or account that the agent cannot reach", "Full assurance", "Recommended: co-located to start", "Installation tier")
+	mustSay(t, v, "On this computer, next to your coding agent", "catch mistakes, not a determined agent",
+		"separate Linux server or user account that your coding agent cannot reach", "strongest protection", "To start, choose co-located", "Installation type")
 	if !strings.Contains(v.hint, "Enter takes the default") {
 		t.Errorf("the hint is %q, want it to say that Enter takes the default", v.hint)
 	}
@@ -61,11 +61,11 @@ func TestTheStepsAreListedFromTheTierQuestionOn(t *testing.T) {
 func TestTheRuntimeQuestionHasAPageAndAChoice(t *testing.T) {
 	run := askedQuestions(t, termWidth, termHeight)
 	v := run.question(t, 1)
-	if !strings.HasPrefix(v.rows[0], "Container runtime") {
-		t.Errorf("the page of the runtime question is titled %q, want \"Container runtime\"", v.rows[0])
+	if !strings.HasPrefix(v.rows[0], "Container program") {
+		t.Errorf("the page of the runtime question is titled %q, want \"Container program\"", v.rows[0])
 	}
-	mustSay(t, v, "rootless", "daemon runs as root", "secrets", "volumes", "typed yes")
-	for _, want := range []string{"podman", "recommended", "docker", "discouraged"} {
+	mustSay(t, v, "without administrator rights", "runs as root", "secrets", "can read them", "type yes")
+	for _, want := range []string{"podman", "recommended", "docker", "not recommended"} {
 		if !strings.Contains(v.text(), want) {
 			t.Errorf("the choice lacks %q:\n%s", want, v.dump())
 		}
@@ -83,7 +83,7 @@ func TestDockerKeepsItsWarningAndTheTypedYesOnAPageOfItsOwn(t *testing.T) {
 	if !strings.HasPrefix(v.rows[0], "Docker is not recommended") {
 		t.Errorf("the page of the Docker confirmation is titled %q", v.rows[0])
 	}
-	mustSay(t, v, "This is a confirmation", "typing yes accepts the risks below", "daemon runs as root", "in volumes", "Type yes to use Docker anyway")
+	mustSay(t, v, "Type yes to accept the risks below", "service runs as root", "in volumes", "Type yes to use Docker anyway")
 	if !strings.Contains(run.output(), "Using Docker") {
 		t.Errorf("the install did not go on with Docker after the typed yes:\n%s", run.output())
 	}
@@ -92,7 +92,7 @@ func TestDockerKeepsItsWarningAndTheTypedYesOnAPageOfItsOwn(t *testing.T) {
 	h = dockerHarness(t, "linux")
 	run = newScreenRun(termWidth, termHeight, "2\n", "no\n")
 	err := Install(liveContext(t), installArgs(h, "--image", testImage, "--tier", "co-located"), run.on(h.newEnv()))
-	if err == nil || !strings.Contains(err.Error(), "use of Docker was not confirmed") {
+	if err == nil || !strings.Contains(err.Error(), "you did not confirm Docker") {
 		t.Fatalf("Install = %v, want the refusal", err)
 	}
 	h.mustNotMutate()
@@ -111,8 +111,8 @@ func TestTheDockerWarningIsStillThereAtTheSmallestWindow(t *testing.T) {
 	if !strings.HasPrefix(v.rows[0], "Docker is not recommended") {
 		t.Errorf("the page of the Docker confirmation is titled %q", v.rows[0])
 	}
-	mustSay(t, v, "daemon runs as root", "in volumes", "Type yes to use Docker anyway")
-	if at, prompt := strings.Index(v.text(), "daemon runs as root"), strings.Index(v.text(), "Type yes to use Docker anyway"); at < 0 || at > prompt {
+	mustSay(t, v, "service runs as root", "in volumes", "Type yes to use Docker anyway")
+	if at, prompt := strings.Index(v.text(), "service runs as root"), strings.Index(v.text(), "Type yes to use Docker anyway"); at < 0 || at > prompt {
 		t.Errorf("the risks are not above the prompt:\n%s", v.dump())
 	}
 }
@@ -123,8 +123,8 @@ func TestThePortsAreExplainedOnOnePageBeforeTheTwoQuestions(t *testing.T) {
 	if !strings.HasPrefix(v.rows[0], "Ports") {
 		t.Errorf("the page of the ports is titled %q, want \"Ports\"", v.rows[0])
 	}
-	mustSay(t, v, "only on 127.0.0.1", "/status", "change report page", "MCP", "coding agent's client", "token", "27081", "27091",
-		"Change a port only if something else on this computer uses it", "nothing outside this computer can reach them", "HTTP port on 127.0.0.1")
+	mustSay(t, v, "only on this computer (127.0.0.1)", "status", "change report page", "MCP", "Your coding agent connects here", "access token", "27081", "27091",
+		"Change a port only if another program on this computer uses it", "nothing outside it can reach them", "HTTP port on 127.0.0.1")
 	if second := run.question(t, 3); !strings.Contains(second.text(), "Ports") || !strings.Contains(second.text(), "MCP port on 127.0.0.1") {
 		t.Errorf("the second port question is not on the page of the ports:\n%s", second.dump())
 	}
@@ -136,7 +136,7 @@ func TestTheReleaseImageIsExplainedAndEnterKeepsTheOneTheBinaryCarries(t *testin
 	if !strings.HasPrefix(v.rows[0], "Release image") {
 		t.Errorf("the page of the image is titled %q, want \"Release image\"", v.rows[0])
 	}
-	mustSay(t, v, "pinned by its digest", "Enter keeps the release this binary carries", "Release image:")
+	mustSay(t, v, "named by its fingerprint (digest)", "Enter keeps the release this program carries", "Release image:")
 }
 
 func TestTheImageOfAnInstalledStackIsTheOneEnterKeeps(t *testing.T) {

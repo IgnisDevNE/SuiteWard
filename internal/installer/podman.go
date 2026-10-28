@@ -43,7 +43,7 @@ func NewPodman(ctx context.Context, d Deps, connection string) (Runtime, error) 
 		return nil, fmt.Errorf("the Podman connection is unavailable: %w", err)
 	}
 	if strings.TrimSpace(string(out)) != "true" {
-		return nil, fmt.Errorf("%w: the co-located and isolated stacks run rootless, so select the machine's rootless connection with --connection NAME", ErrRootful)
+		return nil, fmt.Errorf("%w: SuiteWard needs a Podman connection that runs without administrator rights (rootless), so nothing was changed: select the machine's rootless connection with --connection NAME", ErrRootful)
 	}
 	return p, nil
 }

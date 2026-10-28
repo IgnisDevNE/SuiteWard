@@ -321,8 +321,8 @@ func TestTerminalWindowGivesUpAfterTheLimitAndOnCtrlC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := wait(); err == nil || !strings.Contains(err.Error(), "did not end") {
-		t.Errorf("wait = %v, want the report that setup did not end in time", err)
+	if err := wait(); err == nil || !strings.Contains(err.Error(), "did not finish") {
+		t.Errorf("wait = %v, want the report that setup did not finish in time", err)
 	}
 	if _, err := os.Stat(filepath.Dir(script)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the directory is still there after the limit: %v", err)

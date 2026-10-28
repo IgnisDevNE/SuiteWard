@@ -106,16 +106,9 @@ func (s executionStore) RecordUnblock(ctx context.Context, e commands.Entry, ack
 	jobs = slices.SortedFunc(slices.Values(jobs), func(a, b execution.UnblockJob) int { return cmp.Compare(a.ID, b.ID) })
 	return inTx(ctx, s.pool, "unblock", func(transaction pgx.Tx) error {
 		q := dbgen.New(transaction)
-		locked := make([]execution.Job, len(jobs))
-		for i, o := range jobs {
-			job, err := lockJob(ctx, q, o.ID)
-			if errors.Is(err, execution.ErrNotFound) {
-				return fmt.Errorf("%w: job %d does not exist", execution.ErrInvalidRequest, o.ID)
-			}
-			if err != nil {
-				return err
-			}
-			locked[i] = job
+		locked, err := lockUnblockJobs(ctx, q, jobs)
+		if err != nil {
+			return err
 		}
 		existing, err := q.ListExecutionUnblocks(ctx, dbgen.ListExecutionUnblocksParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID})
 		if err != nil {
@@ -134,19 +127,40 @@ func (s executionStore) RecordUnblock(ctx context.Context, e commands.Entry, ack
 		if _, err := recordEntry(ctx, q, e, pull, ack); err != nil {
 			return err
 		}
-		for i, o := range jobs {
-			if next := locked[i].UnblockEnded(at); next.State != locked[i].State {
-				if err := storeJob(ctx, q, next); err != nil {
-					return err
-				}
-			}
-			if _, err := q.InsertExecutionUnblock(ctx, dbgen.InsertExecutionUnblockParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID, JobID: o.ID, PullNumber: pull,
-				HeadSha: headSHA, DecidedAt: timestamp(at)}); err != nil {
-				return executionWriteError("write the unblock row", err)
+		return liftJobs(ctx, q, e, pull, headSHA, locked, at)
+	})
+}
+
+// lockUnblockJobs locks the jobs, which are in id order, and reads them: execution.ErrInvalidRequest for one that does not exist.
+func lockUnblockJobs(ctx context.Context, q *dbgen.Queries, jobs []execution.UnblockJob) ([]execution.Job, error) {
+	locked := make([]execution.Job, len(jobs))
+	for i, o := range jobs {
+		job, err := lockJob(ctx, q, o.ID)
+		if errors.Is(err, execution.ErrNotFound) {
+			return nil, fmt.Errorf("%w: job %d does not exist", execution.ErrInvalidRequest, o.ID)
+		}
+		if err != nil {
+			return nil, err
+		}
+		locked[i] = job
+	}
+	return locked, nil
+}
+
+// liftJobs ends each open job of the unblock for no-executor, as of at, and writes the unblock row of each job with the same time.
+func liftJobs(ctx context.Context, q *dbgen.Queries, e commands.Entry, pull int32, headSHA string, locked []execution.Job, at time.Time) error {
+	for _, job := range locked {
+		if next := job.UnblockEnded(at); next.State != job.State {
+			if err := storeJob(ctx, q, next); err != nil {
+				return err
 			}
 		}
-		return nil
-	})
+		if _, err := q.InsertExecutionUnblock(ctx, dbgen.InsertExecutionUnblockParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID, JobID: job.ID, PullNumber: pull,
+			HeadSha: headSHA, DecidedAt: timestamp(at)}); err != nil {
+			return executionWriteError("write the unblock row", err)
+		}
+	}
+	return nil
 }
 
 // sameUnblock reports whether the rows of a command, in job order, are those of the jobs it names, all decided at the time.

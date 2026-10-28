@@ -80,7 +80,7 @@ func TestUnblockEndsALeasedJobAndRefusesItsLateResultAndHeartbeat(t *testing.T) 
 	entry := x.requireEntry(500, commands.Unblocked, map[string]any{"plans": []string{"canonical"}, "ended": []string{"canonical"}})
 	x.requireEnded(leased, entry)
 	late := execution.Result{LeaseID: leased.LeaseID, Report: execution.Report{Status: execution.StateUnavailable, Reason: execution.ReasonExecutorError, ExecutorVersion: "0.4.0",
-		ExecutorSHA256: leased.Spec.GoverningDigest, StartedAt: cjOrigin, EndedAt: cjOrigin.Add(time.Second), BodyDigest: leased.Spec.DeclarationDigest}}
+		ExecutorSHA256: leased.GoverningDigest, StartedAt: cjOrigin, EndedAt: cjOrigin.Add(time.Second), BodyDigest: leased.DeclarationDigest}}
 	if _, err := x.store.Complete(t.Context(), leased.ID, late, x.job.now(), 10*time.Minute); !errors.Is(err, execution.ErrConflict) {
 		t.Errorf("the late result of the lease that was ended = %v; want a conflict", err)
 	}

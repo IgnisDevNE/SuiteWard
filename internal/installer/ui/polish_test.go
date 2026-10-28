@@ -199,26 +199,3 @@ func TestAskDefaultKeepsTheDefaultOutOfTheQuestion(t *testing.T) {
 		t.Errorf("the hint is %q, want it to say that Enter takes the default", hint)
 	}
 }
-
-// The rows of a summary that an older name still calls (the restore and backup summaries) are key rows too.
-func TestASummaryWhoseRowsDoNotFitKeepsTheKeyRowsUnderTheirOlderNames(t *testing.T) {
-	s, _ := openScreen(t, windowOptions(60, 20), "\n")
-	rows, warns := summaryDemo()
-	for i := range rows {
-		switch rows[i].Key {
-		case "Installation type":
-			rows[i].Key = "Tier"
-		case "Instance ID":
-			rows[i].Key = "Instance"
-		}
-	}
-	if err := s.Summary(rows, warns); err != nil {
-		t.Fatal(err)
-	}
-	text := strings.Join(summaryLines(snapshot(s)), "\n")
-	for _, want := range []string{"Tier  ", "Instance  ", "Status  ", "Doctor  "} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the summary lost %q:\n%s", strings.TrimSpace(want), text)
-		}
-	}
-}

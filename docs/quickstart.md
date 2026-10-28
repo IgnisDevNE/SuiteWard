@@ -6,7 +6,7 @@ This is the short path for one owner. The **co-located** tier runs SuiteWard nex
 
 ## Co-located (your PC)
 
-On Windows and macOS, start the Podman machine first: `podman machine start` (`podman machine init` once before that). Windows with Podman is the path validated live. macOS is covered by CI tests, and its live validation is pending; Linux is covered by tests only.
+On Windows and macOS, start the Podman machine first: `podman machine start` (`podman machine init` once before that). Windows with Podman is the path validated live. On macOS, the installer ran on a real Mac with Podman (phase M1.15) and CI runs its tests on a macOS machine, but the test runner (the executor of step 2) has not been seen there yet; Linux is covered by tests only.
 
 **1. Get the installer, and verify it if you choose** ([section 4](install.md#4-get-and-verify-the-installer)). Verifying is optional but recommended: the binary is the trust root of the install, and the checks below prove that it is the one the release workflow signed.
 
@@ -50,7 +50,7 @@ It starts the stack, and it walks you through the rest, on this PC:
 suiteward doctor
 ```
 
-On a full screen the install has run these checks already: read its summary, which also states once the reduced assurance of this tier. Run it later with `suiteward doctor`, and expect `ok` on every line. A `FAIL` line names the fix. For Docker instead of Podman, read the warning in [section 5](install.md#5-install-co-located) first, then add `--runtime docker --accept-docker` to the install.
+On a full screen the install has run these checks already: read its summary, which also states once the reduced assurance of this tier. Run it later with `suiteward doctor`, and expect `ok` on every line, except one warning about the test runner: `The test runner has not been checked against an official release.` The install in step 2 was not given `--sha256sums`, so it shows this warning. It is normal and does not change the exit code. To clear it, run `suiteward install --upgrade --sha256sums <the verified SHA256SUMS of the release>` with the program of that release ([section 5.4](install.md#5-install-co-located)). A `FAIL` line names the fix. For Docker instead of Podman, read the warning in [section 5](install.md#5-install-co-located) first, then add `--runtime docker --accept-docker` to the install.
 
 ## Isolated (AlmaLinux 9 host)
 

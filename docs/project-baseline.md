@@ -60,7 +60,7 @@ The [ADR index](decisions/README.md) is the authoritative map of the decisions a
 
 ## Delivery and boundaries
 
-M0 proves the domain. M1 delivers integrity governance. M2 is canonical execution: M2.1 is the engine, the receipt and the Go profile, and M2.2 and M2.3 add Python and TypeScript. The executor is a separate process that drives a container runtime CLI ([D-EXECUTION](plan/decisions.md#d-execution-first-executable-profile-and-execution-trust-model); it replaces the `DockerExecutionBackend` that ADR 0008 planned). M3 adds justified supply-chain hardening.
+M0 proves the domain. M1 delivers integrity governance. M2 is canonical execution: M2.1 is the engine, the receipt and the Go profile, M2.1b is the results comment and page of every pull request, M2.2 and M2.3 add Python and TypeScript, and M2.4 is execution maturity. The executor is a separate process that drives a container runtime CLI ([D-EXECUTION](plan/decisions.md#d-execution-first-executable-profile-and-execution-trust-model); it replaces the `DockerExecutionBackend` that ADR 0008 planned). M3 adds justified supply-chain hardening. A verification phase ends with the first beta, and the managed service comes after it (the [roadmap](plan/README.md#roadmap), [D-ROADMAP](plan/decisions.md#d-roadmap-the-order-after-m21)).
 
 Choosing Go for SuiteWard does not select the languages or testing frameworks of the repositories it will protect. The first executable test profile is Go (D-EXECUTION, accepted 2026-10-26), then Python and TypeScript.
 

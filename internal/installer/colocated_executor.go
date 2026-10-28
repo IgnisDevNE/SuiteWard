@@ -113,8 +113,12 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 			changed = true
 		}
 	}
-	if running && changed {
-		plan.stop(ctx, d)
+	// On Windows a registered task is stopped whether or not the program runs: the wrapper waits a minute between two runs, and a wrapper that is left
+	// starts the old program, with the old environment, next to the new one. A stop that leaves a process fails here, before anything is replaced.
+	if changed && (running || registered && plan.goos == "windows") {
+		if err := plan.stop(ctx, d); err != nil {
+			return plan, err
+		}
 		running = false
 	}
 	if replace {
@@ -191,7 +195,9 @@ func removeExecutor(ctx context.Context, d Deps, tokenFile string) (existed, for
 func removeByHand(goos string) string {
 	switch goos {
 	case "windows":
-		return fmt.Sprintf("end the scheduled task with `schtasks /End /TN \"%[1]s\"`, end the process with `taskkill /IM %[2]s /F` if it still runs, delete the task with `schtasks /Delete /TN \"%[1]s\" /F`, and delete that directory", executorTaskName, executorBinaryName(goos))
+		// Not a kill by name: the wrapper starts the program again after its pause, and a name would also end another instance's executor. With the
+		// task deleted, nothing starts it at the next sign-in; signing out ends everything of the user that still runs.
+		return fmt.Sprintf("end the scheduled task with `schtasks /End /TN \"%[1]s\"`, delete it with `schtasks /Delete /TN \"%[1]s\" /F`, sign out of Windows and sign in again to end what still runs, and delete that directory", executorTaskName)
 	case "darwin":
 		return fmt.Sprintf("`launchctl bootout gui/$(id -u)/%[1]s` stops it and unloads it, and deleting that directory and ~/Library/LaunchAgents/%[1]s.plist removes it", executorLabel)
 	default:

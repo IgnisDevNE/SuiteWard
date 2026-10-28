@@ -3,6 +3,7 @@ package installer
 import (
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf16"
 )
@@ -322,17 +324,111 @@ func (p executorPlan) state(ctx context.Context, d Deps) (registered, running bo
 	}
 }
 
-// stop stops the executor if it runs; a failure is nothing to act on, because the next step says what is wrong.
-func (p executorPlan) stop(ctx context.Context, d Deps) {
+// stop stops the executor if it runs. On macOS and Linux a failure is nothing to act on, because the next step says what is wrong. On Windows it is:
+// the program that is replaced or removed must not run, so the whole tree is ended, and a process that is left is an error.
+func (p executorPlan) stop(ctx context.Context, d Deps) error {
 	switch p.goos {
 	case "windows":
-		_, _ = d.Exec(ctx, "schtasks", []string{"/End", "/TN", executorTaskName}, nil)
+		return p.stopTree(ctx, d)
 	case "darwin":
 		if uid, err := userID(ctx, d); err == nil {
 			_, _ = d.Exec(ctx, "launchctl", []string{"bootout", "gui/" + uid + "/" + executorLabel}, nil)
 		}
 	default:
 		_, _ = d.Exec(ctx, "systemctl", []string{"--user", "stop", executorUnitName}, nil)
+	}
+	return nil
+}
+
+// osProcess is a process of the Windows computer, as listProcesses reads it.
+type osProcess struct {
+	pid           int
+	name, exe, at string // the image name, the path of the image, and the command line
+}
+
+// listProcessesScript prints one line for each console host, command interpreter or executor on the computer, `pid name base64(path) base64(command
+// line)`: the paths and command lines go out as base64 of UTF-8, so that no code page changes a letter of them, and the matching is done here, on
+// the paths that this instance owns, and not in the script, which then has no path to quote.
+var listProcessesScript = `Get-CimInstance Win32_Process | Where-Object { 'conhost.exe','cmd.exe','` + executorBinaryName("windows") + `' -contains $_.Name } | ForEach-Object { '{0} {1} {2} {3}' -f $_.ProcessId, $_.Name, [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_.ExecutablePath)), [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_.CommandLine)) }`
+
+func (p executorPlan) listProcesses(ctx context.Context, d Deps) ([]osProcess, error) {
+	out, err := d.Exec(ctx, p.system+`\WindowsPowerShell\v1.0\powershell.exe`, []string{"-NoProfile", "-NonInteractive", "-Command", listProcessesScript}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list the processes of this computer: %w", err)
+	}
+	var procs []osProcess
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimRight(line, "\r"); line == "" {
+			continue
+		}
+		fields := strings.Split(line, " ") // an empty path or command line leaves an empty field
+		pid, pidErr := strconv.Atoi(fields[0])
+		if len(fields) != 4 || pidErr != nil {
+			return nil, fmt.Errorf("list the processes of this computer: unexpected line %q", line)
+		}
+		proc := osProcess{pid: pid, name: fields[1]}
+		for i, text := range []*string{&proc.exe, &proc.at} {
+			raw, err := base64.StdEncoding.DecodeString(fields[2+i])
+			if err != nil {
+				return nil, fmt.Errorf("list the processes of this computer: unexpected line %q: %w", line, err)
+			}
+			*text = string(raw)
+		}
+		procs = append(procs, proc)
+	}
+	return procs, nil
+}
+
+// ownProcesses is what runs of this instance's executor: the console hosts and command interpreters whose command line names this instance's
+// wrapper (the argument of the task, and what the task of an earlier build ran), then the programs that run from this instance's binary. Never a
+// process by its name alone: another instance's executor, and a command prompt of the user, are not in it. The wrapper's processes come first:
+// ended after the program, its pause would start the program again.
+func (p executorPlan) ownProcesses(procs []osProcess) []osProcess {
+	var wrappers, programs []osProcess
+	for _, proc := range procs {
+		switch {
+		case (strings.EqualFold(proc.name, "conhost.exe") || strings.EqualFold(proc.name, "cmd.exe")) && strings.Contains(strings.ToLower(proc.at), strings.ToLower(p.wrapper)):
+			wrappers = append(wrappers, proc)
+		case strings.EqualFold(proc.name, executorBinaryName("windows")) && strings.EqualFold(proc.exe, p.binary):
+			programs = append(programs, proc)
+		}
+	}
+	return append(wrappers, programs...)
+}
+
+// stopAttempts is how many times stopTree ends what is left before it says that something still runs.
+const stopAttempts = 2
+
+// stopTree ends the task, and then every process of this instance's tree with its children. `schtasks /End` ends only the console host of the task:
+// the wrapper and the program live on, and the wrapper starts the program again after its pause. What taskkill does not end is found by listing again.
+func (p executorPlan) stopTree(ctx context.Context, d Deps) error {
+	_, _ = d.Exec(ctx, "schtasks", []string{"/End", "/TN", executorTaskName}, nil) // it fails when there is no task, which is nothing to act on
+	var killErr error
+	for attempt := 0; ; attempt++ {
+		procs, err := p.listProcesses(ctx, d)
+		if err != nil {
+			return err
+		}
+		own := p.ownProcesses(procs)
+		if len(own) == 0 {
+			return nil
+		}
+		if attempt == stopAttempts {
+			left := make([]string, len(own))
+			for i, proc := range own {
+				left[i] = fmt.Sprintf("process %d, %s", proc.pid, proc.name)
+			}
+			err := fmt.Errorf("the executor is still running (%s) after it was told to stop", strings.Join(left, "; "))
+			if killErr != nil {
+				err = fmt.Errorf("%w: %w", err, killErr)
+			}
+			return err
+		}
+		args := []string{"/T", "/F"}
+		for _, proc := range own {
+			args = append(args, "/PID", strconv.Itoa(proc.pid))
+		}
+		_, killErr = d.Exec(ctx, p.system+`\taskkill.exe`, args, nil) // a process that ended on its own, or with its parent, is an error here and no failure: the next listing says what is left
 	}
 }
 
@@ -370,10 +466,15 @@ func (p executorPlan) start(ctx context.Context, d Deps) error {
 }
 
 // remove stops the executor and takes it out of the operating system when registered says it is there, and deletes its files, the token copy apart:
-// the program, its pin, its log and the definitions.
+// the program, its pin, its log and the definitions. A stop that fails (a process of the Windows tree that is left) fails the removal before anything
+// is deleted. On Windows the stop runs without a registered task too: a wrapper whose task was deleted by hand still starts the program.
 func (p executorPlan) remove(ctx context.Context, d Deps, registered bool) error {
+	if registered || p.goos == "windows" {
+		if err := p.stop(ctx, d); err != nil {
+			return err
+		}
+	}
 	if registered {
-		p.stop(ctx, d)
 		switch p.goos {
 		case "windows":
 			if _, err := d.Exec(ctx, "schtasks", []string{"/Delete", "/TN", executorTaskName, "/F"}, nil); err != nil {

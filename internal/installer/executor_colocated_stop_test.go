@@ -303,7 +303,7 @@ func TestAFirstInstallOnWindowsSetsUpNoExecutorWhenTheProcessesCannotBeListed(t 
 			// The cause (what the listing reports) comes first, once; then why the install stopped and who can help. The listing may already say that a
 			// policy stopped PowerShell, and the note does not say that a second time.
 			const cause = "could not list the programs that run on this computer: "
-			const then = ". Without that list, SuiteWard could never stop or update the test runner, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server"
+			const then = ". SuiteWard could never stop or update the test runner without that list, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server"
 			out := h.out.String()
 			if strings.Count(out, cause) != 1 || !strings.Contains(out, then) || strings.Contains(out, "programs running on this computer") || strings.Contains(out, "Detail:") {
 				t.Errorf("the output must say once that the programs could not be listed, then %q:\n%s", then, out)

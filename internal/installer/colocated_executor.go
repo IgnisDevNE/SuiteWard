@@ -58,8 +58,9 @@ func executorMechanism(goos string) string {
 
 // errProcessesNotListed is why a first install on Windows sets up no test runner: the listing of the programs that run fails, so the installer
 // could never stop or update one. Running the install again changes nothing, and setUpExecutor leaves that advice out. It follows the listing's
-// own error, which already says that the programs could not be listed.
-var errProcessesNotListed = errors.New("PowerShell may be restricted here. Without that list, SuiteWard could never stop or update the test runner, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server")
+// own error, which already says that the programs could not be listed and, when a policy stopped PowerShell, that it did: the note does not say
+// either a second time, and keeps the advice to ask an administrator.
+var errProcessesNotListed = errors.New("SuiteWard could never stop or update the test runner without that list, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server")
 
 // installExecutor makes the executor of this computer as the settings and this program say: its copy of the program and the pin beside it, the
 // definition that the operating system reads, and the start. What is already as it should be is left alone: an executor that runs, with the same

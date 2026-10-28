@@ -670,7 +670,7 @@ The owner decided:
 
 - **The order.** M2.1b (results communication), M2.2 (Python), M2.3 (TypeScript), M2.4 (execution maturity), M3 (security and trust), then a verification phase that ends with the first beta release, then the managed service. Each phase before the beta ships as an alpha.
 - **Dogfooding in M2.1b.** This repository's `.suiteward.yml` names `execution: {profile: go}` in M2.1b's own pull request. During M2.1b the owner enlarges the AWS host that governs this repository and moves it to the M2 release, so it keeps governing on the isolated tier. The full verification of that host waits for the verification phase.
-- **Live tests in each phase.** Podman on the co-located tier is tested on a Podman machine of its own for tests, never on `podman-machine-default`, where A3 runs. The co-located tier on Linux is tested in each phase. macOS and the real AWS host are verified in the verification phase after M3.
+- **Live tests in each phase.** The tests that each phase already runs stay: the co-located tier on Windows with Docker, and the isolated tier on a throwaway AlmaLinux 9 WSL distro. Podman on the co-located tier joins them, on a Podman machine of its own for tests, never on `podman-machine-default`, where A3 runs. The co-located tier on Linux joins them too, on the WSL Ubuntu distro, since nothing stands in its way. macOS and the real AWS host are verified in the verification phase after M3.
 - **The managed service comes after the first beta,** not as the next milestone (it updates the owner's target of 2026-10-17, D-MANAGED-SERVICE).
 - **Remote backups are redesigned later** as storage the owner provides, because the App never gets Contents write (D-BACKUP-REMOTE).
 
@@ -681,7 +681,7 @@ The orchestrator proposed, and the owner approved:
 The orchestrator added, after the owner's answers:
 
 - **A Windows test runner started by a real logon** goes into each phase's live tests, with Linux, since nothing stands in its way.
-- **How to read the decisions above:** the host must have 4 vCPU and 8 GiB with the test runner ([install guide](../install.md), section 1), and it moves to the M2 release in two steps, the host step and then `install --upgrade` as the service account ([install guide](../install.md#11-updating), section 11). Its full verification covers cloud metadata answering, enforcing SELinux and a reboot. The live tests of each phase also keep Docker on Windows, Linux on the WSL Ubuntu distro, and the isolated tier on a throwaway AlmaLinux 9 WSL distro (on the published alpha after the merge when the isolated install needs a release image, decision 15 of M2.1).
+- **How to read the decisions above:** the host must have 4 vCPU and 8 GiB with the test runner ([install guide](../install.md#3-before-you-start), section 3), and it moves to the M2 release in two steps, the host step and then `install --upgrade` as the service account ([install guide](../install.md#11-updating), section 11). Its full verification covers cloud metadata answering, enforcing SELinux and a reboot. On the throwaway AlmaLinux 9 distro, the sandbox tests and the host step run before the pull request with a development build, and the full isolated flow runs after the merge on the published alpha, because the isolated install accepts only a release image (decision 15 of M2.1).
 
 ### D-MIGRATIONS: Migration tooling
 

@@ -70,7 +70,7 @@ From M2.1b on (D-ROADMAP), these live tests replace the remote host in each phas
 - on the co-located tier on Windows, with Docker, and with Podman on a Podman machine of its own for tests (never `podman-machine-default`, where A3 runs), before its pull request;
 - on the co-located tier on Linux, on the WSL Ubuntu distro, before its pull request;
 - with a Windows test runner started by a real logon (the orchestrator's placement);
-- on the isolated tier, on a throwaway AlmaLinux 9 WSL distro: before the pull request with a development build, and after the merge on the published alpha when the isolated install needs a release image (decision 15 of M2.1).
+- on the isolated tier, on a throwaway AlmaLinux 9 WSL distro: the sandbox tests and the host step before the pull request with a development build, and the full isolated flow after the merge on the published alpha, because the isolated install accepts only a release image (decision 15 of M2.1).
 
 There is no deployment workflow: the Deploy workflow, the `:deploy` tag and the `remote-poc` environment were retired on 2026-10-21 (D-DEPLOY), and CI builds the image without pushing it. Releases are the only published images. A host pins a release's signed index digest by hand in the unit files, with no automatic update (no deploy key or registry credential leaves GitHub or reaches the host), and the owner places the App key on the host once. The agent never holds host credentials, so the remote target stays a genuine isolated installation. Host choice and access are decided in D-DEPLOY.
 

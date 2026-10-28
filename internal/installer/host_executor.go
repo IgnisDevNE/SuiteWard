@@ -261,10 +261,17 @@ func (h *host) installedHash(ctx context.Context, file string) string {
 type releaseProgram struct{ exe, sum, pin string }
 
 // verifyRelease requires the release's SHA256SUMS (--sha256sums) and checks, before the step changes anything, that it lists this program exactly once
-// as a Linux binary: the executor's pin is the signed release's line, not only the hash of the program that happened to be copied. A missing flag is
-// a mistake of the command line (ErrUsage).
+// as a Linux binary: the executor's pin is the signed release's line, not only the hash of the program that happened to be copied. A terminal is asked
+// for the file; where nobody can be asked, a missing flag is a mistake of the command line (ErrUsage).
 func (h *host) verifyRelease(ctx context.Context) (releaseProgram, error) {
 	sumsFile, ok := h.r.given("sha256sums")
+	if !ok && h.r.asks("sha256sums") {
+		var err error
+		if sumsFile, err = h.r.Value("sha256sums", "Where is the release's SHA256SUMS file?", ""); err != nil {
+			return releaseProgram{}, err
+		}
+		ok = true
+	}
 	if ok && strings.TrimSpace(sumsFile) == "" {
 		return releaseProgram{}, fmt.Errorf("%w: install host needs the SHA256SUMS file of the release this program was downloaded from, but `--sha256sums` is empty (an unset variable?)", ErrUsage)
 	}

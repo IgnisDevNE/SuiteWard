@@ -61,7 +61,7 @@ func (d *doctor) executorTokenFile() (string, bool) {
 		return "", false
 	}
 	if !isDefault {
-		d.fail("executor.token", "`--settings` names `"+d.settingsPath+"`, which is not the default settings file, so this is a second instance. Without `--token-file`, doctor cannot tell which test runner (the executor) is yours: the default token file `"+file+"` belongs to the main instance. The test runner was not checked.",
+		d.fail("executor.token", "The settings file `"+d.settingsPath+"` is not the default settings file, so this is a second instance. Without `--token-file`, doctor cannot tell which test runner (the executor) is yours: the default token file `"+file+"` belongs to the main instance. The test runner was not checked.",
 			"Pass `--token-file` with this instance's token file (the one its install used). If this is the only instance on this computer and `"+file+"` is its token file, pass `--token-file "+quoteArg(file)+"`.")
 		return "", false
 	}

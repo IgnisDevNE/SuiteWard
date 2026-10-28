@@ -196,6 +196,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	plan := upgradePlan{oldImage: previous.Image, newImage: image, oldDB: dbImage, newDB: postgres}
 	// A stack without a settings file (made by local.ps1) is converted even when it runs this release: the settings are saved.
 	if plan.current() && t.haveSaved {
+		listInstallation(scr, env.Deps, t.settingsPath, tokenFile, s, "") // no settings are saved here, and an installation that was made before the list joins now
 		return upgradeColocatedCurrent(ctx, r, env, rt, s, tokenFile, image, pin)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
@@ -212,7 +213,9 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	startCommand := fmt.Sprintf("`%s start %s`, then, once it is healthy, `%s start %s`", engine, ContainerDB, engine, ContainerServe)
-	started, err := ensureServiceUp(ctx, r, env, c.readStatus, c.startInstalled, startCommand)
+	var instanceID string // what /status shows, kept from the reads below: the service is replaced, and answers again only when the upgrade is done
+	status := noteInstance(&instanceID, c.readStatus)
+	started, err := ensureServiceUp(ctx, r, env, status, c.startInstalled, startCommand)
 	if err != nil {
 		return err
 	}
@@ -223,7 +226,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	scr.Step(2)
 	stored := s
 	stored.Image = previous.Image // what the settings file says until the upgrade is done: a key made now is saved beside it
-	inst := instance{rt: rt, s: stored, settingsPath: t.settingsPath, haveSettings: t.haveSaved, image: previous.Image, status: c.readStatus, startCommand: startCommand, serviceStarted: started}
+	inst := instance{rt: rt, s: stored, settingsPath: t.settingsPath, haveSettings: t.haveSaved, image: previous.Image, status: status, startCommand: startCommand, serviceStarted: started}
 	dir, err := upgradeBackup(ctx, r, env, &inst, parent, nil, agreed)
 	if err != nil {
 		return err
@@ -238,7 +241,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return withBackup(env.Deps, err, dir, "")
 	}
 	scr.Step(4)
-	if err := c.bringUp(ctx, func() error { return SaveSettings(t.settingsPath, c.s) }); err != nil {
+	if err := c.bringUp(ctx, c.saveAndList(scr, env, t, instanceID)); err != nil {
 		return withBackup(env.Deps, err, dir, "")
 	}
 	scr.Step(5)
@@ -249,6 +252,17 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	c.installSelf(ctx)
 	c.endPlainUpgrade(scr)
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
+}
+
+// saveAndList is the save of the bring-up of an upgrade: the settings, then the entry of the installation in the list.
+func (c *colocatedInstall) saveAndList(scr *ui.Screen, env Env, t installTarget, instanceID string) func() error {
+	return func() error {
+		if err := SaveSettings(t.settingsPath, c.s); err != nil {
+			return err
+		}
+		listInstallation(scr, env.Deps, t.settingsPath, c.tokenFile, c.s, instanceID)
+		return nil
+	}
 }
 
 // settleRecipient settles the key the backup of an upgrade is encrypted to, from the settings and what the command was given, before

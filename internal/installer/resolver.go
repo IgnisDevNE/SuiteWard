@@ -44,6 +44,10 @@ type Resolver struct {
 	term           Terminal
 	in             *bufio.Reader // shared with the Screen: both read from the one buffer
 	screen         *ui.Screen    // every question goes through it
+	// chosen is the installation that a command works on when no flag names one: picked on the screen, or the only one there is. At most the
+	// keys settings and token-file: the type and the engine are the ones the settings file names. Only instance(), preset and the settings file
+	// read it, after the flags and the answers file: given, asks and answerSource never do, so a chosen installation is not a typed one.
+	chosen map[string]string
 }
 
 // validate refuses a console that cannot read or write.

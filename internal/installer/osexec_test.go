@@ -67,7 +67,22 @@ func TestMain(m *testing.M) {
 	}
 	// No test opens a window of its own: the window is for the real machine, where it would start a real terminal.
 	setupMachine = machine{goos: "linux", getenv: func(string) string { return "" }}
-	os.Exit(m.Run())
+	// An install writes the list of installations beside the default settings file, and a command that is given no flag reads the default one:
+	// no test may reach the configuration folder of whoever runs it. A test that needs a folder of its own calls useDefaultConfigDir.
+	configDir, err := os.MkdirTemp("", "suiteward-config-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "make the test configuration folder:", err)
+		os.Exit(1)
+	}
+	for _, key := range []string{"APPDATA", "XDG_CONFIG_HOME", "HOME"} {
+		if err := os.Setenv(key, configDir); err != nil {
+			fmt.Fprintln(os.Stderr, "point the test configuration folder:", err)
+			os.Exit(1)
+		}
+	}
+	code := m.Run()
+	_ = os.RemoveAll(configDir)
+	os.Exit(code)
 }
 
 func helperCommand(t *testing.T, mode string) (name string, args []string) {

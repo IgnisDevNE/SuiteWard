@@ -256,6 +256,7 @@ func installIsolated(ctx context.Context, s Settings, r *Resolver, env Env) erro
 	if err := SaveSettings(settingsPath, g.s); err != nil {
 		return err
 	}
+	listInstallation(scr, env.Deps, settingsPath, "", g.s, "")
 	g.clearPending() // the settings name the App now
 	scr.Step(6)
 	say("\nSuiteWard %s is running on this account. Settings are saved in %s.\n\n", digest, settingsPath)

@@ -308,8 +308,8 @@ func emptySettings(flags map[string]string) error {
 }
 
 // settingsPathFrom is the settings file of a command and whether it is the shared per-user default.
-func settingsPathFrom(flags map[string]string) (path string, isDefault bool, err error) {
-	if path = flags["settings"]; path != "" {
+func settingsPathFrom(r *Resolver) (path string, isDefault bool, err error) {
+	if path = r.settingsFlag(); path != "" {
 		return path, false, nil
 	}
 	path, err = DefaultSettingsPath()
@@ -324,7 +324,7 @@ func loadSaved(d Deps, path string, named bool) (Settings, bool, error) {
 	case err == nil:
 		return saved, true, nil
 	case errors.Is(err, ErrNoSettings) && named:
-		return Settings{}, false, fmt.Errorf("--settings names %s, which does not exist: %w (nothing was changed; check the path: only `%s` makes a settings file)", path, ErrNoSettings, d.suggest("install"))
+		return Settings{}, false, fmt.Errorf("the settings file %s does not exist: %w (nothing was changed; check the path: only `%s` makes a settings file)", path, ErrNoSettings, d.suggest("install"))
 	case errors.Is(err, ErrNoSettings):
 		return DefaultSettings(), false, nil
 	}
@@ -365,12 +365,17 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	upgrade := flags["upgrade"] == "true"
+	if upgrade { // an install of a new installation never asks: it names its settings file and token file, or takes the default ones
+		if err := r.chooseInstallation(env.Deps); err != nil {
+			return err
+		}
+	}
 	env.Deps.instance = r.instance()
-	settingsPath, defaultPath, err := settingsPathFrom(flags)
+	settingsPath, defaultPath, err := settingsPathFrom(r)
 	if err != nil {
 		return err
 	}
-	upgrade := flags["upgrade"] == "true"
 	saved, haveSaved, err := loadSaved(env.Deps, settingsPath, upgrade && !defaultPath) // an install makes the file: only an upgrade needs it to be there
 	if err != nil {
 		return err
@@ -478,7 +483,17 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 	}
 	var closed error
 	defer endConsole(scr, &closed) // a panic must not leave the terminal on the alternate screen; the exit code below reads the error of Close
-	code := Doctor(ctx, env.Deps, flags["settings"], flags["token-file"], env.Term.Out, false)
+	r, err := NewResolver(flags, nil, env.Term)
+	if err == nil {
+		err = r.chooseInstallation(env.Deps)
+	}
+	if err != nil {
+		_ = scr.Close() // before the error is printed, or the screen would hide it; the deferred call reports a close that failed
+		_, _ = fmt.Fprintf(stderr, "suiteward: %v\n", err)
+		return 1
+	}
+	env.Deps.instance = r.instance()
+	code := Doctor(ctx, env.Deps, r.settingsFlag(), r.preset("token-file", ""), env.Term.Out, false)
 	interrupted := ctx.Err() != nil // Ctrl-C ended the checks; one at the final wait comes after them and keeps their code
 	waitErr := holdPage(scr)        // the results stay on the screen until Enter
 	closeErr := scr.Close()
@@ -498,12 +513,15 @@ func doctorCommand(ctx context.Context, args []string, env Env, stderr io.Writer
 	return code
 }
 
-// preset is an answer that is never asked for: the flag or the answers file, else def.
+// preset is an answer that is never asked for: the flag or the answers file, else the installation that was chosen, else def.
 func (r *Resolver) preset(key, def string) string {
 	if v, ok := r.flags[key]; ok {
 		return v
 	}
 	if v, ok := r.answers[key]; ok {
+		return v
+	}
+	if v, ok := r.chosen[key]; ok {
 		return v
 	}
 	return def

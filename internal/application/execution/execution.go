@@ -372,7 +372,7 @@ type ReceiptCheck struct {
 	PullNumber   int
 	HeadSHA      string
 	State        CheckState
-	Reason       string // receipt-running, receipt-failing, receipt-complete or receipt-not-run
+	Reason       string // receipt-running, receipt-not-responding, receipt-failing, receipt-complete or receipt-not-run
 	Reference    string // "P<n>-R<m>" or empty
 	JobID        int64  // the receipt job that the state shows, 0 for none
 	Unblocked    bool   // the owner unblocked the head's receipt job and it is unavailable

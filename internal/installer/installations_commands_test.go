@@ -183,8 +183,8 @@ func TestAnUpgradeOfTheChosenInstallationStillSaysTheTierNotice(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := u.env()
-	env.Term = Terminal{In: strings.NewReader(u.settingsPath() + "\n"), Out: &u.out, IsTerminal: true, ReadPassword: func() ([]byte, error) { return nil, nil }}
-	if err := Install(context.Background(), []string{"--upgrade", "--image", testImage, "--yes", "--plain", "--backup-dir", u.backups}, env); err != nil {
+	env.Term = Terminal{In: strings.NewReader(u.settingsPath() + "\n" + "y\n"), Out: &u.out, IsTerminal: true, ReadPassword: func() ([]byte, error) { return nil, nil }}
+	if err := Install(context.Background(), []string{"--upgrade", "--image", testImage, "--plain", "--backup-dir", u.backups}, env); err != nil {
 		t.Fatalf("%v\n%s", err, u.out.String())
 	}
 	if !strings.Contains(u.out.String(), reducedAssuranceNotice) {

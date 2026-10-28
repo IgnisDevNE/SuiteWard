@@ -11,24 +11,23 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
-// installationKeys are the flags that name an installation together: a person types up to five of them today.
-var installationKeys = []string{"settings", "token-file", "tier", "runtime", "connection"}
-
 // settingsFlag is the settings file the run names: --settings, else the installation that was chosen. The answers file never names it.
 func (r *Resolver) settingsFlag() string { return cmp.Or(r.flags["settings"], r.chosen["settings"]) }
 
-// namesInstallation says whether the run was given a flag, or an answers-file key but for settings, that names an installation.
+// namesInstallation says whether the run names an installation: with --settings, or with a token file (the flag or its answers-file key), which is
+// the other file that tells two installations apart. The tier, the runtime and the connection do not: with several installations, a run that gives
+// only one of them has not said which installation it is for.
 func (r *Resolver) namesInstallation() bool {
-	if _, ok := r.flags["settings"]; ok {
-		return true
-	}
-	return slices.ContainsFunc(installationKeys[1:], func(key string) bool { _, ok := r.given(key); return ok })
+	_, settings := r.flags["settings"]
+	_, tokenFile := r.given("token-file")
+	return settings || tokenFile
 }
 
 // chooseInstallation settles which installation a command works on when no flag names one: it asks when there are several and a terminal
-// can be asked, uses the one there is and says which, and refuses where nobody can be asked. The choice goes into r.chosen, which
-// instance(), preset and settingsFlag read after the flags and the answers file; given and asks do not, so a chosen installation is not a
-// typed one. The default installation, chosen, sets nothing.
+// can be asked, uses the one there is and says which, and refuses where nobody can be asked: with no terminal, and under --yes or --answers, so
+// that a script never waits on the question and never gets the default one silently. The choice goes into r.chosen, which instance(), preset
+// and settingsFlag read after the flags and the answers file; given and asks do not, so a chosen installation is not a typed one. The default
+// installation, chosen, sets nothing.
 func (r *Resolver) chooseInstallation(d Deps) error {
 	if r.namesInstallation() {
 		return nil
@@ -44,7 +43,7 @@ func (r *Resolver) chooseInstallation(d Deps) error {
 		r.say("This computer has one SuiteWard installation, so the command uses it. Its settings file is %s.\n", found[0].Settings)
 		r.choose(d, found[0])
 		return nil
-	case !r.term.IsTerminal:
+	case !r.term.IsTerminal || unattended(r.flags):
 		files := make([]string, len(found))
 		for i, c := range found {
 			files[i] = c.Settings

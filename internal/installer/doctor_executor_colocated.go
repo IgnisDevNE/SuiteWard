@@ -78,8 +78,10 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 		other, stateErr = plan.foreign(registered)
 	}
 	d.refusedFolder = plan.refuseNew()
-	if stateErr == nil && !registered && d.failRefusedFolder() {
-		return // nothing is there, and an install would refuse the folder: no other row is checked, because its fix would be that install
+	// Nothing of this instance is there (or another instance's holds the place), and an install would refuse the folder even once that one is removed:
+	// no other row is checked, because its fix would be that install.
+	if stateErr == nil && (!registered || other) && d.failRefusedFolder() {
+		return
 	}
 	fix, notRunning := d.executorFix(), plan.startHint()
 	if other { // no install makes this instance an executor of its own while that one is registered
@@ -125,8 +127,9 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	d.checkExecutorLoopback(ctx)
 }
 
-// failRefusedFolder is the result of a computer that has no test runner in a folder that an install refuses (refuseNew): running the install again
-// does not help, so the message says what to. It reports whether the folder is refused.
+// failRefusedFolder is the result of a computer that has no test runner of this instance in a folder that an install refuses (refuseNew): running
+// the install again does not help, nor does removing the test runner of another instance, so the message says what to do. It reports whether the
+// folder is refused.
 func (d *doctor) failRefusedFolder() bool {
 	if d.refusedFolder != nil {
 		d.fail("executor.lifecycle", d.refusedFolder.Error(), "Do what the message says, then run `"+d.deps.suggest("doctor")+"` again.")

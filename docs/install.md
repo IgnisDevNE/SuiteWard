@@ -602,7 +602,7 @@ Read these before you rely on a result, and before you choose `required`.
   - under `canonical: required`, the Contract check of the head that awaits your approval: it states the counts of the approved tests on the head, and when one fails, is missing or is flaky it adds that an edited test can pass by checking less. The approved version of the edited test fails there;
   - under `canonical: advisory`, the canonical run on the receipt page, where the approved version fails too.
 
-  Read the change of every edited test before you approve. A signal for an approved test that a change edits and that fails in its approved version is planned for the results-communication phase before M2.2 (owner decision 22 of the [phase page](plan/phases/M2.1.md)).
+  With `canonical: off` nothing runs the approved version, so only the marker line and the change report are left. Read the change of every edited test before you approve. A signal for an approved test that a change edits and that fails in its approved version is planned for the results-communication phase before M2.2 (owner decision 22 of the [phase page](plan/phases/M2.1.md)).
 - **`NEW API` covers a whole package.** A test that needs a new dependency, or a symbol that only the head's non-test source has, does not build on the base. In Go a build failure belongs to a package, so every evaluated test of that package reads `NEW API`.
 - **Two tests of one name read as one.** An internal and an external test package of one directory that both declare a test of one name are reported once, with the worst observation of the two, because `go test -run` selects by name alone.
 - **Excluded tests are not covered,** and the tests of a nested module that the repository protects are among them (a nested module that it does not protect excludes nothing; see "What the source check refuses").
@@ -667,7 +667,7 @@ Read these before you rely on a result, and before you choose `required`.
 - **Also seen there:** the executor with no window; its restart about a minute after its process was killed; an upgrade that stopped the running executor's whole tree by itself, started the new one and moved the database to version 22 with its data kept; and the purge.
 - **Seen on a throwaway AlmaLinux 9 distro** (WSL, Podman 5.8.2, cgroup v2): the sandbox tests, the verified source stream and one executor run, as a user without administrator rights under rootless Podman, all passed (`--log-driver=none` included); and the host step with a development binary and a sums file made for it, which refused to run without `--sha256sums` (exit code 2) and then set up an executor that ran. That sums file does not exercise the pin of a signed release.
 - **Not seen:**
-  - the co-located tier on Podman, the program this guide recommends;
+  - the executor on the co-located tier with Podman, the program this guide recommends (the installer itself was validated live on Podman in earlier phases);
   - the co-located executor on macOS and on Linux;
   - the lease wait at its default of 2 minutes;
   - a real PowerShell constrained language mode (the refusal of section 5.4 is covered by unit tests only);

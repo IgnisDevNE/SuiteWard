@@ -67,20 +67,70 @@ var serviceCommands = []string{"enroll", "install"}
 
 // writeCommands is a fix of a row of the service with each command that the row says it names (named) written as every other hint is, with the
 // flags that name the instance (suggest): the service writes the bare name, because it cannot know them. The row comes from another process, so
-// only a subcommand of serviceCommands is written, and only where the fix spells it; any other name leaves the fix as it came. A bare command
-// that stood between backticks stays between them, and one that did not gets them, because the flags make it longer than a word.
+// only a subcommand of serviceCommands is written, and only where the fix spells it as a whole command (commandWord); anything else, such as a
+// command with flags of its own or a longer word, stays as the service wrote it. A command is written between backticks, as the service had it
+// or, when it stood alone, with them, because the flags make it longer than a word. All the spellings are found in the service's own text first,
+// so what is written is never read again.
 func (d Deps) writeCommands(fix string, named []string) string {
-	var pairs []string
+	type span struct {
+		from, to int
+		with     string
+	}
+	var spans []span
 	for _, sub := range serviceCommands {
-		if slices.Contains(named, sub) {
-			bare, written := selfName+" "+sub, "`"+d.suggest(sub)+"`"
-			pairs = append(pairs, "`"+bare+"`", written, bare, written)
+		if !slices.Contains(named, sub) {
+			continue
+		}
+		bare, written := selfName+" "+sub, "`"+d.suggest(sub)+"`"
+		for at := 0; ; {
+			i := strings.Index(fix[at:], bare)
+			if i < 0 {
+				break
+			}
+			from, to := at+i, at+i+len(bare)
+			at = to
+			if first, last, whole := commandWord(fix, from, to); whole {
+				spans = append(spans, span{first, last, written})
+			}
 		}
 	}
-	if len(pairs) == 0 {
-		return fix
+	slices.SortFunc(spans, func(a, b span) int { return a.from - b.from })
+	var out strings.Builder
+	end := 0
+	for _, s := range spans {
+		out.WriteString(fix[end:s.from])
+		out.WriteString(s.with)
+		end = s.to
 	}
-	return strings.NewReplacer(pairs...).Replace(fix) // one pass over the service's text: what it writes is not read again
+	out.WriteString(fix[end:])
+	return out.String()
+}
+
+// commandWord says whether fix[from:to], the program's name and a subcommand, is a whole command, and where it stands with its backticks. It is
+// one when it is exactly between a pair of backticks, or when it stands alone: after the start of the text, a space or an opening bracket, and
+// before the end of the text, a punctuation mark or a space that no flag follows (a flag belongs to the command, and the instance's flags would go
+// before it). Inside a longer backticked command, glued to a word or followed by one it is not.
+func commandWord(fix string, from, to int) (first, last int, whole bool) {
+	var before, after byte
+	if from > 0 {
+		before = fix[from-1]
+	}
+	if to < len(fix) {
+		after = fix[to]
+	}
+	switch {
+	case before == '`' && after == '`':
+		return from - 1, to + 1, true
+	case before != 0 && !strings.ContainsRune(" (\n", rune(before)):
+		return 0, 0, false
+	case after == 0:
+		return from, to, true
+	case after == ' ':
+		rest := strings.TrimLeft(fix[to:], " ")
+		return from, to, rest == "" || rest[0] != '-'
+	default:
+		return from, to, strings.ContainsRune(".,;:!?)", rune(after))
+	}
 }
 
 // onIsolated is d for the install and the upgrade of the isolated tier, whose hints name it with --tier isolated: a host that was set up by

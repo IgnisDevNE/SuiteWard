@@ -86,6 +86,9 @@ func (f *fakeEngine) deps() Deps {
 					return []byte(r.out), r.err
 				}
 			}
+			if strings.Contains(c.line(), "Win32_Process") { // a computer where no rule says what runs lists no process, and its listing ends as it should
+				return []byte(listingOf(nil)), nil
+			}
 			return nil, nil
 		},
 		Interactive: func(_ context.Context, name string, args []string) error {

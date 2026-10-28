@@ -93,6 +93,13 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	} else if other {
 		return plan, fmt.Errorf("a computer has one test runner, and yours belongs to another instance. This instance left it as it is. To use this instance's own, remove the other instance with `%[1]s uninstall`, then run `%[1]s install` again", d.command())
 	}
+	// state lists the programs when a task is there; a first install has not yet. An executor that the installer can never list again can never be
+	// updated or removed by it (PowerShell in constrained language mode), so it is not set up.
+	if plan.goos == "windows" && !registered {
+		if _, err := plan.listProcesses(ctx, d); err != nil {
+			return plan, fmt.Errorf("SuiteWard cannot check the processes on this computer (PowerShell is restricted here), so it does not set up the test runner. Nothing was changed. Detail: %w", err)
+		}
+	}
 	if err := os.MkdirAll(plan.dir, 0o700); err != nil {
 		return plan, fmt.Errorf("create %s: %w", plan.dir, err)
 	}

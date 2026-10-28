@@ -264,7 +264,6 @@ func TestInstallDoesNotReplaceTheExecutorWhenTheProcessesCannotBeListedOnWindows
 // executor that the installer could never list again could never be updated or removed by it.
 func TestAFirstInstallOnWindowsEndsNothingAndListsTheProcessesOnceBeforeItCreatesTheTask(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
-	h.f.on("Win32_Process", listingOf(nil))
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}

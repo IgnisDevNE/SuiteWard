@@ -252,3 +252,36 @@ func TestChecksCountOnlyACompleteJobGovernedByTheManifestOfTheCanonical(t *testi
 		})
 	}
 }
+
+// The counted job is set where it is read: any reason but an approval that is missing counts none, and a pass that cannot read the run carries the stored job only when the
+// stored check of the same head is an approval that is missing too, so a job id never moves onto another reason or another head.
+func TestChecksCarryTheStoredCountedJobOnlyForTheSameHeadOfAnApprovalThatIsMissing(t *testing.T) {
+	w := newExecWorld(t, gateDecl)
+	unknown := &executionRun{} // the policy was not read, so this pass cannot count anything
+	for _, tc := range []struct {
+		name     string
+		sameHead bool
+		stored   string // the reason of the stored check
+		decided  string // the reason of this pass
+		want     int64
+	}{
+		{"the same approval that is missing", true, reasonApprovalMissing, reasonApprovalMissing, 5},
+		{"another head", false, reasonApprovalMissing, reasonApprovalMissing, 0},
+		{"a stored check of another reason", true, reasonReady, reasonApprovalMissing, 0},
+		{"a decided reason that is not an approval that is missing", true, reasonApprovalMissing, reasonReady, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &pullState{sameHead: tc.sameHead, record: checks.Record{Result: checks.Result{Reason: tc.stored, CountedJob: 5}}}
+			d := &pullDecision{result: checks.Result{Reason: tc.decided, CountedJob: 9}} // a value that only this pass may set
+			var executed executionOutcome
+
+			if err := w.check.approvalCounts(t.Context(), s, unknown, d, &executed); err != nil {
+				t.Fatal(err)
+			}
+
+			if d.result.CountedJob != tc.want || executed.counts != nil {
+				t.Errorf("counted job %d, counts %+v; want job %d and no counts", d.result.CountedJob, executed.counts, tc.want)
+			}
+		})
+	}
+}

@@ -113,15 +113,12 @@ func (r *Resolver) pickInstallation(d Deps, found []candidate, stale int) (candi
 	return found[i], nil
 }
 
-// choose makes c the installation of the run. Only what the default would not give is set: its settings file, its token file and, for an
-// installation on a separate server, its type. The engine is not: the settings file names it, and a list that went stale must not override it.
+// choose makes c the installation of the run. Only what the default would not give is set: its settings file and its token file. The type and
+// the engine are not: the settings file of a candidate exists and names them, and a list that went stale or was edited must not override it.
 func (r *Resolver) choose(d Deps, c candidate) {
 	r.chosen = map[string]string{}
 	if !c.isDefault {
 		r.chosen["settings"] = c.Settings
-		if c.Tier == config.TierIsolated {
-			r.chosen["tier"] = string(config.TierIsolated)
-		}
 	}
 	if c.TokenFile != "" {
 		if def, err := defaultTokenFile(d); err != nil || !samePath(d.GOOS, def, c.TokenFile) { // with no default to compare to, the entry's is the one

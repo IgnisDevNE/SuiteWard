@@ -138,7 +138,7 @@ func variedReasons(head, base []Observation) ([]TestReason, error) {
 	if varies(base) {
 		out = append(out, TestReason{Code: TestReasonBaseVaried, Runs: base})
 	}
-	if out == nil {
+	if len(out) == 0 {
 		return nil, fmt.Errorf("%w: a flaky test whose runs did not differ", ErrNoTestReason)
 	}
 	return out, nil

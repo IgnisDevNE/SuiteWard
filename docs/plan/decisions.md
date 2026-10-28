@@ -662,6 +662,16 @@ Accepted 2026-10-26 (the owner's decisions of M2.1 planning, on the [phase page]
 - **Open.** Nothing of M2.1 is open. What is deferred is listed in [Open](#open) (`D-EXECUTION-LATER`) and in the ADR.
 - **Not in this phase.** Python and TypeScript, integration tests that need a service such as PostgreSQL, sealed tests kept outside the repository, mutation testing, remote attestation, execution by a managed service, and the pruning of stored results.
 
+### D-ROADMAP: The order after M2.1
+
+Owner, 2026-10-28, after M2.1 was merged (#60) and released as `v0.5.0-alpha.1`. The [roadmap](README.md#roadmap) holds the phases:
+
+- **The order.** M2.1b (results communication), M2.2 (Python), M2.3 (TypeScript), M2.4 (execution maturity), M3 (security and trust), then a verification phase that ends with the first beta release, then the managed service. Each phase before the beta ships as an alpha.
+- **Dogfooding in M2.1b.** This repository's `.suiteward.yml` names `execution: {profile: go}` in M2.1b's own pull request. During M2.1b the owner enlarges the AWS host that governs this repository (the test runner needs 4 vCPU and 8 GiB) and moves it to the M2 release with `install host --sha256sums`, so it keeps governing on the isolated tier. Its full verification (cloud metadata, enforcing SELinux, a reboot) waits for the verification phase.
+- **Live tests in each phase.** Before its pull request, a phase that changes what runs is tested live on: the co-located tier on Windows with Docker, and with Podman on a Podman machine of its own for tests (never `podman-machine-default`, where A3 runs); the co-located tier on Linux, on the WSL Ubuntu distro; and the isolated tier on a throwaway AlmaLinux 9 WSL distro (on the published alpha after the merge when the isolated install needs a release image, decision 15 of M2.1); a Windows test runner started by a real logon goes with them, since nothing stands in the way. macOS, the real AWS host and a real PowerShell Constrained Language Mode refusal are verified in the verification phase after M3.
+- **The managed service comes after the first beta,** not as the next milestone (it updates the owner's target of 2026-10-17, D-MANAGED-SERVICE).
+- **Remote backups are redesigned later** as storage the owner provides, such as an S3-compatible bucket, because the App never gets Contents write (D-BACKUP-REMOTE).
+
 ### D-MIGRATIONS: Migration tooling
 
 Superseded by R1. Goose, pgx and sqlc stay ([ADR 0026](../decisions/0026-versioned-postgresql-migrations.md)); the migrations were reset to a single normalized `00001` (River and the outbox were added in M1.2) described in the [persistence contract](../contracts/persistence.md).
@@ -672,15 +682,15 @@ Updated by R1. Patch coverage of 90% is required; project coverage is informatio
 
 ## Open
 
-- **D-EXECUTION-LATER:** sealed tests kept outside the repository, remote attestation (an M3 candidate), services such as PostgreSQL in the sandbox, the pruning of stored results, the safety of the Python and TypeScript install steps, which run package code (M2.2 and M2.3), private Go modules hosted on GitHub fetched through the App's read access under a governed list of prefixes (owner, 2026-10-26; M2.1 supports them only vendored), and, for a later SecOps phase, a candidate that forces `resource-limit` (a memory hog) to turn an advisory receipt `neutral` or to pass `before-approval` (owner, 2026-10-26).
+- **D-EXECUTION-LATER:** sealed tests kept outside the repository, remote attestation (an M3 candidate), services such as PostgreSQL in the sandbox, the pruning of stored results, the safety of the Python and TypeScript install steps, which run package code (M2.2 and M2.3), private Go modules hosted on GitHub fetched through the App's read access under a governed list of prefixes (owner, 2026-10-26; M2.1 supports them only vendored), and, for a later SecOps phase, a candidate that forces `resource-limit` (a memory hog) to turn an advisory receipt `neutral` or to pass `before-approval` (owner, 2026-10-26). D-ROADMAP (owner, 2026-10-28) places in M2.4 the pruning of stored results, the caching of archives and modules between containers, and the private Go modules; in M3 the forced `resource-limit` and an evaluation of remote attestation; sealed tests, services in the sandbox and mutation testing stay in the backlog.
 - **D-MANAGED-EXECUTION:** future provider-hosted or customer-infrastructure execution; nothing scheduled.
 - **D-HARDENING-CONTROLS:** further signing, provenance and transparency controls where a concrete threat justifies them. Signing the release image against `release.yml` on a `refs/tags/v*` ref, with a provenance and an SBOM, is in place from the first release built after the 2026-10-20 amendment of ADR 0008 (D-RELEASE); what remains is M3's key management and other controls. Encrypting the TOTP secret at rest with a host key is an M3 candidate with ADR 0019 (ADR 0027).
 
 ## Post-MVP
 
-- **D-MANAGED-SERVICE:** the paid managed service (owner's target, 2026-10-17), with a public App, several owners per instance, web enrollment and a hosted trust model (D-INSTALL, ADR 0009).
+- **D-MANAGED-SERVICE:** the paid managed service (owner's target, 2026-10-17), with a public App, several owners per instance, web enrollment and a hosted trust model (D-INSTALL, ADR 0009). It comes after M3 and the first beta release (D-ROADMAP, owner, 2026-10-28).
 - **D-FORK-MERGE:** a maintainer command to authorize or refuse the merge of a fork pull request, after a deeper analysis (D-SECURITY-REVIEW; fork pull requests fail closed until then).
 - **D-QUEUE:** contract-change priority queue ([ADR 0022](../decisions/0022-contract-change-pr-priority.md)).
-- **D-BACKUP-REMOTE:** Release backups and the 29-day contingency ([ADR 0021](../decisions/0021-release-backups-and-health-reconciliation.md)); it needs Contents write, which the App keeps out. Scheduled backups and the separate backup container of ADR 0019, the recovery mode of the restore and an exclusion mechanism for an old and a replacement instance (ADR 0020) wait with it ([D-ARCHIVE](#d-archive-the-encrypted-backup-archive), [D-RESTORE](#d-restore-the-guided-restore)).
+- **D-BACKUP-REMOTE:** Release backups and the 29-day contingency ([ADR 0021](../decisions/0021-release-backups-and-health-reconciliation.md)); it needs Contents write, which the App keeps out, so it will be redesigned as storage the owner provides, such as an S3-compatible bucket (D-ROADMAP, owner, 2026-10-28). Scheduled backups and the separate backup container of ADR 0019, the recovery mode of the restore and an exclusion mechanism for an old and a replacement instance (ADR 0020) wait with it ([D-ARCHIVE](#d-archive-the-encrypted-backup-archive), [D-RESTORE](#d-restore-the-guided-restore)).
 
 The runbook still re-bootstraps from the protected main branch when no backup can be used ([backup runbook](../backup.md#4-re-bootstrap-from-the-protected-default-branch)).

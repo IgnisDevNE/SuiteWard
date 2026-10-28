@@ -39,8 +39,8 @@ func TestAnInstallOfAnotherReleaseSaysToUpgradeWithTheProgramOfTheRun(t *testing
 	env := h.newEnv()
 	env.Deps.Command = swCmd
 	args := []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm", "--image", oldImage}
-	if err := Install(context.Background(), args, env); err == nil || !strings.Contains(err.Error(), "use `"+swCmd+" install --upgrade`") {
-		t.Errorf("Install = %v, want a refusal that says to use `%s install --upgrade`", err, swCmd)
+	if err := Install(context.Background(), args, env); err == nil || !strings.Contains(err.Error(), "run `"+swCmd+" install --upgrade`") {
+		t.Errorf("Install = %v, want a refusal that says to run `%s install --upgrade`", err, swCmd)
 	}
 }
 
@@ -148,7 +148,7 @@ func TestEnrollNamesTheProgramAsTheRunReachesIt(t *testing.T) {
 	if got := enrollAs(t); !strings.Contains(got, "run `"+swCmd+" install --upgrade --tier co-located` first") {
 		t.Errorf("a host with no settings file is told %q, want `%s install --upgrade --tier co-located`", got, swCmd)
 	}
-	if got := enrollAs(t, "--tier", "co-located"); !strings.Contains(got, "run `"+swCmd+" install --upgrade`, which converts") {
+	if got := enrollAs(t, "--tier", "co-located"); !strings.Contains(got, "run `"+swCmd+" install --upgrade`, which saves the settings file") {
 		t.Errorf("a co-located stack with no settings file is told %q, want `%s install --upgrade`", got, swCmd)
 	}
 	if err := func() error { _, err := enrollChecks(swCmd, &Resolver{}, GitHub{}); return err }(); err == nil || !strings.Contains(err.Error(), "run `"+swCmd+" install --github yes` first") {
@@ -193,7 +193,7 @@ func TestAnIsolatedUpgradeNamesTheProgramAsTheRunReachesIt(t *testing.T) {
 	if err := Install(context.Background(), args, env); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Check the instance with `" + swCmd + " doctor`."; !strings.Contains(u.out.String(), want) {
+	if want := "To check that everything works, run `" + swCmd + " doctor`."; !strings.Contains(u.out.String(), want) {
 		t.Errorf("the output lacks %q:\n%s", want, u.out.String())
 	}
 	r := &Resolver{flags: map[string]string{"settings": "/s.yaml"}}
@@ -214,7 +214,7 @@ func TestTheRulesetStepNamesDoctorAsTheRunReachesIt(t *testing.T) {
 		run.result(t)
 		_ = run.env.Out.(*ui.Screen).Close()
 		tail := run.out.String()[strings.LastIndex(run.out.String(), leaveAlt):]
-		if want := "then run " + swCmd + " doctor to check the protection"; !strings.Contains(tail, want) {
+		if want := "then run `" + swCmd + " doctor` to check the protection"; !strings.Contains(tail, want) {
 			t.Errorf("the warning that is kept lacks %q:\n%s", want, tail)
 		}
 	})
@@ -229,7 +229,7 @@ func TestTheRulesetStepNamesDoctorAsTheRunReachesIt(t *testing.T) {
 		run.result(t)
 		_ = run.env.Out.(*ui.Screen).Close()
 		tail := run.out.String()[strings.LastIndex(run.out.String(), leaveAlt):]
-		if want := "Run the checks again at any time with " + swCmd + " doctor."; !strings.Contains(tail, want) {
+		if want := "To check again at any time, run `" + swCmd + " doctor`."; !strings.Contains(tail, want) {
 			t.Errorf("the scrollback lacks %q:\n%s", want, tail)
 		}
 	})
@@ -244,7 +244,7 @@ func TestTheEndOfSetupNamesEnrollAsTheRunReachesIt(t *testing.T) {
 	if err := afterSetup(scr, swCmd, errors.New("boom")); err == nil {
 		t.Fatal("afterSetup hid the failure of setup")
 	}
-	mustSay(t, viewOf(t, run.output(), 100, 30), "run "+swCmd+" enroll to try again")
+	mustSay(t, viewOf(t, run.output(), 100, 30), "run `"+swCmd+" enroll` to try again")
 	_ = scr.Close()
 }
 
@@ -268,7 +268,7 @@ func TestASetupThatDoesNotEndInTimeSaysToRunEnrollAgainAsTheRunReachesIt(t *test
 func TestTheIsolatedImageRefusalNamesTheUpgradeAsTheRunReachesIt(t *testing.T) {
 	r := newTestResolver(t, map[string]string{"image": "sha256:" + strings.Repeat("b", 64)}, nil, Terminal{In: strings.NewReader(""), Out: &syncBuffer{}})
 	_, err := chooseImage(swCmd, r, strings.Repeat("a", 64), func() (bool, error) { return false, nil }, func(string, ...any) {})
-	if err == nil || !strings.Contains(err.Error(), "use `"+swCmd+" install --upgrade`") {
-		t.Errorf("chooseImage = %v, want a refusal that says to use `%s install --upgrade`", err, swCmd)
+	if err == nil || !strings.Contains(err.Error(), "run `"+swCmd+" install --upgrade`") {
+		t.Errorf("chooseImage = %v, want a refusal that says to run `%s install --upgrade`", err, swCmd)
 	}
 }

@@ -73,10 +73,10 @@ func TestTheStatusLineOfAPlainInstallInAPodmanMachineIsTheAddressWhenItAnswersFr
 				t.Fatal(err)
 			}
 			out := h.out.String()
-			if got := statusLineOf(out, "Read the status of the service: "); got != tc.want {
+			if got := statusLineOf(out, "Service status: "); got != tc.want {
 				t.Errorf("the status line is %q, want %q:\n%s", got, tc.want, out)
 			}
-			read, enroll, check := strings.Index(out, "Read the status of the service"), strings.Index(out, "Setup was not run"), strings.Index(out, "Then check the instance")
+			read, enroll, check := strings.Index(out, "Service status:"), strings.Index(out, "The owner setup did not run"), strings.Index(out, "Then check that everything works")
 			if enroll >= read || read >= check {
 				t.Errorf("the status line is not between the enrollment and the doctor line (%d, %d, %d):\n%s", enroll, read, check, out)
 			}

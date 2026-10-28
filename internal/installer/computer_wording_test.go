@@ -22,7 +22,7 @@ func TestTheTierIsDescribedAsThisComputerOnEveryPlatform(t *testing.T) {
 			if code := Main(context.Background(), args, h.newEnv(), &bytes.Buffer{}); code != 0 {
 				t.Fatalf("exit %d", code)
 			}
-			if !strings.Contains(h.out.String(), "co-located (this computer) or isolated") {
+			if !strings.Contains(h.out.String(), "co-located (on this computer, next to your coding agent) or isolated (on a separate server)") {
 				t.Errorf("the help of --tier is:\n%s", h.out.String())
 			}
 		})

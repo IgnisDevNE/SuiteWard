@@ -188,7 +188,7 @@ func TestATransientFailureOfTheOrganizationLookupWarnsAndGoesOn(t *testing.T) {
 				t.Error("the App was not created")
 			}
 			text := out.String()
-			for _, want := range []string{"Could not check acme on GitHub (" + tc.why + ")", "continuing", "after the App is created"} {
+			for _, want := range []string{"Could not check acme on GitHub (" + tc.why + ")", "This is not a problem", "after the App is created"} {
 				if !strings.Contains(text, want) {
 					t.Errorf("the output lacks %q:\n%s", want, text)
 				}

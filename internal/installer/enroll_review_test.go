@@ -104,7 +104,7 @@ func TestEnrollNamesTheOwnerItReplaces(t *testing.T) {
 	if code, stderr := h.enroll("enroll\n", "--owner", "BOB"); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	if strings.Contains(h.out.String(), "replaces the owner") || !strings.Contains(h.out.String(), "replaces the TOTP secret") {
+	if strings.Contains(h.out.String(), "replaces the owner") || !strings.Contains(h.out.String(), "replaces the authenticator secret") {
 		t.Errorf("the same owner, in another letter case, was warned about a replacement of the owner:\n%s", h.out.String())
 	}
 }

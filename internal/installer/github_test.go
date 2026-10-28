@@ -98,14 +98,10 @@ func TestResolveGitHubWithAnExistingApp(t *testing.T) {
 	}
 	assertNoKey(t, out.String(), fmt.Sprint(res), fmt.Sprintf("%+v", res), fmt.Sprintf("%#v", res))
 	entries, err := os.ReadDir(env.SettingsDir)
-	if err != nil || len(entries) != 1 || entries[0].Name() != "suiteward-ruleset-acme-app.json" {
-		t.Fatalf("settings dir = %v, %v; want only the ruleset", entries, err)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("settings dir = %v, %v; want nothing: the protection is enforced, so the ruleset file is deleted", entries, err)
 	}
-	raw, _ := os.ReadFile(filepath.Join(env.SettingsDir, entries[0].Name()))
-	if string(raw) != goldenRuleset {
-		t.Errorf("ruleset file:\n%s", raw)
-	}
-	for _, want := range []string{"https://github.example/acme/app/settings/rules", "suiteward-ruleset-acme-app.json", "enforced"} {
+	for _, want := range []string{"https://github.example/acme/app/settings/rules", "suiteward-ruleset-acme-app.json", "enforced", "was deleted"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the output lacks %q:\n%s", want, out.String())
 		}
@@ -422,7 +418,7 @@ func TestResolveGitHubWarnsAboutPrivateRepositoriesOnFree(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := out.String()
-	for _, want := range []string{"GitHub Free", "acme/app", "public repository"} {
+	for _, want := range []string{"GitHub Free", "acme/app", "is public or the account is on a paid plan"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the warning lacks %q:\n%s", want, text)
 		}
@@ -474,8 +470,8 @@ func TestResolveGitHubWaitsForTheImport(t *testing.T) {
 	if !strings.Contains(out.String(), "Press Enter when the rulesets are imported") {
 		t.Errorf("the user was not asked to confirm the import:\n%s", out.String())
 	}
-	if _, err := os.Stat(filepath.Join(env.SettingsDir, "suiteward-ruleset-acme-app.json")); err != nil {
-		t.Error(err)
+	if rulesetFileExists(t, env.SettingsDir, "acme/app") {
+		t.Error("the ruleset file stayed after the import worked")
 	}
 	// With the wait skipped nothing is asked at all.
 	env, out = flowEnv(t, g, existingFlags(t, nil), strings.NewReader(""), true)
@@ -489,6 +485,7 @@ func TestResolveGitHubRulesetFileIsPrivate(t *testing.T) {
 		t.Skip("POSIX modes")
 	}
 	g := newFakeGitHub(t)
+	g.changeRepos(func(repos []fakeRepo) { repos[0].noRule = true }) // the file stays while the import is not done
 	env, _ := flowEnv(t, g, existingFlags(t, nil), strings.NewReader(""), false)
 	if _, err := resolve(t, env); err != nil {
 		t.Fatal(err)

@@ -354,7 +354,7 @@ func TestInstallPodmanBringsTheStackUpInOrder(t *testing.T) {
 	if s.Runtime != RuntimePodman || s.Connection != "pm" || s.HTTPPort != 18081 || s.MCPPort != 18091 {
 		t.Errorf("saved settings: %+v", s)
 	}
-	if !strings.Contains(h.out.String(), "GitHub is not configured") {
+	if !strings.Contains(h.out.String(), "GitHub is not set up yet") {
 		t.Errorf("the next steps do not say that setup needs GitHub:\n%s", h.out.String())
 	}
 }
@@ -483,7 +483,7 @@ func TestInstallConvertsAV01xStack(t *testing.T) {
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(h.out.String(), "Upgrading an existing stack") {
+	if !strings.Contains(h.out.String(), "This installation comes from an older release") {
 		t.Errorf("the conversion was not announced:\n%s", h.out.String())
 	}
 	if owner := h.secretWrites(SecretDatabaseOwnerURL); len(owner) != 1 || owner[0] != DatabaseURL("suiteward", "ownerpw") {
@@ -542,7 +542,7 @@ func TestInstallStopsWhenTheDatabaseExits(t *testing.T) {
 	h := newHarness(t, "linux")
 	h.first("--format {{json .State}} suiteward-db", `{"Status":"exited"}`)
 	err := h.podman()
-	if err == nil || !strings.Contains(err.Error(), "exited") {
+	if err == nil || !strings.Contains(err.Error(), "stopped") {
 		t.Fatalf("got %v", err)
 	}
 	if len(h.f.find("psql")) != 0 {
@@ -614,7 +614,7 @@ func TestInstallTheIsolatedTierRunsOnLinuxOnly(t *testing.T) {
 
 func TestInstallRefusesAnUnknownRuntimeAndBadFlags(t *testing.T) {
 	h := newHarness(t, "linux")
-	if err := h.install("--runtime", "nerdctl", "--image", testImage); err == nil || !strings.Contains(err.Error(), "runtime") {
+	if err := h.install("--runtime", "nerdctl", "--image", testImage); err == nil || !strings.Contains(err.Error(), "container program") {
 		t.Errorf("runtime: %v", err)
 	}
 	if err := h.install("--no-such-flag"); !errors.Is(err, ErrUsage) {
@@ -1107,7 +1107,7 @@ func TestInstallEnablesPodmanRestartInAMachineWhoseUserCannot(t *testing.T) {
 				t.Fatalf("calls %v, want %v", got, tc.calls)
 			}
 			out := h.out.String()
-			if noted := strings.Contains(out, "podman-restart.service could not be enabled"); noted != tc.note {
+			if noted := strings.Contains(out, "Could not turn on podman-restart.service"); noted != tc.note {
 				t.Errorf("note printed: %v, want %v\n%s", noted, tc.note, out)
 			}
 			if tc.note && !strings.Contains(out, restartLink) {
@@ -1150,7 +1150,7 @@ func TestInstallDoesNotLinkRestartForAMachineUserThatIsNotAPlainName(t *testing.
 	}
 	var note string
 	for _, line := range strings.Split(h.out.String(), "\n") {
-		if strings.Contains(line, "podman-restart.service could not be enabled") {
+		if strings.Contains(line, "Could not turn on podman-restart.service") {
 			note = line
 		}
 	}
@@ -1205,7 +1205,7 @@ func TestInstallDockerNeedsConfirmationAndNamesTheReasons(t *testing.T) {
 	if len(h.f.calls) != 0 {
 		t.Errorf("the engine was called before the confirmation: %v", h.f.lines())
 	}
-	for _, want := range []string{"Podman", "rootful", "secrets"} {
+	for _, want := range []string{"Podman", "root", "secrets"} {
 		if !strings.Contains(h.out.String(), want) {
 			t.Errorf("the warning lacks %q:\n%s", want, h.out.String())
 		}
@@ -1484,7 +1484,7 @@ func TestInstallSkipsSetupWhenAnOwnerIsEnrolled(t *testing.T) {
 			t.Fatalf("terminal=%v: setup ran although an owner is enrolled: %v", terminal, h.f.tty)
 		}
 		out := h.out.String()
-		for _, want := range []string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged", "To re-enroll", "suiteward enroll --settings " + quoteArg(h.settingsPath())} {
+		for _, want := range []string{"An owner (bob) is already enrolled", "owner setup was skipped", "authenticator secret (the TOTP secret) is unchanged", "To enroll again", "suiteward enroll --settings " + quoteArg(h.settingsPath())} {
 			if !strings.Contains(out, want) {
 				t.Errorf("terminal=%v: the output lacks %q:\n%s", terminal, want, out)
 			}
@@ -1522,11 +1522,11 @@ func TestInstallRerunWithoutTheFlowSaysWhetherAnOwnerIsEnrolled(t *testing.T) {
 			func(context.Context, string) ([]byte, error) {
 				return []byte(`{"version":"v0.2.0","owner":{"login":"bob","accountId":7,"enrolledAt":"2026-10-01T00:00:00Z"}}`), nil
 			},
-			[]string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged"},
+			[]string{"An owner (bob) is already enrolled", "owner setup was skipped", "authenticator secret (the TOTP secret) is unchanged"},
 		},
 		"no owner": {
 			func(context.Context, string) ([]byte, error) { return []byte(`{"version":"v0.2.0"}`), nil },
-			[]string{"no owner is enrolled", placeholder},
+			[]string{"No owner is enrolled yet", placeholder},
 		},
 		"unreadable": {
 			func(context.Context, string) ([]byte, error) { return nil, errors.New("dial tcp: connection refused") },

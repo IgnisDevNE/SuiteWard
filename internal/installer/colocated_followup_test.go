@@ -226,7 +226,7 @@ func TestInstallReportsItsProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := h.out.String()
-	wait, migrated := strings.Index(out, "Waiting for suiteward-db"), strings.Index(out, "suiteward migrate finished")
+	wait, migrated := strings.Index(out, "Waiting for the database (suiteward-db)"), strings.Index(out, "The database update (migration) finished")
 	if wait < 0 || migrated < wait {
 		t.Errorf("progress lines missing or out of order:\n%s", out)
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -71,7 +72,7 @@ func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 		defaultOwner = res.Account
 	}
 	env.R.explain([]string{"owner"}, "Instance owner", ownerPage)
-	if res.OwnerLogin, err = env.R.Value("owner", "GitHub login of the instance owner, the only account whose approvals count", defaultOwner); err != nil {
+	if res.OwnerLogin, err = env.R.Value("owner", "GitHub username of the owner, the only account that can approve changes", defaultOwner); err != nil {
 		return fail(err)
 	}
 	if !ghLoginPattern.MatchString(res.OwnerLogin) {
@@ -100,7 +101,7 @@ func resolveGitHub(ctx context.Context, env githubEnv) (GitHubResult, error) {
 }
 
 // ownerPage is the explanation of the owner question, which the install and enroll draw on a full screen that is going to ask it.
-var ownerPage = ui.Para("Your GitHub username, as in github.com/<username>. Only this account's /suiteward commands and approvals count, and it cannot be an organization.")
+var ownerPage = ui.Para("Your GitHub username, as in github.com/<username>. Only this account can approve changes, with /suiteward commands. It cannot be an organization.")
 
 // chooseApp finds the App the flow works with: the one an answer names, else a new one when --github new-app asks for it, else
 // the one an earlier run created and recorded (PendingApp) when it is not the App of the settings, else the one the settings name,
@@ -176,23 +177,23 @@ func keyInTheWay(env githubEnv) string {
 	switch {
 	case recordWins(env.Existing, env.Pending):
 		p := env.Pending
-		return fmt.Sprintf("the secret %s holds the key of the App %s that an earlier run created and recorded: run again without --github new-app to take that App up; to replace it instead, remove the secret and the record, and delete the App at %s",
+		return fmt.Sprintf("the secret %s already holds the key of the App %s that an earlier run created, so nothing was changed. To use that App, run again without --github new-app. To replace it instead, remove the secret and the record, and delete the App at %s",
 			SecretGitHubAppKey, p.Slug, appPage(env.WebURL, p.Slug, p.Account, p.AccountType))
 	case env.Existing != nil && env.Existing.AppID != 0:
-		return fmt.Sprintf("the secret %s holds the key of the App %d of the settings, and the key of a new App cannot be stored over it. Remove it, then run again: the App %d stops working on this instance, and stays on GitHub (delete it at %s)",
+		return fmt.Sprintf("the secret %s holds the key of the App %d of the settings, and a new App's key cannot be stored over it, so nothing was changed. Remove the secret, then run again: the App %d then stops working on this instance and stays on GitHub (delete it at %s)",
 			SecretGitHubAppKey, env.Existing.AppID, env.Existing.AppID, appListPages(env.WebURL, *env.Existing))
 	}
-	return fmt.Sprintf("the secret %s exists, and the key of a new App cannot be stored over it: remove it, then run again", SecretGitHubAppKey)
+	return fmt.Sprintf("the secret %s exists, and a new App's key cannot be stored over it, so nothing was changed: remove the secret, then run again", SecretGitHubAppKey)
 }
 
 // replacedNote says that the App the settings named, and the App an earlier run recorded, stay on GitHub, and where each is deleted.
 func replacedNote(env githubEnv) string {
 	var note string
 	if env.Existing != nil && env.Existing.AppID != 0 {
-		note = fmt.Sprintf("The App %d that the settings named stays on GitHub. Delete it at %s.\n", env.Existing.AppID, appListPages(env.WebURL, *env.Existing))
+		note = fmt.Sprintf("The App %d that the settings named stays on GitHub. You can delete it at %s.\n", env.Existing.AppID, appListPages(env.WebURL, *env.Existing))
 	}
 	if p := env.Pending; recordWins(env.Existing, p) {
-		note += fmt.Sprintf("The App %s that an earlier run recorded stays on GitHub. Delete it at %s; the record is replaced.\n", p.Slug, appPage(env.WebURL, p.Slug, p.Account, p.AccountType))
+		note += fmt.Sprintf("The App %s that an earlier run recorded stays on GitHub. You can delete it at %s; the record is replaced.\n", p.Slug, appPage(env.WebURL, p.Slug, p.Account, p.AccountType))
 	}
 	return note
 }
@@ -211,13 +212,13 @@ func missingKey(env githubEnv, who, deleteAt string) ([]byte, error) {
 		return readAppKey(env.R)
 	}
 	if !env.R.term.IsTerminal {
-		return nil, fmt.Errorf("the %s has no key in the secret store (%s): pass --github-app-key-file <file> with the App's private key (create one on the App's settings page if you have none), or --github %s to create a new App (the old one stays on GitHub: delete it at %s)",
+		return nil, fmt.Errorf("the %s has no key in the secret store (%s), so nothing was changed. Pass --github-app-key-file <file> with the App's private key (create one on the App's settings page if you have none), or pass --github %s to create a new App (the old one stays on GitHub: delete it at %s)",
 			who, SecretGitHubAppKey, newAppAnswer, deleteAt)
 	}
 	if scr := env.R.screen; scr.FullScreen() {
 		scr.Page("The App has no key",
-			ui.Para(fmt.Sprintf("The %s has no key in the secret store (%s).", who, SecretGitHubAppKey)),
-			ui.Para("Give the App's private key file, or create a new App: the old one stays on GitHub, and you delete it at "+deleteAt+"."))
+			ui.Para(fmt.Sprintf("The %s has no key in the secret store (%s), so SuiteWard cannot use it.", who, SecretGitHubAppKey)),
+			ui.Para("Give the App's private key file, or create a new App: the old one stays on GitHub, and you can delete it at "+deleteAt+"."))
 		picked, err := scr.Select("What do you want to do?", []ui.Choice{
 			{Name: "key file", Desc: "give the App's private key file"},
 			{Name: "new App", Desc: "create a new App; the old one stays on GitHub"},
@@ -249,7 +250,7 @@ func createdError(err error, deleteURL string) error {
 	if deleteURL == "" {
 		return err
 	}
-	return fmt.Errorf("%w (the GitHub App was created by this run or an earlier one: if you cannot continue, delete it at %s)", err, deleteURL)
+	return fmt.Errorf("%w (an App was created by this run or an earlier one: if you cannot go on, delete it at %s)", err, deleteURL)
 }
 
 // appPage is the settings page of an App, where it is deleted.
@@ -498,7 +499,7 @@ func chooseAccount(ctx context.Context, env githubEnv) (string, error) {
 		case err == nil:
 			return account, nil
 		case errors.As(err, &failed): // nothing is known of the account: the conversion checks its owner after the App is made
-			env.R.screen.Warn("Could not check %s on GitHub (%s); continuing: GitHub's answer is checked after the App is created.\n", account, failed)
+			env.R.screen.Warn("Could not check %s on GitHub (%s). This is not a problem: GitHub checks the account again after the App is created.\n", account, failed)
 			return account, nil
 		case !errors.As(err, &refused) || !typed:
 			return "", err
@@ -706,7 +707,7 @@ func waitForInstallation(ctx context.Context, env githubEnv, app appauth.App, sl
 	scr := env.R.screen
 	if scr.FullScreen() {
 		scr.Page("Install the GitHub App",
-			ui.Para(fmt.Sprintf("The App exists. Install it on %s and give it access to the repositories to protect, at most %d: the installer continues by itself when it sees the installation.", account, MaxRepositories)),
+			ui.Para(fmt.Sprintf("The App exists. Install it on %s and give it access to the repositories to protect (at most %d). The installer goes on by itself when it sees the installation.", account, MaxRepositories)),
 			ui.Fields(ui.KV{Key: "Address", Value: address}, ui.KV{Key: "Account", Value: account}))
 	} else {
 		ghSay(env.Out, "Install it: open %s, choose %s, and give it access to the repositories to protect.\n", address, account)
@@ -768,7 +769,7 @@ func chooseRepositories(ctx context.Context, env githubEnv, app appauth.App, res
 	}
 	hint := fmt.Sprintf("numbers or owner/name, comma-separated, at most %d", MaxRepositories)
 	if scr.FullScreen() && env.R.asks("repositories") {
-		scr.Page("Repositories to protect", ui.Para(fmt.Sprintf("The App can reach the repositories below, and SuiteWard protects the ones you select, at most %d: each gets a ruleset that requires SuiteWard / Contract and your test check.", MaxRepositories)))
+		scr.Page("Repositories to protect", ui.Para(fmt.Sprintf("SuiteWard protects the repositories you select, at most %d. Each gets a GitHub rule (a ruleset) that requires two checks before a change is merged: SuiteWard / Contract and your test check.", MaxRepositories)))
 		choices := make([]ui.Choice, len(all))
 		for i, name := range all {
 			choices[i] = ui.Choice{Name: name}
@@ -993,11 +994,11 @@ func askTestCheck(ctx context.Context, env githubEnv, client *rest.Client, r rep
 	asking := env.R.screen.FullScreen() && env.R.asks(key)
 	if asking { // one repository to a page, before the list is read: the list goes under it
 		env.R.screen.Page("Required test check for "+r.name,
-			ui.Para("SuiteWard does not replace your CI's tests: the ruleset of this repository requires your CI's test check beside "+protection.ContractCheck+", so a pull request needs both to pass. The list shows the checks seen on the default branch."))
+			ui.Para("SuiteWard does not replace your CI's tests: a pull request must pass both "+protection.ContractCheck+" and your CI's test check. Pick the test check from the checks seen on the default branch."))
 	}
 	names, err := checkRunNames(ctx, client, r)
 	if err != nil {
-		ghSay(env.Out, "Could not read the check runs of %s (%v); you will type the name.\n", r.name, err)
+		ghSay(env.Out, "Could not read the checks of %s (%v), so you type the name.\n", r.name, err)
 	}
 	if asking && len(names) > 0 {
 		return pickTestCheck(env.R, r, names, key)
@@ -1013,7 +1014,7 @@ func askTestCheck(ctx context.Context, env githubEnv, client *rest.Client, r rep
 			def = names[0]
 		}
 	} else {
-		ghSay(env.Out, "%s has no check runs yet. Type the name your CI will publish; until a check with that name exists, /status reports missing-test-check.\n", r.name)
+		ghSay(env.Out, "%s has no checks yet. Type the name your CI will publish. Until a check with that name exists, the status shows missing-test-check, which is expected.\n", r.name)
 	}
 	answer, err := env.R.Value(key, label, def)
 	if err != nil {
@@ -1081,13 +1082,13 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		}
 		// One page, before the warnings below, which a page that came after them would take off the screen. What the user must keep is
 		// kept when the pause is over (keepImports), and only for what is left to do.
-		importPage(scr, "Import each file on GitHub.", env.WebURL, repos, files, nil)
+		importPage(scr, "Import each file on GitHub: this turns the protection on.", env.WebURL, repos, files, nil)
 		for _, r := range repos {
 			warnPrivate(scr, r)
 		}
 	} else {
 		if scr.FullScreen() { // before the lines below: a page that comes after them takes them off the screen
-			scr.Page("Import the rulesets", ui.Para("Import the file of each repository on GitHub, as below. If an older SuiteWard ruleset (of an earlier App) is already there, delete it first: both would apply."))
+			scr.Page("Import the rulesets", ui.Para("Import the file of each repository on GitHub, as shown below. This turns the protection on. If an older SuiteWard ruleset (from an earlier App) is already there, delete it first: both would apply."))
 		}
 		for _, r := range repos {
 			path, err := writeRulesetFile(env.SettingsDir, res, r)
@@ -1120,6 +1121,7 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		return pauseForImport(ctx, scr, env.Command, env.WebURL, reader, res, repos, files)
 	}
 	results, lines := readProtections(ctx, reader, res, repos)
+	dropImported(scr, repos, files, results)
 	keepProtection(scr, env.Command, lines)
 	return results, nil
 }
@@ -1151,13 +1153,29 @@ func keepSteps(scr *ui.Screen, webURL string, r repoInfo) {
 // warnPrivate warns that a private repository cannot be protected on GitHub Free.
 func warnPrivate(scr *ui.Screen, r repoInfo) {
 	if r.private {
-		scr.Warn("Warning: %s is a private repository. On GitHub Free, rules are not enforced on private repositories, so SuiteWard cannot protect it until the repository is a public repository or the account is on a paid plan (Team). The install continues, and /status will report enforcement-unavailable.\n", r.name)
+		scr.Warn("%s is a private repository. On GitHub Free, rules are not enforced on private repositories, so SuiteWard cannot protect it until the repository is public or the account is on a paid plan (Team). The install goes on, and the status shows enforcement-unavailable, which is expected.\n", r.name)
 	}
 }
 
-// keepImports prints, as lines that stay, the file and the rules page of each repository that is not protected: what is left to do once
-// the page of the pause is gone.
+// dropImported deletes the ruleset file of each repository whose protection reads as enforced: the import worked, and the file is not
+// needed any more (owner decision 20). A protection that still needs the import, or whose enforcement is unavailable, keeps its file.
+func dropImported(scr *ui.Screen, repos []repoInfo, files map[string]string, results map[string]protection.Result) {
+	for _, r := range repos {
+		if results[r.name].Kind != protection.KindEnforced || files[r.name] == "" {
+			continue
+		}
+		if err := os.Remove(files[r.name]); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			scr.Warn("Could not delete the ruleset file %s (%v). You do not need it any more, so you can delete it yourself.\n", files[r.name], err)
+			continue
+		}
+		scr.Keep("The ruleset file of %s was deleted: the import worked.\n", r.name)
+	}
+}
+
+// keepImports first deletes the files that are done (dropImported), then prints, as lines that stay, the file and the rules page of each
+// repository that is not protected: what is left to do once the page of the pause is gone.
 func keepImports(scr *ui.Screen, webURL string, repos []repoInfo, files map[string]string, results map[string]protection.Result) {
+	dropImported(scr, repos, files, results)
 	for _, r := range repos {
 		if results[r.name].Kind != protection.KindEnforced {
 			keepImport(scr, r, files[r.name])
@@ -1181,7 +1199,7 @@ func importPage(scr *ui.Screen, lead, webURL string, repos []repoInfo, files map
 		dir = filepath.Dir(files[r.name])
 	}
 	scr.Page("Import the rulesets", ui.Para(lead+" The files are in "+dir+":"), ui.Fields(rows...),
-		ui.Para("Open the link of each repository, choose New ruleset, then Import a ruleset, select its file and create the ruleset. If an older SuiteWard ruleset (of an earlier App) is already there, delete it first: both would apply."))
+		ui.Para("Open the link of each repository, choose New ruleset, then Import a ruleset, select its file and create the ruleset. If an older SuiteWard ruleset (from an earlier App) is already there, delete it first: both would apply."))
 }
 
 // rulesPageURL is the page of the rules of r on GitHub, where its ruleset is imported.
@@ -1194,8 +1212,8 @@ func rulesPageURL(webURL string, r repoInfo) string { return webURL + "/" + r.na
 // do, the file and the rules page of each repository that is not protected, is kept when the pause is over.
 func pauseForImport(ctx context.Context, scr *ui.Screen, cmd, webURL string, reader *github.Reader, res GitHubResult, repos []repoInfo, files map[string]string) (map[string]protection.Result, error) {
 	choices := []ui.Choice{
-		{Name: "I imported it, check now", Desc: "check on GitHub"},
-		{Name: "Skip, import later", Desc: "go on without it"},
+		{Name: "I imported it, check now", Desc: "reads the protection from GitHub"},
+		{Name: "Skip, import later", Desc: "go on; nothing is protected until you import"},
 	}
 	var results map[string]protection.Result
 	var lines []string
@@ -1234,7 +1252,7 @@ func pauseForImport(ctx context.Context, scr *ui.Screen, cmd, webURL string, rea
 			open = append(open, r.name)
 		}
 	}
-	scr.Warn("The rulesets of %s are not imported or not checked yet: import the files named above on GitHub, then run %s doctor to check the protection.\n", strings.Join(open, ", "), cmd)
+	scr.Warn("The rulesets of %s are not imported or not checked yet, so these repositories are not protected. Import the files named above on GitHub, then run `%s doctor` to check the protection.\n", strings.Join(open, ", "), cmd)
 	return results, nil
 }
 
@@ -1331,7 +1349,7 @@ func keepProtection(scr *ui.Screen, cmd string, lines []string) {
 	for _, line := range lines {
 		scr.Keep("%s", line)
 	}
-	scr.Keep("Run the checks again at any time with %s doctor.\n", cmd)
+	scr.Keep("To check again at any time, run `%s doctor`.\n", cmd)
 }
 
 // runSetup runs `suiteward setup` in the serving container on a real terminal. Setup prints the TOTP enrollment URI and secret there,
@@ -1411,7 +1429,7 @@ func explainSetup(scr *ui.Screen, owner string, window, closes bool) error {
 		where, prompt = "Setup opens in a separate window and this one waits for it. In that window, press Enter after the code is accepted: "+then, "Press Enter to open setup in a new window: "
 	}
 	scr.Page("Enroll the owner",
-		ui.Para(fmt.Sprintf("Next, setup enrolls %s as the owner of this instance, the only account whose approvals count. It shows a TOTP secret once, as text: an otpauth:// link and the same secret in base32. Add it to your authenticator app, by typing the key or pasting the link, then confirm with a code from the app.", owner)),
+		ui.Para(fmt.Sprintf("Next, setup makes %s the owner of this instance: the only account that can approve changes. It shows an authenticator secret (the TOTP secret) once, as text: a link that starts with otpauth:// and the same secret as a key. Add it to your authenticator app by typing the key or pasting the link, then confirm with the six-digit code from your authenticator app.", owner)),
 		ui.Para("The installer never sees the secret and keeps no copy of it: setup runs in the container and writes it straight to the terminal."),
 		ui.Para("Stop any screen or terminal recording first, and make sure no coding agent can read the terminal where the secret shows."),
 		ui.Para(where))
@@ -1434,7 +1452,7 @@ func setupInWindow(ctx context.Context, rt Runtime, scr *ui.Screen, open windowS
 		goesOn = "when the setup window closes"
 	}
 	scr.Page("Enroll the owner",
-		ui.Para("Setup is open in another window. Follow it there: add the secret to your authenticator app and enter the code it shows."),
+		ui.Para("Setup is open in another window. Follow it there: add the secret to your authenticator app and enter the six-digit code from your authenticator app."),
 		ui.Para("This window goes on "+goesOn+". Ctrl-C stops waiting; close the setup window yourself if it stays open."))
 	return true, working(scr, "waiting for the owner enrollment in the other window (Ctrl-C to cancel)", wait)
 }
@@ -1446,7 +1464,7 @@ func setupHere(ctx context.Context, cmd string, rt Runtime, scr *ui.Screen, out 
 	if note != "" {
 		ghSay(out, "\n%s", note)
 	}
-	ghSay(out, "\nSetup enrolls you as the owner and prints a TOTP enrollment URI and secret, only on this terminal. Stop any session recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log setup's output.\n")
+	ghSay(out, "\nSetup makes you the owner and shows an authenticator secret (the TOTP secret, as a link and a key), only on this terminal. Stop any screen recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log what setup prints.\n")
 	execErr := rt.ExecTTY(ctx, ContainerServe, argv)
 	var waitErr error
 	if scr.FullScreen() { // the screen comes back when this returns, so the secret stays on the terminal until the user has copied it
@@ -1467,13 +1485,13 @@ func setupHere(ctx context.Context, cmd string, rt Runtime, scr *ui.Screen, out 
 // setup that did not end well.
 func afterSetup(scr *ui.Screen, cmd string, err error) error {
 	if err != nil {
-		scr.Page("Setup did not finish", ui.Para("This run did not see setup finish. If the owner is not enrolled, run "+cmd+" enroll to try again."))
+		scr.Page("Setup did not finish", ui.Para("Setup did not finish. If the owner is not enrolled yet, run `"+cmd+" enroll` to try again."))
 		if errors.Is(err, errSetupTimeout) {
 			err = fmt.Errorf("%w: finish it in its window, or run %s enroll again", err, cmd)
 		}
 		return fmt.Errorf("setup failed: %w", err)
 	}
-	scr.Page("Setup finished", ui.Para("The TOTP secret was shown only in the terminal of setup: the installer did not see, keep or log it. From now on an approval of this instance needs the code your authenticator shows."))
+	scr.Page("Setup finished", ui.Para("The authenticator secret (the TOTP secret) was shown only in setup's terminal: the installer did not see, keep or log it. From now on, approving a change needs the six-digit code from your authenticator app."))
 	return nil
 }
 

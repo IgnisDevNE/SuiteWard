@@ -282,7 +282,7 @@ func TestPlainSetupIsUnchangedOnWindows(t *testing.T) {
 	if err := runSetup(context.Background(), "suiteward", &ttyRuntime{}, "alice", setupChecks, &out); err != nil {
 		t.Fatal(err)
 	}
-	want := "\nSetup enrolls you as the owner and prints a TOTP enrollment URI and secret, only on this terminal. Stop any session recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log setup's output.\n"
+	want := "\nSetup makes you the owner and shows an authenticator secret (the TOTP secret, as a link and a key), only on this terminal. Stop any screen recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log what setup prints.\n"
 	if out.String() != want || len(win.started) != 0 {
 		t.Errorf("plain output = %q after %d windows; want %q and none", out.String(), len(win.started), want)
 	}

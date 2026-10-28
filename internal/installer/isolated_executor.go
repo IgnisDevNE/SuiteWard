@@ -36,7 +36,7 @@ func readExecutorHandover(configDir string) (token []byte, found bool, err error
 	}
 	token = bytes.TrimSpace(raw)
 	if len(token) < minExecutorTokenBytes {
-		return nil, false, fmt.Errorf("%s holds a token of fewer than %d bytes, which the service refuses: as the administrator, remove %s and run `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>` again, which makes a new one", file, minExecutorTokenBytes, executorAuthEtc)
+		return nil, false, fmt.Errorf("%s holds a token shorter than %d bytes, which the service refuses. An administrator removes %s and runs `sudo suiteward install host --sha256sums <the release's SHA256SUMS file>` again, which makes a new one", file, minExecutorTokenBytes, executorAuthEtc)
 	}
 	return token, true, nil
 }
@@ -71,14 +71,14 @@ func settleExecutorSecret(ctx context.Context, store SecretStore, token []byte, 
 // noExecutorNote is what an install or an upgrade says when the service runs without the executor's token. again is the command to run after the host
 // step: an upgrade cannot run again at the release that is installed, so it names the install.
 func noExecutorNote(again string) string {
-	return "The host has no executor token for this account yet, so the service runs without an executor and canonical execution has nothing to run on. " +
-		"The administrator makes the executor and its token with `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>`; then run " + again + ".\n"
+	return "The host has no token for the test runner (the executor) for this account yet, so the service runs without one and cannot run the approved tests. " +
+		"An administrator makes the test runner and its token with `sudo suiteward install host --sha256sums <the release's SHA256SUMS file>`; then run " + again + ".\n"
 }
 
 // executorHostNote is what an uninstall says of the executor: it is the administrator's, and the service account cannot reach it.
 func executorHostNote() string {
-	return fmt.Sprintf("The executor, when the host step made one, is the administrator's: its account %[1]s, its unit, its binary and its token are not touched here. "+
-		"It keeps asking for jobs of a service that is gone. As the administrator, to stop it: systemctl --user --machine=%[1]s@.host disable --now %[2]s "+
+	return fmt.Sprintf("The test runner (the executor), if the host step made one, belongs to the administrator: its account %[1]s, its unit, its binary and its token were not touched. "+
+		"It keeps asking for jobs from a service that is gone. To stop it, the administrator runs: systemctl --user --machine=%[1]s@.host disable --now %[2]s "+
 		"(to remove all of it: also delete %[3]s, %[4]s, %[5]s and %[6]s, the nft unit %[7]s and the account).\n",
 		ExecutorAccount, executorUnitName, executorUnitPath, executorLibDir, executorAuthEtc, executorRuleFile, executorBlockUnit)
 }
@@ -116,7 +116,7 @@ func (e executorSetup) currentNote(serviceWithout bool, install string) string {
 	if !serviceWithout || !e.found {
 		return ""
 	}
-	return fmt.Sprintf("The host step made an executor token that the service does not have yet: run %#q to give it, which restarts the service.\n", install)
+	return fmt.Sprintf("The host step made a token for the test runner (the executor) that the service does not have yet. Run %#q to give it, which restarts the service.\n", install)
 }
 
 // rotated is whether the service has an executor token secret that is not the host step's copy: the administrator removed the token and the host
@@ -152,7 +152,7 @@ func (e executorSetup) settleCurrent(ctx context.Context, env Env, scr *ui.Scree
 	if err := waitStable(ctx, env, scr, httpPort); err != nil {
 		return false, err
 	}
-	_, err = fmt.Fprintf(env.Term.Out, "The host step made a new executor token: it replaced the service's, and the service was restarted to read it. The release is current already.\n")
+	_, err = fmt.Fprintf(env.Term.Out, "The host step made a new token for the test runner (the executor). It replaced the service's, and the service was restarted to read it. The release is current already.\n")
 	return true, err
 }
 
@@ -164,7 +164,7 @@ func upgradeCurrent(ctx context.Context, env Env, r *Resolver, scr *ui.Screen, h
 		return err
 	}
 	if !settled {
-		_, _ = fmt.Fprintf(env.Term.Out, "Nothing to upgrade: already on %s. Check the instance with `%s doctor`.\n", digestOf(image), env.Deps.command())
+		_, _ = fmt.Fprintf(env.Term.Out, "Nothing to upgrade: this instance is already on %s. To check that everything works, run `%s doctor`.\n", digestOf(image), env.Deps.command())
 		_, _ = fmt.Fprint(env.Term.Out, e.currentNote(serviceWithout, installCommand(env.Deps.command(), r, true)))
 	}
 	return holdPage(scr)

@@ -262,7 +262,7 @@ func TestReportAdoptedSaysOnlyWhichTierReplacesTheOneAskedFor(t *testing.T) {
 	}
 	asked.Tier, installed.Tier = config.TierCoLocated, config.TierIsolated
 	reportAdopted(say, asked, installed)
-	if len(said) != 1 || !strings.Contains(said[0], "installed tier") {
+	if len(said) != 1 || !strings.Contains(said[0], "installation type that is installed") {
 		t.Fatalf("said %v, want the installed tier alone", said)
 	}
 }

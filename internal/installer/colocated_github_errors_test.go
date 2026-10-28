@@ -58,7 +58,7 @@ func TestInstallRefusesAGitHubResultItCannotUse(t *testing.T) {
 		result GitHubResult
 		want   string
 	}{
-		{"nothing", GitHubResult{}, "returned no App, installation or repositories"},
+		{"nothing", GitHubResult{}, "finished without an App, an installation or repositories"},
 		{"a repository that is not owner/name", GitHubResult{AppID: 1, InstallationID: 2, Account: "Acme", Repositories: []string{"not-a-repository"}}, "repositor"},
 	}
 	for _, tc := range cases {
@@ -119,7 +119,7 @@ func TestWantsGitHubForTheValuesOfTheSavedApp(t *testing.T) {
 		t.Errorf("values for the App of the saved settings: %v, %v; want the flow to run", yes, err)
 	}
 	fresh := &githubInstall{s: DefaultSettings()}
-	if _, err := fresh.wantsGitHub(context.Background(), newResolver(map[string]string{"owner": "alice"})); err == nil || !strings.Contains(err.Error(), "without a GitHub App") {
+	if _, err := fresh.wantsGitHub(context.Background(), newResolver(map[string]string{"owner": "alice"})); err == nil || !strings.Contains(err.Error(), "no GitHub App to use it with") {
 		t.Errorf("values without an App: %v", err)
 	}
 }
@@ -136,7 +136,7 @@ func TestRemoveKeySecretSaysHowForEachRuntime(t *testing.T) {
 		t.Errorf("podman: %s", got)
 	}
 	g = &githubInstall{env: Env{Deps: Deps{GOOS: "linux"}}}
-	if got := g.removeKeySecret(); got != "remove it from the secret store of the container runtime" {
+	if got := g.removeKeySecret(); got != "remove it from the secret store of the container program" {
 		t.Errorf("no engine: %s", got)
 	}
 }
@@ -148,7 +148,7 @@ func TestLeftoversNamesAKeyThatHasNoRecord(t *testing.T) {
 	g := &githubInstall{rt: pm, env: Env{Deps: Deps{GOOS: "linux"}}, pendingPath: "/x/settings.yaml.pending-app"}
 	cause := errors.New("record failed")
 	err := g.leftovers(cause, true, false)
-	if !errors.Is(err, cause) || !strings.Contains(err.Error(), "no record of the App was made") || !strings.Contains(err.Error(), "podman secret rm "+SecretGitHubAppKey) {
+	if !errors.Is(err, cause) || !strings.Contains(err.Error(), "but the App was not recorded") || !strings.Contains(err.Error(), "podman secret rm "+SecretGitHubAppKey) {
 		t.Errorf("leftovers = %v", err)
 	}
 	if got := g.leftovers(cause, false, false); got != cause {
@@ -166,7 +166,7 @@ func TestClearPendingReportsARecordItCannotDelete(t *testing.T) {
 	g := &githubInstall{out: &out, pendingPath: record}
 	g.s.GitHub = GitHub{AppID: 1}
 	g.clearPending()
-	if !strings.Contains(out.String(), "Note:") || !strings.Contains(out.String(), "you may delete it") {
+	if !strings.Contains(out.String(), "Could not delete the record of the App") || !strings.Contains(out.String(), "you can delete it yourself") {
 		t.Errorf("the failure was not reported: %q", out.String())
 	}
 
@@ -226,7 +226,7 @@ func TestEnrollErrors(t *testing.T) {
 		var out strings.Builder
 		g := &githubInstall{rt: rt, env: Env{Deps: deps}, out: &out, setupOwner: "alice", setupChecks: map[string]string{"acme/app": "CI"}}
 		err = g.enroll(context.Background(), noOwner)
-		if err == nil || !strings.Contains(err.Error(), "the stack is running, but enrolling the owner failed") || !strings.Contains(err.Error(), "exit status 1") {
+		if err == nil || !strings.Contains(err.Error(), "the service is running, but enrolling the owner failed") || !strings.Contains(err.Error(), "exit status 1") {
 			t.Fatalf("enroll = %v", err)
 		}
 	})
@@ -236,7 +236,7 @@ func TestEnrollErrors(t *testing.T) {
 		var out strings.Builder
 		g := &githubInstall{rt: pm, env: Env{Deps: f.deps()}, out: &out, setupOwner: "alice", setupChecks: map[string]string{"acme/app": "CI"}}
 		err := g.enroll(context.Background(), func(context.Context) ([]byte, error) { return []byte(`{"owner":{"login":"bob"}}`), nil })
-		if err != nil || !strings.Contains(out.String(), "an owner (bob) is already enrolled") || len(f.tty) != 0 {
+		if err != nil || !strings.Contains(out.String(), "An owner (bob) is already enrolled") || len(f.tty) != 0 {
 			t.Errorf("enroll = %v, tty %v, output %q", err, f.tty, out.String())
 		}
 	})

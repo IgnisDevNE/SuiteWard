@@ -257,7 +257,7 @@ func TestUpgradeHelpSaysYesDoesNotStartTheService(t *testing.T) {
 	env := h.newEnv()
 	env.Term.Out = &out
 	_ = Install(context.Background(), []string{"--help"}, env) // flag.ErrHelp
-	if !strings.Contains(out.String(), "does not start") {
+	if !strings.Contains(out.String(), "is not started") {
 		t.Errorf("--yes in the help does not say that it leaves a stopped service alone:\n%s", out.String())
 	}
 }

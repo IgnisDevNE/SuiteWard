@@ -70,7 +70,7 @@ func manifestJSON(name, redirectURL string) ([]byte, error) {
 
 var manifestPage = template.Must(template.New("manifest").Parse(`<!doctype html>
 <meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>SuiteWard</title>
-<p>Sending the SuiteWard App manifest to GitHub. If nothing happens, press the button.</p>
+<p>Sending SuiteWard's App settings to GitHub. If nothing happens, press the button.</p>
 <form id="f" method="post" action="{{.Action}}"><input type="hidden" name="manifest" value="{{.Manifest}}"><button>Continue to GitHub</button></form>
 <script>document.getElementById("f").submit()</script>
 `))
@@ -148,22 +148,22 @@ func obtainManifestCode(ctx context.Context, env githubEnv, account string) (str
 	if scr := env.R.screen; scr.FullScreen() {
 		// What the user acts on comes first, and the explanation last: a page that is too long loses the end of it.
 		blocks := []ui.Block{
-			ui.Para("Open the address below in the browser of this machine and approve the App on GitHub. The installer continues by itself; if the browser shows an error after GitHub, it offers to paste the address after " + spoken(env.PasteAfter) + "."),
+			ui.Para("Open the address below in your browser and approve the App on GitHub. The installer goes on by itself; if the browser shows an error after GitHub, it offers to paste the address after " + spoken(env.PasteAfter) + "."),
 			ui.Fields(ui.KV{Key: "Address", Value: "http://" + addr + "/"}, ui.KV{Key: "App name", Value: name}),
 		}
 		if env.Tier == config.TierIsolated {
 			port := addr[strings.LastIndex(addr, ":")+1:]
-			blocks = append(blocks, ui.Para("Isolated host: forward the port from your computer first, then open the address on the computer.\n"+
+			blocks = append(blocks, ui.Para("On a separate server, first forward the port from your computer, then open the address on that computer.\n"+
 				"aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\""+port+"\"],\"localPortNumber\":[\""+port+"\"]}'"))
 		}
-		blocks = append(blocks, ui.Para("Note the App name: if the installer cannot finish, the App has to be deleted on GitHub. You may rename it there."))
+		blocks = append(blocks, ui.Para("Note the App name: if the installer cannot finish, you delete that App on GitHub. You can rename it there."))
 		redraw = func() { scr.Page("Create the GitHub App", blocks...) }
 		redraw()
 	} else {
-		ghSay(env.Out, "Create the GitHub App: open this address in the browser of this machine and approve the App on GitHub. The App is named %s unless you rename it there; note the name, in case the installer cannot finish and the App has to be deleted.\n  http://%s/\n", name, addr)
+		ghSay(env.Out, "Create the GitHub App: open this address in your browser and approve the App on GitHub. The App is named %s unless you rename it there. Note the name: if the installer cannot finish, you delete the App on GitHub by that name.\n  http://%s/\n", name, addr)
 		if env.Tier == config.TierIsolated {
 			port := addr[strings.LastIndex(addr, ":")+1:]
-			ghSay(env.Out, "This host is isolated: from your computer, forward the port first, then open the address on the computer (the browser reaches the listener through the forward).\n"+
+			ghSay(env.Out, "On a separate server, first forward the port from your computer, then open the address on that computer (the browser reaches the installer through the forward).\n"+
 				"  aws ssm start-session --region <region> --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"%s\"],\"localPortNumber\":[\"%s\"]}'\n", port, port)
 		}
 	}
@@ -313,7 +313,7 @@ func spoken(d time.Duration) string {
 
 func waitError(ctx context.Context, wait time.Duration) error {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return fmt.Errorf("timed out after %s waiting for the manifest code from GitHub; run the installer again", wait)
+		return fmt.Errorf("timed out after %s waiting for GitHub's answer; if you approved the App on GitHub, delete it in your GitHub App settings, then run the installer again", wait)
 	}
 	return ctx.Err()
 }
@@ -371,7 +371,7 @@ func convertManifest(ctx context.Context, client *http.Client, apiURL, code, acc
 		if errors.As(err, &urlErr) {
 			err = urlErr.Err
 		}
-		return convertedApp{}, fmt.Errorf("the manifest conversion request failed: %w", err)
+		return convertedApp{}, fmt.Errorf("could not reach GitHub to finish creating the App: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }() // the answer is read below; a close error cannot change it
 	if resp.StatusCode != http.StatusCreated {
@@ -380,7 +380,7 @@ func convertManifest(ctx context.Context, client *http.Client, apiURL, code, acc
 		if resp.StatusCode == http.StatusNotFound {
 			hint = " (the code was already used, or is older than one hour)"
 		}
-		return convertedApp{}, fmt.Errorf("the manifest conversion answered HTTP %d%s", resp.StatusCode, hint)
+		return convertedApp{}, fmt.Errorf("GitHub refused to finish creating the App (HTTP %d)%s", resp.StatusCode, hint)
 	}
 	orphan := "" // the answer is unusable but the App may exist: its name is how to find it
 	if appName != "" {
@@ -398,17 +398,17 @@ func convertManifest(ctx context.Context, client *http.Client, apiURL, code, acc
 		PEM         string            `json:"pem"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxConversionAnswer)).Decode(&out); err != nil {
-		return convertedApp{}, fmt.Errorf("the manifest conversion answer is not an App object%s", orphan)
+		return convertedApp{}, fmt.Errorf("GitHub's answer about the new App could not be read%s", orphan)
 	}
 	if out.ID <= 0 || !slugPattern.MatchString(out.Slug) || out.Owner.Login == "" || out.PEM == "" {
-		return convertedApp{}, fmt.Errorf("the manifest conversion answer lacks the App id, slug, owner or key%s", orphan)
+		return convertedApp{}, fmt.Errorf("GitHub's answer about the new App is incomplete%s", orphan)
 	}
 	app := convertedApp{ID: out.ID, Slug: out.Slug, OwnerLogin: out.Owner.Login, OwnerType: out.Owner.Type}
 	refuse := func(reason string) (convertedApp, error) {
 		return app, fmt.Errorf("the App %s was created but %s", out.Slug, reason)
 	}
 	if !maps.Equal(out.Permissions, appManifestPermissions) {
-		return refuse("its permissions are not exactly the five of the install guide")
+		return refuse("its permissions are not exactly the five that SuiteWard needs (the install guide lists them)")
 	}
 	if account == accountPersonal {
 		if out.Owner.Type != "User" {

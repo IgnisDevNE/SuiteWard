@@ -94,7 +94,7 @@ func (g *githubInstall) wantsGitHub(ctx context.Context, r *Resolver) (bool, err
 	}
 	for _, key := range githubImplying {
 		if _, ok := r.given(key); ok && !existing {
-			return false, fmt.Errorf("GitHub values were given without a GitHub App (%s): pass --github-app-id with --github-installation-id and the App key for an App that exists, or --github yes to create one, or --github-app-id none", key)
+			return false, fmt.Errorf("you gave a GitHub value (%s), but there is no GitHub App to use it with, so nothing was changed. To use an App you already made, pass --github-app-id, --github-installation-id and the App's key; to create one, pass --github yes; to skip GitHub, pass --github-app-id none", key)
 		}
 	}
 	for _, key := range githubImplying {
@@ -113,8 +113,8 @@ func (g *githubInstall) wantsGitHub(ctx context.Context, r *Resolver) (bool, err
 		return false, nil
 	}
 	r.screen.Page("What SuiteWard needs on GitHub",
-		ui.Para("SuiteWard protects your repositories through a GitHub App that it creates for you in your browser, and that you install on the repositories to protect. The App asks for no write access to your code (no Contents write)."),
-		ui.Para("Answer No to install the stack without GitHub. A later run of the installer can set GitHub up."))
+		ui.Para("SuiteWard protects your repositories through a GitHub App (an account that SuiteWard uses on GitHub). It creates the App for you in your browser, and you install it on the repositories to protect. The App gets no write access to your files, so it cannot change your code."),
+		ui.Para("Answer No to install without GitHub: nothing is protected until you run the installer again and set GitHub up."))
 	return r.confirm("github", "Set up GitHub now (creates a GitHub App in your browser)?")
 }
 
@@ -132,7 +132,7 @@ func (g *githubInstall) githubFlow(ctx context.Context, r *Resolver, settingsDir
 			if g.s.GitHub.AppID != 0 {
 				return g.offOverRecordError()
 			}
-			screenOn(g.out).Warn("Note: GitHub is off in this run, and the App %s that an earlier run created is not used. It still exists on GitHub (%s) and its key is the secret %s (%s); the record is %s. A re-run without --github no takes it up again (or pass --github yes). To throw it away, delete the App, remove the secret and delete the record.\n",
+			screenOn(g.out).Warn("GitHub is off in this run, so the App %s that an earlier run created is not used. It still exists on GitHub (%s). Its key is the secret %s (%s) and its record is %s. To use it, run again without --github no (or pass --github yes). To throw it away, delete the App, remove the secret and delete the record.\n",
 				g.pending.Slug, appPage("https://github.com", g.pending.Slug, g.pending.Account, g.pending.AccountType), SecretGitHubAppKey, g.removeKeySecret(), g.pendingPath)
 		}
 		return err
@@ -169,7 +169,7 @@ func (g *githubInstall) githubFlow(ctx context.Context, r *Resolver, settingsDir
 		return g.leftovers(err, stored, recorded)
 	}
 	if res.AppID == 0 || res.InstallationID == 0 || len(res.Repositories) == 0 {
-		return errors.New("the GitHub flow returned no App, installation or repositories")
+		return errors.New("the GitHub step finished without an App, an installation or repositories, so nothing was saved")
 	}
 	g.s.GitHub = GitHub{
 		AppID: res.AppID, InstallationID: res.InstallationID, Owner: res.Account, Repositories: res.Repositories, TestChecks: res.TestChecks,
@@ -200,7 +200,7 @@ func (g *githubInstall) removeKeySecret() string {
 	if cmd, err := engineCommand(g.rt, g.env.Deps.GOOS); err == nil {
 		return cmd + " secret rm " + SecretGitHubAppKey
 	}
-	return "remove it from the secret store of the container runtime"
+	return "remove it from the secret store of the container program"
 }
 
 // leftovers adds to the error of a failed flow what the run left behind and what to do about it: the App, its key secret
@@ -210,9 +210,9 @@ func (g *githubInstall) leftovers(err error, stored, recorded bool) error {
 	secret := SecretGitHubAppKey + " (" + g.removeKeySecret() + ")"
 	switch {
 	case errors.Is(err, ErrSecretExists):
-		return fmt.Errorf("%w. The secret %s already exists, so the key of the App this run created was not stored: an earlier run left it behind. Delete the App that this run created (the link above) and the one of the earlier run on GitHub, remove the secret %s, then run the installer again", err, SecretGitHubAppKey, secret)
+		return fmt.Errorf("%w. The secret %s already exists (an earlier run left it behind), so the key of the App this run created was not stored. To start over, delete the App this run created (the link above) and the one from the earlier run on GitHub, remove the secret %s, then run the installer again", err, SecretGitHubAppKey, secret)
 	case errors.Is(err, errPendingKeyMissing) && g.pending != nil:
-		return fmt.Errorf("%w. The record of that App is %s (a new App replaces it). The key file works with the App id too, once the App is installed: run again with --github-app-id %d, --github-installation-id <the number in the address of the installation's settings page> and --github-app-key-file <the key file>", err, g.pendingPath, g.pending.AppID)
+		return fmt.Errorf("%w. The record of that App is %s (a new App replaces it). If you have the App's key file, install the App, then run again with --github-app-id %d, --github-installation-id <the number in the address of the installation's settings page> and --github-app-key-file <the key file>", err, g.pendingPath, g.pending.AppID)
 	case errors.Is(err, errNewAppKeyExists):
 		note := g.removeKeySecret()
 		if g.pending != nil {
@@ -220,11 +220,11 @@ func (g *githubInstall) leftovers(err error, stored, recorded bool) error {
 		}
 		return fmt.Errorf("%w (%s)", err, note)
 	case errors.Is(err, errResuming) && g.pending != nil:
-		return fmt.Errorf("%w. This run took up the App %s, which an earlier run recorded in %s; its key is the secret %s. Run the installer again to retry. A 401 can also mean a wrong system clock or a key that was replaced on GitHub: check those first. If the App no longer exists (404 above), or to start over, delete the old App on GitHub if it is still there, delete the record file and remove the secret, then run again to create a new App", err, g.pending.Slug, g.pendingPath, secret)
+		return fmt.Errorf("%w. This run took up the App %s, which an earlier run recorded in %s; its key is the secret %s. Run the installer again to retry. A 401 error can also mean a wrong clock on this computer or a key that was replaced on GitHub: check those first. If the App no longer exists (a 404 error above), or to start over, delete the old App on GitHub if it is still there, delete the record file, remove the secret, then run again to create a new App", err, g.pending.Slug, g.pendingPath, secret)
 	case stored && recorded:
-		return fmt.Errorf("%w. The key of the App is in the secret store as %s and the App is recorded in %s: run the installer again to take up that App. To start over instead, delete the App (the link above), remove the secret and delete the record", err, secret, g.pendingPath)
+		return fmt.Errorf("%w. The App's key is saved in the secret store as %s, and the App is recorded in %s. To go on, run the installer again: it takes up that App. To start over instead, delete the App (the link above), remove the secret and delete the record", err, secret, g.pendingPath)
 	case stored:
-		return fmt.Errorf("%w. The key of the App is in the secret store as %s, and no record of the App was made: delete the App (the link above) and remove the secret before you run the installer again", err, secret)
+		return fmt.Errorf("%w. The App's key is saved in the secret store as %s, but the App was not recorded. Before you run the installer again, delete the App (the link above) and remove the secret", err, secret)
 	}
 	return err
 }
@@ -236,7 +236,7 @@ func (g *githubInstall) clearPending() {
 		return
 	}
 	if err := os.Remove(g.pendingPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		screenOn(g.out).Warn("Note: %v. The settings name the App now, so the record is not used again: you may delete it.\n", err)
+		screenOn(g.out).Warn("Could not delete the record of the App (%v). The settings name the App now, so the record is not used again: you can delete it yourself.\n", err)
 	}
 }
 
@@ -268,7 +268,7 @@ func waitForStatus(ctx context.Context, sleep func(time.Duration), status func(c
 		if body, err = status(ctx); err == nil || ctx.Err() != nil {
 			break
 		}
-		bar.set(float64(i)/statusTries, "waiting for /status")
+		bar.set(float64(i)/statusTries, "waiting for the service")
 		if i < statusTries-1 {
 			sleep(statusEvery)
 		}
@@ -276,7 +276,7 @@ func waitForStatus(ctx context.Context, sleep func(time.Duration), status func(c
 	if err != nil {
 		return nil, err
 	}
-	bar.set(1, "answers")
+	bar.set(1, "ready")
 	return body, nil
 }
 
@@ -286,7 +286,7 @@ func parseEnrolledOwner(body []byte) (string, error) {
 		Owner *struct{ Login string } `json:"owner"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", errors.New("the answer of /status is not JSON")
+		return "", errors.New("the status answer of the service is not JSON, so it cannot be read")
 	}
 	switch {
 	case parsed.Owner == nil:
@@ -318,24 +318,24 @@ func (g *githubInstall) enroll(ctx context.Context, status func(context.Context)
 	login, err := g.enrolledOwner(ctx, status, barOn(scr, "Service"))
 	switch {
 	case err != nil && ctx.Err() != nil: // Ctrl-C ended the wait: nothing is known of the service, and the install is over
-		return fmt.Errorf("the stack is running, but the install was interrupted before the owner was enrolled: run `%s` to enroll: %w", command, err)
+		return fmt.Errorf("the service is running, but the install was interrupted before the owner was enrolled. To enroll the owner, run `%s`: %w", command, err)
 	case err != nil:
 		g.owner, g.statusDead = "unknown: /status could not be read", true
-		scr.Warn("Setup was not run: /status of the service could not be read (%v), so it is not known whether an owner is enrolled, and setup would replace the TOTP secret of one. Once the service answers, check /status, and if it has no owner, run on a real terminal with session recording off:\n  %s\n", err, command)
+		scr.Warn("The owner setup did not run: the service's status could not be read (%v), so it is not known whether an owner is already enrolled, and running it again would replace that owner's authenticator secret (the TOTP secret). Once the service answers, check its status. If it shows no owner, turn off any screen recording and run this on a real terminal:\n  %s\n", err, command)
 	case login != "":
 		g.owner = login + " (already enrolled)"
-		scr.Warn("Note: an owner (%s) is already enrolled; setup was skipped, so the TOTP secret is unchanged. To re-enroll (for example after losing the authenticator), run on a real terminal with session recording off: %s\n", login, command)
+		scr.Warn("An owner (%s) is already enrolled, so the owner setup was skipped and the authenticator secret (the TOTP secret) is unchanged. To enroll again (for example after losing your authenticator), turn off any screen recording and run this on a real terminal: %s\n", login, command)
 	case g.setupOwner == "":
 		g.owner = notEnrolled
-		scr.Warn("Note: no owner is enrolled, and this run does not know the owner login or the test checks. Turn off any session recording of a real terminal, then enroll the owner:\n  %s\n", command)
+		scr.Warn("No owner is enrolled yet, and this run does not know the owner's GitHub username or the test checks. Turn off any screen recording, then enroll the owner on a real terminal:\n  %s\n", command)
 	case setupTerminal():
 		if err := runSetup(ctx, g.env.Deps.command(), g.rt, g.setupOwner, g.setupChecks, g.out); err != nil {
-			return fmt.Errorf("the stack is running, but enrolling the owner failed: %w", err)
+			return fmt.Errorf("the service is running, but enrolling the owner failed: %w", err)
 		}
 		g.owner = g.setupOwner + " (enrolled now)"
 	default:
 		g.owner = notEnrolled
-		scr.Warn("Next: setup needs a real terminal (it prints the TOTP secret). Turn off any session recording of that terminal, then enroll the owner:\n  %s\n", command)
+		scr.Warn("Next step: the owner setup needs a real terminal, because it shows the authenticator secret (the TOTP secret) there. Turn off any screen recording, then enroll the owner:\n  %s\n", command)
 	}
 	return nil
 }
@@ -351,6 +351,6 @@ func (g *githubInstall) offOverRecordError() error {
 	}
 	ways += fmt.Sprintf(", or delete that App (%s), remove the secret (%s) and delete the record %s to go on with the App of the settings",
 		appPage("https://github.com", p.Slug, p.Account, p.AccountType), g.removeKeySecret(), g.pendingPath)
-	return fmt.Errorf("GitHub is off in this run, but an earlier run created the App %s and recorded it, and its key is the secret %s now, while the settings name the App %d: the stack would run that App with this key and GitHub would refuse it. To go on, %s",
+	return fmt.Errorf("GitHub is off in this run, but an earlier run created the App %s and recorded it. Its key is now the secret %s, while the settings name the App %d, so the service would run that App with this key and GitHub would refuse it. Nothing was changed. To go on, %s",
 		p.Slug, SecretGitHubAppKey, g.s.GitHub.AppID, ways)
 }

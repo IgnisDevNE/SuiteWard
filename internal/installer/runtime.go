@@ -21,7 +21,7 @@ const (
 // Errors a caller can distinguish.
 var (
 	ErrRootful        = errors.New("the container connection is rootful")
-	ErrNotDocker      = errors.New("the engine behind this docker command is not Docker")
+	ErrNotDocker      = errors.New("the container program behind this docker command is not Docker")
 	ErrNotDigestImage = errors.New("the image is not pinned by an sha256 digest")
 	ErrNoConnection   = errors.New("no single rootless machine connection to select")
 )

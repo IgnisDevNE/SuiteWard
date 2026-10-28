@@ -126,7 +126,7 @@ func TestTheUsageOfTheTokenFileSaysThatAnotherSettingsFileNeedsIt(t *testing.T) 
 		t.Fatal("Install --help must end with the help")
 	}
 	help := strings.Join(strings.Fields(h.out.String()), " ")
-	if !strings.Contains(help, "with the default settings file only") || !strings.Contains(help, "another --settings file needs --token-file") {
+	if !strings.Contains(help, "for the default settings file only") || !strings.Contains(help, "another --settings file needs --token-file") {
 		t.Errorf("the usage of --token-file does not say that another settings file needs it:\n%s", h.out.String())
 	}
 }

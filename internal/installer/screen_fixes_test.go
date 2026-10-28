@@ -218,9 +218,9 @@ func TestTheDockerWarningIsOneWarningWithItsPointsOnTheScreenAndInTheScrollback(
 		t.Fatal(err)
 	}
 	// A full screen has the same two points in fewer words, so that the smallest window still shows them above the question.
-	want := "! Docker is allowed on this computer, but Podman is strongly recommended.\n" +
-		"    - Docker's daemon runs as root: its containers are not isolated from whoever controls it.\n" +
-		"    - Its secrets live in volumes that anyone who controls the daemon can read.\n"
+	want := "! Docker works on this computer, but Podman is strongly recommended.\n" +
+		"    - Docker's service runs as root: whoever controls it can reach the containers.\n" +
+		"    - Its secrets are in volumes that anyone who controls the service can read.\n"
 	if got := c.tail(); got != want {
 		t.Errorf("the scrollback holds\n%s\nwant\n%s", got, want)
 	}
@@ -261,7 +261,7 @@ func TestTheSummaryOfAnInstallWithoutGitHubWaitsForTheServiceToAnswer(t *testing
 		return c.tail(), asked
 	}
 
-	if tail, _ := run(t, 3); !strings.Contains(tail, "Release: v0.2.0\n") {
+	if tail, _ := run(t, 3); !strings.Contains(tail, "Version: v0.2.0\n") {
 		t.Errorf("the summary has no Release row although the service answered a few seconds in:\n%s", tail)
 	}
 	// A service that never answers is waited for as long as the install waits for it with GitHub, and the summary still comes.
@@ -292,7 +292,7 @@ func TestTheSummaryOfAnUpgradeWaitsForTheServiceToAnswer(t *testing.T) {
 	if err := Install(liveContext(t), args, env); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(c.tail(), "Instance: "+testInstance+"\n") || !strings.Contains(c.tail(), "Release: v0.2.0\n") {
+	if !strings.Contains(c.tail(), "Instance ID: "+testInstance+"\n") || !strings.Contains(c.tail(), "Version: v0.2.0\n") {
 		t.Errorf("the summary has no Instance and Release rows although the service answered a few tries in:\n%s", c.tail())
 	}
 }

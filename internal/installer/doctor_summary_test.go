@@ -145,6 +145,9 @@ func TestTheSummaryOfTheIsolatedTierRunsDoctor(t *testing.T) {
 		t.Fatalf("a failed check of doctor failed the install: %v", err)
 	}
 	doctorCountsIn(t, c.tail())
+	if !strings.Contains(c.tail(), "Installation type: on a separate server\n") {
+		t.Errorf("the summary does not say the installation type in words:\n%s", c.tail())
+	}
 	if strings.Contains(c.tail(), "Next: suiteward doctor") {
 		t.Errorf("the summary of the install still sends the person to a command that has run:\n%s", c.tail())
 	}
@@ -178,7 +181,7 @@ func TestAPlainInstallDoesNotRunDoctor(t *testing.T) {
 		t.Errorf("a plain install ran doctor: %v", calls)
 	}
 	out := h.out.String()
-	if !strings.Contains(out, "Then check the instance with `suiteward doctor --settings "+quoteArg(h.settingsPath())+" --token-file "+quoteArg(h.tokenPath())+"`.") || doctorSummaryRow.MatchString(out) {
+	if !strings.Contains(out, "Then check that everything works with `suiteward doctor --settings "+quoteArg(h.settingsPath())+" --token-file "+quoteArg(h.tokenPath())+"`.") || doctorSummaryRow.MatchString(out) {
 		t.Errorf("the plain output changed:\n%s", out)
 	}
 }
@@ -239,11 +242,12 @@ func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 		}
 	}
 	var rows summaryRows
-	for _, kv := range [][2]string{{"Tier", "co-located"}, {"Runtime", "Podman (rootless)"}, {"Instance", "1a2b3c4d"}, {"Release", "v0.4.0-alpha.2"}, {"GitHub App", "1234 on Acme"},
-		{"Repositories", "Acme/api, Acme/web"}, {"Owner", "alice (enrolled now)"}, {"Status", "http://127.0.0.1:47081/status"}, {"Settings", path}} {
+	for _, kv := range [][2]string{{"Installation type", "co-located"}, {"Container program", "Podman (runs without administrator rights)"}, {"Instance ID", "1a2b3c4d"}, {"Version", "v0.4.0-alpha.2"}, {"GitHub App", "1234, installed on Acme"},
+		{"Repositories", "Acme/api, Acme/web"}, {"Owner", "alice (enrolled now)"}, {"Status", "http://127.0.0.1:47081/status"}, {"Settings file", path}} {
 		rows.add(kv[0], kv[1])
 	}
 	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}}
+	rows.warn(reducedAssuranceNotice) // commonSummary adds it before the checks run, so it is the first warning of a real summary
 	rows.addDoctor(context.Background(), env, path, coloTokenFile(t, f), doctorHint("suiteward", path, true))
 
 	c := sizedConsole{termConsole: newTermConsole(&bytes.Buffer{}), w: 80, h: 24}
@@ -259,9 +263,17 @@ func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 	}
 	out := c.out.String()
 	page := pageText(t, out[:strings.LastIndex(out, leaveAlt)], 80, 24)
-	for _, want := range []string{"Status http://127.0.0.1:47081/status", "Doctor ", "failures", "Check again", "FAIL protection.Acme/api"} {
+	// The notice of the reduced assurance is the first warning of a real summary, and on a page this full it takes the room of the checks'
+	// warnings: the Doctor row says how many failed, and the scrollback that Close leaves holds every one of them.
+	for _, want := range []string{"Installation type co-located", "Instance ID 1a2b3c4d", "Status http://127.0.0.1:47081/status", "Doctor ", "failures", "Check again", reducedAssuranceKey} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the summary page lacks %q at 80x24:\n%s", want, page)
+		}
+	}
+	scrollback := out[strings.LastIndex(out, leaveAlt):]
+	for _, want := range []string{"FAIL protection.Acme/api", "FAIL protection.Acme/web", reducedAssuranceKey} {
+		if !strings.Contains(flat(scrollback), want) {
+			t.Errorf("the scrollback lacks %q:\n%s", want, scrollback)
 		}
 	}
 }

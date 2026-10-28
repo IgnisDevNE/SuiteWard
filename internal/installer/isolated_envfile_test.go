@@ -39,7 +39,7 @@ func TestInstallIsolatedKeepsTheAppOfTheEnvFileOfAHandInstalledHost(t *testing.T
 		if len(g.seen) != 0 || strings.Contains(out, "Set up GitHub now") {
 			t.Errorf("tty=%v: the install offered a second App (flow runs %d):\n%s", tty, len(g.seen), out)
 		}
-		if strings.Contains(out, "GitHub is not configured") {
+		if strings.Contains(out, "GitHub is not set up yet") {
 			t.Errorf("tty=%v: the App of the env file is configured:\n%s", tty, out)
 		}
 		saved, err := LoadSettings(settingsFile(g.home))
@@ -79,7 +79,7 @@ func TestInstallIsolatedRerunAfterAFailureTakesTheAppFromTheEnvFile(t *testing.T
 	if err != nil || saved.GitHub.AppID != 123 || saved.GitHub.InstallationID != 456 || len(saved.GitHub.Repositories) != 2 {
 		t.Errorf("the re-run must take the App from the env file: %+v, %v", saved.GitHub, err)
 	}
-	if strings.Contains(g.out.String(), "GitHub is not configured") {
+	if strings.Contains(g.out.String(), "GitHub is not set up yet") {
 		t.Errorf("the output says GitHub is not configured:\n%s", g.out.String())
 	}
 }
@@ -126,7 +126,7 @@ func TestInstallIsolatedAnEmptyEnvFileMeansNoGitHubValues(t *testing.T) {
 	if err := g.run(); err != nil {
 		t.Fatalf("the installer writes an empty env file when GitHub is off: %v", err)
 	}
-	if !strings.Contains(g.out.String(), "GitHub is not configured") {
+	if !strings.Contains(g.out.String(), "GitHub is not set up yet") {
 		t.Errorf("an empty file configures nothing, and the output must say so:\n%s", g.out.String())
 	}
 }
@@ -160,11 +160,11 @@ func TestInstallIsolatedRerunWithoutTheFlowSaysWhetherAnOwnerIsEnrolled(t *testi
 	}{
 		"enrolled": {
 			func(context.Context, string) ([]byte, error) { return []byte(enrolled), nil },
-			[]string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged"},
+			[]string{"An owner (bob) is already enrolled", "owner setup was skipped", "authenticator secret (the TOTP secret) is unchanged"},
 		},
 		"no owner": {
 			func(context.Context, string) ([]byte, error) { return []byte(`{"version":"v0.2.0"}`), nil },
-			[]string{"no owner is enrolled", placeholderCommand},
+			[]string{"No owner is enrolled yet", placeholderCommand},
 		},
 		"unreadable": {
 			func(_ context.Context, address string) ([]byte, error) {

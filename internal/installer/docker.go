@@ -61,7 +61,7 @@ func NewDocker(ctx context.Context, d Deps, o DockerOptions) (Runtime, error) {
 func (dk *Docker) identify(ctx context.Context) (Engine, error) {
 	out, err := dk.run(ctx, nil, "version", "--format", "{{json .Server}}")
 	if err != nil {
-		return Engine{}, fmt.Errorf("the Docker engine does not answer: %w", err)
+		return Engine{}, fmt.Errorf("the container program (Docker) does not answer (is it started?): %w", err)
 	}
 	var server struct {
 		Platform   struct{ Name string }
@@ -72,16 +72,16 @@ func (dk *Docker) identify(ctx context.Context) (Engine, error) {
 		return Engine{}, fmt.Errorf("read the Docker server version: %w", err)
 	}
 	if server.Platform.Name == "" && server.Version == "" {
-		return Engine{}, fmt.Errorf("the Docker engine does not answer: %s reported no server", dk.bin)
+		return Engine{}, fmt.Errorf("the container program (Docker) does not answer (is it started?): %s reported no server", dk.bin)
 	}
 	// Only Docker names its engine "Engine": Podman's compatible API says "Podman Engine" and its own API names no components.
 	isDocker := slices.ContainsFunc(server.Components, func(c engineComponent) bool { return c.Name == "Engine" })
 	if !isDocker {
-		what := "an engine that does not identify itself as Docker"
+		what := "a container program that does not identify itself as Docker"
 		if strings.Contains(strings.ToLower(server.Platform.Name+componentNames(server.Components)), "podman") || (server.Platform.Name == "" && len(server.Components) == 0) {
 			what = "Podman"
 		}
-		return Engine{}, fmt.Errorf("%w: the engine behind %s is %s %s (%s); select Docker's own context or CLI, or install the stack with --runtime podman",
+		return Engine{}, fmt.Errorf("%w: the container program behind %s is %s %s (%s); select Docker's own context or CLI, or install with --runtime podman",
 			ErrNotDocker, dk.bin, what, server.Version, server.Platform.Name)
 	}
 	out, err = dk.run(ctx, nil, "info", "--format", "{{json .SecurityOptions}}")

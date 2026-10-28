@@ -66,7 +66,7 @@ func TestNewDockerRefusesWhatItCannotIdentify(t *testing.T) {
 		rules func(f *fakeEngine)
 		want  string
 	}{
-		{"the engine does not answer", func(f *fakeEngine) { f.fail("version --format", errInjected) }, "the Docker engine does not answer"},
+		{"the engine does not answer", func(f *fakeEngine) { f.fail("version --format", errInjected) }, "the container program (Docker) does not answer"},
 		{"the version is not JSON", func(f *fakeEngine) { f.on("version --format", "not json") }, "read the Docker server version"},
 		{"no server is reported", func(f *fakeEngine) { f.on("version --format", "{}") }, "reported no server"},
 		{"the engine is not Docker", func(f *fakeEngine) { f.on("version --format", `{"Platform":{"Name":"Podman Engine"},"Version":"5"}`) }, ErrNotDocker.Error()},

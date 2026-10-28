@@ -102,7 +102,8 @@ func TestTheSummaryKeepsTheEnrollInstructionWhenTheProgramIsRunByAnotherName(t *
 }
 
 // A command is a whole word of the fix: the program's name and the subcommand, between backticks or standing alone. What is part of a longer command
-// (one with its own flags) or of a longer word is not written again, and the fix stays as the service wrote it.
+// (one with its own flags) or of a longer word is not written again, and the fix stays as the service wrote it. Two backticked commands may share a
+// backtick ("`suiteward install`suiteward install`"): the first is written, and the second, which would reuse its closing backtick, is not.
 func TestWriteCommandsWritesOnlyWholeCommands(t *testing.T) {
 	d := Deps{instance: instanceArgs{settings: "/s.yaml"}}
 	install, enroll := "`"+d.suggest("install")+"`", "`"+d.suggest("enroll")+"`"
@@ -122,9 +123,49 @@ func TestWriteCommandsWritesOnlyWholeCommands(t *testing.T) {
 		"a longer word":                    {"the suiteward installer", []string{"install"}, "the suiteward installer"},
 		"a word before it":                 {"the xsuiteward install", []string{"install"}, "the xsuiteward install"},
 		"a long command and a longer word": {"run `suiteward install --upgrade` now; the suiteward installer", []string{"install"}, "run `suiteward install --upgrade` now; the suiteward installer"},
+		"a shared backtick, the same one":  {"`suiteward install`suiteward install`", []string{"enroll", "install"}, install + "suiteward install`"},
+		"a shared backtick, two commands":  {"`suiteward enroll`suiteward install`", []string{"enroll", "install"}, enroll + "suiteward install`"},
 	} {
-		if got := d.writeCommands(c.fix, c.named); got != c.want {
+		if got := writing(t, d, c.fix, c.named); got != c.want {
 			t.Errorf("%s: %q became %q, want %q", name, c.fix, got, c.want)
 		}
 	}
+}
+
+// writing is writeCommands with a panic reported as a failure of the test: the fix is the text of a row from another process, which doctor reads
+// without a recover, and the install's closing summary runs doctor in the same process.
+func writing(t *testing.T, d Deps, fix string, named []string) (got string) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("writeCommands panics on %q: %v", fix, r)
+			got = fix
+		}
+	}()
+	return d.writeCommands(fix, named)
+}
+
+// Whatever the service sends, the fix is written without a panic, and it differs from the text only where a command stood: with the commands that
+// were written turned back into their bare spelling, and the backticks that stood around them or were added left out of both, nothing else changed.
+func FuzzWriteCommands(f *testing.F) {
+	d := Deps{instance: instanceArgs{settings: "ZZ"}}
+	named := []string{"enroll", "install"}
+	for _, seed := range []string{
+		"", "`", "``", "suiteward install", "suiteward enroll.", "`suiteward install`", "``suiteward install``",
+		"`suiteward install`suiteward install`", "`suiteward enroll`suiteward install`", "`suiteward install`suiteward enroll`suiteward install`",
+		"suiteward install suiteward install", "suiteward enroll`suiteward enroll`suiteward enroll", "run `suiteward install --upgrade` now; the suiteward installer",
+		"run `suiteward enroll` where you ran `suiteward install` (as `suiteward` on an isolated host)", "(suiteward enroll)\nsuiteward install\r\n",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, fix string) {
+		if strings.Contains(fix, "ZZ") { // the mark of what is written would be the text's own
+			t.Skip()
+		}
+		got := writing(t, d, fix, named)
+		turnedBack := strings.NewReplacer("`"+d.suggest("enroll")+"`", "suiteward enroll", "`"+d.suggest("install")+"`", "suiteward install").Replace(got)
+		if strings.ReplaceAll(turnedBack, "`", "") != strings.ReplaceAll(fix, "`", "") {
+			t.Errorf("%q became %q: more than commands changed", fix, got)
+		}
+	})
 }

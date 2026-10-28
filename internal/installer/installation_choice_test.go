@@ -45,12 +45,17 @@ func twoInstallations(t *testing.T) installationsOf {
 
 func TestSeveralInstallationsAndNoFlagShowTheScreenAndTheChoiceNamesTheCommandsOfTheRun(t *testing.T) {
 	i := twoInstallations(t)
-	r, c := keyResolver(t, false, nil, nil, "\x1b[B\r") // the default is highlighted first: one down, Enter
+	r, c := keyResolver(t, false, nil, nil, "\x1b[B\x1b[B\r") // no row is highlighted at first: the first down is the default installation, the second is the next
 	if err := r.chooseInstallation(choiceDeps(t)); err != nil {
 		t.Fatal(err)
 	}
 	page := c.out.String()
-	for _, want := range []string{"Which installation?", "This computer has 2 SuiteWard installations. Choose the one this command is for."} {
+	// Above the choice, the full text of each installation: a row of the choice cuts a long path, and its description with it.
+	for _, want := range []string{
+		"Which installation?", "This computer has 2 SuiteWard installations. Choose the one this command is for.",
+		"The default installation. Instance not known yet, on this computer, with podman (connection pm), ports 27081 and 27091.",
+		"Instance 5e6f7a8b, on this computer, with podman (connection pm2), ports 28081 and 28091.",
+	} {
 		if !shows(page, want) {
 			t.Errorf("the screen lacks %q:\n%s", want, page)
 		}
@@ -72,7 +77,7 @@ func TestSeveralInstallationsAndNoFlagShowTheScreenAndTheChoiceNamesTheCommandsO
 
 func TestTheDefaultInstallationChosenSetsNothing(t *testing.T) {
 	i := twoInstallations(t)
-	r, _ := keyResolver(t, false, nil, nil, "\r")
+	r, _ := keyResolver(t, false, nil, nil, "\x1b[B\r") // the first row is the default installation
 	if err := r.chooseInstallation(choiceDeps(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +103,7 @@ func TestAPlainScreenListsTheInstallationsAndAsksForTheTypedSettingsFile(t *test
 		"This computer has 2 SuiteWard installations:",
 		"\n  " + i.def + "\n    The default installation. ",
 		"\n  " + i.second + "\n    Instance 5e6f7a8b, on this computer, with podman (connection pm2), ports 28081 and 28091.\n",
-		"Installation (type the settings file of one of them) [" + i.def + "]: ",
+		"Installation (type the settings file of one of them): ", // no default: Enter never picks an installation
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the transcript lacks %q:\n%s", want, out.String())
@@ -107,19 +112,42 @@ func TestAPlainScreenListsTheInstallationsAndAsksForTheTypedSettingsFile(t *test
 	if r.chosen["settings"] != i.second || r.chosen["token-file"] != i.token {
 		t.Errorf("chosen is %v, want the second installation", r.chosen)
 	}
-	for name, c := range map[string]struct{ typed, want string }{
-		"Enter takes the default":         {"\n", ""},
-		"a settings file that is not one": {"/nowhere/settings.yaml\n", "is not the settings file of one of the installations"},
-	} {
-		r, _ := plainResolver(t, nil, nil, c.typed)
-		err := r.chooseInstallation(choiceDeps(t))
-		switch {
-		case c.want == "" && (err != nil || len(r.chosen) != 0):
-			t.Errorf("%s: %v, chosen %v", name, err, r.chosen)
-		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
-			t.Errorf("%s: err %v, want it to say %q", name, err, c.want)
-		}
+	// A mistyped settings file says what to do.
+	r, _ = plainResolver(t, nil, nil, "/nowhere/settings.yaml\n")
+	want := "is not the settings file of one of the installations listed above. Nothing was changed. Run the command again and type one of the settings files listed"
+	if err := r.chooseInstallation(choiceDeps(t)); err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("a settings file that is not listed: err %v, want it to say %q", err, want)
 	}
+}
+
+// Enter never picks an installation, and above all not the main one: nothing is preselected, an empty line is asked again, and an input that ends
+// with no answer is an error.
+func TestEnterNeverPicksAnInstallation(t *testing.T) {
+	i := twoInstallations(t)
+	t.Run("a plain screen asks again", func(t *testing.T) {
+		r, out := plainResolver(t, nil, nil, "\n\n"+i.second+"\n")
+		if err := r.chooseInstallation(choiceDeps(t)); err != nil || r.chosen["settings"] != i.second {
+			t.Fatalf("err %v, chosen %v: want the second installation after two empty lines", err, r.chosen)
+		}
+		if got, want := strings.Count(out.String(), "Type the settings file of one of the installations listed above."), 2; got != want {
+			t.Errorf("an empty line was explained %d times, want %d:\n%s", got, want, out.String())
+		}
+	})
+	t.Run("a plain screen whose input ends with no answer", func(t *testing.T) {
+		r, _ := plainResolver(t, nil, nil, "\n")
+		if err := r.chooseInstallation(choiceDeps(t)); err == nil || len(r.chosen) != 0 {
+			t.Errorf("err %v, chosen %v: want an error and nothing chosen", err, r.chosen)
+		}
+	})
+	t.Run("a full screen refuses an Enter before a row is highlighted", func(t *testing.T) {
+		r, c := keyResolver(t, false, nil, nil, "\r")
+		if err := r.chooseInstallation(choiceDeps(t)); err == nil || len(r.chosen) != 0 {
+			t.Errorf("err %v, chosen %v: want an error and nothing chosen", err, r.chosen)
+		}
+		if !strings.Contains(c.out.String(), "Pick one with the arrows.") {
+			t.Errorf("the screen did not say to pick one:\n%s", c.out.String())
+		}
+	})
 }
 
 // A row says which installation it is: the instance, where it runs, the engine and the two ports; the default one says so.
@@ -155,7 +183,7 @@ func TestNoFlagAndNoAnswersKeyAnswersTheQuestionWhichInstallation(t *testing.T) 
 		"an answer": {nil, map[string]string{"installation": i.second}},
 		"both":      {map[string]string{"installation": i.second}, map[string]string{"installation": i.second}},
 	} {
-		r, out := plainResolver(t, c.flags, c.answers, "\n") // Enter takes the default installation
+		r, out := plainResolver(t, c.flags, c.answers, i.def+"\n") // the default installation, typed
 		if err := r.chooseInstallation(choiceDeps(t)); err != nil || len(r.chosen) != 0 {
 			t.Errorf("%s: err %v, chosen %v: want the question asked and the default installation taken", name, err, r.chosen)
 		}
@@ -163,7 +191,7 @@ func TestNoFlagAndNoAnswersKeyAnswersTheQuestionWhichInstallation(t *testing.T) 
 			t.Errorf("%s: the question was not asked:\n%s", name, out.String())
 		}
 	}
-	r, c := keyResolver(t, false, nil, map[string]string{"installation": i.second}, "\r")
+	r, c := keyResolver(t, false, nil, map[string]string{"installation": i.second}, "\x1b[B\r")
 	if err := r.chooseInstallation(choiceDeps(t)); err != nil || len(r.chosen) != 0 || !strings.Contains(c.out.String(), "Which installation?") {
 		t.Errorf("on a full screen: err %v, chosen %v, want the page and the default installation\n%s", err, r.chosen, c.out.String())
 	}
@@ -247,7 +275,7 @@ func TestAStaleEntryIsSkippedAndCounted(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("on the screen", func(t *testing.T) {
-		r, c := keyResolver(t, false, nil, nil, "\r")
+		r, c := keyResolver(t, false, nil, nil, "\x1b[B\r")
 		if err := r.chooseInstallation(choiceDeps(t)); err != nil {
 			t.Fatal(err)
 		}
@@ -259,7 +287,7 @@ func TestAStaleEntryIsSkippedAndCounted(t *testing.T) {
 		}
 	})
 	t.Run("in plain lines", func(t *testing.T) {
-		r, out := plainResolver(t, nil, nil, "\n")
+		r, out := plainResolver(t, nil, nil, i.def+"\n")
 		if err := r.chooseInstallation(choiceDeps(t)); err != nil {
 			t.Fatal(err)
 		}
@@ -381,7 +409,7 @@ func TestAChosenInstallationDoesNotSkipTheTierPage(t *testing.T) {
 	if err := recordInstallation(runtime.GOOS, second, "", lying, ""); err != nil {
 		t.Fatal(err)
 	}
-	r, c := keyResolver(t, false, nil, nil, "[B"+"") // the installation, then the tier
+	r, c := keyResolver(t, false, nil, nil, "\x1b[B\x1b[B\r"+"\r") // the installation (down to the first row, down to the second), then the tier
 	if err := r.chooseInstallation(choiceDeps(t)); err != nil {
 		t.Fatal(err)
 	}

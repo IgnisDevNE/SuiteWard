@@ -70,7 +70,8 @@ var serviceCommands = []string{"enroll", "install"}
 // only a subcommand of serviceCommands is written, and only where the fix spells it as a whole command (commandWord); anything else, such as a
 // command with flags of its own or a longer word, stays as the service wrote it. A command is written between backticks, as the service had it
 // or, when it stood alone, with them, because the flags make it longer than a word. All the spellings are found in the service's own text first,
-// so what is written is never read again.
+// so what is written is never read again, and two that share a backtick ("`a`b`") are not both written: the first is written and the other is left
+// as the service wrote it. Whatever the text, the function reads only inside it.
 func (d Deps) writeCommands(fix string, named []string) string {
 	type span struct {
 		from, to int
@@ -98,6 +99,9 @@ func (d Deps) writeCommands(fix string, named []string) string {
 	var out strings.Builder
 	end := 0
 	for _, s := range spans {
+		if s.from < end { // it would reuse the closing backtick of the span before it: the first one stays
+			continue
+		}
 		out.WriteString(fix[end:s.from])
 		out.WriteString(s.with)
 		end = s.to

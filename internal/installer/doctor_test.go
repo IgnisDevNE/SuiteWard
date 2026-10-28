@@ -105,6 +105,8 @@ func executorProbeAllowed(name string, args []string) bool {
 		return under("/usr/local/libexec/suiteward/")
 	case "pgrep", "tasklist":
 		return true
+	case "powershell": // the listing of the programs that run (the executor's own, by path): a read, and only this script
+		return slices.Equal(args, []string{"-NoProfile", "-NonInteractive", "-Command", listProcessesScript})
 	case "schtasks":
 		return has("/Query")
 	case "launchctl":

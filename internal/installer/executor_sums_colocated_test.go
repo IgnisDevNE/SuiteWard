@@ -58,7 +58,7 @@ func TestInstallWithoutTheSumsSaysOnceThatTheBinaryWasNotChecked(t *testing.T) {
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(h.out.String(), "not checked against"); got != 1 {
+	if got := strings.Count(h.out.String(), "has not been checked against"); got != 1 {
 		t.Errorf("the output says it %d times, want once:\n%s", got, h.out.String())
 	}
 	if !strings.Contains(h.out.String(), "SHA256SUMS") {

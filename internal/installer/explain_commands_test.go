@@ -335,7 +335,7 @@ func TestThePlainPurgeKeepsItsPromptAndItsLines(t *testing.T) {
 	out := h.out.String()
 	for _, want := range []string{
 		"This is the instance " + testInstance + " on ",
-		"Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network, the MCP token copy and the settings file?\n",
+		"Remove the containers, the volumes (this deletes the database and the saved files, called artifacts), the secrets, the network, the access token copy and the settings file?\n",
 		"Type the instance id " + testInstance + " to remove it: ",
 	} {
 		if !strings.Contains(out, want) {

@@ -12,19 +12,20 @@ import (
 )
 
 // The checks of the executor of the co-located tier: what an install leaves beside the token copies, what the operating system says of it, and
-// what the service saw. The executor runs as this user, next to the coding agent, so the pins catch drift and accident and not a determined agent:
-// the check says that the assurance is reduced, as the approvals of this tier do (ADR 0027, ADR 0028 section 13).
+// what the service saw. The executor runs as this user, next to the coding agent, so the pins catch drift and accident and not a determined agent.
+// The rows do not repeat that reduced assurance: the install's summary and the page that introduces this tier say it once (owner decision 19).
+// Their texts are for a person with little technical background (work/m21-briefs/plain-language.md): what happened, whether it is a problem, what to do.
 
 // installFix is the fix of a result that an install of this release makes right.
 func (d *doctor) installFix() string {
 	cmd := d.deps.command()
-	return fmt.Sprintf("run `%[1]s install --upgrade` with this program when the service is of an earlier release, or `%[1]s install` again: either copies this program as the executor, makes its token and starts it", cmd)
+	return fmt.Sprintf("Run `%[1]s install --upgrade` if the service is from an earlier release. Otherwise run `%[1]s install` again. Either one sets up the test runner again.", cmd)
 }
 
 // anotherInstanceFix is the fix of an executor that is registered for another instance: an install of this one skips it, so it is that instance's removal that frees the place.
 func (d *doctor) anotherInstanceFix() string {
 	cmd := d.deps.command()
-	return "a computer has one executor, and it is registered for another instance: remove that instance (`" + cmd + " uninstall`, with that instance's --settings and --token-file (none for the default instance)), then run `" + cmd + " install` again for this one; until then the install leaves the registered executor as it is"
+	return "A computer has one test runner, and it belongs to another instance. Remove that instance with `" + cmd + " uninstall` (pass that instance's `--settings` and `--token-file`; the default instance needs neither). Then run `" + cmd + " install` again for this one. Until then the install leaves the other test runner alone."
 }
 
 // executorTokenFile is the token file that the files of the executor are beside: the one --token-file names, else the default place of this user's
@@ -36,17 +37,17 @@ func (d *doctor) executorTokenFile() (string, bool) {
 	}
 	file, err := defaultTokenFile(d.deps)
 	if err != nil {
-		d.fail("executor.token", err.Error(), "this is where doctor looks for the files of the executor: set the variable it names, or pass --token-file")
+		d.fail("executor.token", err.Error(), "Doctor looks for the files of the test runner (the executor) there. Set the variable the message names, or pass `--token-file`.")
 		return "", false
 	}
 	isDefault, err := isDefaultSettings(d.deps.GOOS, d.settingsPath, !d.settingsNamed)
 	if err != nil {
-		d.fail("executor.token", err.Error(), "pass --token-file with the token file of this instance")
+		d.fail("executor.token", err.Error(), "Pass `--token-file` with this instance's token file.")
 		return "", false
 	}
 	if !isDefault {
-		d.fail("executor.token", "--settings names "+d.settingsPath+", which is not the default settings file, so this is a second instance, and without --token-file the files of its executor are not known: the default token file "+file+" is the main instance's, and its executor is not checked as this one's",
-			"pass --token-file with the token file of this instance (the one its install was given); if this is the only instance on this computer and "+file+" is its token file, pass --token-file "+quoteArg(file))
+		d.fail("executor.token", "`--settings` names `"+d.settingsPath+"`, which is not the default settings file, so this is a second instance. Without `--token-file`, doctor cannot tell which test runner (the executor) is yours: the default token file `"+file+"` belongs to the main instance. The test runner was not checked.",
+			"Pass `--token-file` with this instance's token file (the one its install used). If this is the only instance on this computer and `"+file+"` is its token file, pass `--token-file "+quoteArg(file)+"`.")
 		return "", false
 	}
 	return file, true
@@ -60,7 +61,7 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	}
 	plan, err := planExecutor(d.deps, tokenFile, d.s, engineBinDir(d.rt))
 	if err != nil {
-		d.fail("executor.lifecycle", err.Error(), "set the variable it names, then run doctor again")
+		d.fail("executor.lifecycle", err.Error(), "Do what the message says, then run `"+d.deps.command()+" doctor` again.")
 		return
 	}
 	registered, running, stateErr := plan.state(ctx, d.deps)
@@ -75,30 +76,38 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	}
 	d.checkExecutorToken(plan) // the install makes the token copy and the service's token whatever becomes of the executor, so its fix stays the install's
 	d.checkExecutorColocatedBinary(plan, fix)
+	current, definitionErr := true, error(nil) // the registered definition is this build's: the one of another instance is not read
+	if stateErr == nil && !other && registered {
+		current, definitionErr = plan.definitionIsCurrent(d.deps)
+	}
 	switch {
 	case stateErr != nil:
-		d.fail("executor.lifecycle", "ask the operating system about the executor: "+stateErr.Error(), d.installFix())
+		d.fail("executor.lifecycle", "Doctor could not ask the operating system about the test runner: "+stateErr.Error(), d.installFix())
 	case other:
-		d.fail("executor.lifecycle", "the executor of this user is registered for another instance, not for the token file "+tokenFile+": a computer has one executor", fix)
+		d.fail("executor.lifecycle", "The test runner on this computer belongs to another instance, not to the one that uses the token file `"+tokenFile+"`. A computer has one test runner.", fix)
 	case !registered:
-		d.fail("executor.lifecycle", "the executor is not registered with the operating system: it should be "+executorMechanism(plan.goos), d.installFix())
+		d.fail("executor.lifecycle", "The test runner is not set up on this computer. It should be "+executorMechanism(plan.goos)+".", d.installFix())
+	case definitionErr != nil:
+		d.fail("executor.lifecycle", "Doctor could not read the test runner's task definition: "+definitionErr.Error(), d.installFix())
+	case !current:
+		d.fail("executor.lifecycle", "The scheduled task of the test runner is not the one this version of SuiteWard makes (it may come from an older version, or it was changed). This needs your action.", d.installFix())
 	default:
-		d.pass("executor.lifecycle", "the executor is registered as "+executorMechanism(plan.goos))
+		d.pass("executor.lifecycle", "The test runner is set up as "+executorMechanism(plan.goos)+".")
 	}
 	d.checkExecutorRunning(ctx, func(context.Context) error {
 		switch {
 		case stateErr != nil:
-			return fmt.Errorf("it is not known whether the executor runs: %w", stateErr)
+			return fmt.Errorf("doctor could not tell whether the test runner is running: %w", stateErr)
 		case other:
-			return errors.New("the executor that is registered is another instance's, so none runs for this one")
+			return errors.New("the test runner on this computer belongs to another instance, so none runs for this one")
 		case !running:
-			return errors.New("the executor is not running")
+			return errors.New("the test runner is not running")
 		}
 		return nil
 	}, runningFixes{
 		noToken:    d.installFix(),
 		notRunning: notRunning,
-		notSeen:    "read the executor's log (" + plan.logWhere() + "), then " + d.installFix() + ", so that the service and the executor hold one token and one port",
+		notSeen:    "Read the test runner's log (" + plan.logWhere() + ") to see why. Then run `" + d.deps.command() + " install` again: it makes the service and the test runner use the same token and port.",
 	})
 	d.checkExecutorImage(ctx)
 	d.checkExecutorLoopback(ctx)
@@ -111,21 +120,21 @@ func (d *doctor) checkExecutorImage(ctx context.Context) {
 		return
 	}
 	if !d.rt.ImageExists(ctx, goprofile.Image) {
-		d.fail("executor.image", "the engine has no Go image of the sandboxes ("+goprofile.Image+"): the executor starts them without pulling, so every execution job is unavailable", d.installFix())
+		d.fail("executor.image", "The container engine does not have the Go image that the test runner's sandboxes use ("+goprofile.Image+"). The test runner does not download it, so no test can run.", d.installFix())
 		return
 	}
-	d.pass("executor.image", "the engine has the Go image of the sandboxes, under its digest")
+	d.pass("executor.image", "The container engine has the Go image that the test runner's sandboxes use.")
 }
 
 // startHint is how to start the executor by hand where the operating system keeps it, and where to read why it stopped.
 func (p executorPlan) startHint() string {
 	switch p.goos {
 	case "windows":
-		return `start it with schtasks /Run /TN "` + executorTaskName + `" and read why it stopped in ` + p.log
+		return "Start it with `schtasks /Run /TN \"" + executorTaskName + "\"`. To see why it stopped, read `" + p.log + "`."
 	case "darwin":
-		return "start it with launchctl kickstart -k gui/$(id -u)/" + executorLabel + " and read why it stopped in " + p.log
+		return "Start it with `launchctl kickstart -k gui/$(id -u)/" + executorLabel + "`. To see why it stopped, read `" + p.log + "`."
 	default:
-		return "start it with systemctl --user start " + executorUnitName + " and read why it stopped with journalctl --user -u " + executorUnitName
+		return "Start it with `systemctl --user start " + executorUnitName + "`. To see why it stopped, run `journalctl --user -u " + executorUnitName + "`."
 	}
 }
 
@@ -134,7 +143,7 @@ func (p executorPlan) startHint() string {
 func (d *doctor) checkExecutorToken(plan executorPlan) {
 	var problems []string
 	if info, err := os.Stat(plan.tokenFile); err != nil || !info.Mode().IsRegular() {
-		problems = append(problems, "the executor's token copy "+plan.tokenFile+" is not there")
+		problems = append(problems, "The token file of the test runner (the executor) is missing: `"+plan.tokenFile+"`.")
 	}
 	raw, ok := d.raw[ContainerServe]
 	if !ok {
@@ -145,13 +154,13 @@ func (d *doctor) checkExecutorToken(plan executorPlan) {
 	if err != nil {
 		problems = append(problems, err.Error())
 	} else if _, has := envMap(in.Config.Env)[executorAuthFileEnv]; !has {
-		problems = append(problems, "the service container has no executor token: it was made by a release before the executor")
+		problems = append(problems, "The service has no token for the test runner: it was made by an earlier release.")
 	}
 	if len(problems) > 0 {
-		d.fail("executor.token", strings.Join(problems, "; "), d.installFix())
+		d.fail("executor.token", strings.Join(problems, " "), d.installFix())
 		return
 	}
-	d.pass("executor.token", "the executor has its token copy, and the service container reads its token from "+executorAuthFileEnv)
+	d.pass("executor.token", "The test runner (the executor) has its token file, and the service is set up to read the matching token.")
 }
 
 // checkExecutorColocatedBinary checks the executor's copy of the program: there, as installed (its pin), and this program's build. The pin
@@ -160,7 +169,7 @@ func (d *doctor) checkExecutorToken(plan executorPlan) {
 func (d *doctor) checkExecutorColocatedBinary(plan executorPlan, fix string) {
 	sum, err := hashFile(plan.binary)
 	if errors.Is(err, fs.ErrNotExist) {
-		d.fail("executor.binary", "no executor binary at "+plan.binary, fix)
+		d.fail("executor.binary", "The test runner's program is missing: `"+plan.binary+"`.", fix)
 		return
 	}
 	if err != nil {
@@ -170,27 +179,24 @@ func (d *doctor) checkExecutorColocatedBinary(plan executorPlan, fix string) {
 	pin, err := os.ReadFile(plan.pin)
 	fields := strings.Fields(string(pin))
 	if err != nil || len(fields) == 0 {
-		d.fail("executor.binary", "no pin of the executor's binary at "+plan.pin, fix)
+		d.fail("executor.binary", "The record of the test runner's fingerprint is missing: `"+plan.pin+"`.", fix)
 		return
 	}
 	own, err := d.ownHash()
 	switch {
 	case err != nil:
-		d.fail("executor.binary", "hash this program: "+err.Error(), "this is a bug of the installer: report it")
+		d.fail("executor.binary", "Doctor could not read its own program: "+err.Error(), "This looks like a bug in the installer. Please report it.")
 	case sum != fields[0]:
-		d.fail("executor.binary", fmt.Sprintf("the executor's binary has changed since it was installed (SHA-256 %s, pinned %s)", sum, fields[0]), fix)
+		d.fail("executor.binary", fmt.Sprintf("The test runner's program has changed since it was installed. Its fingerprint (SHA-256 %s) no longer matches the recorded one (%s). Do not go on until this is fixed.", sum, fields[0]), fix)
 	case sum != own:
-		d.fail("executor.binary", fmt.Sprintf("the executor runs another build than this program (the executor's SHA-256 %s, this program's %s)", sum, own), fix)
+		d.fail("executor.binary", fmt.Sprintf("The test runner is a different version from this program. Its fingerprint (SHA-256) is %s; this program's is %s. This needs your action.", sum, own), fix)
 	case len(fields) >= 2 && releaseAssetOf(plan.goos).MatchString(fields[1]):
-		d.pass("executor.binary", "the executor's binary (SHA-256 "+sum+") is the pinned one, this program's, and the release's line of SHA256SUMS "+fields[1]+". "+colocatedAssurance)
+		d.pass("executor.binary", "The test runner's program matches the official release: its fingerprint (SHA-256 "+sum+") is listed in the release's SHA256SUMS as "+fields[1]+".")
 	default:
-		d.warn("executor.binary", "the executor's binary (SHA-256 "+sum+") is the pinned one and this program's, but the pin was not made from a release's SHA256SUMS, so nothing checked it against the release. "+colocatedAssurance,
-			"run `"+d.deps.command()+" install --upgrade --sha256sums <the SHA256SUMS of the release>` with that release's binary")
+		d.warn("executor.binary", "The test runner has not been checked against an official release. This is normal for a development build.",
+			"To check it, run `"+d.deps.command()+" install --upgrade --sha256sums <the release's SHA256SUMS file>` with the program from that release.")
 	}
 }
-
-// colocatedAssurance is what doctor says of the executor of this tier whether or not its pin is a release's line.
-const colocatedAssurance = "This tier has reduced assurance: it runs as your user, next to your coding agent, so these pins catch drift and accident, not a determined agent"
 
 // checkExecutorLoopback checks that this computer reaches the port that a Podman machine publishes. The executor is a program of this computer,
 // and on Windows and macOS the machine's published loopback port does not always answer from outside it; the service then never sees the
@@ -201,11 +207,11 @@ func (d *doctor) checkExecutorLoopback(ctx context.Context) {
 	}
 	address := fmt.Sprintf("http://127.0.0.1:%d/readyz", d.s.HTTPPort)
 	if _, err := d.fetch(ctx, address); err != nil {
-		d.fail("executor.loopback", fmt.Sprintf("this computer cannot reach 127.0.0.1:%d, the port that the Podman machine %s publishes (%v), so the executor, a program of this computer, cannot reach the service: its runs read no-executor, and the owner can unblock each head", d.s.HTTPPort, d.machine.Name, err),
-			"a known limit of the machine's port forwarding: restart the machine (`podman machine stop`, then `podman machine start`) and run doctor again; if it persists, the owner unblocks the heads with `/suiteward unblock`")
+		d.fail("executor.loopback", fmt.Sprintf("This computer cannot reach `127.0.0.1:%d`, the port that the Podman machine %s publishes (%v). The test runner cannot reach the service either, so its test runs end with `no-executor`. The owner can unblock each revision with `/suiteward unblock`.", d.s.HTTPPort, d.machine.Name, err),
+			"This is a known limit of the machine's port forwarding. Run `podman machine stop`, then `podman machine start`, then run doctor again. If it persists, the owner unblocks each revision with `/suiteward unblock`.")
 		return
 	}
-	d.pass("executor.loopback", fmt.Sprintf("this computer reaches 127.0.0.1:%d, the port that the Podman machine %s publishes", d.s.HTTPPort, d.machine.Name))
+	d.pass("executor.loopback", fmt.Sprintf("This computer reaches `127.0.0.1:%d`, the port that the Podman machine %s publishes.", d.s.HTTPPort, d.machine.Name))
 }
 
 // logWhere is where the executor's log is: a file where the operating system has the program write one, the journal of the user's manager on Linux.

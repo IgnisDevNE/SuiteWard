@@ -2,7 +2,9 @@ package installer
 
 import (
 	"bytes"
+	"encoding/xml"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,7 +24,8 @@ import (
 
 // isOSCall says whether a command is one that keeps the executor running, which the operating system answers and no container engine does.
 func isOSCall(c call) bool {
-	return slices.Contains([]string{"systemctl", "schtasks", "tasklist", "launchctl", "id"}, c.name)
+	// The Windows ones are named by their full path under the system directory.
+	return slices.Contains([]string{"systemctl", "schtasks", "tasklist", "taskkill", "powershell", "launchctl", "id"}, baseName(c.name))
 }
 
 func (h *harness) executorDir() string { return filepath.Join(h.dir, "executor") }
@@ -162,24 +165,120 @@ func TestInstallStartsTheExecutorAsAScheduledTaskAtLogonOnWindows(t *testing.T) 
 			t.Errorf("the wrapper lacks %s:\n%s", want, wrapper)
 		}
 	}
-	raw, err := os.ReadFile(filepath.Join(h.executorDir(), "task.xml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	task := utf16le(t, raw)
+	task := utf16le(t, mustRead(t, filepath.Join(h.executorDir(), "task.xml")))
 	for _, want := range []string{
 		"<LogonTrigger>", "<UserId>" + testSID + "</UserId>", "<LogonType>InteractiveToken</LogonType>", "<RunLevel>LeastPrivilege</RunLevel>",
 		"<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>", "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
-		"<RestartOnFailure>", "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
-		"<Command>" + filepath.Join(h.executorDir(), "run.cmd") + "</Command>",
+		"<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
 	} {
 		if !strings.Contains(task, want) {
 			t.Errorf("the task lacks %s:\n%s", want, task)
 		}
 	}
 	h.assertOrder("/Create /TN SuiteWard Executor /XML "+filepath.Join(h.executorDir(), "task.xml")+" /F", "/Run /TN SuiteWard Executor")
-	if !strings.Contains(h.out.String(), "console window") {
-		t.Errorf("the output must say that a console window shows (a task of the logged-on user cannot hide it):\n%s", h.out.String())
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// execAction is the action of the task as Task Scheduler reads it: the program, its arguments and the folder it starts in.
+type execAction struct{ Command, Arguments, WorkingDirectory string }
+
+func taskAction(t *testing.T, task string) (action execAction, hasRestart bool) {
+	t.Helper()
+	var doc struct {
+		Actions struct{ Exec execAction }
+	}
+	dec := xml.NewDecoder(strings.NewReader(task))
+	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil } // the file declares UTF-16: utf16le has decoded it
+	if err := dec.Decode(&doc); err != nil {
+		t.Fatalf("the task is not XML: %v\n%s", err, task)
+	}
+	return doc.Actions.Exec, strings.Contains(task, "RestartOnFailure")
+}
+
+// The executor is never a window on the user's computer (owner decision 18). A scheduled task of the logged-on user opens a console for a console
+// program, so the script runs through conhost.exe --headless, which has no window. Every program is named by its full path under the system
+// directory, and the script by its name in the folder the task starts in, with its own path as an argument that cmd ignores: no character of a
+// path goes through the quoting rules of cmd /c, and the process list names the instance by that path.
+func TestTheScheduledTaskOfTheExecutorRunsItsScriptThroughAHeadlessConsole(t *testing.T) {
+	for name, c := range map[string]struct{ systemRoot, system string }{
+		"the system directory of the computer": {`D:\Windows`, `D:\Windows\System32`},
+		"the default system directory":         {"", `C:\Windows\System32`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := machineHarnessOn(t, "windows")
+			h.dir = filepath.Join(h.dir, "Ana & Pedro (work)") // a folder name that cmd reads as an operator and a group
+			if err := os.MkdirAll(h.dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			h.f.env["SystemRoot"] = c.systemRoot
+			if err := h.podman(); err != nil {
+				t.Fatal(err)
+			}
+			action, hasRestart := taskAction(t, utf16le(t, mustRead(t, filepath.Join(h.executorDir(), "task.xml"))))
+			if want := c.system + `\conhost.exe`; action.Command != want {
+				t.Errorf("the task runs %q, want %q: no console of Windows Terminal may open", action.Command, want)
+			}
+			wrapper := filepath.Join(h.executorDir(), "run.cmd")
+			if want := `--headless "` + c.system + `\cmd.exe" /d /c .\run.cmd "` + wrapper + `"`; action.Arguments != want {
+				t.Errorf("the task passes %q, want %q", action.Arguments, want)
+			}
+			if action.WorkingDirectory != h.executorDir() {
+				t.Errorf("the task starts in %q, want %q", action.WorkingDirectory, h.executorDir())
+			}
+			if hasRestart {
+				t.Error("the task keeps RestartOnFailure: Task Scheduler does not restart an action that exited, so the wrapper is what brings the executor back")
+			}
+		})
+	}
+}
+
+// The wrapper is what brings the executor back (owner decision 18): Task Scheduler's RestartOnFailure does not restart an action that exited, so a
+// closed console, a crash or an exit starts the program again after about a minute. The pause is ping, which reads no console (timeout does).
+func TestTheWrapperOfTheWindowsTaskStartsTheExecutorAgainAfterAPause(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(h.readHome("executor/run.cmd")), "\r\n")
+	start := `"` + h.executorBinary() + `" execute >> "` + filepath.Join(h.executorDir(), "executor.log") + `" 2>&1`
+	at := func(from int, want string) int {
+		t.Helper()
+		for i := from; i < len(lines); i++ {
+			if strings.Contains(lines[i], want) {
+				return i
+			}
+		}
+		t.Fatalf("the wrapper has no line with %q after line %d:\n%s", want, from, strings.Join(lines, "\n"))
+		return -1
+	}
+	label := at(0, ":again")
+	run := at(label, start)
+	pause := at(run, `"%SystemRoot%\System32\ping.exe" -n 61 127.0.0.1 >nul`)
+	at(pause, "goto again")
+	if strings.Contains(strings.Join(lines, "\n"), "timeout") {
+		t.Error("the wrapper pauses with timeout, which reads the console")
+	}
+}
+
+func TestTheInstallSaysThatTheExecutorOfWindowsHasNoWindow(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	out := h.out.String()
+	if !strings.Contains(out, "no window") {
+		t.Errorf("the output must say that the executor has no window:\n%s", out)
+	}
+	if strings.Contains(out, "console window") || strings.Contains(out, "Closing the window") {
+		t.Errorf("the output still says that a window shows and that closing it stops the executor:\n%s", out)
 	}
 }
 
@@ -239,7 +338,7 @@ func TestInstallStopsAScheduledTaskBeforeItReplacesTheProgramItHolds(t *testing.
 	again.exe = newer
 	again.have(kindSecret, SecretMCPAuth, SecretExecutorAuth)
 	again.first("/Query /TN SuiteWard Executor", "") // the task of the first install is registered
-	again.f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`)
+	again.f.on("Win32_Process", listingOf(nil))      // no process listed: the task's tree is already gone
 	if err := again.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +355,7 @@ func TestInstallOnlyWarnsWhenTheExecutorCannotBeStarted(t *testing.T) {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
 	}
 	out := h.out.String()
-	if !strings.Contains(out, "executor could not be set up") || !strings.Contains(out, "Access is denied") {
+	if !strings.Contains(out, "could not be set up") || !strings.Contains(out, "Access is denied") {
 		t.Errorf("the output must say that the executor could not be set up, and why:\n%s", out)
 	}
 	if _, err := os.Stat(h.settingsPath()); err != nil {
@@ -410,8 +509,8 @@ func TestTheInstallsSayThatAnEngineHasOneExecutor(t *testing.T) {
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
-	if out := h.out.String(); !strings.Contains(out, "one executor") || !strings.Contains(out, "suiteward-sandbox-") {
-		t.Errorf("the co-located install must say that an engine has one executor, and why:\n%s", out)
+	if out := h.out.String(); !strings.Contains(out, "only one test runner (the executor)") || !strings.Contains(out, "suiteward-sandbox-") {
+		t.Errorf("the co-located install must say that an engine has one test runner, and why:\n%s", out)
 	}
 	host := newHostFake()
 	out, err := runHost(t, host, declineMetadataRule, false, "")
@@ -453,7 +552,7 @@ func TestInstallSaysThatTheUserIDIsMissingWhenIdPrintsNothing(t *testing.T) {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
 	}
 	out := h.out.String()
-	if !strings.Contains(out, "executor could not be set up") || !strings.Contains(out, "id of this user") {
+	if !strings.Contains(out, "could not be set up") || !strings.Contains(out, "id of this user") {
 		t.Errorf("the output must say that the executor could not be set up because the id of the user is not known:\n%s", out)
 	}
 	if strings.Contains(out, "<nil>") || strings.Contains(out, "%!") {
@@ -489,7 +588,7 @@ func TestUninstallWarnsAndGoesOnWhenTheUserManagerCannotBeAskedAboutAnExecutorTh
 		t.Errorf("the stack was not removed: %v", un.f.calls)
 	}
 	out := un.out.String()
-	if !strings.Contains(out, "executor was not removed") || !strings.Contains(out, un.executorDir()) || !strings.Contains(out, "disable --now suiteward-executor.service") {
+	if !strings.Contains(out, "was not removed") || !strings.Contains(out, un.executorDir()) || !strings.Contains(out, "disable --now suiteward-executor.service") {
 		t.Errorf("the output must say that the executor is still there, where, and how to remove it:\n%s", out)
 	}
 }
@@ -523,7 +622,7 @@ func TestInstallDoesNotRepointTheExecutorOfAnotherInstance(t *testing.T) {
 	if len(h.f.find("enable --now suiteward-executor.service")) != 0 || len(h.f.find("--user stop")) != 0 {
 		t.Errorf("the executor of the other instance was stopped or started: %v", h.f.calls)
 	}
-	if out := h.out.String(); !strings.Contains(out, "another instance") || !strings.Contains(out, "one executor") {
+	if out := h.out.String(); !strings.Contains(out, "another instance") || !strings.Contains(out, "one test runner") {
 		t.Errorf("the output must say that the computer has one executor and that it is another instance's:\n%s", out)
 	}
 	if _, err := os.Stat(h.executorDir()); !os.IsNotExist(err) {
@@ -600,26 +699,68 @@ func TestUpgradeAtTheInstalledReleaseDoesNotStartAnExecutorWithoutItsTokenCopy(t
 	if len(u.f.find("--user enable --now suiteward-executor.service")) != 0 {
 		t.Errorf("an executor with no token was started: %v", u.f.calls)
 	}
-	if out := u.out.String(); !strings.Contains(out, "token copy") || !strings.Contains(out, "install") {
+	if out := u.out.String(); !strings.Contains(out, "token file") || !strings.Contains(out, "install") {
 		t.Errorf("the output must say that the token copy is missing and what to run:\n%s", out)
 	}
 }
 
-// A batch file reads a percent sign: `%` in the folder of the executor (a profile or a token file under a name with one) has to be doubled in the
-// line that starts the program and in the one that names its log, as it is in the `set` lines.
-func TestTheWrapperOfTheWindowsTaskDoublesAPercentSignInItsProgramAndLogPaths(t *testing.T) {
+// Windows reads `%name%` in the arguments and the working directory of a scheduled task, and cmd reads it in the command line: a percent sign in
+// the folder of the executor (a profile or a token file under a name with one) would not reach the script as written. The install says so, plainly,
+// and changes nothing, instead of writing a definition that does not work.
+func TestTheInstallRefusesAPercentSignInTheFolderOfTheWindowsExecutor(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
 	h.dir = filepath.Join(h.dir, "50%off")
 	if err := os.MkdirAll(h.dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.podman(); err != nil {
+		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
+	}
+	out := h.out.String()
+	if !strings.Contains(out, "could not be set up") || !strings.Contains(out, "percent sign") || !strings.Contains(out, "--token-file") {
+		t.Errorf("the output must say that the executor could not be set up because of the percent sign, and what to do:\n%s", out)
+	}
+	if pathExists(h.executorDir()) || len(h.f.find("/Create /TN")) != 0 {
+		t.Errorf("a definition was written for a folder that Windows would misread: %v", h.f.lines())
+	}
+}
+
+// cmd reads the wrapper in the code page of the console, which is not UTF-8: a profile with a letter outside ASCII (C:\Users\João), which the installer
+// writes into the script as UTF-8, would be misread in the `set` lines, the program's path and the log redirect, and the loop would retry
+// silently. The first thing the wrapper does is switch the console to UTF-8.
+func TestTheWrapperOfTheWindowsTaskSwitchesTheConsoleToUTF8First(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	h.dir = filepath.Join(h.dir, "João")
+	if err := os.MkdirAll(h.dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	doubled := func(path string) string { return strings.ReplaceAll(path, "%", "%%") }
-	want := `"` + doubled(h.executorBinary()) + `" execute >> "` + doubled(filepath.Join(h.executorDir(), "executor.log")) + `" 2>&1`
-	if wrapper := h.readHome("executor/run.cmd"); !strings.Contains(wrapper, want) {
-		t.Errorf("the wrapper lacks the line that starts the program with its percent signs doubled, %s:\n%s", want, wrapper)
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(h.readHome("executor/run.cmd"), "\r\n")
+	if lines[0] != "@echo off" || lines[1] != `"%SystemRoot%\System32\chcp.com" 65001 >nul` {
+		t.Errorf("the wrapper does not switch the console to UTF-8 right after @echo off:\n%s", strings.Join(lines, "\n"))
+	}
+	for i, line := range lines {
+		if strings.HasPrefix(line, "set ") && i < 2 {
+			t.Errorf("a set line comes before the code page is changed: %s", line)
+		}
+	}
+}
+
+// The reduced assurance of the co-located installation is stated once, by the pages that introduce it and the summaries, and not by the executor's
+// install line, which keeps the facts: its token, the address it reaches, and that an engine has one test runner.
+func TestTheExecutorLineOfTheInstallDoesNotRepeatTheReducedAssurance(t *testing.T) {
+	h := newHarness(t, "linux")
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	out := h.out.String()
+	if strings.Contains(out, "less protected") || strings.Contains(out, "separate server") {
+		t.Errorf("the executor's install line repeats the reduced-assurance caveat:\n%s", out)
+	}
+	if !strings.Contains(out, "its own token") || !strings.Contains(out, "http://127.0.0.1:") {
+		t.Errorf("the executor's install line lost its token and its address:\n%s", out)
 	}
 }
 
@@ -634,8 +775,8 @@ func TestTheUninstallWarningNamesTheCommandsOfTheOperatingSystemThatKeepsTheExec
 			un.first("/Query /TN SuiteWard Executor", "") // the task is registered, and this instance made its two files
 			writeFile(un.t, filepath.Join(un.executorDir(), executorWrapperName), "the wrapper")
 			writeFile(un.t, filepath.Join(un.executorDir(), "task.xml"), "the task")
-			un.f.fail("IMAGENAME eq suiteward-executor.exe", errors.New("tasklist: access denied"))
-		}, []string{`schtasks /End /TN "SuiteWard Executor"`, "`taskkill /IM suiteward-executor.exe /F`", `schtasks /Delete /TN "SuiteWard Executor" /F`}},
+			un.f.fail("Win32_Process", errors.New("powershell: access denied"))
+		}, []string{`schtasks /End /TN "SuiteWard Executor"`, `schtasks /Delete /TN "SuiteWard Executor" /F`, "sign out of Windows"}},
 		{"darwin", func(un *harness) { un.f.fail("=-u", errors.New("id: not found")) }, []string{"launchctl bootout gui/$(id -u)/" + executorLabel}},
 	}
 	for _, c := range cases {
@@ -649,8 +790,13 @@ func TestTheUninstallWarningNamesTheCommandsOfTheOperatingSystemThatKeepsTheExec
 				t.Fatalf("an uninstall must go on with the stack: %v", err)
 			}
 			out := un.out.String()
-			if !strings.Contains(out, "executor was not removed") || strings.Contains(out, "systemctl") {
+			if !strings.Contains(out, "was not removed") || strings.Contains(out, "systemctl") {
 				t.Errorf("the output must say that the executor is still there, and not give the command of Linux:\n%s", out)
+			}
+			// The wrapper starts the program again after its pause, so ending the program by its name alone would not stop the executor, and it would
+			// end another instance's too: a person signs out, which ends everything of the user, after the task is deleted.
+			if strings.Contains(out, "taskkill") {
+				t.Errorf("the output teaches a kill by name:\n%s", out)
 			}
 			for _, want := range c.want {
 				if !strings.Contains(out, want) {

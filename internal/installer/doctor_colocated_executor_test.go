@@ -72,8 +72,12 @@ func healthyColocatedExecutor(t *testing.T, f *fakeEngine) {
 		files.binary: coloProgramText,
 		files.pin:    hex.EncodeToString(sum[:]) + "  " + testReleaseAsset(f.goos) + "\n", // made from a release's sums
 	}
-	if f.goos == "windows" { // a registered task is this instance's when this instance made the two files of it
-		made[filepath.Join(files.dir, executorWrapperName)], made[filepath.Join(files.dir, "task.xml")] = "the wrapper", "the task"
+	if f.goos == "windows" { // a registered task is this instance's when this instance made the two files of it; the task is the current definition
+		plan, err := planExecutor(f.deps(), coloTokenFile(t, f), Settings{HTTPPort: DefaultHTTPPort, Runtime: RuntimePodman}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		made[plan.wrapper], made[plan.taskXML] = plan.windowsWrapper(), string(plan.windowsTask(testSID))
 	}
 	for path, content := range made {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -85,7 +89,7 @@ func healthyColocatedExecutor(t *testing.T, f *fakeEngine) {
 	}
 	switch f.goos {
 	case "windows":
-		f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`)
+		f.on("Win32_Process", listingOf([]osProc{{pid: 4242, parent: 4, name: executorBinaryName("windows"), exe: files.binary, cmd: `"` + files.binary + `" execute`}}))
 	case "darwin":
 		f.on("=-u", "501\n").on("=print gui/501/"+executorLabel, "state = running\n")
 	default:
@@ -102,14 +106,39 @@ func TestDoctorColocatedExecutorIsHealthyOnEveryOperatingSystem(t *testing.T) {
 				t.Errorf("exit %d, results %+v", code, res)
 			}
 			wantOK(t, res, "executor.token", "executor.binary", "executor.lifecycle", "executor.running")
-			if d := res["executor.binary"].Detail; !strings.Contains(d, "reduced assurance") {
-				t.Errorf("the binary check must say that the assurance of this tier is reduced: %q", d)
+			// The reduced assurance of this tier is stated once, by the install's summary and the page that introduces it: not by each row.
+			if d := res["executor.binary"].Detail; !strings.Contains(d, "matches the official release") || strings.Contains(d, "reduced assurance") {
+				t.Errorf("the binary check must say that the program matches the release, and not repeat the caveat: %q", d)
 			}
 			if _, has := res["executor.loopback"]; has != (goos != "linux") {
 				t.Errorf("the loopback of a Podman machine is checked on Windows and macOS only: %v", has)
 			}
 		})
 	}
+}
+
+// The task of an earlier build (the wrapper run by itself, with a window and RestartOnFailure) is registered by this instance and is not the one this
+// build makes: doctor reads it as a difference that `install --upgrade` fixes, and still says that the executor runs.
+func TestDoctorColocatedWindowsTaskOfAnEarlierBuildIsADifferenceThatAnUpgradeFixes(t *testing.T) {
+	f, s := colocated{goos: "windows"}.build(t)
+	plan, err := planExecutor(f.deps(), coloTokenFile(t, f), Settings{HTTPPort: DefaultHTTPPort, Runtime: RuntimePodman}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, plan.taskXML, string(legacyTask(plan)))
+	code, res, _ := runDoctor(t, f, s)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	wantFail(t, res, "executor.lifecycle", "not the one this version")
+	// It is an older definition or one that was changed by hand: the text does not claim what only the pre-F7 definition did.
+	if d := res["executor.lifecycle"].Detail; strings.Contains(d, "opens a window") {
+		t.Errorf("the detail %q assumes the old definition", d)
+	}
+	if !strings.Contains(res["executor.lifecycle"].Fix, "install --upgrade") {
+		t.Errorf("the fix %q must name the upgrade", res["executor.lifecycle"].Fix)
+	}
+	wantOK(t, res, "executor.running")
 }
 
 func removeFile(t *testing.T, path string) {
@@ -144,11 +173,12 @@ func TestDoctorColocatedExecutorFailures(t *testing.T) {
 			writeFile(t, files.binary, "the previous release")
 			sum := sha256.Sum256([]byte("the previous release"))
 			writeFile(t, files.pin, hex.EncodeToString(sum[:])+"  suiteward-executor\n")
-		}, nil, "executor.binary", func(coloExecFiles) []string { return []string{"another build"} }, "install --upgrade"},
+		}, nil, "executor.binary", func(coloExecFiles) []string { return []string{"different version"} }, "install --upgrade"},
 		{"not registered on Linux", "linux", nil, []rule{{match: userUnit, out: "LoadState=not-found\nActiveState=inactive\nSubState=dead\n"}}, "executor.lifecycle", func(coloExecFiles) []string { return []string{"systemd user unit"} }, "install"},
 		{"not registered on Windows", "windows", nil, []rule{{match: "/Query /TN", err: errors.New("error: the system cannot find the file specified")}}, "executor.lifecycle", func(coloExecFiles) []string { return []string{"scheduled task"} }, "install"},
 		{"not running on Linux", "linux", nil, []rule{{match: userUnit, out: "LoadState=loaded\nActiveState=inactive\nSubState=dead\n"}}, "executor.running", func(coloExecFiles) []string { return []string{"not running"} }, "systemctl --user start suiteward-executor.service"},
-		{"not running on Windows", "windows", nil, []rule{{match: "IMAGENAME eq suiteward-executor.exe", out: "INFO: No tasks are running which match the specified criteria."}}, "executor.running", func(coloExecFiles) []string { return []string{"not running"} }, "schtasks /Run"},
+		{"not running on Windows", "windows", nil, []rule{{match: "Win32_Process", out: listingOf(nil)}}, "executor.running", func(coloExecFiles) []string { return []string{"not running"} }, "schtasks /Run"},
+		{"not running on Windows while only another instance's executor runs", "windows", nil, []rule{{match: "Win32_Process", out: listingOf([]osProc{{pid: 9, name: "suiteward-executor.exe", exe: `C:\other\executor\suiteward-executor.exe`, cmd: `"C:\other\executor\suiteward-executor.exe" execute`}})}}, "executor.running", func(coloExecFiles) []string { return []string{"not running"} }, "schtasks /Run"},
 		{"not running on macOS", "darwin", nil, []rule{{match: "=print gui/501/" + executorLabel, out: "state = waiting\n"}}, "executor.running", func(coloExecFiles) []string { return []string{"not running"} }, "launchctl kickstart"},
 	}
 	for _, c := range cases {

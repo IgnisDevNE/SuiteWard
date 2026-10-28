@@ -89,7 +89,7 @@ func TestThePurgeOfAnotherSettingsFileKeepsTheDefaultTokenFileAndSaysSo(t *testi
 		t.Error("the purge removed the default token file, which may belong to another instance")
 	}
 	out := h.out.String()
-	for _, want := range []string{"Kept the MCP token file " + mainToken, "--token-file"} {
+	for _, want := range []string{"Kept the access token file " + mainToken, "--token-file"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the output lacks %q:\n%s", want, out)
 		}
@@ -152,7 +152,7 @@ func TestThePlainPurgeListsWhatItDeletesBeforeItAsks(t *testing.T) {
 	}
 	out := h.out.String()
 	prompt := strings.Index(out, "Type the instance id")
-	for _, want := range with(purgeLists, h.settingsPath(), "the MCP token file "+h.tokenPath()) {
+	for _, want := range with(purgeLists, h.settingsPath(), "the access token file "+h.tokenPath()) {
 		if at := strings.Index(out, want); at < 0 || at > prompt {
 			t.Errorf("%q is not said before the prompt (at %d, the prompt at %d):\n%s", want, at, prompt, out)
 		}
@@ -170,12 +170,12 @@ func TestThePlainPurgeThatKeepsTheDefaultTokenFileSaysSoBeforeItAsks(t *testing.
 	}
 	out := h.out.String()
 	prompt := strings.Index(out, "Type the instance id")
-	for _, want := range with(purgeLists, h.settingsPath(), "The MCP token file "+mainToken+" is kept", "--token-file <path>") {
+	for _, want := range with(purgeLists, h.settingsPath(), "The access token file "+mainToken+" is kept", "--token-file <path>") {
 		if at := strings.Index(out, want); at < 0 || at > prompt {
 			t.Errorf("%q is not said before the prompt (at %d, the prompt at %d):\n%s", want, at, prompt, out)
 		}
 	}
-	if strings.Contains(out, "the MCP token file "+mainToken+"\n") {
+	if strings.Contains(out, "the access token file "+mainToken+"\n") {
 		t.Errorf("the kept token file is listed among what is deleted:\n%s", out)
 	}
 }
@@ -189,7 +189,7 @@ func TestThePurgePageListsWhatItDeletesAndTheTokenFileItRemoves(t *testing.T) {
 		t.Fatalf("Uninstall: %v\n%s", err, run.output())
 	}
 	v := run.question(t, 0)
-	mustSay(t, v, with(purgeLists, "the MCP token file")...)
+	mustSay(t, v, with(purgeLists, "the access token file")...)
 	if strings.Contains(v.text(), "is kept: it may belong") || strings.Contains(v.text(), trimmed) {
 		t.Errorf("the page keeps a token file that it removes, or is trimmed:\n%s", v.dump())
 	}
@@ -207,7 +207,7 @@ func TestThePurgePageSaysWhichTokenFileItKeeps(t *testing.T) {
 	}
 	v := run.question(t, 0)
 	mustSay(t, v, with(purgeLists, "is kept", "may belong to another instance", "--token-file <path>")...)
-	if strings.Contains(v.text(), "the MCP token file") || strings.Contains(v.text(), trimmed) {
+	if strings.Contains(v.text(), "the access token file") || strings.Contains(v.text(), trimmed) {
 		t.Errorf("the page lists the kept token file among what is deleted, or is trimmed:\n%s", v.dump())
 	}
 }
@@ -222,7 +222,7 @@ func TestThePurgeByYesListsWhatItDeletesBeforeItActs(t *testing.T) {
 		}
 		out := h.out.String()
 		acted := strings.Index(out, "Removed the containers")
-		for _, want := range with(purgeLists, h.settingsPath(), "the MCP token file "+h.tokenPath()) {
+		for _, want := range with(purgeLists, h.settingsPath(), "the access token file "+h.tokenPath()) {
 			if at := strings.Index(out, want); at < 0 || at > acted {
 				t.Errorf("%q is not said before the removal (at %d, the removal at %d):\n%s", want, at, acted, out)
 			}
@@ -238,7 +238,7 @@ func TestThePurgeByYesListsWhatItDeletesBeforeItActs(t *testing.T) {
 		out := run.output()
 		drawn := out[:strings.LastIndex(out, leaveAlt)] // the frames, before the screen was left
 		scrollback := squash(run.console.tail())
-		for _, want := range with(purgeLists, "the MCP token file "+h.tokenPath()) {
+		for _, want := range with(purgeLists, "the access token file "+h.tokenPath()) {
 			if !strings.Contains(drawn, want) {
 				t.Errorf("no frame drew %q:\n%s", want, drawn)
 			}
@@ -255,7 +255,7 @@ func TestThePurgeByYesListsWhatItDeletesBeforeItActs(t *testing.T) {
 			t.Fatalf("Uninstall: %v\n%s", err, run.output())
 		}
 		scrollback := squash(run.console.tail()) // the path of the kept file is absolute, and the terminal cuts it wherever its row ends
-		for _, want := range with(purgeLists, "The MCP token file "+mainToken+" is kept", "--token-file <path>") {
+		for _, want := range with(purgeLists, "The access token file "+mainToken+" is kept", "--token-file <path>") {
 			if !strings.Contains(scrollback, squash(want)) {
 				t.Errorf("the scrollback lacks %q:\n%s", want, run.console.tail())
 			}
@@ -296,7 +296,7 @@ func TestThePurgeListsTheRecordOfAGitHubAppOnlyWhenThereIsOne(t *testing.T) {
 
 // With another settings file and no --token-file, the default token file is kept: when there is no such file, there is nothing to say about it.
 func TestThePurgeSaysNothingOfAKeptTokenFileThatIsNotThere(t *testing.T) {
-	const aboutIt = "MCP token file"
+	const aboutIt = "access token file"
 	t.Run("plain", func(t *testing.T) {
 		h := purgeHarness(t)
 		defaultTokenPlace(t, h) // the default place is in the test's directory, and nothing is there

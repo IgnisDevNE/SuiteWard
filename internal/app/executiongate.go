@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
@@ -30,8 +31,20 @@ func (j *checksJob) executionStep(ctx context.Context, s *pullState, x *executio
 	if err != nil {
 		return executionOutcome{}, err
 	}
-	outcome.receipt, err = j.receiptCheck(ctx, s, jobs)
+	outcome.receipt, err = j.receiptCheck(ctx, s, x, jobs)
 	return outcome, err
+}
+
+// runnerNotResponding says that the job a gate reads waits for a runner that no request reached for NotRespondingAfter (docs/contracts/runtime.md, "Not responding"):
+// the job is leased, or pending for a reason other than GitHub, and the runner is silent. A plan with no job yet waits for nothing. Each check reads its own job.
+func (j *checksJob) runnerNotResponding(job execution.Job, found bool) bool {
+	return found && job.WaitsForRunner() && j.liveness.Silent(j.now())
+}
+
+// headNotResponding says that a head reads "not responding": the runner is silent and at least one wanted job of the head waits for it. The wanted jobs are the canonical
+// job when the canonical level is not off and the receipt job when the receipt applies, as the gates read them. The comment of the head reads this.
+func (j *checksJob) headNotResponding(jobs headJobs) bool {
+	return (jobs.canonicalPlanned && j.runnerNotResponding(jobs.canonical, jobs.hasCanonical)) || (jobs.receiptApplies && j.runnerNotResponding(jobs.receipt, jobs.hasReceipt))
 }
 
 // ungated is the check as it was decided before the canonical gate held it back: a stored check with a gate reason is the success it replaced, unchanged for
@@ -39,7 +52,7 @@ func (j *checksJob) executionStep(ctx context.Context, s *pullState, x *executio
 func ungated(r checks.Result) checks.Result {
 	r.Unblocked = false
 	switch r.Reason {
-	case reasonCanonicalPending, reasonCanonicalUnavailable, reasonCanonicalFailing:
+	case reasonCanonicalPending, reasonCanonicalNotResponding, reasonCanonicalUnavailable, reasonCanonicalFailing:
 		r.State, r.Reason = checks.Success, reasonReady
 		if r.Change == changeCodes[inventory.Unchanged] {
 			r.Reason = reasonUnchanged
@@ -69,6 +82,9 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 	reason, err := x.policy.canonical.CheckGate(status, counts, unblocked)
 	if err != nil {
 		return executionOutcome{}, fmt.Errorf("decide the canonical gate: %w", err)
+	}
+	if reason == domain.ReasonCanonicalPending && j.runnerNotResponding(jobs.canonical, jobs.hasCanonical) {
+		reason = domain.ReasonCanonicalNotResponding
 	}
 	d.result = base
 	switch reason {

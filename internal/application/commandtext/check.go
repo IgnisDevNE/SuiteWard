@@ -32,7 +32,7 @@ type Check struct {
 	PathsTotal int
 	Changes    *Changes
 	// Execution and Unblocked mark the summary of canonical: required (docs/contracts/runtime.md, "The canonical gate"): the counts of a complete canonical run, and the
-	// owner's unblock of an unavailable one. The reasons canonical-pending, canonical-unavailable and canonical-failing mark it too. An approval that is missing against a canonical states the counts too.
+	// owner's unblock of an unavailable one. The reasons canonical-pending, canonical-not-responding, canonical-unavailable and canonical-failing mark it too. An approval that is missing against a canonical states the counts too.
 	Execution *CheckExecution
 	Unblocked bool
 	// ApproveMode marks an approval-missing check whose approve names a mode: the repository requires a receipt (docs/contracts/runtime.md, "The revision comment"), as the
@@ -110,6 +110,10 @@ var checkReasons = map[string]checkReason{
 	"canonical-pending": {CheckInProgress, "Canonical run pending",
 		"The run of the approved tests on this head has not finished: it is waiting for an executor, or it is running. The check does not pass until the run ends.",
 		"Next: nothing is required; this check changes when the run ends."},
+	"canonical-not-responding": {CheckInProgress, "Test runner not responding",
+		"The test runner has not answered for about half a minute, so the approved tests have not run on this commit. This is a problem only if it lasts. " +
+			"SuiteWard keeps trying, and the tests start when the test runner answers. This check does not pass until they have run.",
+		"Next: check that the test runner is running on the machine that runs SuiteWard. To let this commit pass without the approved tests, the owner comments:"},
 	"canonical-unavailable": {CheckInProgress, "Canonical run unavailable",
 		"SuiteWard could not run the approved tests on this head, so the run is unavailable and the check does not pass.",
 		"Next: push a new head to run the approved tests again. To let this head pass without that run, the owner comments:"},
@@ -119,7 +123,7 @@ var checkReasons = map[string]checkReason{
 }
 
 // canonicalReasons are the reasons of the canonical gate. They, the counts of a run and the owner's unblock mark the summary of canonical: required.
-var canonicalReasons = []string{"canonical-pending", "canonical-unavailable", "canonical-failing"}
+var canonicalReasons = []string{"canonical-pending", "canonical-not-responding", "canonical-unavailable", "canonical-failing"}
 
 // unblockedText is what the summary says of a head whose unavailable canonical run the owner unblocked.
 const unblockedText = "The owner unblocked this head: its canonical run was unavailable, so the approved tests did not run on it."
@@ -201,7 +205,7 @@ func CheckSummary(c Check) (title, summary string) {
 		next, command = "To approve this exact revision, say what kind of change it is (its mode) and comment:", modeApproveCommand(ref)
 	case c.Reason == "approval-missing":
 		command = codeCommand("approve", ref)
-	case c.Reason == "canonical-unavailable":
+	case c.Reason == "canonical-unavailable", c.Reason == "canonical-not-responding":
 		command = copyable("/suiteward unblock <code>")
 	}
 	parts = append(parts, next)

@@ -49,6 +49,8 @@ const (
 	reasonCanonicalUnavailable = string(domain.ReasonCanonicalUnavailable)
 	reasonCanonicalFailing     = string(domain.ReasonCanonicalFailing)
 
+	reasonCanonicalNotResponding = string(domain.ReasonCanonicalNotResponding)
+
 	problemReadFailed = "read-failed" // a GitHub read failed; the next run tries again
 	problemConflict   = "conflict"    // the canonical moved under the assessment; the next run tries again
 	problemFailed     = "failed"      // a store error that failed the run
@@ -259,7 +261,7 @@ func (j *checksJob) suite(ctx context.Context, p owner.ProjectPolicy) (suiteView
 // (integrity-failed, a fork, a skip, a carrier that was none), and any reason the renderer no longer knows, such as the
 // bootstrap-pending of an installation from before the M1.7b rework.
 var keptReasons = []string{reasonUnchanged, reasonReady, reasonBootstrapReady, reasonApprovalMissing, reasonNotCurrent, reasonAssessmentPending,
-	reasonSourceUnavailable, reasonInvalidSource, reasonOwnerCommand, reasonRunnerUncovered, reasonCanonicalPending, reasonCanonicalUnavailable, reasonCanonicalFailing}
+	reasonSourceUnavailable, reasonInvalidSource, reasonOwnerCommand, reasonRunnerUncovered, reasonCanonicalPending, reasonCanonicalNotResponding, reasonCanonicalUnavailable, reasonCanonicalFailing}
 
 // pullState is what the decision of one open pull request reads: the Suite, the stored check and the owner's latest command.
 type pullState struct {

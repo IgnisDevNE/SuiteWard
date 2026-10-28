@@ -9,7 +9,7 @@ import (
 )
 
 // ReceiptCheck is what the output of the SuiteWard / Receipt check run states (docs/contracts/runtime.md, "The SuiteWard / Receipt check"). Reason is the stable code
-// the checks job stored (receipt-running, receipt-failing, receipt-complete, receipt-not-run or receipt-not-applicable), and State must be the one the code belongs to.
+// the checks job stored (receipt-running, receipt-not-responding, receipt-failing, receipt-complete, receipt-not-run or receipt-not-applicable), and State must be the one the code belongs to.
 // Proposal and Revision name the revision the check concerns. Counts and Markers are the receipt of the head: the tests by state, the excluded ones, the changed test
 // files that do not parse and the marker lines seen. Unavailable is the reason code of a job that was not run (receipt-not-run only), and Unblocked says that the owner
 // unblocked that job. A receipt summary is public: no repository text, no path, no test name, no link and no mode.
@@ -36,6 +36,8 @@ type receiptReason struct {
 var receiptReasons = map[string]receiptReason{
 	"receipt-running": {CheckInProgress, "Receipt pending",
 		"The receipt of this head has not finished: it is waiting for an executor, or it is running. The check has no result yet."},
+	"receipt-not-responding": {CheckInProgress, "Receipt waiting: test runner not responding",
+		"The test runner has not answered for about half a minute, so the receipt of this commit has not run. SuiteWard keeps trying. This check has no result yet."},
 	"receipt-failing": {CheckFailure, "Receipt: failing or missing tests",
 		"At least one test that this revision adds or changes FAILS or is MISSING on the head, or a changed test file does not parse. The counts below are what SuiteWard saw."},
 	"receipt-complete": {CheckSuccess, "Receipt ready",
@@ -69,6 +71,8 @@ var unavailableWords = map[string]string{
 const (
 	evidenceSentence         = "Observed by this instance's executor. Evidence, not a verdict."
 	receiptUnblockedSentence = "The owner unblocked this head: its receipt was unavailable, so the tests did not run."
+	// receiptUnblockOffer ends the text of receipt-not-responding where the receipt gate would refuse an approve.
+	receiptUnblockOffer = "To approve without the receipt, the owner can comment `/suiteward unblock <code>`."
 	// emptyReceiptText is the text of receipt-complete when no test was evaluated: "SuiteWard ran the tests" would say something the run did not do.
 	emptyReceiptText = "This revision adds or changes no test that SuiteWard can run, so the receipt is empty. The counts below are what it saw."
 )
@@ -83,6 +87,9 @@ func ReceiptCheckSummary(c ReceiptCheck) (title, summary string) {
 	text := reason.text
 	if c.Reason == "receipt-complete" && c.Counts.Empty() {
 		text = emptyReceiptText
+	}
+	if c.OffersUnblock {
+		text += " " + receiptUnblockOffer
 	}
 	parts := []string{text}
 	if c.Unavailable != "" {
@@ -136,6 +143,8 @@ func validateReceiptCheck(c ReceiptCheck) (receiptReason, error) {
 		return reason, errors.New("commandtext: a receipt that was not run needs a reason of the closed set")
 	case c.Reason != "receipt-not-run" && (c.Unavailable != "" || c.Unblocked):
 		return reason, fmt.Errorf("commandtext: reason %q has no unavailable reason and no unblock", c.Reason)
+	case c.OffersUnblock && c.Reason != "receipt-not-responding":
+		return reason, fmt.Errorf("commandtext: reason %q offers no unblock: only a receipt that waits for a runner that does not respond does", c.Reason)
 	}
 	if c.Proposal != 0 {
 		if _, err := reference(c.Proposal, c.Revision); err != nil {

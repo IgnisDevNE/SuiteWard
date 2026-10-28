@@ -18,10 +18,12 @@ const (
 	receiptCheckKind = "github_receipt_check"
 	receiptCheckKey  = "receipt-check" // receipt-check:<repository id>:<pull>:<generation>
 
-	receiptRunning  = "receipt-running"
-	receiptFailing  = "receipt-failing"
-	receiptComplete = "receipt-complete"
-	receiptNotRun   = "receipt-not-run"
+	receiptRunning = "receipt-running"
+	// receiptNotResponding replaces receiptRunning while the receipt job waits for a runner that does not respond.
+	receiptNotResponding = "receipt-not-responding"
+	receiptFailing       = "receipt-failing"
+	receiptComplete      = "receipt-complete"
+	receiptNotRun        = "receipt-not-run"
 
 	// receiptNotApplicable is the reason of the last run of a head whose published receipt no longer applies, or whose level turned off.
 	receiptNotApplicable = "receipt-not-applicable"
@@ -49,12 +51,14 @@ type receiptCheckPayload struct {
 	HeadSHA     string             `json:"headSha"`
 	Generation  int64              `json:"generation"`
 	State       string             `json:"state"`
-	Reason      string             `json:"reason"` // receipt-running, receipt-failing, receipt-complete or receipt-not-run
+	Reason      string             `json:"reason"` // receipt-running, receipt-not-responding, receipt-failing, receipt-complete or receipt-not-run
 	Reference   string             `json:"reference"`
 	Tier        string             `json:"tier"`
 	Counts      receiptCheckCounts `json:"counts"`
 	Unavailable string             `json:"unavailable,omitempty"` // for a neutral check: why the job did not run
 	Unblocked   bool               `json:"unblocked,omitempty"`
+	// OffersUnblock is for receipt-not-responding: the receipt gate would refuse an approve now, so the summary offers /suiteward unblock.
+	OffersUnblock bool `json:"offersUnblock,omitempty"`
 }
 
 // receiptDecision is the Receipt check of a head as the job decided it. publish is false for a head with no receipt (the level is off, the head has no
@@ -89,7 +93,7 @@ func (j *checksJob) withdrawnReceipt(ctx context.Context, s *pullState, jobs hea
 // receiptCheck decides the Receipt check of the head from its receipt job: in progress while it is pending or has no job yet, a failure when it is complete
 // with a failing or missing test or a file that does not parse, a success otherwise, and neutral when it is unavailable, which the owner's unblock marks
 // without changing it.
-func (j *checksJob) receiptCheck(ctx context.Context, s *pullState, jobs headJobs) (receiptDecision, error) {
+func (j *checksJob) receiptCheck(ctx context.Context, s *pullState, x *executionRun, jobs headJobs) (receiptDecision, error) {
 	if !jobs.receiptApplies {
 		return j.withdrawnReceipt(ctx, s, jobs)
 	}
@@ -102,9 +106,19 @@ func (j *checksJob) receiptCheck(ctx context.Context, s *pullState, jobs headJob
 		return receiptDecision{}, fmt.Errorf("decide the Receipt check: %w", err)
 	}
 	check := execution.ReceiptCheck{RepositoryID: s.p.RepositoryID, PullNumber: s.pull.Number, HeadSHA: s.pull.HeadSHA, Reference: jobs.reference}
+	offersUnblock := false
 	switch conclusion {
 	case domain.ConclusionInProgress:
 		check.State, check.Reason = execution.CheckInProgress, receiptRunning
+		if j.runnerNotResponding(jobs.receipt, jobs.hasReceipt) {
+			check.Reason = receiptNotResponding
+			// The unblock is offered where the receipt gate would refuse an approve while the run is pending: under required and before-approval.
+			refusal, err := x.policy.receipt.ApproveGate(domain.RunPending, domain.ReceiptCounts{}, domain.ModeNone, false)
+			if err != nil {
+				return receiptDecision{}, fmt.Errorf("decide the receipt gate: %w", err)
+			}
+			offersUnblock = refusal != domain.ReasonNone
+		}
 	case domain.ConclusionFailure:
 		check.State, check.Reason = execution.CheckFailure, receiptFailing
 	case domain.ConclusionSuccess:
@@ -116,7 +130,7 @@ func (j *checksJob) receiptCheck(ctx context.Context, s *pullState, jobs headJob
 	}
 	decision := receiptDecision{publish: true, check: check, counts: receiptCheckCounts{Detects: run.counts.Detects, Inert: run.counts.Inert, NewAPI: run.counts.NewAPI,
 		Fails: run.counts.Fails, Missing: run.counts.Missing, Flaky: run.counts.Flaky, Skipped: run.counts.Skipped, Excluded: run.counts.Excluded, Markers: run.markers,
-		Unparsed: run.counts.Unparsed}}
+		Unparsed: run.counts.Unparsed}, offersUnblock: offersUnblock}
 	if jobs.hasReceipt {
 		decision.check.JobID = jobs.receipt.ID
 	}
@@ -132,7 +146,7 @@ func (j *checksJob) receiptCheck(ctx context.Context, s *pullState, jobs headJob
 // newReceiptCheckMessage builds the github_receipt_check message of generation for the decided Receipt check d of a pull request of repo (owner/name).
 func newReceiptCheckMessage(repo string, d receiptDecision, tier string, generation int64) (governance.OutboxMessage, error) {
 	p := receiptCheckPayload{commentTarget: commentTarget{RepositoryID: d.check.RepositoryID, Repo: repo, Pull: d.check.PullNumber}, HeadSHA: d.check.HeadSHA, Generation: generation,
-		State: string(d.check.State), Reason: d.check.Reason, Reference: d.check.Reference, Tier: tier, Counts: d.counts, Unavailable: string(d.unavailable), Unblocked: d.check.Unblocked}
+		State: string(d.check.State), Reason: d.check.Reason, Reference: d.check.Reference, Tier: tier, Counts: d.counts, Unavailable: string(d.unavailable), Unblocked: d.check.Unblocked, OffersUnblock: d.offersUnblock}
 	key := fmt.Sprintf("%s:%d:%d:%d", receiptCheckKey, d.check.RepositoryID, d.check.PullNumber, generation)
 	if _, _, err := p.output(key); err != nil { // rendered when it is built, as every github_check message is: a state or a combination the renderer refuses fails this step
 		return governance.OutboxMessage{}, err

@@ -360,11 +360,11 @@ func (x *executionRun) namesMode(r checks.Result) bool {
 // pass cannot read keeps the stored value of the same head, so a store that fails for a moment does not flip the check and write two messages. The failure of the read is
 // returned, once the check is published.
 func (j *checksJob) approvalCounts(ctx context.Context, s *pullState, x *executionRun, d *pullDecision, executed *executionOutcome) error {
+	d.result.CountedJob = 0 // no reason but an approval that is missing counts a job, and no pass but this one sets it
 	if d.result.Reason != reasonApprovalMissing {
 		return nil
 	}
-	d.result.CountedJob = 0
-	if s.sameHead {
+	if s.sameHead && s.record.Reason == reasonApprovalMissing {
 		d.result.CountedJob = s.record.CountedJob // kept unless this pass reads the run
 	}
 	if !x.known {

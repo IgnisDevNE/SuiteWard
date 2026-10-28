@@ -325,6 +325,18 @@ func (p executorPlan) state(ctx context.Context, d Deps) (registered, running bo
 	}
 }
 
+// mustStop says whether an install stops the executor before it writes anything. Everywhere a running executor is stopped when something is
+// to change. On Windows a registered task is ended whether or not the program runs, because the wrapper waits a minute between two runs: a wrapper that
+// is left would start the old program, with the old environment, next to the new one. It is ended when nothing changed, too, while no program runs:
+// `schtasks /End` and a closed console host leave the wrapper alive, and the start that follows would add a second one (a task whose console host
+// still runs ignores that start, so ending its tree first loses nothing).
+func (p executorPlan) mustStop(registered, running, changed bool) bool {
+	if p.goos != "windows" {
+		return running && changed
+	}
+	return running && changed || registered && (changed || !running)
+}
+
 // stop stops the executor if it runs. On macOS and Linux a failure is nothing to act on, because the next step says what is wrong. On Windows it is:
 // the program that is replaced or removed must not run, so the whole tree is ended, and a process that is left is an error.
 func (p executorPlan) stop(ctx context.Context, d Deps) error {
@@ -525,12 +537,9 @@ func (p executorPlan) definitionIsCurrent(d Deps) (bool, error) {
 	if p.goos != "windows" {
 		return true, nil
 	}
-	if d.UserSID == nil {
-		return false, errors.New("the installer cannot find your Windows user ID (SID), which the scheduled task needs")
-	}
-	sid, err := d.UserSID()
+	sid, err := windowsSID(d)
 	if err != nil {
-		return false, fmt.Errorf("could not find the Windows user ID (SID) of this user: %w", err)
+		return false, err
 	}
 	on, err := os.ReadFile(filepath.Clean(p.taskXML))
 	if err != nil {

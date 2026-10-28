@@ -73,17 +73,9 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	if err != nil {
 		return executorPlan{}, err
 	}
-	sid := ""
-	if d.GOOS == "windows" {
-		if d.UserSID == nil {
-			return plan, errors.New("the installer cannot find your Windows user ID (SID), which the scheduled task needs")
-		}
-		if sid, err = d.UserSID(); err != nil {
-			return plan, fmt.Errorf("could not find the Windows user ID (SID) of this user: %w", err)
-		}
-		if !strings.HasPrefix(sid, "S-1-") {
-			return plan, fmt.Errorf("could not find the Windows user ID (SID) of this user: %q is not one", sid)
-		}
+	sid, err := windowsSID(d)
+	if err != nil {
+		return plan, err
 	}
 	sum, err := hashFile(exe)
 	if err != nil {
@@ -107,15 +99,9 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	have, _ := hashFile(plan.binary) // a copy that is not there yet has no hash, and is copied
 	replace := have != sum
 	files := plan.definitionFiles(sid)
-	changed := replace
-	for path, content := range files {
-		if on, err := os.ReadFile(filepath.Clean(path)); err != nil || !bytes.Equal(on, content) {
-			changed = true
-		}
-	}
-	// On Windows a registered task is stopped whether or not the program runs: the wrapper waits a minute between two runs, and a wrapper that is left
-	// starts the old program, with the old environment, next to the new one. A stop that leaves a process fails here, before anything is replaced.
-	if changed && (running || registered && plan.goos == "windows") {
+	changed := replace || filesDiffer(files)
+	// A stop that leaves a process fails here, before anything is replaced.
+	if plan.mustStop(registered, running, changed) {
 		if err := plan.stop(ctx, d); err != nil {
 			return plan, err
 		}
@@ -139,6 +125,34 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 		return plan, nil
 	}
 	return plan, plan.start(ctx, d)
+}
+
+// windowsSID is the SID of this user, which the scheduled task of Windows names; the other systems have none.
+func windowsSID(d Deps) (string, error) {
+	if d.GOOS != "windows" {
+		return "", nil
+	}
+	if d.UserSID == nil {
+		return "", errors.New("the installer cannot find your Windows user ID (SID), which the scheduled task needs")
+	}
+	sid, err := d.UserSID()
+	if err != nil {
+		return "", fmt.Errorf("could not find the Windows user ID (SID) of this user: %w", err)
+	}
+	if !strings.HasPrefix(sid, "S-1-") {
+		return "", fmt.Errorf("could not find the Windows user ID (SID) of this user: %q is not one", sid)
+	}
+	return sid, nil
+}
+
+// filesDiffer says whether a file is missing or holds other bytes than the content that is meant for it.
+func filesDiffer(files map[string][]byte) bool {
+	for path, content := range files {
+		if on, err := os.ReadFile(filepath.Clean(path)); err != nil || !bytes.Equal(on, content) {
+			return true
+		}
+	}
+	return false
 }
 
 // setUpExecutor installs or refreshes the executor after the stack is up. The stack does not depend on it, so a failure is a warning that says

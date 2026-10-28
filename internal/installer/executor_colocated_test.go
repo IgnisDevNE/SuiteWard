@@ -215,7 +215,7 @@ func TestTheScheduledTaskOfTheExecutorRunsItsScriptThroughAHeadlessConsole(t *te
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := machineHarnessOn(t, "windows")
-			h.f.idleListing = true // a first install lists the programs that run once
+			h.f.idleListing = true                             // a first install lists the programs that run once
 			h.dir = filepath.Join(h.dir, "Ana & Pedro (work)") // a folder name that cmd reads as an operator and a group
 			if err := os.MkdirAll(h.dir, 0o700); err != nil {
 				t.Fatal(err)

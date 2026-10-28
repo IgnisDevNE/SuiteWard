@@ -40,7 +40,7 @@ func Weakened(receipt, canonical WeakenedRun, receiptTests []ReceiptTest, canoni
 	}
 	failing := map[TestID]bool{}
 	for _, t := range canonicalTests {
-		failing[TestID{t.Package, t.Name}] = weakens(t.State)
+		failing[TestID{t.Package, t.Name}] = t.State.Flagged()
 	}
 	for _, t := range receiptTests {
 		if id := (TestID{t.Package, t.Name}); t.Changed && failing[id] {
@@ -49,9 +49,4 @@ func Weakened(receipt, canonical WeakenedRun, receiptTests []ReceiptTest, canoni
 	}
 	slices.SortFunc(tests, func(a, b TestID) int { return cmp.Or(cmp.Compare(a.Package, b.Package), cmp.Compare(a.Name, b.Name)) })
 	return tests, true
-}
-
-// weakens says whether a canonical state is one that weakens a test that the change edits: the states that block the canonical gate.
-func weakens(s CanonicalState) bool {
-	return s == CanonicalFail || s == CanonicalMissing || s == CanonicalFlaky
 }

@@ -133,6 +133,7 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		{"an identical result writes no message and updates what the verdict carries", ckIdenticalResult},
 		{"a new head, state, reason or reference advances the generation by exactly one", ckAdvancesGeneration},
 		{"a change of unblocked alone advances the generation, and a result that never says it reads false", ckUnblocked},
+		{"a change of the counted job alone advances the generation, and a result that never says it reads none", ckCountedJob},
 		{"the message is built for the generation it publishes", ckMessageGeneration},
 		{"a publication that ended failed is retried under the next generation once the cooldown has passed", ckRetryAfterCooldown},
 		{"a lost publication is not retried before the cooldown has passed", ckNoRetryInCooldown},
@@ -233,6 +234,34 @@ func ckUnblocked(e *env) {
 		e.t.Fatalf("first result = %+v, written %v; want generation 1, unblocked", record, written)
 	}
 	e.requireOutbox(key(10, 1, 1), key(10, 1, 2), key(10, 1, 3), key(10, 2, 1))
+}
+
+// The canonical job whose counts an approval that is missing states: a run that completes after the first message has a new job id and so a new message, and the same job
+// again is quiet.
+func ckCountedJob(e *env) {
+	plain := result(10, 1, headA, checks.InProgress, "approval-missing")
+	record, written := e.publish(plain, 1)
+	e.requirePublished(record, written, true, 1)
+	if record.CountedJob != 0 {
+		e.t.Fatal("a result that never says a counted job reads one")
+	}
+	counted := plain
+	counted.CountedJob = 7
+	record, written = e.publish(counted, 2)
+	e.requirePublished(record, written, true, 2)
+	e.requireCurrent(checks.Record{Result: counted, HeadSince: at(1), Generation: 2, DecidedAt: at(2)})
+	record, written = e.publish(counted, 3) // the same job again is quiet
+	e.requirePublished(record, written, false, 2)
+	other := plain
+	other.CountedJob = 8 // a job that replaced it
+	record, written = e.publish(other, 4)
+	e.requirePublished(record, written, true, 3)
+	record, written = e.publish(plain, 5) // and none again
+	e.requirePublished(record, written, true, 4)
+	if record.CountedJob != 0 {
+		e.t.Fatal("a result that no longer says a counted job reads one")
+	}
+	e.requireOutbox(key(10, 1, 1), key(10, 1, 2), key(10, 1, 3), key(10, 1, 4))
 }
 
 func ckMessageGeneration(e *env) {
@@ -409,6 +438,7 @@ func ckInvalidResult(e *env) {
 		"reference text": func(r *checks.Result) { r.Reference = "P1-R2 " },
 		"revision":       func(r *checks.Result) { r.Revision = -1 },
 		"command":        func(r *checks.Result) { r.CommandID = -1 },
+		"counted job":    func(r *checks.Result) { r.CountedJob = -1 },
 	}
 	for name, mutate := range bad {
 		r := valid

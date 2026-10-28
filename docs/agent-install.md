@@ -10,7 +10,7 @@ The installer (`suiteward install`) does most of the work in one command, and it
 
 **Stop and hand the step to the user** when it involves any of these. Do not work around a refusal, and never ask the user to paste a secret into the chat.
 
-A command that the installer prints, in a hint or a fix, names the program as that run reached it: `suiteward` where the shell finds this binary by that name, else the path of the binary, quoted when it needs it (with `&` in front on Windows). It is the same command, and every rule on this page applies to it.
+A command that the installer prints, in a hint or a fix, names the program as that run reached it: `suiteward` where the shell finds this binary by that name, else the path of the binary, quoted when it needs it (with `&` in front on Windows). It also repeats the `--settings`, the `--token-file` and the given `--tier` of the command that printed it, so that it acts on the same instance ([the install guide](install.md#5-install-co-located) says which commands leave one out). It is the same command, and every rule on this page applies to it.
 
 | Never | Why |
 | --- | --- |

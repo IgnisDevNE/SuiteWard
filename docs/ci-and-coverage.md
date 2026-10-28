@@ -1,6 +1,6 @@
 # CI and coverage
 
-- **Updated:** 2026-10-23 (macOS tests, the five-target cross-build and the AlmaLinux quadlet job, phase M1.13)
+- **Updated:** 2026-10-28 (the `sandbox` build tag is linted and vetted and its tests run by hand, and the weekly image scan covers the Go image of the sandboxes, phase M2.1); 2026-10-23 (macOS tests, the five-target cross-build and the AlmaLinux quadlet job, phase M1.13)
 - **Status:** Active. `main` requires an up-to-date PR with the contexts `CI / Gate` (GitHub Actions) and `codecov/patch` (Codecov).
 
 ## Quality policy

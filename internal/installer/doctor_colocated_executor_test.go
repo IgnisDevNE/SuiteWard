@@ -386,3 +386,20 @@ func TestTheWayOutOfAFolderWithAPercentSignDoesNotRepeatTheTokenFileThatIsRefuse
 		t.Errorf("the fix is %q, want the uninstall %s and then the install %q", fix, uninstall, want)
 	}
 }
+
+// The way out says plainly what the uninstall removes (this instance's containers as well as its test runner, with the data kept) and that the new
+// install makes a new access token file, which the coding agent's client has to be pointed at.
+func TestTheWayOutOfAFolderWithAPercentSignSaysWhatTheUninstallRemovesAndWhatTheClientNeeds(t *testing.T) {
+	f, s := colocated{goos: "windows", folder: "50%off"}.build(t)
+	files := coloExecFilesOf(t, f)
+	writeFile(t, files.binary, "the previous release")
+	sum := sha256.Sum256([]byte("the previous release"))
+	writeFile(t, files.pin, hex.EncodeToString(sum[:])+"  suiteward-executor.exe\n")
+	_, res, _ := runDoctor(t, f, s)
+	fix := res["executor.binary"].Fix
+	for _, want := range []string{"removes this instance's containers and its test runner", "your data stays", "new access token file", "point your coding agent's client at it"} {
+		if !strings.Contains(fix, want) {
+			t.Errorf("the fix lacks %q:\n%s", want, fix)
+		}
+	}
+}

@@ -34,8 +34,15 @@ type processTable struct {
 	procs    []osProc
 	stubborn map[int]bool // processes that taskkill cannot end
 	listErr  error
+	silent   bool    // the listing prints nothing and exits 0, as PowerShell does when its language mode refuses every call of the script
+	junk     string  // a line that is not a process, put before the others
 	kills    [][]int // the PIDs of each taskkill, in order
 }
+
+// listingEnd is the last line of the listing that the installer's script prints. A listing without it is not trusted: a script that failed half way,
+// or that PowerShell's constrained language mode refused for every process, ends with nothing printed and an exit code of 0, and a stop that took
+// that for "nothing runs" would start a second tree beside a wrapper that is alive.
+const listingEnd = "suiteward-listing-end"
 
 func (pt *processTable) install(d *Deps) {
 	inner := d.Exec
@@ -46,7 +53,10 @@ func (pt *processTable) install(d *Deps) {
 			if pt.listErr != nil {
 				return nil, pt.listErr
 			}
-			return []byte(pt.listing()), nil
+			if pt.silent {
+				return nil, nil
+			}
+			return []byte(pt.junk + listingOf(pt.procs)), nil
 		case "taskkill":
 			pt.kill(args)
 			return nil, nil
@@ -55,15 +65,16 @@ func (pt *processTable) install(d *Deps) {
 	}
 }
 
-func (pt *processTable) listing() string {
+// listingOf is what the installer's script prints for these processes.
+func listingOf(procs []osProc) string {
 	var b strings.Builder
-	for _, p := range pt.procs {
+	for _, p := range procs {
 		if slices.Contains([]string{"conhost.exe", "cmd.exe", "suiteward-executor.exe"}, strings.ToLower(p.name)) {
 			enc := base64.StdEncoding.EncodeToString
 			fmt.Fprintf(&b, "%d %s %s %s\r\n", p.pid, p.name, enc([]byte(p.exe)), enc([]byte(p.cmd)))
 		}
 	}
-	return b.String()
+	return b.String() + listingEnd + "\r\n"
 }
 
 // kill is `taskkill /T /F /PID n ...`: each process and its children, but not a stubborn one.
@@ -421,4 +432,70 @@ func TestAnInstallAgainEndsAWrapperThatIsLeftWhenNothingChangedOnWindows(t *test
 		t.Errorf("the processes left are %v, want only the others' %v", left, survivors)
 	}
 	again.assertOrder("/T /F /PID", "/Run /TN SuiteWard Executor")
+}
+
+// Under PowerShell's constrained language mode (AppLocker, WDAC) the script's method calls are refused for every process, and PowerShell prints
+// nothing and exits 0. The script stops at its first error, and it ends with a line that the installer requires, so that no failure of the listing
+// reads as "no process runs".
+func TestTheListingScriptStopsAtItsFirstErrorAndEndsWithASentinel(t *testing.T) {
+	if !strings.HasPrefix(listProcessesScript, "$ErrorActionPreference = 'Stop'; ") {
+		t.Errorf("the script does not stop at its first error:\n%s", listProcessesScript)
+	}
+	if !strings.HasSuffix(listProcessesScript, "; '"+listingEnd+"'") {
+		t.Errorf("the script does not end by printing %q:\n%s", listingEnd, listProcessesScript)
+	}
+}
+
+func TestInstallDoesNotReplaceTheExecutorWhenTheListingIsEmptyOnWindows(t *testing.T) {
+	r := reinstallOnWindows(t, true, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary) }, func(pt *processTable) { pt.silent = true })
+	if r.err != nil {
+		t.Fatalf("the stack is up and the install does not fail for the executor: %v", r.err)
+	}
+	if out := r.again.out.String(); !strings.Contains(out, "could not be set up") || !strings.Contains(out, "could not list the programs") {
+		t.Errorf("the output must say that the executor could not be set up because the programs could not be listed:\n%s", out)
+	}
+	for name, before := range r.files {
+		if got := mustRead(t, filepath.Join(r.again.executorDir(), name)); string(got) != string(before) {
+			t.Errorf("%s was rewritten while nobody knew what still ran", name)
+		}
+	}
+	if len(r.again.f.find("/Create /TN")) != 0 || len(r.again.f.find("/Run /TN")) != 0 {
+		t.Errorf("the task was created or started again: %v", r.again.f.lines())
+	}
+}
+
+func TestUninstallKeepsTheExecutorWhenTheListingIsEmptyOnWindows(t *testing.T) {
+	un, _, err := windowsUninstall(t, func(pt *processTable) { pt.silent = true })
+	if err != nil {
+		t.Fatalf("an uninstall must go on with the stack: %v", err)
+	}
+	if out := un.out.String(); !strings.Contains(out, "was not removed") || !strings.Contains(out, "could not list the programs") {
+		t.Errorf("the output must say that the executor was not removed because the programs could not be listed:\n%s", out)
+	}
+	if len(un.f.find("/Delete /TN")) != 0 || !pathExists(un.executorDir()) {
+		t.Errorf("the task or the folder of an executor that may still run was removed: %v", un.f.lines())
+	}
+}
+
+// A line of the listing that is not a process may hold the command line of another program: the error names what is wrong with it, never the line.
+func TestAMalformedLineOfTheListingIsNeverEchoed(t *testing.T) {
+	for name, junk := range map[string]string{
+		"too few fields":   "worker-secret-command-line --token=abc\r\n",
+		"no process id":    "x conhost.exe worker-secret-command-line worker-secret-command-line\r\n",
+		"not base64 paths": "7 cmd.exe worker-secret-command-line! worker-secret-command-line!\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := reinstallOnWindows(t, true, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary) }, func(pt *processTable) { pt.junk = junk })
+			if r.err != nil {
+				t.Fatal(r.err)
+			}
+			out := r.again.out.String()
+			if strings.Contains(out, "worker-secret-command-line") {
+				t.Errorf("the output echoes a line of the listing:\n%s", out)
+			}
+			if !strings.Contains(out, "could not list the programs") {
+				t.Errorf("the output must say that the programs could not be listed:\n%s", out)
+			}
+		})
+	}
 }

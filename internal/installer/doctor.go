@@ -70,6 +70,9 @@ type doctorResult struct {
 	Detail  string `json:"detail"`
 	Fix     string `json:"fix"`
 	Warning bool   `json:"warning,omitempty"` // a passing result that needs a look; it does not change the exit code
+	// Commands are the subcommands of this program that Fix of a row of the service names by its bare name: `suiteward check --json` says which,
+	// because the service cannot know the flags of the instance (see commands). An older service sends none.
+	Commands []string `json:"commands,omitempty"`
 }
 
 // needsALook says that a result is not a plain pass: a failure, or a pass that doctor warns about.

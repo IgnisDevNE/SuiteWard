@@ -82,12 +82,16 @@ type Facts struct {
 
 // Result is the evaluation. Findings and Caveats are sorted; Instructions
 // holds one fixed sentence per finding or caveat (findings first), or a single
-// sentence for an exclusive result.
+// sentence for an exclusive result. Commands are the subcommands of suiteward
+// that Instructions name ("enroll"), as data: a reader that knows which
+// instance it speaks of (the installer) writes each with that instance's
+// flags. The sentences themselves do not change; code parses two of them.
 type Result struct {
 	Kind         Kind
 	Findings     []Code
 	Caveats      []Code
 	Instructions []string
+	Commands     []string
 }
 
 var instructions = map[Code]string{

@@ -54,6 +54,10 @@ type selfCheckResult struct {
 	Fix    string `json:"fix"`
 	// Warning marks a passing result that needs a look, such as GitHub not being configured; it is in the JSON only when set.
 	Warning bool `json:"warning,omitempty"`
+	// Commands are the subcommands of this program that Fix names by its bare name ("suiteward install"), in the JSON only when there are some.
+	// The service cannot know the --settings and --token-file of the instance a person works on, so the installer that runs doctor writes each
+	// of these with those flags. The sentence of Fix stays complete without them, for a reader that does not know the key.
+	Commands []string `json:"commands,omitempty"`
 }
 
 func checkPassed(name, detail string) selfCheckResult {
@@ -446,8 +450,7 @@ func selfCheckDatabaseResults(ctx context.Context, cfg config.Config) (schema, r
 		warning.Detail = "no owner is enrolled, and setup needs GitHub, which is not configured"
 		return schema, role, warning, nil
 	case !found:
-		return schema, role, checkFailed(nameOwnerEnrolled, "no owner is enrolled",
-			"run `suiteward enroll` where you ran `suiteward install` (as `suiteward` on an isolated host), on a real terminal with session recording off (see the install guide)"), nil
+		return schema, role, checkNoOwner(), nil
 	}
 	return schema, role, checkPassed(nameOwnerEnrolled, fmt.Sprintf("%s is enrolled for %d repositories, tier %s", state.Owner.Login, len(state.Projects), state.Tier)), state.Projects
 }
@@ -489,3 +492,9 @@ func formatPermissions(permissions map[string]string) string {
 
 // selfCheckDatabaseTimeout bounds the database checks together, so a host that never answers cannot hang `check`.
 var selfCheckDatabaseTimeout = 15 * time.Second
+
+// checkNoOwner is the failure of an instance with GitHub whose owner is not enrolled yet.
+func checkNoOwner() selfCheckResult {
+	return checkFailed(nameOwnerEnrolled, "no owner is enrolled",
+		"run `suiteward enroll` where you ran `suiteward install` (as `suiteward` on an isolated host), on a real terminal with session recording off (see the install guide)")
+}

@@ -184,3 +184,21 @@ func TestUnknown(t *testing.T) {
 		t.Fatalf("instruction %q", r.Instructions[0])
 	}
 }
+
+// The setup instruction names the enroll command as data too, so that a reader who knows which instance it speaks of can write the command with that
+// instance's flags. The sentence is the same as before: code parses it.
+func TestTheSetupInstructionSaysWhichCommandItNames(t *testing.T) {
+	facts := ruleFacts(rule(true, contract(app)))
+	if got := Evaluate(facts, app, "").Commands; !slices.Equal(got, []string{"enroll"}) {
+		t.Errorf("the setup instruction names %q, want enroll", got)
+	}
+	for name, res := range map[string]Result{
+		"a project with its test check":        Evaluate(facts, app, test),
+		"an App that is not configured":        Evaluate(Facts{}, 0, ""),
+		"a repository whose rules are unknown": Unknown(),
+	} {
+		if len(res.Commands) != 0 {
+			t.Errorf("%s names the commands %q, want none", name, res.Commands)
+		}
+	}
+}

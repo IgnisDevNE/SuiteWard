@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
@@ -714,5 +715,32 @@ func TestWriteSelfCheckPrintsAWarningWithItsFix(t *testing.T) {
 
 	if want := "WARN github.app: not configured — set GitHub up\n"; out.String() != want {
 		t.Errorf("output = %q; want %q", out.String(), want)
+	}
+}
+
+// A fix that names a command of this program by its bare name says so in the row, as data: the installer that runs doctor knows which instance it
+// works on, and writes the command with that instance's flags. The sentence of the fix stays as it is, for a reader that does not know the key.
+func TestTheRowsWhoseFixNamesACommandSayWhichOnesInTheJSON(t *testing.T) {
+	enrolled := protection.Evaluate(protection.Facts{}, 1234, "")
+	withTest := protection.Evaluate(protection.Facts{}, 1234, "CI / test")
+	for name, c := range map[string]struct {
+		row  selfCheckResult
+		want string // the text of the key in the JSON, empty for none
+	}{
+		"GitHub is not configured":            {checkNotConfigured(nameApp), `"commands":["install"]`},
+		"no owner is enrolled":                {checkNoOwner(), `"commands":["enroll","install"]`},
+		"no test check is configured yet":     {selfCheckProtection("Acme/api", enrolled), `"commands":["enroll"]`},
+		"a test check that the rules lack":    {selfCheckProtection("Acme/api", withTest), ""},
+		"a row whose fix names no command":    {checkFailed(nameRole, "d", "f"), ""},
+		"a check that waits for another one":  {checkSkipped(nameOwnerEnrolled, nameSchema), ""},
+		"the database that cannot be reached": {checkFailed(nameSchema, "cannot reach the database", dbFix), ""},
+	} {
+		raw, err := json.Marshal(c.row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if has := strings.Contains(string(raw), `"commands"`); c.want == "" && has || c.want != "" && !strings.Contains(string(raw), c.want) {
+			t.Errorf("%s: the row is %s, want the key %q", name, raw, c.want)
+		}
 	}
 }

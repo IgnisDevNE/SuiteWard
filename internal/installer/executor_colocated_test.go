@@ -509,8 +509,8 @@ func TestTheInstallsSayThatAnEngineHasOneExecutor(t *testing.T) {
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
-	if out := h.out.String(); !strings.Contains(out, "one executor") || !strings.Contains(out, "suiteward-sandbox-") {
-		t.Errorf("the co-located install must say that an engine has one executor, and why:\n%s", out)
+	if out := h.out.String(); !strings.Contains(out, "only one test runner (the executor)") || !strings.Contains(out, "suiteward-sandbox-") {
+		t.Errorf("the co-located install must say that an engine has one test runner, and why:\n%s", out)
 	}
 	host := newHostFake()
 	out, err := runHost(t, host, declineMetadataRule, false, "")
@@ -704,21 +704,63 @@ func TestUpgradeAtTheInstalledReleaseDoesNotStartAnExecutorWithoutItsTokenCopy(t
 	}
 }
 
-// A batch file reads a percent sign: `%` in the folder of the executor (a profile or a token file under a name with one) has to be doubled in the
-// line that starts the program and in the one that names its log, as it is in the `set` lines.
-func TestTheWrapperOfTheWindowsTaskDoublesAPercentSignInItsProgramAndLogPaths(t *testing.T) {
+// Windows reads `%name%` in the arguments and the working directory of a scheduled task, and cmd reads it in the command line: a percent sign in
+// the folder of the executor (a profile or a token file under a name with one) would not reach the script as written. The install says so, plainly,
+// and changes nothing, instead of writing a definition that does not work.
+func TestTheInstallRefusesAPercentSignInTheFolderOfTheWindowsExecutor(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
 	h.dir = filepath.Join(h.dir, "50%off")
 	if err := os.MkdirAll(h.dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.podman(); err != nil {
+		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
+	}
+	out := h.out.String()
+	if !strings.Contains(out, "could not be set up") || !strings.Contains(out, "percent sign") || !strings.Contains(out, "--token-file") {
+		t.Errorf("the output must say that the executor could not be set up because of the percent sign, and what to do:\n%s", out)
+	}
+	if pathExists(h.executorDir()) || len(h.f.find("/Create /TN")) != 0 {
+		t.Errorf("a definition was written for a folder that Windows would misread: %v", h.f.lines())
+	}
+}
+
+// cmd reads the wrapper in the code page of the console, which is not UTF-8: a profile with a letter outside ASCII (C:\Users\João), which the installer
+// writes into the script as UTF-8, would be misread in the `set` lines, the program's path and the log redirect, and the loop would retry
+// silently. The first thing the wrapper does is switch the console to UTF-8.
+func TestTheWrapperOfTheWindowsTaskSwitchesTheConsoleToUTF8First(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	h.dir = filepath.Join(h.dir, "João")
+	if err := os.MkdirAll(h.dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	doubled := func(path string) string { return strings.ReplaceAll(path, "%", "%%") }
-	want := `"` + doubled(h.executorBinary()) + `" execute >> "` + doubled(filepath.Join(h.executorDir(), "executor.log")) + `" 2>&1`
-	if wrapper := h.readHome("executor/run.cmd"); !strings.Contains(wrapper, want) {
-		t.Errorf("the wrapper lacks the line that starts the program with its percent signs doubled, %s:\n%s", want, wrapper)
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(h.readHome("executor/run.cmd"), "\r\n")
+	if lines[0] != "@echo off" || lines[1] != `"%SystemRoot%\System32\chcp.com" 65001 >nul` {
+		t.Errorf("the wrapper does not switch the console to UTF-8 right after @echo off:\n%s", strings.Join(lines, "\n"))
+	}
+	for i, line := range lines {
+		if strings.HasPrefix(line, "set ") && i < 2 {
+			t.Errorf("a set line comes before the code page is changed: %s", line)
+		}
+	}
+}
+
+// The reduced assurance of the co-located installation is stated once, by the pages that introduce it and the summaries, and not by the executor's
+// install line, which keeps the facts: its token, the address it reaches, and that an engine has one test runner.
+func TestTheExecutorLineOfTheInstallDoesNotRepeatTheReducedAssurance(t *testing.T) {
+	h := newHarness(t, "linux")
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	out := h.out.String()
+	if strings.Contains(out, "less protected") || strings.Contains(out, "separate server") {
+		t.Errorf("the executor's install line repeats the reduced-assurance caveat:\n%s", out)
+	}
+	if !strings.Contains(out, "its own token") || !strings.Contains(out, "http://127.0.0.1:") {
+		t.Errorf("the executor's install line lost its token and its address:\n%s", out)
 	}
 }
 

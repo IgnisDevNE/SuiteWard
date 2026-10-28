@@ -130,7 +130,11 @@ func TestDoctorColocatedWindowsTaskOfAnEarlierBuildIsADifferenceThatAnUpgradeFix
 	if code != 1 {
 		t.Errorf("exit %d, want 1", code)
 	}
-	wantFail(t, res, "executor.lifecycle", "window")
+	wantFail(t, res, "executor.lifecycle", "not the one this version")
+	// It is an older definition or one that was changed by hand: the text does not claim what only the pre-F7 definition did.
+	if d := res["executor.lifecycle"].Detail; strings.Contains(d, "opens a window") {
+		t.Errorf("the detail %q assumes the old definition", d)
+	}
 	if !strings.Contains(res["executor.lifecycle"].Fix, "install --upgrade") {
 		t.Errorf("the fix %q must name the upgrade", res["executor.lifecycle"].Fix)
 	}

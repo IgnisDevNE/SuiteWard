@@ -270,7 +270,7 @@ func TestPrepareHostRejectsTheMetadataAddressesForTheExecutorByDestinationWithou
 func TestPrepareHostFailsWhenTheExecutorRulesAreNotLoaded(t *testing.T) {
 	h := newHostFake()
 	h.failOn = map[string]error{"nft list table inet suiteward_exec": errInjected}
-	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || !strings.Contains(err.Error(), "executor rule is not loaded") {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || !strings.Contains(err.Error(), "executor rule (the firewall rule) is not loaded") {
 		t.Fatalf("rules that are not loaded must stop the run before the executor starts, got %v", err)
 	}
 	if h.has("systemctl", "suiteward-executor.service") {

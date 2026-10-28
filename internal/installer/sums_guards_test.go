@@ -60,7 +60,7 @@ func TestInstallOnWindowsRefusesSumsThatListOnlyAnotherSystemsBinary(t *testing.
 	h := machineHarnessOn(t, "windows")
 	sums := writeSums(t, h, sumsAsset) // the Linux name
 	err := h.podman("--sha256sums", sums)
-	if err == nil || !strings.Contains(err.Error(), "windows binary") {
+	if err == nil || !strings.Contains(err.Error(), "windows program") {
 		t.Fatalf("want a refusal that names a windows binary, got %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(h.dir, "executor")); !os.IsNotExist(statErr) {

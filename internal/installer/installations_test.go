@@ -14,7 +14,7 @@ import (
 // --upgrade where they save the settings, read by the commands that ask which installation, removed by a purge.
 
 // tokenName is a token file of a test, as the list records it: absolute. No such file is made.
-func tokenName(name string) string { return absolute(filepath.Join("/tokens", name)) }
+func tokenName(name string) string { return absolute("/tokens/" + name) }
 
 // listFile is the path of the list in the configuration folder of the test.
 func listFile(t *testing.T) string {

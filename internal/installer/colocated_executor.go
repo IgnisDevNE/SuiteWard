@@ -261,7 +261,7 @@ func instanceTokenFile(r *Resolver, env Env, t installTarget) (string, error) {
 		return "", err
 	}
 	if !isDefault {
-		return "", fmt.Errorf("The settings file `%[1]s` is not the default settings file, so this is a second instance. Without `--token-file`, this command would use the default token file `%[2]s`, which belongs to the main instance (its test runner is next to it). Nothing was changed. Pass `--token-file` with a file of this instance's own. If this is the only instance on this computer and `%[2]s` is its token file, pass `--token-file %[3]s`", t.settingsPath, file, quoteArg(file))
+		return "", fmt.Errorf("`%[1]s` is not the default settings file, so this is a second instance. Without `--token-file`, this command would use the default token file `%[2]s`, which belongs to the main instance (its test runner is next to it). Nothing was changed. Pass `--token-file` with a file of this instance's own. If this is the only instance on this computer and `%[2]s` is its token file, pass `--token-file %[3]s`", t.settingsPath, file, quoteArg(file))
 	}
 	return file, nil
 }

@@ -241,14 +241,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return withBackup(env.Deps, err, dir, "")
 	}
 	scr.Step(4)
-	save := func() error {
-		if err := SaveSettings(t.settingsPath, c.s); err != nil {
-			return err
-		}
-		listInstallation(scr, env.Deps, t.settingsPath, tokenFile, c.s, instanceID)
-		return nil
-	}
-	if err := c.bringUp(ctx, save); err != nil {
+	if err := c.bringUp(ctx, c.saveAndList(scr, env, t, instanceID)); err != nil {
 		return withBackup(env.Deps, err, dir, "")
 	}
 	scr.Step(5)
@@ -259,6 +252,17 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	c.installSelf(ctx)
 	c.endPlainUpgrade(scr)
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
+}
+
+// saveAndList is the save of the bring-up of an upgrade: the settings, then the entry of the installation in the list.
+func (c *colocatedInstall) saveAndList(scr *ui.Screen, env Env, t installTarget, instanceID string) func() error {
+	return func() error {
+		if err := SaveSettings(t.settingsPath, c.s); err != nil {
+			return err
+		}
+		listInstallation(scr, env.Deps, t.settingsPath, c.tokenFile, c.s, instanceID)
+		return nil
+	}
 }
 
 // settleRecipient settles the key the backup of an upgrade is encrypted to, from the settings and what the command was given, before

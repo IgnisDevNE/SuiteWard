@@ -148,6 +148,10 @@ func recordInstallation(goos, settingsPath, tokenFile string, s Settings, instan
 	if tokenFile != "" {
 		entry.TokenFile = absolute(tokenFile)
 	}
+	// An entry that the list would refuse when it is read is not written: it would make every later command refuse the whole list.
+	if problem := entry.problem(); problem != "" {
+		return fmt.Errorf("this installation's entry %s, so it was not listed", problem)
+	}
 	if i := slices.IndexFunc(list.Installations, func(e installation) bool { return samePath(goos, e.Settings, entry.Settings) }); i >= 0 {
 		entry.Instance = cmp.Or(instance, list.Installations[i].Instance)
 		list.Installations[i] = entry

@@ -59,9 +59,10 @@ func (r *Resolver) chooseInstallation(d Deps) error {
 }
 
 // severalInstallations is the refusal of a run that cannot be asked which of the installations it is for: it names the settings files and
-// the flags that answer.
+// the flags that answer, and the way for a stack that has no settings file (a first install that failed before it saved them).
 func severalInstallations(settingsFiles []string) string {
-	return "This computer has several SuiteWard installations (" + strings.Join(settingsFiles, ", ") + "). Say which one with `--settings <file>` and `--token-file <file>`."
+	return "This computer has several SuiteWard installations (" + strings.Join(settingsFiles, ", ") + "). Say which one with `--settings <file>` and `--token-file <file>`." +
+		" A stack that has no settings file is named with `--token-file <file>` plus `--runtime` and `--connection`."
 }
 
 // pickInstallation asks which of the installations. No row is preselected and an empty answer picks nothing: Enter must never pick the main

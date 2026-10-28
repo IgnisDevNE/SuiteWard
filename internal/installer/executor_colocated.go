@@ -361,35 +361,46 @@ type osProcess struct {
 
 // listProcessesScript prints one line for each console host, command interpreter or executor on the computer, `pid name base64(path) base64(command
 // line)`: the paths and command lines go out as base64 of UTF-8, so that no code page changes a letter of them, and the matching is done here, on
-// the paths that this instance owns, and not in the script, which then has no path to quote.
-var listProcessesScript = `Get-CimInstance Win32_Process | Where-Object { 'conhost.exe','cmd.exe','` + executorBinaryName("windows") + `' -contains $_.Name } | ForEach-Object { '{0} {1} {2} {3}' -f $_.ProcessId, $_.Name, [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_.ExecutablePath)), [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_.CommandLine)) }`
+// the paths that this instance owns, and not in the script, which then has no path to quote. The script stops at its first error and ends by printing
+// processListingEnd, which listProcesses requires: under PowerShell's constrained language mode (AppLocker, WDAC) every method call of the script is
+// refused, and PowerShell prints nothing and exits 0, which must not read as "no process runs".
+const processListingEnd = "suiteward-listing-end"
+
+var listProcessesScript = `$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process | Where-Object { 'conhost.exe','cmd.exe','` + executorBinaryName("windows") + `' -contains $_.Name } | ForEach-Object { '{0} {1} {2} {3}' -f $_.ProcessId, $_.Name, [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_.ExecutablePath)), [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_.CommandLine)) }; '` + processListingEnd + `'`
 
 func (p executorPlan) listProcesses(ctx context.Context, d Deps) ([]osProcess, error) {
 	out, err := d.Exec(ctx, p.system+`\WindowsPowerShell\v1.0\powershell.exe`, []string{"-NoProfile", "-NonInteractive", "-Command", listProcessesScript}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("could not list the programs that run on this computer: %w", err)
 	}
+	// A line that is not a process may hold the command line of another program: the errors say what is wrong with a line and never repeat it.
 	var procs []osProcess
 	for _, line := range strings.Split(string(out), "\n") {
 		if line = strings.TrimRight(line, "\r"); line == "" {
 			continue
 		}
+		if line == processListingEnd {
+			return procs, nil
+		}
 		fields := strings.Split(line, " ") // an empty path or command line leaves an empty field
-		pid, pidErr := strconv.Atoi(fields[0])
-		if len(fields) != 4 || pidErr != nil {
-			return nil, fmt.Errorf("could not list the programs that run on this computer: unexpected line %q", line)
+		if len(fields) != 4 {
+			return nil, fmt.Errorf("could not list the programs that run on this computer: a line has %d fields, not 4", len(fields))
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			return nil, errors.New("could not list the programs that run on this computer: a line does not start with a process id")
 		}
 		proc := osProcess{pid: pid, name: fields[1]}
 		for i, text := range []*string{&proc.exe, &proc.at} {
 			raw, err := base64.StdEncoding.DecodeString(fields[2+i])
 			if err != nil {
-				return nil, fmt.Errorf("could not list the programs that run on this computer: unexpected line %q: %w", line, err)
+				return nil, errors.New("could not list the programs that run on this computer: a line has a path or a command line that is not base64")
 			}
 			*text = string(raw)
 		}
 		procs = append(procs, proc)
 	}
-	return procs, nil
+	return nil, errors.New("could not list the programs that run on this computer: the listing did not end as it should, so it may be incomplete (a policy may have stopped PowerShell)")
 }
 
 // ownProcesses is what runs of this instance's executor: the console hosts and command interpreters whose command line names this instance's

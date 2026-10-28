@@ -339,6 +339,7 @@ func TestInstallStopsAScheduledTaskBeforeItReplacesTheProgramItHolds(t *testing.
 	again.have(kindSecret, SecretMCPAuth, SecretExecutorAuth)
 	again.first("/Query /TN SuiteWard Executor", "") // the task of the first install is registered
 	again.f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`)
+	again.f.on("Win32_Process", listingOf(nil)) // no process listed: the task's tree is already gone
 	if err := again.podman(); err != nil {
 		t.Fatal(err)
 	}

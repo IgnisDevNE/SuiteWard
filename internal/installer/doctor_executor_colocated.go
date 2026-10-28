@@ -33,7 +33,7 @@ func (d *doctor) executorFix() string {
 	if d.refusedFolder != nil {
 		fresh := d.deps // the install of the other folder names this instance's settings, and a token file to fill in: the old one is the refused one
 		fresh.instance.tokenFile = ""
-		return "An install cannot set up the test runner in this folder, because of the percent sign (%) in its path. Run `" + d.deps.suggest("uninstall") + "` to remove it (your data stays), then run `" + fresh.suggest("install", "--token-file <a file in a folder without a percent sign>") + "` to set it up again."
+		return "An install cannot set up the test runner in this folder, because of the percent sign (%) in its path. To move this instance to another folder, run `" + d.deps.suggest("uninstall") + "`, which removes this instance's containers and its test runner (your data stays), then run `" + fresh.suggest("install", "--token-file <a file in a folder without a percent sign>") + "`, which sets it up again with a new access token file, so point your coding agent's client at it."
 	}
 	return d.installFix()
 }

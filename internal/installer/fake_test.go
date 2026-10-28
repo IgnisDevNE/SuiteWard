@@ -37,6 +37,10 @@ type fakeEngine struct {
 	goos  string
 	env   map[string]string
 	exe   string // the program of this run for Deps.Executable; empty means the test binary
+	// idleListing makes a listing of the programs that run (Win32_Process) that no rule answers say that none runs, and end as it should. Only the install
+	// harnesses of Windows set it, because a first install lists once. Without it an unruled listing is empty and unfinished, so a code path that lists
+	// where it should not fails loudly.
+	idleListing bool
 }
 
 func newFake(goos string) *fakeEngine { return &fakeEngine{goos: goos, env: map[string]string{}} }
@@ -86,7 +90,7 @@ func (f *fakeEngine) deps() Deps {
 					return []byte(r.out), r.err
 				}
 			}
-			if strings.Contains(c.line(), "Win32_Process") { // a computer where no rule says what runs lists no process, and its listing ends as it should
+			if f.idleListing && strings.Contains(c.line(), "Win32_Process") {
 				return []byte(listingOf(nil)), nil
 			}
 			return nil, nil

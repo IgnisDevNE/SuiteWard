@@ -60,6 +60,7 @@ func newHarness(t *testing.T, goos string) *harness {
 	h.f.fail("image inspect", errors.New("no such image")) // pulled unless a test says the image is here
 	if goos == "windows" {
 		h.f.fail("/Query /TN", errors.New("schtasks: the system cannot find the file specified")) // no task of the executor yet: a test that has one says so first
+		h.f.idleListing = true                                                                    // a first install lists once
 	}
 	h.f.on("info --format {{.Host.Security.Rootless}}", "true\n")
 	h.f.on("--format {{json .State}} suiteward-db", `{"Status":"running","Health":{"Status":"healthy"}}`)
@@ -73,6 +74,7 @@ func dockerHarness(t *testing.T, goos string) *harness {
 	h.f.fail("image inspect", errors.New("no such image"))
 	if goos == "windows" {
 		h.f.fail("/Query /TN", errors.New("schtasks: the system cannot find the file specified"))
+		h.f.idleListing = true // a first install lists once
 	}
 	h.f.on("version --format", dockerDesktopServer).on("info --format", `["name=seccomp,profile=builtin"]`)
 	h.f.on("--format {{json .State}} suiteward-db", `{"Status":"running","Health":{"Status":"healthy"}}`)

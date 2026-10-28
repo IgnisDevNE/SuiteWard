@@ -369,8 +369,9 @@ func (r ReceiptCheck) Validate() error {
 	return nil
 }
 
-// ValidateUnblock reports why the entry, the head and the jobs cannot be recorded as an unblock, as ErrInvalidRequest. That each job
-// exists, is unavailable and is of the head and the pull request is for the store to check.
+// ValidateUnblock reports why the entry, the head, the jobs and the time cannot be recorded as an unblock, as ErrInvalidRequest. The state of a job is
+// one that an unblock lifts or ends (unavailable, pending or leased), with a lease id that is empty or well formed. That each job exists, is as observed
+// and is of the head and the pull request is for the store to check.
 func ValidateUnblock(e commands.Entry, headSHA string, jobs []UnblockJob, at time.Time) error {
 	switch {
 	case e.Disposition != commands.Unblocked:
@@ -379,11 +380,18 @@ func ValidateUnblock(e commands.Entry, headSHA string, jobs []UnblockJob, at tim
 		return invalid("the head must be 40 lowercase hexadecimal digits")
 	case len(jobs) == 0:
 		return invalid("an unblock lifts at least one job")
+	case at.IsZero():
+		return invalid("the time of the unblock is required")
 	}
 	seen := make(map[int64]bool, len(jobs))
 	for _, job := range jobs {
-		if job.ID <= 0 || seen[job.ID] {
+		switch {
+		case job.ID <= 0 || seen[job.ID]:
 			return invalid("the lifted jobs are distinct and positive")
+		case job.State != StateUnavailable && job.State != StatePending && job.State != StateLeased:
+			return invalid("job %d is observed as %q; an unblock lifts a job that is unavailable, pending or leased", job.ID, job.State)
+		case job.LeaseID != "" && !leasePattern.MatchString(job.LeaseID):
+			return invalid("job %d is observed with a lease id that is not 32 lower-case hexadecimal digits", job.ID)
 		}
 		seen[job.ID] = true
 	}

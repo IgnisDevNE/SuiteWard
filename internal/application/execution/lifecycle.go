@@ -120,6 +120,20 @@ func (j Job) Heartbeated(leaseID string, now time.Time) (Job, error) {
 	return j, nil
 }
 
+// UnblockEnded is the job after the owner's unblock (docs/contracts/runtime.md, "The early unblock and its hold"): an open job, pending or leased, is
+// unavailable for no-executor as the sweep ends a pending one, at the time of the command and with no failure counted, and the lease id and the time of the
+// lease stay, so that the old lease's result and heartbeat are refused; a job that is unavailable already stays as it is. The store writes no results row.
+func (j Job) UnblockEnded(at time.Time) Job {
+	if j.State == StateUnavailable {
+		return j
+	}
+	return j.ended(StateUnavailable, ReasonNoExecutor, Stored(at))
+}
+
+// Observed reports whether the job is as the caller of an unblock observed it: in that state and with that lease id. Every grant makes a new lease id, so a
+// runner that took a pending job in between is a change.
+func (j Job) Observed(o UnblockJob) bool { return j.State == o.State && j.LeaseID == o.LeaseID }
+
 // ended is the job after it became final.
 func (j Job) ended(state State, reason Reason, now time.Time) Job {
 	j.State, j.Reason, j.FinishedAt = state, reason, now

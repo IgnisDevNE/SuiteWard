@@ -147,7 +147,7 @@ func ubEnds(e *env) {
 	e.requireJob(unavailable)
 	e.requireNoResult(pending.ID)
 	e.requireNoResult(leased.ID)
-	e.requireUnblocks(1, unavailable.ID, pending.ID, leased.ID)
+	e.requireUnblocks(1, unavailable.ID, leased.ID, pending.ID) // in the order of the job ids
 	for _, id := range []int64{pending.ID, leased.ID, unavailable.ID} {
 		e.requireDecided(1, id, now)
 		e.requireUnblocked(id, 0, true)

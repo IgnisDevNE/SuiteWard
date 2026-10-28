@@ -464,24 +464,35 @@ func (m *Memory) RecordUnblock(ctx context.Context, e commands.Entry, ack *gover
 	if err := execution.ValidateUnblock(e, headSHA, jobs, at); err != nil {
 		return err
 	}
-	jobIDs := make([]int64, len(jobs))
+	jobs = slices.SortedFunc(slices.Values(jobs), func(a, b execution.UnblockJob) int { return cmp.Compare(a.ID, b.ID) })
+	lifted := make([]int64, len(jobs))
 	for i, job := range jobs {
-		jobIDs[i] = job.ID
+		lifted[i] = job.ID
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, id := range jobIDs {
-		if job, ok := m.jobs[id]; !ok || job.State != execution.StateUnavailable || job.RepositoryID != e.RepositoryID || job.PullNumber != e.PullNumber || job.HeadSHA != headSHA {
-			return fmt.Errorf("%w: job %d is not an unavailable job of this head and pull request", execution.ErrInvalidRequest, id)
+	key := comment{e.RepositoryID, e.CommentID}
+	if stored, ok := m.unblocks[key]; ok { // a command that is recorded: the same entry, jobs and time is success, whatever its jobs are now
+		if !slices.Equal(stored.jobs, lifted) || !stored.decidedAt.Equal(execution.Stored(at)) {
+			return fmt.Errorf("%w: comment %d of repository %d unblocked other jobs", commands.ErrConflict, e.CommentID, e.RepositoryID)
+		}
+		return m.ledger.Record(ctx, e, ack)
+	}
+	for _, o := range jobs {
+		if job, ok := m.jobs[o.ID]; !ok || job.RepositoryID != e.RepositoryID || job.PullNumber != e.PullNumber || job.HeadSHA != headSHA {
+			return fmt.Errorf("%w: job %d is not a job of this head and pull request", execution.ErrInvalidRequest, o.ID)
+		}
+	}
+	for _, o := range jobs {
+		if !m.jobs[o.ID].Observed(o) {
+			return fmt.Errorf("%w: job %d", execution.ErrJobChanged, o.ID)
 		}
 	}
 	if err := m.ledger.Record(ctx, e, ack); err != nil {
 		return err
 	}
-	key := comment{e.RepositoryID, e.CommentID}
-	lifted := slices.Sorted(slices.Values(jobIDs))
-	if stored, ok := m.unblocks[key]; ok && !slices.Equal(stored.jobs, lifted) {
-		return fmt.Errorf("%w: comment %d of repository %d unblocked other jobs", commands.ErrConflict, e.CommentID, e.RepositoryID)
+	for _, o := range jobs {
+		m.jobs[o.ID] = m.jobs[o.ID].UnblockEnded(at)
 	}
 	m.unblocks[key] = unblock{jobs: lifted, createdAt: execution.Stored(e.CreatedAt), decidedAt: execution.Stored(at)}
 	return nil

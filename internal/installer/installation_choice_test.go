@@ -279,11 +279,11 @@ func TestAStaleEntryIsSkippedAndCounted(t *testing.T) {
 	})
 }
 
-// A flag that names an installation answers the question for it: nothing is asked, refused or said, and nothing is chosen. An answers-file key
-// does the same, except settings, which only the command line gives.
+// With several installations, the settings file and the token file are what name one: a flag of either answers the question, nothing is asked,
+// refused or said, and nothing is chosen. An answers-file key does the same, except settings, which only the command line gives.
 func TestAnInstallationFlagIsNeverAskedAbout(t *testing.T) {
 	twoInstallations(t)
-	for _, key := range []string{"settings", "token-file", "tier", "runtime", "connection"} {
+	for _, key := range []string{"settings", "token-file"} {
 		for name, give := range map[string]func(string) (flags, answers map[string]string){
 			"a flag":    func(v string) (map[string]string, map[string]string) { return map[string]string{key: v}, nil },
 			"an answer": func(v string) (map[string]string, map[string]string) { return nil, map[string]string{key: v} },
@@ -309,6 +309,64 @@ func TestAnInstallationFlagIsNeverAskedAbout(t *testing.T) {
 	r := newTestResolver(t, nil, map[string]string{"settings": "/x"}, term)
 	if err := r.chooseInstallation(choiceDeps(t)); err == nil || !strings.Contains(err.Error(), "several SuiteWard installations") {
 		t.Errorf("an answers-file settings key answered the question: %v", err)
+	}
+}
+
+// The tier, the runtime and the connection do not name an installation among several: a script that gave only one of them used to get the default
+// one, which may be another installation than the one it meant. They are asked about, and refused where nobody can be asked.
+func TestOnlyTheSettingsFileAndTheTokenFileAnswerTheQuestionAmongSeveral(t *testing.T) {
+	i := twoInstallations(t)
+	for _, key := range []string{"tier", "runtime", "connection"} {
+		for name, give := range map[string]func(string) (flags, answers map[string]string){
+			"a flag":    func(v string) (map[string]string, map[string]string) { return map[string]string{key: v}, nil },
+			"an answer": func(v string) (map[string]string, map[string]string) { return nil, map[string]string{key: v} },
+		} {
+			flags, answers := give("x")
+			r, out := plainResolver(t, flags, answers, i.second+"\n")
+			if err := r.chooseInstallation(choiceDeps(t)); err != nil || r.chosen["settings"] != i.second || !strings.Contains(out.String(), "SuiteWard installations") {
+				t.Errorf("%s %s on a terminal: err %v, chosen %v: want the question asked and answered", name, key, err, r.chosen)
+			}
+			term, _ := fakeTerminal(false, "")
+			if err := newTestResolver(t, flags, answers, term).chooseInstallation(choiceDeps(t)); err == nil || !strings.Contains(err.Error(), "several SuiteWard installations") {
+				t.Errorf("%s %s with no terminal: %v, want the refusal", name, key, err)
+			}
+		}
+	}
+}
+
+// A script never waits on the question and never gets the default silently: --yes or --answers with several installations and no flag that names one
+// refuse as a run with no terminal does, even on a terminal. One installation is still used, and a flag that names one still answers.
+func TestAnUnattendedRunRefusesSeveralInstallationsAndNeverAsks(t *testing.T) {
+	i := twoInstallations(t)
+	for name, flags := range map[string]map[string]string{
+		"--yes":     {"yes": "true"},
+		"--answers": {"answers": "a.yaml"},
+	} {
+		r, out := plainResolver(t, flags, nil, i.second+"\n")
+		err := r.chooseInstallation(choiceDeps(t))
+		want := "This computer has several SuiteWard installations (" + i.def + ", " + i.second + "). Say which one with `--settings <file>` and `--token-file <file>`."
+		if err == nil || err.Error() != want || out.Len() != 0 || len(r.chosen) != 0 {
+			t.Errorf("%s on a terminal: err %v, output %q, chosen %v: want the refusal and no question", name, err, out.String(), r.chosen)
+		}
+		withFlag := map[string]string{"token-file": i.token}
+		for k, v := range flags {
+			withFlag[k] = v
+		}
+		r, out = plainResolver(t, withFlag, nil, "")
+		if err := r.chooseInstallation(choiceDeps(t)); err != nil || out.Len() != 0 {
+			t.Errorf("%s with a flag that names an installation: err %v, output %q: want nothing", name, err, out.String())
+		}
+	}
+	r, _ := plainResolver(t, map[string]string{"yes": "false"}, nil, i.second+"\n")
+	if err := r.chooseInstallation(choiceDeps(t)); err != nil || r.chosen["settings"] != i.second {
+		t.Errorf("--yes=false is not a script: err %v, chosen %v, want the question asked", err, r.chosen)
+	}
+	if err := os.Remove(i.second); err != nil {
+		t.Fatal(err)
+	}
+	r, out := plainResolver(t, map[string]string{"yes": "true"}, nil, "")
+	if err := r.chooseInstallation(choiceDeps(t)); err != nil || !strings.Contains(out.String(), "one SuiteWard installation") {
+		t.Errorf("one installation under --yes: err %v, output %q, want it used and said", err, out.String())
 	}
 }
 

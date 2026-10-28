@@ -28,7 +28,7 @@ var ErrForeignContainer = errors.New("a container named like one of SuiteWard's 
 // reducedAssuranceNotice is what the co-located tier gives up against the isolated one. It is a security disclosure, and it is said here, once: on
 // the page that introduces the tier and in the summary of an install (a plain run prints it at the end), and nowhere else, so the doctor
 // rows of the test runner do not repeat it.
-const reducedAssuranceNotice = "On this computer the test runner (the executor) and SuiteWard run as your user, next to your coding agent, so these checks catch mistakes, not a determined agent."
+const reducedAssuranceNotice = "On this computer the test runner (the executor) and SuiteWard run as your user, next to your coding agent, so SuiteWard's checks catch mistakes, not a determined agent."
 
 // installTarget is where the install keeps its settings and what is already there.
 type installTarget struct {

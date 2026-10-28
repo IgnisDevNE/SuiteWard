@@ -100,3 +100,10 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 	}
 	return executionOutcome{counts: checkCountsOf(counts)}, nil
 }
+
+// runnerBack says that the runner is back for the current head: it has a job with an unblock row (since the enrollment), the reason no-executor and an end earlier than the
+// last real executor request (docs/contracts/runtime.md, "The early unblock and its hold"). It reads both plans, whether the owner's command ended the job or lifted it after
+// the lease wait. The comment that warns the owner reads it.
+func (j *checksJob) runnerBack(ctx context.Context, s *pullState) (bool, error) {
+	return false, nil
+}

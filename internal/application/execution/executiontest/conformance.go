@@ -274,6 +274,7 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		{"an unblock ends the open jobs it lifts for no-executor at its time, and the old lease is refused", ubEnds},
 		{"an unblock of a job that is no longer as observed ends nothing and writes nothing", ubChanged},
 		{"an unblock waits for a lease that holds a job, and a pending job is never both leased and ended", ubLeaseRace},
+		{"the unblock rows of a head are read with their times since the enrollment, and the job that a command ended is told by them", ubHeadUnblocks},
 		{"an approval receipt is written with its ledger entry or not at all", apApproval},
 		{"a canceled context writes nothing", jbCanceled},
 	}

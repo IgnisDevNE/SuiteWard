@@ -134,6 +134,11 @@ func (j Job) UnblockEnded(at time.Time) Job {
 // runner that took a pending job in between is a change.
 func (j Job) Observed(o UnblockJob) bool { return j.State == o.State && j.LeaseID == o.LeaseID }
 
+// EndedBy reports whether an unblock ended the job and not the sweep (docs/contracts/runtime.md, "The early unblock and its hold", "`ended` is derived, not stored").
+func (j Job) EndedBy(unblocks []JobUnblock) bool {
+	return false
+}
+
 // ended is the job after it became final.
 func (j Job) ended(state State, reason Reason, now time.Time) Job {
 	j.State, j.Reason, j.FinishedAt = state, reason, now

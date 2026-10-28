@@ -423,6 +423,11 @@ func (m *Memory) Unblocked(ctx context.Context, jobID int64, since time.Time) (b
 	return false, nil
 }
 
+// HeadUnblocks implements execution.Store.
+func (m *Memory) HeadUnblocks(ctx context.Context, repositoryID int64, pull int, headSHA string, since time.Time) ([]execution.JobUnblock, error) {
+	return nil, errors.New("HeadUnblocks is not implemented")
+}
+
 // RecordApproval implements execution.Store.
 func (m *Memory) RecordApproval(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, gate execution.ApprovalGate) error {
 	if err := ctx.Err(); err != nil {

@@ -26,6 +26,11 @@ func (s executionStore) Unblocked(ctx context.Context, jobID int64, since time.T
 	return unblocked, nil
 }
 
+// HeadUnblocks implements execution.Store.
+func (s executionStore) HeadUnblocks(ctx context.Context, repositoryID int64, pull int, headSHA string, since time.Time) ([]execution.JobUnblock, error) {
+	return nil, errors.New("HeadUnblocks is not implemented")
+}
+
 func gateParams(e commands.Entry, gate execution.ApprovalGate) dbgen.InsertApprovalReceiptParams {
 	var job pgtype.Int8
 	if gate.JobID != 0 {

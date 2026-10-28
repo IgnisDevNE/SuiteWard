@@ -40,11 +40,11 @@ func (w *cjJobWorld) unblock(pull int, comment int64, head string, jobs ...execu
 	w.t.Helper()
 	e := commands.Entry{RepositoryID: bootRepoID, CommentID: comment, PullNumber: pull, AuthorID: bootOwnerID, CreatedAt: w.clock.Add(30 * time.Second),
 		BodyDigest: artifact.Hash([]byte("body")), Disposition: commands.Unblocked, DecidedAt: w.clock.Add(31 * time.Second)}
-	ids := make([]int64, len(jobs))
+	observed := make([]execution.UnblockJob, len(jobs))
 	for i, job := range jobs {
-		ids[i] = job.ID
+		observed[i] = execution.UnblockJob{ID: job.ID, State: job.State, LeaseID: job.LeaseID}
 	}
-	if err := w.jobs.RecordUnblock(w.t.Context(), e, nil, head, ids); err != nil {
+	if err := w.jobs.RecordUnblock(w.t.Context(), e, nil, head, observed, e.DecidedAt); err != nil {
 		w.t.Fatal(err)
 	}
 }

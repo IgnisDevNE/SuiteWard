@@ -371,21 +371,21 @@ func (r ReceiptCheck) Validate() error {
 
 // ValidateUnblock reports why the entry, the head and the jobs cannot be recorded as an unblock, as ErrInvalidRequest. That each job
 // exists, is unavailable and is of the head and the pull request is for the store to check.
-func ValidateUnblock(e commands.Entry, headSHA string, jobIDs []int64) error {
+func ValidateUnblock(e commands.Entry, headSHA string, jobs []UnblockJob, at time.Time) error {
 	switch {
 	case e.Disposition != commands.Unblocked:
 		return invalid("the jobs of an unblock are recorded with the disposition %q, not %q", commands.Unblocked, e.Disposition)
 	case !headPattern.MatchString(headSHA):
 		return invalid("the head must be 40 lowercase hexadecimal digits")
-	case len(jobIDs) == 0:
+	case len(jobs) == 0:
 		return invalid("an unblock lifts at least one job")
 	}
-	seen := make(map[int64]bool, len(jobIDs))
-	for _, id := range jobIDs {
-		if id <= 0 || seen[id] {
+	seen := make(map[int64]bool, len(jobs))
+	for _, job := range jobs {
+		if job.ID <= 0 || seen[job.ID] {
 			return invalid("the lifted jobs are distinct and positive")
 		}
-		seen[id] = true
+		seen[job.ID] = true
 	}
 	return nil
 }

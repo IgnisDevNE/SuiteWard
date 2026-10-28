@@ -67,11 +67,12 @@ func (j *commandsJob) unblock(ctx context.Context, enrollment owner.State, c com
 	if err != nil {
 		return &opaque{what: "build the acknowledgment", cause: err}
 	}
-	ids := make([]int64, len(jobs))
+	observed := make([]execution.UnblockJob, len(jobs))
 	for i, job := range jobs {
-		ids[i] = job.ID
+		observed[i] = execution.UnblockJob{ID: job.ID, State: job.State, LeaseID: job.LeaseID}
 	}
-	return j.written(j.executions.RecordUnblock(ctx, j.entry(c, commands.Unblocked, ""), &ack, pull.HeadSHA, ids))
+	entry := j.entry(c, commands.Unblocked, "")
+	return j.written(j.executions.RecordUnblock(ctx, entry, &ack, pull.HeadSHA, observed, entry.DecidedAt))
 }
 
 // liftable lists the jobs of the head that an unblock lifts, and their plans: the canonical job when the canonical level is not off, and the receipt job when the

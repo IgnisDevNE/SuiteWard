@@ -84,12 +84,16 @@ func (s executionStore) RecordApproval(ctx context.Context, e commands.Entry, ac
 // RecordUnblock implements execution.Store in one transaction: the ledger entry, its acknowledgment and one unblock row for each lifted
 // job. Each job is checked first, and an unavailable job never changes, so the check cannot go stale. A command that already lifted
 // jobs must lift the same ones.
-func (s executionStore) RecordUnblock(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, headSHA string, jobIDs []int64) error {
+func (s executionStore) RecordUnblock(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, headSHA string, jobs []execution.UnblockJob, at time.Time) error {
 	if err := e.Validate(); err != nil {
 		return err
 	}
-	if err := execution.ValidateUnblock(e, headSHA, jobIDs); err != nil {
+	if err := execution.ValidateUnblock(e, headSHA, jobs, at); err != nil {
 		return err
+	}
+	jobIDs := make([]int64, len(jobs))
+	for i, job := range jobs {
+		jobIDs[i] = job.ID
 	}
 	if ack != nil {
 		if err := ack.Validate(); err != nil {
@@ -121,7 +125,7 @@ func (s executionStore) RecordUnblock(ctx context.Context, e commands.Entry, ack
 		}
 		for _, id := range lifted {
 			if _, err := q.InsertExecutionUnblock(ctx, dbgen.InsertExecutionUnblockParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID, JobID: id, PullNumber: pull,
-				HeadSha: headSHA, DecidedAt: timestamp(e.DecidedAt)}); err != nil {
+				HeadSha: headSHA, DecidedAt: timestamp(at)}); err != nil {
 				return executionWriteError("write the unblock row", err)
 			}
 		}

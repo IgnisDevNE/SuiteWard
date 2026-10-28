@@ -69,6 +69,14 @@ func TestExecutionConformance(t *testing.T) {
 				}
 				return pgx.CollectRows(rows, pgx.RowTo[int64])
 			},
+			UnblockDecided: func(ctx context.Context, repositoryID, commentID, jobID int64) (time.Time, bool, error) {
+				var decided time.Time
+				err := w.pool.QueryRow(ctx, "SELECT decided_at FROM execution_unblocks WHERE repository_id = $1 AND comment_id = $2 AND job_id = $3", repositoryID, commentID, jobID).Scan(&decided)
+				if errors.Is(err, pgx.ErrNoRows) {
+					return time.Time{}, false, nil
+				}
+				return decided, err == nil, err
+			},
 		}
 	})
 }

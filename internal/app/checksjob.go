@@ -352,23 +352,40 @@ func (x *executionRun) namesMode(r checks.Result) bool {
 	return x.known && r.Reason == reasonApprovalMissing && x.policy.receipt == domain.ReceiptLevelRequired
 }
 
-// approvalCounts gives the check of a head whose approval is missing, under canonical: required, the counts of the complete canonical run of the head. The run does not decide the
-// check: the approval is what is missing, and the reason keeps its precedence. The owner reads the counts before approving, because a head can fail the approved tests that its
-// own change edits. A run that is pending, unavailable or not wanted adds nothing. The check is written once per state, so these counts go out with the message the ledger
-// writes next. The failure of the read is returned, once the check is published.
+// approvalCounts gives the check of a head whose approval is missing, under canonical: required, the counts of the complete canonical run of the head, and records the job it
+// counted in the decision (CountedJob). The run does not decide the check: the approval is what is missing, and the reason keeps its precedence. The owner reads the counts
+// before approving, because a head can fail the approved tests that its own change edits. A run that is pending, unavailable or not wanted adds nothing and counts no job.
+// The ledger writes a check again when the counted job changes: the first message goes out while the run is pending and the reason does not change when it completes, so the
+// job that completes is what gives the check its counts. Only a complete job that the manifest of the canonical governs is counted, never a job of another version. What this
+// pass cannot read keeps the stored value of the same head, so a store that fails for a moment does not flip the check and write two messages. The failure of the read is
+// returned, once the check is published.
 func (j *checksJob) approvalCounts(ctx context.Context, s *pullState, x *executionRun, d *pullDecision, executed *executionOutcome) error {
-	if d.result.Reason != reasonApprovalMissing || !x.known || x.policy.canonical != domain.CanonicalLevelRequired {
+	if d.result.Reason != reasonApprovalMissing {
 		return nil
 	}
-	job, found, err := j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical, artifact.Digest{})
+	d.result.CountedJob = 0
+	if s.sameHead {
+		d.result.CountedJob = s.record.CountedJob // kept unless this pass reads the run
+	}
+	if !x.known {
+		return nil
+	}
+	if x.policy.canonical != domain.CanonicalLevelRequired {
+		d.result.CountedJob = 0
+		return nil
+	}
+	job, found, err := j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical, s.suite.manifest)
+	var run canonicalRun
+	if err == nil {
+		run, err = j.reads().canonical(ctx, job, found)
+	}
 	if err != nil {
 		return err
 	}
-	run, err := j.reads().canonical(ctx, job, found)
-	if err != nil || run.status != domain.RunComplete {
-		return err
+	d.result.CountedJob = 0
+	if run.status == domain.RunComplete {
+		executed.counts, d.result.CountedJob = checkCountsOf(run.counts), job.ID
 	}
-	executed.counts = checkCountsOf(run.counts)
 	return nil
 }
 

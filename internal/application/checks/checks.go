@@ -62,7 +62,7 @@ type Record struct {
 // suite in checkstest.
 type Store interface {
 	Current(ctx context.Context, repositoryID int64, pull int) (Record, bool, error)
-	// Publish stores r for its pull. When the head, State, Reason, Reference or Unblocked differ from the current record
+	// Publish stores r for its pull. When the head, State, Reason, Reference, Unblocked or CountedJob differ from the current record
 	// (or there is none) it advances the generation and writes message(generation) to the outbox in the same
 	// transaction, as a system row. Otherwise it updates Change, Revision, CommandID and DecidedAt only and
 	// writes no message. It also advances the generation and writes a message when the current generation's
@@ -104,6 +104,8 @@ func (r Result) Validate() error {
 		return invalid("the reference %q is not P<n>-R<m>", r.Reference)
 	case r.Revision < 0 || r.CommandID < 0:
 		return invalid("the revision and the command id must not be negative")
+	case r.CountedJob < 0:
+		return invalid("the counted job must not be negative")
 	}
 	return nil
 }
@@ -117,8 +119,8 @@ func ValidatePublish(r Result, at time.Time) error {
 }
 
 // Next is the record stored when r is published at time at over current (found false: there is none) and
-// whether it carries a new generation, hence a new message: when the head, state, reason, reference or unblocked
-// changed, or when the current generation's message ended failed (failedAt, its finished_at; zero when it did not)
+// whether it carries a new generation, hence a new message: when the head, state, reason, reference, unblocked
+// or counted job changed, or when the current generation's message ended failed (failedAt, its finished_at; zero when it did not)
 // at least RepublishCooldown before at. Otherwise only Change, Revision, CommandID
 // and the decision time move. Times are kept at microseconds, all PostgreSQL stores.
 func Next(current Record, found bool, r Result, at time.Time, failedAt time.Time) (next Record, advance bool) {
@@ -131,7 +133,7 @@ func Next(current Record, found bool, r Result, at time.Time, failedAt time.Time
 		next.HeadSince = at
 	}
 	lost := !failedAt.IsZero() && !at.Before(failedAt.Add(RepublishCooldown))
-	if lost || r.HeadSHA != current.HeadSHA || r.State != current.State || r.Reason != current.Reason || r.Reference != current.Reference || r.Unblocked != current.Unblocked {
+	if lost || r.HeadSHA != current.HeadSHA || r.State != current.State || r.Reason != current.Reason || r.Reference != current.Reference || r.Unblocked != current.Unblocked || r.CountedJob != current.CountedJob {
 		next.Generation++
 		advance = true
 	}

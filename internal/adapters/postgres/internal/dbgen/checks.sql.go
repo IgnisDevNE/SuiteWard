@@ -30,7 +30,7 @@ func (q *Queries) GetOutboxOutcome(ctx context.Context, key string) (GetOutboxOu
 
 const getPRCheck = `-- name: GetPRCheck :one
 
-SELECT repository_id, pull_number, head_sha, head_since, state, reason, reference, change, revision, command_id, generation, message_key, decided_at, unblocked
+SELECT repository_id, pull_number, head_sha, head_since, state, reason, reference, change, revision, command_id, generation, message_key, decided_at, unblocked, counted_job
 FROM pr_checks WHERE repository_id = $1 AND pull_number = $2
 `
 
@@ -58,14 +58,15 @@ func (q *Queries) GetPRCheck(ctx context.Context, arg GetPRCheckParams) (PrCheck
 		&i.MessageKey,
 		&i.DecidedAt,
 		&i.Unblocked,
+		&i.CountedJob,
 	)
 	return i, err
 }
 
 const insertPRCheck = `-- name: InsertPRCheck :execrows
-INSERT INTO pr_checks (repository_id, pull_number, head_sha, head_since, state, reason, reference, change, revision, command_id, generation, message_key, decided_at, unblocked)
+INSERT INTO pr_checks (repository_id, pull_number, head_sha, head_since, state, reason, reference, change, revision, command_id, generation, message_key, decided_at, unblocked, counted_job)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11, $12, $13, $14)
+        $8, $9, $10, $11, $12, $13, $14, $15)
 ON CONFLICT (repository_id, pull_number) DO NOTHING
 `
 
@@ -84,6 +85,7 @@ type InsertPRCheckParams struct {
 	MessageKey   string
 	DecidedAt    pgtype.Timestamptz
 	Unblocked    bool
+	CountedJob   int64
 }
 
 // Rows affected: 0 means the pull already has a row, which LockPRCheck reads once the concurrent insert committed.
@@ -103,6 +105,7 @@ func (q *Queries) InsertPRCheck(ctx context.Context, arg InsertPRCheckParams) (i
 		arg.MessageKey,
 		arg.DecidedAt,
 		arg.Unblocked,
+		arg.CountedJob,
 	)
 	if err != nil {
 		return 0, err
@@ -111,7 +114,7 @@ func (q *Queries) InsertPRCheck(ctx context.Context, arg InsertPRCheckParams) (i
 }
 
 const lockPRCheck = `-- name: LockPRCheck :one
-SELECT repository_id, pull_number, head_sha, head_since, state, reason, reference, change, revision, command_id, generation, message_key, decided_at, unblocked
+SELECT repository_id, pull_number, head_sha, head_since, state, reason, reference, change, revision, command_id, generation, message_key, decided_at, unblocked, counted_job
 FROM pr_checks WHERE repository_id = $1 AND pull_number = $2 FOR UPDATE
 `
 
@@ -139,6 +142,7 @@ func (q *Queries) LockPRCheck(ctx context.Context, arg LockPRCheckParams) (PrChe
 		&i.MessageKey,
 		&i.DecidedAt,
 		&i.Unblocked,
+		&i.CountedJob,
 	)
 	return i, err
 }
@@ -147,8 +151,8 @@ const updatePRCheck = `-- name: UpdatePRCheck :exec
 UPDATE pr_checks
 SET head_sha = $1, head_since = $2, state = $3, reason = $4, reference = $5,
     change = $6, revision = $7, command_id = $8, generation = $9,
-    message_key = $10, decided_at = $11, unblocked = $12
-WHERE repository_id = $13 AND pull_number = $14
+    message_key = $10, decided_at = $11, unblocked = $12, counted_job = $13
+WHERE repository_id = $14 AND pull_number = $15
 `
 
 type UpdatePRCheckParams struct {
@@ -164,6 +168,7 @@ type UpdatePRCheckParams struct {
 	MessageKey   string
 	DecidedAt    pgtype.Timestamptz
 	Unblocked    bool
+	CountedJob   int64
 	RepositoryID int64
 	PullNumber   int32
 }
@@ -182,6 +187,7 @@ func (q *Queries) UpdatePRCheck(ctx context.Context, arg UpdatePRCheckParams) er
 		arg.MessageKey,
 		arg.DecidedAt,
 		arg.Unblocked,
+		arg.CountedJob,
 		arg.RepositoryID,
 		arg.PullNumber,
 	)

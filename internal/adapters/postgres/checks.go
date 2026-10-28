@@ -26,7 +26,7 @@ func (s *Store) Checks() checks.Store { return checkLedger{pool: s.pool} }
 
 func checkRecord(row dbgen.PrCheck) checks.Record {
 	return checks.Record{Result: checks.Result{RepositoryID: row.RepositoryID, PullNumber: int(row.PullNumber), HeadSHA: row.HeadSha, State: checks.State(row.State),
-		Reason: row.Reason, Reference: row.Reference, Change: row.Change, Revision: row.Revision, CommandID: row.CommandID, Unblocked: row.Unblocked},
+		Reason: row.Reason, Reference: row.Reference, Change: row.Change, Revision: row.Revision, CommandID: row.CommandID, Unblocked: row.Unblocked, CountedJob: row.CountedJob},
 		HeadSince: observedTime(row.HeadSince), Generation: row.Generation, DecidedAt: observedTime(row.DecidedAt)}
 }
 
@@ -131,7 +131,7 @@ func advanceCheck(ctx context.Context, q *dbgen.Queries, row dbgen.PrCheck, r ch
 	}
 	if err := q.UpdatePRCheck(ctx, dbgen.UpdatePRCheckParams{RepositoryID: r.RepositoryID, PullNumber: row.PullNumber, HeadSha: next.HeadSHA, HeadSince: timestamp(next.HeadSince),
 		State: string(next.State), Reason: next.Reason, Reference: next.Reference, Change: next.Change, Revision: next.Revision, CommandID: next.CommandID,
-		Generation: next.Generation, MessageKey: messageKey, DecidedAt: timestamp(next.DecidedAt), Unblocked: next.Unblocked}); err != nil {
+		Generation: next.Generation, MessageKey: messageKey, DecidedAt: timestamp(next.DecidedAt), Unblocked: next.Unblocked, CountedJob: next.CountedJob}); err != nil {
 		return checks.Record{}, false, fmt.Errorf("update check record: %w", err)
 	}
 	return next, advance, nil
@@ -147,7 +147,7 @@ func insertFirstCheck(ctx context.Context, q *dbgen.Queries, build func(int64) (
 	}
 	inserted, err := q.InsertPRCheck(ctx, dbgen.InsertPRCheckParams{RepositoryID: r.RepositoryID, PullNumber: pull, HeadSha: next.HeadSHA, HeadSince: timestamp(next.HeadSince),
 		State: string(next.State), Reason: next.Reason, Reference: next.Reference, Change: next.Change, Revision: next.Revision, CommandID: next.CommandID,
-		Generation: next.Generation, MessageKey: msg.Key, DecidedAt: timestamp(next.DecidedAt), Unblocked: next.Unblocked})
+		Generation: next.Generation, MessageKey: msg.Key, DecidedAt: timestamp(next.DecidedAt), Unblocked: next.Unblocked, CountedJob: next.CountedJob})
 	if err != nil {
 		return checks.Record{}, false, fmt.Errorf("write check record: %w", err)
 	}

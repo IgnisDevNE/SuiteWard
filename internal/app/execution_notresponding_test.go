@@ -219,3 +219,29 @@ func TestChecksReadEachJobForItsOwnCheckWhenOnlyOneWaitsForTheRunner(t *testing.
 		})
 	}
 }
+
+// A head reads "not responding" when the runner is silent and at least one wanted job of the head waits for it: the state that the comment of the head and the
+// unblock read (docs/contracts/runtime.md, "Not responding"). A job that the head does not want, and a plan with no job yet, wait for nothing.
+func TestAHeadReadsNotRespondingWhenTheRunnerIsSilentAndAWantedJobWaitsForIt(t *testing.T) {
+	start := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	waits, github := execution.Job{State: execution.StatePending}, execution.Job{State: execution.StatePending, Reason: execution.ReasonGitHubUnavailable}
+	leased, done := execution.Job{State: execution.StateLeased}, execution.Job{State: execution.StateComplete}
+	for name, tc := range map[string]struct {
+		silence time.Duration
+		jobs    headJobs
+		want    bool
+	}{
+		"the canonical job waits":                      {30 * time.Second, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, true},
+		"the receipt job waits, the canonical is done": {30 * time.Second, headJobs{canonicalPlanned: true, canonical: done, hasCanonical: true, receiptApplies: true, receipt: leased, hasReceipt: true}, true},
+		"one waits on GitHub and the other is done":    {time.Hour, headJobs{canonicalPlanned: true, canonical: github, hasCanonical: true, receiptApplies: true, receipt: done, hasReceipt: true}, false},
+		"the runner is not silent yet":                 {30*time.Second - time.Millisecond, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, false},
+		"a canonical job that the head does not want":  {time.Hour, headJobs{canonical: waits, hasCanonical: true}, false},
+		"a receipt that does not apply":                {time.Hour, headJobs{receipt: waits, hasReceipt: true}, false},
+		"no job yet":                                   {time.Hour, headJobs{canonicalPlanned: true, receiptApplies: true}, false},
+	} {
+		j := &checksJob{liveness: execution.NewLiveness(start), now: func() time.Time { return start.Add(tc.silence) }}
+		if got := j.headNotResponding(tc.jobs); got != tc.want {
+			t.Errorf("%s: headNotResponding = %v, want %v", name, got, tc.want)
+		}
+	}
+}

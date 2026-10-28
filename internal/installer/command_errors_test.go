@@ -83,7 +83,7 @@ func TestMainExitCodes(t *testing.T) {
 		{"a flag that does not exist", []string{"install", "--nope"}, 2, "flag provided but not defined", ""},
 		{"a doctor flag that does not exist", []string{"doctor", "--nope"}, 2, "flag provided but not defined", ""},
 		{"a stray argument", []string{"install", "now"}, 2, `unexpected argument "now"`, ""},
-		{"install host off Linux", []string{"install", "host"}, 1, "install host prepares an AlmaLinux host", ""},
+		{"install host off Linux", []string{"install", "host"}, 1, "install host prepares an AlmaLinux server", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -45,7 +45,7 @@ func ColocatedStack(s Settings, image string) (Stack, error) {
 		return Stack{}, err
 	}
 	if s.Tier != config.TierCoLocated {
-		return Stack{}, fmt.Errorf("a container stack is made for the co-located tier, not %s", s.Tier)
+		return Stack{}, fmt.Errorf("an installation made of containers is for the co-located type (on this computer), not %s", s.Tier)
 	}
 	if image == "" {
 		return Stack{}, fmt.Errorf("the release image is required")

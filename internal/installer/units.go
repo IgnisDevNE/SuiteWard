@@ -67,7 +67,7 @@ const (
 
 func (p UnitParams) validate() error {
 	if !imageDigest.MatchString(p.Digest) {
-		return fmt.Errorf("%q is not an image digest of the form sha256:<64 lowercase hex characters>", p.Digest)
+		return fmt.Errorf("%q is not a valid image fingerprint (digest): it must be sha256: followed by 64 lowercase hexadecimal characters", p.Digest)
 	}
 	// The tier, ports and job timeout follow the settings rules, which are the one definition of what is valid.
 	if err := (Settings{Tier: p.Tier, Runtime: RuntimePodman, HTTPPort: p.HTTPPort, MCPPort: p.MCPPort, JobTimeout: p.JobTimeout}).Validate(); err != nil {

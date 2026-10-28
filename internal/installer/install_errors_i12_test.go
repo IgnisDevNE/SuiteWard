@@ -123,7 +123,7 @@ func TestUpgradeColocatedAStartQuestionThatCannotBeReadIsAnError(t *testing.T) {
 	term.Out = &u.out
 	env.Term = term
 	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--upgrade", "--backup-dir", u.backups, "--runtime", "podman", "--connection", "pm", "--image", testImage}
-	if err := Install(context.Background(), args, env); err == nil || !strings.Contains(err.Error(), "read the answer") || u.startCalls(ContainerDB) != 0 {
+	if err := Install(context.Background(), args, env); err == nil || !strings.Contains(err.Error(), "read your answer") || u.startCalls(ContainerDB) != 0 {
 		t.Fatalf("got %v", err)
 	}
 }

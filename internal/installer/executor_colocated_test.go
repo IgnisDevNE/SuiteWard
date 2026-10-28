@@ -517,8 +517,8 @@ func TestTheInstallsSayThatAnEngineHasOneExecutor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "one executor") || !strings.Contains(out, "suiteward-sandbox-") {
-		t.Errorf("the host step must say that an engine has one executor, and why:\n%s", out)
+	if !strings.Contains(out, "one test runner") || !strings.Contains(out, "suiteward-sandbox-") {
+		t.Errorf("the host step must say that a container program has one test runner, and why:\n%s", out)
 	}
 }
 

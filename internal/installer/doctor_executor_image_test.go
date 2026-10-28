@@ -35,7 +35,7 @@ func TestDoctorIsolatedSaysThatTheHostStepChecksTheGoImage(t *testing.T) {
 	f, s := isolatedRig{}.build(t)
 	_, res, _ := runDoctor(t, f, s)
 	wantOK(t, res, "executor.image")
-	for _, want := range []string{ExecutorAccount, "host step", "digest"} {
+	for _, want := range []string{ExecutorAccount, "host step", "fingerprint"} {
 		if !strings.Contains(res["executor.image"].Detail, want) {
 			t.Errorf("the detail %q lacks %q", res["executor.image"].Detail, want)
 		}

@@ -22,7 +22,7 @@ func TestTheQuestionsThatDefaultToYesAreAChoiceOnAFullScreen(t *testing.T) {
 			t.Fatalf("got %v, want the refusal that names `suiteward backup init`", err)
 		}
 		v := run.question(t, 0)
-		mustSay(t, v, "No recovery key is set", "Make one now")
+		mustSay(t, v, "has no recovery key", "Make one now")
 		if !strings.Contains(v.row("1) Yes"), "(default)") || v.row("2) No") == "" || strings.Contains(v.text(), "[Y/n]") {
 			t.Errorf("the question is not a choice between Yes, the default, and No:\n%s", v.dump())
 		}

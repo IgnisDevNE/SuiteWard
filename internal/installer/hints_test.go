@@ -29,7 +29,7 @@ func TestBackupInitNamesTheProgramAsTheRunReachesIt(t *testing.T) {
 		t.Errorf("keys = %v, want a refusal that names `%s backup init --replace`", err, swCmd)
 	}
 	k.kept()
-	if want := "`" + swCmd + " backup`, and `" + swCmd + " install --upgrade`"; !strings.Contains(out.String(), want) {
+	if want := "`" + swCmd + " backup` and `" + swCmd + " install --upgrade` lock their backups"; !strings.Contains(out.String(), want) {
 		t.Errorf("the output lacks %q:\n%s", want, out.String())
 	}
 }
@@ -89,7 +89,7 @@ func savedAt(t *testing.T, s Settings) string {
 func TestDoctorNamesTheProgramAsTheRunReachesIt(t *testing.T) {
 	t.Run("no settings file", func(t *testing.T) {
 		res := doctorAs(t, newFake("linux"), swCmd, filepath.Join(t.TempDir(), "settings.yaml"))
-		if fix := res["settings"].Fix; !strings.Contains(fix, "run `"+swCmd+" install` first") {
+		if fix := res["settings"].Fix; !strings.Contains(fix, "Run `"+swCmd+" install` first") {
 			t.Errorf("the fix is %q, want one that names `%s install`", fix, swCmd)
 		}
 	})
@@ -157,11 +157,11 @@ func TestEnrollNamesTheProgramAsTheRunReachesIt(t *testing.T) {
 }
 
 func TestTheMessagesOfTheInstanceNameTheProgramAsTheRunReachesIt(t *testing.T) {
-	if err := (instance{settingsPath: "/s.yaml"}).needSettings(swCmd); err == nil || !strings.Contains(err.Error(), "run `"+swCmd+" install --upgrade`, which saves them") {
+	if err := (instance{settingsPath: "/s.yaml"}).needSettings(swCmd); err == nil || !strings.Contains(err.Error(), "`"+swCmd+" install --upgrade`, which saves one") {
 		t.Errorf("needSettings = %v, want a message that names `%s install --upgrade`", err, swCmd)
 	}
 	steps := colocatedSteps(swCmd, nil, colocatedSettings(), testImage, screenOn(&bytes.Buffer{}))
-	if !strings.Contains(steps.recovery, "run `"+swCmd+" install` with the options of this run") {
+	if !strings.Contains(steps.recovery, "run `"+swCmd+" install` with the same options as this run") {
 		t.Errorf("the way back to a running service is %q, want it to name `%s install`", steps.recovery, swCmd)
 	}
 }

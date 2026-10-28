@@ -125,7 +125,7 @@ func TestARestoreOfABackupWhoseStatusIsNotRecordedKeepsTheCanonicalBehindLine(t 
 func TestTheRestoreWarningNamesTheDefaultBranchOnlyForABackupThatMayHoldRepositories(t *testing.T) {
 	const (
 		replaces = "What was approved, proposed or promoted after the backup is lost"
-		ahead    = "the default branch on GitHub may be ahead of the restored canonical"
+		ahead    = "the default branch on GitHub may be ahead of the restored approved version"
 	)
 	for _, tc := range []struct {
 		name  string
@@ -165,7 +165,7 @@ func TestARestoreSaysThatTheExecutorTokenIsAsItWas(t *testing.T) {
 	if err := u.restore(aBackup(t, withoutRepositories), "--kit", writeTestKit(t, t.TempDir()), "--yes", "--instance", testInstance); err != nil {
 		t.Fatal(err)
 	}
-	if out := u.out.String(); !strings.Contains(out, "the executor token") {
+	if out := u.out.String(); !strings.Contains(out, "the test runner's token") {
 		t.Errorf("the closing lines of a restore lack the executor's token among the credentials that are as they were:\n%s", out)
 	}
 }

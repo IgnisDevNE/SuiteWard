@@ -23,7 +23,7 @@ func TestUpgradeColocatedStopsAtTheStepThatFails(t *testing.T) {
 		{"an image of a shape that is not pinned", "", []string{"--image", "ghcr.io/ignisdevne/suiteward:latest"}, []string{"never pins a tag"}, false},
 		{"the secrets cannot be read", "secret ls --filter name=" + SecretDBAuth, nil, []string{errInjected.Error()}, false},
 		{"the new image cannot be pulled", "pull " + testImage, nil, []string{errInjected.Error(), "nothing was changed", "the backup is in"}, true},
-		{"the database cannot be started", "run --detach --replace --name suiteward-db ", nil, []string{errInjected.Error(), "Migrate did not run", "The backup is in"}, true},
+		{"the database cannot be started", "run --detach --replace --name suiteward-db ", nil, []string{errInjected.Error(), "did not run, so your data is unchanged", "The backup is in"}, true},
 		{"migrate fails", "run --rm --replace --name suiteward-migrate", nil, []string{errInjected.Error(), "suiteward restore "}, true},
 		{"the service cannot be started", "run --detach --replace --name suiteward --network", nil, []string{errInjected.Error(), "suiteward restore "}, true},
 	}
@@ -59,7 +59,7 @@ func TestUpgradeColocatedWithoutAStatusMakesNoBackup(t *testing.T) {
 	u := newUpgradeHarness(t, nil)
 	u.status = failAfterFirst(u.status)
 	err := u.upgrade("--image", testImage, "--yes")
-	if !errors.Is(err, errInjected) || !strings.Contains(err.Error(), "read GET /status") || !strings.Contains(err.Error(), "nothing was changed") {
+	if !errors.Is(err, errInjected) || !strings.Contains(err.Error(), "read /status of the service") || !strings.Contains(err.Error(), "nothing was changed") {
 		t.Fatalf("upgrade = %v", err)
 	}
 	u.noChanges()
@@ -130,7 +130,7 @@ func TestUpgradeIsolatedStopsAtTheStepThatFails(t *testing.T) {
 		want  []string
 		never []string
 	}{
-		{"an image of another repository", nil, []string{"--image", "docker.io/library/other@" + testDigest}, []string{"the isolated tier runs"},
+		{"an image of another repository", nil, []string{"--image", "docker.io/library/other@" + testDigest}, []string{"an installation on a separate server runs"},
 			[]string{"pg_dump", "systemctl --user stop", "daemon-reload"}},
 		{"an image that is a tag", nil, []string{"--image", "ghcr.io/ignisdevne/suiteward:v1"}, []string{"never pins a tag"},
 			[]string{"pg_dump", "systemctl --user stop", "daemon-reload"}},
@@ -140,7 +140,7 @@ func TestUpgradeIsolatedStopsAtTheStepThatFails(t *testing.T) {
 		}, nil, []string{errInjected.Error(), "nothing was changed", "the backup is in"},
 			[]string{"systemctl --user stop", "daemon-reload", "restart suiteward-migrate.service", "start suiteward.service"}},
 		{"the service cannot be stopped", func(u *isoUpgrade) { u.f.failOn["systemctl --user stop suiteward.service"] = errInjected }, nil,
-			[]string{"stop the service", "Migrate did not run", "Fix the cause"},
+			[]string{"stop the service", "did not run, so your data is unchanged", "Fix the cause"},
 			[]string{generatorPath, "daemon-reload", "restart suiteward-migrate.service", "start suiteward.service"}},
 		{"the generator rejects the units", func(u *isoUpgrade) { u.f.failOn[generatorPath] = errInjected }, nil,
 			[]string{"the Podman generator rejects the units", "suiteward.service is stopped"},
@@ -149,7 +149,7 @@ func TestUpgradeIsolatedStopsAtTheStepThatFails(t *testing.T) {
 			[]string{"daemon-reload", "suiteward.service is stopped"},
 			[]string{"restart suiteward-db.service", "restart suiteward-migrate.service", "start suiteward.service"}},
 		{"migrate fails", func(u *isoUpgrade) { u.f.failOn["restart suiteward-migrate.service"] = errInjected }, nil,
-			[]string{"the migration failed, so the service was not started", "suiteward restore "},
+			[]string{"the database update (migration) failed, so the service was not started", "suiteward restore "},
 			[]string{"start suiteward.service", "--property=ActiveState"}},
 		{"the service does not start", func(u *isoUpgrade) { u.f.failOn["start suiteward.service"] = errInjected }, nil,
 			[]string{"start the service", "suiteward restore "},

@@ -47,17 +47,17 @@ func PrepareHost(ctx context.Context, r *Resolver, d Deps, out io.Writer) error 
 		return err
 	}
 	if d.GOOS != "linux" {
-		return fmt.Errorf("install host prepares an AlmaLinux host; this system is %s", d.GOOS)
+		return fmt.Errorf("install host prepares an AlmaLinux server, but this system is %s. Nothing was changed", d.GOOS)
 	}
 	h := &host{r: r, d: d, out: out}
 	scr := r.screen
 	scr.Steps("Podman", "Account", "Metadata", "Executor", "Next")
 	uid, err := h.run(ctx, "id", "-u")
 	if err != nil {
-		return fmt.Errorf("find out who is running the installer: %w", err)
+		return fmt.Errorf("could not find out which user is running the installer: %w", err)
 	}
 	if uid != "0" {
-		return errors.New("install host changes the system and must run as root: run it with sudo, then run the service-account step as the service account")
+		return errors.New("install host changes the system, so it must run as root. Run it with sudo, then run the next step as the service account. Nothing was changed")
 	}
 	if h.release, err = h.verifyRelease(ctx); err != nil {
 		return err
@@ -94,15 +94,15 @@ func (h *host) exists(ctx context.Context, p string) bool {
 // dnf runs dnf with the user's consent: it never changes packages on its own.
 func (h *host) dnf(ctx context.Context, why string, args ...string) error {
 	command := "dnf " + strings.Join(args, " ")
-	ok, err := h.r.confirm("yes", why+": run `"+command+"`?")
+	ok, err := h.r.confirm("yes", why+". Run `"+command+"` now? If you answer no, the step stops and you can run it yourself.")
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("%s; run `%s` yourself, or pass --yes", why, command)
+		return fmt.Errorf("%s. Run `%s` yourself, or pass `--yes` so that this step runs it", why, command)
 	}
 	if err := working(screenOn(h.out), "Running "+command, func() error { _, err := h.run(ctx, "dnf", args...); return err }); err != nil {
-		return fmt.Errorf("%s: %w", command, err)
+		return fmt.Errorf("`%s` failed: %w", command, err)
 	}
 	return nil
 }
@@ -115,7 +115,7 @@ func (h *host) podman(ctx context.Context) error {
 			return err
 		}
 		if out, err = h.run(ctx, "podman", "--version"); err != nil {
-			return fmt.Errorf("podman still does not run after the installation: %w", err)
+			return fmt.Errorf("Podman still does not run after it was installed: %w", err)
 		}
 	}
 	if !podmanAtLeast(out, 5, 5) {
@@ -123,7 +123,7 @@ func (h *host) podman(ctx context.Context) error {
 			return err
 		}
 		if out, err = h.run(ctx, "podman", "--version"); err != nil || !podmanAtLeast(out, 5, 5) {
-			return fmt.Errorf("SuiteWard needs Podman 5.5 or later, this host has %q", out)
+			return fmt.Errorf("SuiteWard needs Podman 5.5 or later, but this server has %q", out)
 		}
 	}
 	fixed := func() (bool, error) {
@@ -132,14 +132,14 @@ func (h *host) podman(ctx context.Context) error {
 	}
 	ok, err := fixed()
 	if err != nil {
-		return fmt.Errorf("read the changelog of the podman package: %w", err)
+		return fmt.Errorf("could not read the changelog of the Podman package: %w", err)
 	}
 	if !ok {
-		if err := h.dnf(ctx, "this Podman has no fix for "+podmanCVE, "upgrade", "-y", "podman"); err != nil {
+		if err := h.dnf(ctx, "this Podman version has no fix for the security flaw "+podmanCVE, "upgrade", "-y", "podman"); err != nil {
 			return err
 		}
 		if ok, err = fixed(); err != nil || !ok {
-			return fmt.Errorf("the podman package has no fix for %s, so SuiteWard must not run on this host: update Podman and run this again", podmanCVE)
+			return fmt.Errorf("the Podman package still has no fix for the security flaw %s, so SuiteWard must not run on this server. Update Podman, then run this again", podmanCVE)
 		}
 	}
 	h.check("Podman %s, with the fix for %s.\n", podmanVersionText.FindString(out), podmanCVE)
@@ -175,7 +175,7 @@ func (h *host) account(ctx context.Context) error {
 func (h *host) ensureAccount(ctx context.Context, name string) error {
 	if _, err := h.run(ctx, "id", "-u", name); err != nil {
 		if _, err := h.run(ctx, "useradd", "--create-home", "--shell", "/usr/sbin/nologin", name); err != nil {
-			return fmt.Errorf("create the account %s: %w", name, err)
+			return fmt.Errorf("could not create the account %s: %w", name, err)
 		}
 		h.check("Created the account %s with no login shell.\n", name)
 	}
@@ -195,12 +195,12 @@ func (h *host) ensureAccount(ctx context.Context, name string) error {
 	}
 	if len(add) > 0 {
 		if _, err := h.run(ctx, "usermod", append(add, name)...); err != nil {
-			return fmt.Errorf("add the subordinate id ranges: %w", err)
+			return fmt.Errorf("could not add the id ranges (subuid and subgid) for the account: %w", err)
 		}
-		h.check("Added the subordinate id ranges %s.\n", strings.Join(add, " "))
+		h.check("Added the id ranges (subuid and subgid) for the account: %s.\n", strings.Join(add, " "))
 	}
 	if _, err := h.run(ctx, "loginctl", "enable-linger", name); err != nil {
-		return fmt.Errorf("enable linger for %s: %w", name, err)
+		return fmt.Errorf("could not turn on linger for %s (keeping its services running after logout): %w", name, err)
 	}
 	return nil
 }
@@ -234,7 +234,7 @@ func (h *host) metadata(ctx context.Context) error {
 	installed := h.exists(ctx, "/etc/systemd/system/"+imdsUnit)
 	if !installed {
 		if _, err := h.run(ctx, "curl", "--version"); err != nil {
-			return fmt.Errorf("curl is needed to look for a cloud metadata service: %w", err)
+			return fmt.Errorf("curl is needed to look for a cloud metadata service, and it does not run: %w", err)
 		}
 		// A timeout or a refusal makes curl fail: nothing answers there.
 		code, err := h.run(ctx, "curl", "-s", "-m", "3", "-X", "PUT", "-H", "X-aws-ec2-metadata-token-ttl-seconds: 60",
@@ -243,12 +243,12 @@ func (h *host) metadata(ctx context.Context) error {
 			h.check("Nothing answers at %s, so no metadata rule is needed.\n", metadataAddress)
 			return nil
 		}
-		ok, err := h.r.confirm("metadata-rule", "A metadata service answers at "+metadataAddress+" and hands out the instance's credentials. Add the nft rule that refuses it for the "+ServiceAccount+" account (--metadata-rule yes|no)")
+		ok, err := h.r.confirm("metadata-rule", "A cloud metadata service answers at "+metadataAddress+". It hands out this server's cloud credentials, so SuiteWard must not be able to reach it. Add a firewall rule that blocks it for the "+ServiceAccount+" account (--metadata-rule yes|no)?")
 		if err != nil {
 			return err
 		}
 		if !ok {
-			h.warn("No metadata rule installed: containers of %s can reach %s. Doctor reports this.\n", ServiceAccount, metadataAddress)
+			h.warn("No firewall rule was added, so containers of the account %s can reach %s. Doctor reports this as a failure until the rule is added.\n", ServiceAccount, metadataAddress)
 			return nil
 		}
 	}
@@ -257,7 +257,7 @@ func (h *host) metadata(ctx context.Context) error {
 
 // nftSetup is a rule that refuses addresses for one account: the table it makes, its file and the unit that loads it at every boot.
 type nftSetup struct {
-	label       string   // what the rule is called in an error: "metadata" or "executor"
+	label       string   // what the rule is called in an error: "metadata" or "test runner"
 	table       string   // the nft table, inet
 	ruleFile    string   // where the rule lives
 	unit        string   // the oneshot unit that loads it
@@ -282,20 +282,20 @@ table inet suiteward_imds {
   }
 }
 `, ServiceAccount, metadataAddress),
-		addresses: []string{metadataAddress}, consequence: "the service must not run on this host until it does",
+		addresses: []string{metadataAddress}, consequence: "the service must not run on this server until the rule is loaded",
 		description: "Reject the instance metadata service for the " + ServiceAccount + " user",
-		refusedLine: fmt.Sprintf("Refusing %s for the account %s (the rule loads at every boot).\n", metadataAddress, ServiceAccount),
+		refusedLine: fmt.Sprintf("Blocked %s for the account %s with a firewall rule (it loads at every boot).\n", metadataAddress, ServiceAccount),
 	}, installed)
 }
 
 func (h *host) installNft(ctx context.Context, s nftSetup, installed bool) error {
 	nft, err := h.run(ctx, "sh", "-c", "command -v nft")
 	if err != nil {
-		if err := h.dnf(ctx, "nft is not installed", "install", "-y", "nftables"); err != nil {
+		if err := h.dnf(ctx, "nft (the Linux firewall tool) is not installed", "install", "-y", "nftables"); err != nil {
 			return err
 		}
 		if nft, err = h.run(ctx, "sh", "-c", "command -v nft"); err != nil {
-			return fmt.Errorf("nft is still missing after the installation: %w", err)
+			return fmt.Errorf("nft (the Linux firewall tool) is still missing after the installation: %w", err)
 		}
 	}
 	unit := fmt.Sprintf(`[Unit]
@@ -333,11 +333,11 @@ WantedBy=multi-user.target
 	}
 	table, err := h.run(ctx, "nft", "list", "table", "inet", s.table)
 	if err != nil {
-		return fmt.Errorf("the %s rule is not loaded: %w", s.label, err)
+		return fmt.Errorf("the %s rule (the firewall rule) is not loaded: %w", s.label, err)
 	}
 	for _, address := range s.addresses {
 		if !strings.Contains(table, "reject") || !strings.Contains(table, address) {
-			return fmt.Errorf("the table %s has no reject rule for %s: %s", s.table, address, s.consequence)
+			return fmt.Errorf("the firewall table %s has no reject rule for %s, and %s", s.table, address, s.consequence)
 		}
 	}
 	h.check("%s", s.refusedLine)
@@ -370,7 +370,7 @@ func (h *host) configDir(ctx context.Context) error {
 	// The account owns these directories, so it could have planted a link where root is about to chown or write.
 	for _, p := range []string{dotConfig, dir, dest} {
 		if _, err := h.run(ctx, "test", "-L", p); err == nil {
-			return fmt.Errorf("%s is a symbolic link: root will not chown or copy through it; remove the link and run this again", p)
+			return fmt.Errorf("%s is a shortcut (symbolic link), and the installer will not write through it as root. Remove the link, then run this again", p)
 		}
 	}
 	// install -d owns only the last component it names, so both directories are named.
@@ -385,7 +385,7 @@ func (h *host) configDir(ctx context.Context) error {
 	}
 	if h.exists(ctx, dest) {
 		if _, err := h.run(ctx, "cmp", "-s", etcEnvFile, dest); err != nil {
-			return fmt.Errorf("%s and %s both exist and differ: make the new one hold the values you want (it is the one the service will read), and run this again", etcEnvFile, dest)
+			return fmt.Errorf("%[1]s and %[2]s both exist and are different. Edit %[2]s so that it holds the values you want, because the service reads that one, then run this again", etcEnvFile, dest)
 		}
 		return nil
 	}
@@ -402,29 +402,29 @@ func (h *host) configDir(ctx context.Context) error {
 func (h *host) next(ctx context.Context) error {
 	uid, err := h.run(ctx, "id", "-u", ServiceAccount)
 	if err != nil {
-		return fmt.Errorf("look up the id of %s: %w", ServiceAccount, err)
+		return fmt.Errorf("could not look up the user id of %s: %w", ServiceAccount, err)
 	}
 	exe, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("find this program: %w", err)
+		return fmt.Errorf("could not find this program's own file: %w", err)
 	}
 	command := exe + " install --tier isolated"
 	_, carriesRelease := ReleaseImage()
 	if !carriesRelease {
 		command += " --image sha256:<signed index digest>"
 	}
-	h.say("\nThe host is ready. Now run the installer as the service account, in a shell with its user bus (the account has no login shell):\n\n")
+	h.say("\nThe host is ready. Next, run the installer as the service account. The account has no login shell, so this command opens one with the settings it needs:\n\n")
 	h.say("  sudo -u %s -H env XDG_RUNTIME_DIR=/run/user/%s DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus %s\n\n", ServiceAccount, uid, uid, command)
-	h.say("The executor of canonical execution already runs as %s and waits for the service. It is pointed at the HTTP port that the settings of the service account name, else at %d: when the service will publish its HTTP listener on another port, run this step again with --http-port <port>. Keep one executor for each container engine: at start it removes every %s container of its engine, so a second one would remove the sandboxes of the first.\n\n", ExecutorAccount, DefaultHTTPPort, sandboxNamePrefix)
+	h.say("The test runner (the executor) already runs as %s and waits for the service. It uses the HTTP port named in the service account's settings, else %d. If the service will use another HTTP port, run this step again with `--http-port <port>`. Keep one test runner for each container program: when it starts, it removes every %s container of its container program, so a second one would remove the first one's sandboxes.\n\n", ExecutorAccount, DefaultHTTPPort, sandboxNamePrefix)
 	h.say("The account must be able to run %s", exe)
 	if strings.HasPrefix(exe, "/root/") || strings.HasPrefix(exe, "/home/") {
-		h.say(": that path is inside a home directory, so copy the binary to a shared place such as /usr/local/bin first")
+		h.say(": that path is inside a home directory, so copy the program to a shared place such as /usr/local/bin first")
 	}
 	if carriesRelease {
 		h.say(".\n")
 		return nil
 	}
-	h.say(". The --image flag is needed because this binary carries no release digest (it is a development build).\n")
+	h.say(". The `--image` flag is needed because this program carries no release fingerprint (it is a development build).\n")
 	return nil
 }
 
@@ -442,18 +442,18 @@ func (r *Resolver) confirm(key, question string) (bool, error) {
 		return parseYesNo(key, v)
 	}
 	if !r.term.IsTerminal {
-		return false, fmt.Errorf("%s (pass --%s, or set %q in the answers file: stdin is not a terminal, so it cannot be asked)", question, key, key)
+		return false, fmt.Errorf("%s\nNothing can ask you here, because the input is not a terminal. Pass `--%s`, or set `%s` in the answers file", question, key, key)
 	}
 	if r.screen.FullScreen() {
 		picked, err := r.screen.Select(question, yesNo, 1)
 		if err != nil {
-			return false, fmt.Errorf("read the answer for %s: %w", key, err)
+			return false, fmt.Errorf("could not read your answer for %s: %w", key, err)
 		}
 		return picked == 0, nil
 	}
 	line, err := r.screen.Prompt(question + " [y/N]: ")
 	if err != nil {
-		return false, fmt.Errorf("read the answer for %s: %w", key, err)
+		return false, fmt.Errorf("could not read your answer for %s: %w", key, err)
 	}
 	if line == "" {
 		return false, nil

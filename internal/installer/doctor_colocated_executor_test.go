@@ -219,7 +219,7 @@ func TestDoctorColocatedExecutorRunningNeedsTheServiceToHaveSeenIt(t *testing.T)
 		want   string
 	}{
 		"seen long ago":            {coloStatus(10 * time.Minute), "ago"},
-		"no execution object":      {okStatus, "M2.1"},
+		"no execution object":      {okStatus, "added the test runner"},
 		"the service has no token": {okStatus[:len(okStatus)-1] + `,"execution":{"enabled":false,"jobs":{"pending":0},"lastSeenAt":"2026-10-27T00:00:00Z"}}`, "EXECUTOR_TOKEN"},
 	}
 	for name, c := range cases {

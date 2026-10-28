@@ -15,7 +15,7 @@ func TestPrepareHostStopsAtTheStepThatFails(t *testing.T) {
 		want     string
 		notAfter [2]string // a command (name, text of its arguments) that must not have run
 	}{
-		{"the user id", func(h *hostFake) { h.failOn["id -u"] = errInjected }, "find out who is running the installer", [2]string{"podman", ""}},
+		{"the user id", func(h *hostFake) { h.failOn["id -u"] = errInjected }, "find out which user is running the installer", [2]string{"podman", ""}},
 		{"the installation of podman", func(h *hostFake) {
 			h.podman = ""
 			h.failOn["dnf install -y podman"] = errInjected
@@ -23,13 +23,13 @@ func TestPrepareHostStopsAtTheStepThatFails(t *testing.T) {
 		{"a podman that does not run after its installation", func(h *hostFake) {
 			h.podman = ""
 			h.failOn["podman --version"] = errInjected
-		}, "podman still does not run after the installation", [2]string{"useradd", ""}},
+		}, "Podman still does not run after it was installed", [2]string{"useradd", ""}},
 		{"the upgrade of an old podman", func(h *hostFake) {
 			h.podman = "podman version 5.4.0"
 			h.failOn["dnf upgrade -y podman"] = errInjected
 		}, "dnf upgrade -y podman", [2]string{"useradd", ""}},
 		{"an upgrade that leaves podman old", func(h *hostFake) { h.podman = "podman version 5.4.0" }, "needs Podman 5.5 or later", [2]string{"useradd", ""}},
-		{"the changelog of podman", func(h *hostFake) { h.failOn["rpm -q"] = errInjected }, "read the changelog of the podman package", [2]string{"useradd", ""}},
+		{"the changelog of podman", func(h *hostFake) { h.failOn["rpm -q"] = errInjected }, "read the changelog of the Podman package", [2]string{"useradd", ""}},
 		{"the upgrade for the CVE", func(h *hostFake) {
 			h.changelog = ""
 			h.failOn["dnf upgrade -y podman"] = errInjected
@@ -43,8 +43,8 @@ func TestPrepareHostStopsAtTheStepThatFails(t *testing.T) {
 		{"the subordinate ranges", func(h *hostFake) {
 			h.subuid, h.subgid = "", ""
 			h.failOn["usermod"] = errInjected
-		}, "add the subordinate id ranges", [2]string{"loginctl", ""}},
-		{"linger", func(h *hostFake) { h.failOn["loginctl enable-linger"] = errInjected }, "enable linger for suiteward", [2]string{"curl", ""}},
+		}, "add the id ranges (subuid and subgid)", [2]string{"loginctl", ""}},
+		{"linger", func(h *hostFake) { h.failOn["loginctl enable-linger"] = errInjected }, "turn on linger for suiteward", [2]string{"curl", ""}},
 		{"curl", func(h *hostFake) { h.failOn["curl --version"] = errInjected }, "curl is needed", [2]string{"tee", "imds-block"}},
 		{"the installation of nft", func(h *hostFake) {
 			h.metadata = "200"
@@ -54,7 +54,7 @@ func TestPrepareHostStopsAtTheStepThatFails(t *testing.T) {
 		{"an nft that is still missing", func(h *hostFake) {
 			h.metadata = "200"
 			h.failOn["command -v nft"] = errInjected
-		}, "nft is still missing after the installation", [2]string{"tee", "imds-block"}},
+		}, "is still missing after the installation", [2]string{"tee", "imds-block"}},
 		{"the directory of the rule", func(h *hostFake) {
 			h.metadata = "200"
 			h.failOn["mkdir -p"] = errInjected
@@ -70,7 +70,7 @@ func TestPrepareHostStopsAtTheStepThatFails(t *testing.T) {
 		{"a rule that is not loaded", func(h *hostFake) {
 			h.metadata = "200"
 			h.failOn["nft list table"] = errInjected
-		}, "the metadata rule is not loaded", [2]string{"getent", ""}},
+		}, "the metadata rule (the firewall rule) is not loaded", [2]string{"getent", ""}},
 		{"a table without the reject rule", func(h *hostFake) {
 			h.metadata = "200"
 			h.nftOutput = "table inet suiteward_imds { }"
@@ -104,7 +104,7 @@ func TestNextNeedsTheIDOfTheServiceAccount(t *testing.T) {
 	h := newHostFake()
 	h.failOn = map[string]error{"id -u suiteward": errInjected}
 	hst := &host{d: h.deps(), out: io.Discard}
-	if err := hst.next(context.Background()); err == nil || !strings.Contains(err.Error(), "look up the id of suiteward") {
+	if err := hst.next(context.Background()); err == nil || !strings.Contains(err.Error(), "look up the user id of suiteward") {
 		t.Fatalf("next = %v", err)
 	}
 }
@@ -125,7 +125,7 @@ func TestPrepareHostAsksOrRefusesTheMetadataQuestion(t *testing.T) {
 		h := newHostFake()
 		h.metadata = "200"
 		_, err := runHost(t, h, nil, true, "")
-		if err == nil || !strings.Contains(err.Error(), "read the answer for metadata-rule") {
+		if err == nil || !strings.Contains(err.Error(), "read your answer for metadata-rule") {
 			t.Fatalf("PrepareHost = %v", err)
 		}
 	})

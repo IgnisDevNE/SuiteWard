@@ -26,7 +26,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	}
 	digest, ok := strings.CutPrefix(image, releaseImageRepo+"@")
 	if !ok {
-		return fmt.Errorf("the isolated tier runs %s only, not %s", releaseImageRepo, image)
+		return fmt.Errorf("an installation on a separate server runs %s only, not %s. Nothing was changed", releaseImageRepo, image)
 	}
 	s := saved
 	s.Tier, s.Runtime = config.TierIsolated, RuntimePodman
@@ -165,7 +165,7 @@ func refuseChangedSettings(asked, installed Settings, command string) error {
 	if len(flags) == 0 {
 		return nil
 	}
-	return fmt.Errorf("an upgrade keeps the installed ports and job timeout (HTTP port %d, MCP port %d, job timeout %q) and this run asks for others (%s): nothing was changed. Change them first with a re-run of the install, `%s %s`, then upgrade without those flags",
+	return fmt.Errorf("an upgrade keeps the installed ports and job timeout (HTTP port %d, MCP port %d, job timeout %q), but this run asks for others (%s). Nothing was changed. To change them, run `%s %s` first, then upgrade without those flags",
 		installed.HTTPPort, installed.MCPPort, installed.JobTimeout, strings.Join(flags, " "), command, strings.Join(flags, " "))
 }
 
@@ -175,7 +175,7 @@ func replaceUnits(ctx context.Context, host isolatedHost, d Deps, scr *ui.Screen
 	systemctl := userSystemctl(d)
 	stop := func() error { _, err := systemctl(ctx, "stop", "suiteward.service"); return err } // the service gets up to 45 s to stop
 	if err := working(scr, "Stopping the service", stop); err != nil {
-		return fmt.Errorf("stop the service: %w", err)
+		return fmt.Errorf("could not stop the service: %w", err)
 	}
 	if _, err := prepareUnits(ctx, host, d, scr, params, dbChanges); err != nil {
 		return stoppedError{err}
@@ -205,7 +205,7 @@ func prepareUnits(ctx context.Context, host isolatedHost, d Deps, scr *ui.Screen
 	if dbChanges {
 		// The running database container has the old image: restart it, so it is recreated from the new pin on the same volume.
 		if _, err := userSystemctl(d)(ctx, "restart", "suiteward-db.service"); err != nil {
-			return nil, fmt.Errorf("restart the database: %w", err)
+			return nil, fmt.Errorf("could not restart the database: %w", err)
 		}
 		return units, waitHealthy(ctx, host.rt, barOn(scr, "Database"))
 	}
@@ -218,12 +218,12 @@ func migrateAndStart(ctx context.Context, d Deps, scr *ui.Screen) error {
 	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	// The migration unit migrates, and the service requires it; the service was stopped before, so it is started explicitly.
-	err := working(scr, "Running the migration and starting the service", func() error {
+	err := working(scr, "Updating the database and starting the service", func() error {
 		if _, err := systemctl(startCtx, "restart", "suiteward-migrate.service"); err != nil {
-			return fmt.Errorf("the migration failed, so the service was not started (read `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`): %w", err)
+			return fmt.Errorf("the database update (migration) failed, so the service was not started (to see why, run `journalctl --user -u suiteward-migrate.service -n 50 --no-pager`): %w", err)
 		}
 		if _, err := systemctl(startCtx, "start", "suiteward.service"); err != nil {
-			return fmt.Errorf("start the service (read `journalctl --user -u suiteward.service -n 50 --no-pager`): %w", err)
+			return fmt.Errorf("could not start the service (to see why, run `journalctl --user -u suiteward.service -n 50 --no-pager`): %w", err)
 		}
 		return nil
 	})

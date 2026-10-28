@@ -30,7 +30,7 @@ func upgradeTarget(r *Resolver) (string, error) {
 	if !ok {
 		embedded, have := ReleaseImage()
 		if !have {
-			return "", errors.New("this is a development build and carries no release image: pass --image " + releaseImageRepo + "@sha256:<signed index digest>")
+			return "", errors.New("this is a development build, so it does not know which release image to install. Pass `--image " + releaseImageRepo + "@sha256:<signed index digest>`")
 		}
 		return embedded, nil
 	}
@@ -77,8 +77,8 @@ func confirmUpgrade(r *Resolver, plan upgradePlan, parent, recipient string, ser
 	if recipient != "" {
 		key = "the recovery key " + archive.Fingerprint(recipient)
 	}
-	r.say("An encrypted backup of the database and the artifacts is made first, as a new file under %s, encrypted to %s.\n", parent, key)
-	ok, err := r.confirm("yes", "Back up and upgrade now?")
+	r.say("First, an encrypted backup of the database and the saved files (artifacts) is made as a new file under %s, locked with %s.\n", parent, key)
+	ok, err := r.confirm("yes", "Back up and upgrade now? If you answer no, the upgrade stops here.")
 	if err != nil {
 		return err
 	}
@@ -256,6 +256,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	cmd := c.env.Deps.command()
 	upgraded(scr, image, dir, goBackColocated(cmd, engine, previous.Image, dir, scopeFlags(r, false)), c.doctorAgain(t))
 	c.installSelf(ctx)
+	c.endPlainUpgrade(scr)
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }
 
@@ -292,7 +293,7 @@ func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, di
 	b := inst.backup(env.Deps, dir, recipient)
 	b.beside = beside
 	var path string
-	err = working(r.screen, "Backing up the database and the artifacts", func() (err error) {
+	err = working(r.screen, "Backing up the database and the saved files", func() (err error) {
 		path, err = takeBackup(ctx, b)
 		return err
 	})
@@ -303,25 +304,37 @@ func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, di
 // backup are kept, so that they are still there when the screen has gone.
 func upgraded(scr *ui.Screen, image, backupPath, goBack, doctor string) {
 	scr.Say("Upgraded to %s.\n", digestOf(image))
-	scr.Keep("The backup is in %s. It holds the TOTP secret, encrypted to your recovery key: keep its kit off this machine.\n", backupPath)
+	scr.Keep("The backup is in %s. It holds the authenticator secret (the TOTP secret), locked with your recovery key. Keep the recovery kit off this computer.\n", backupPath)
 	scr.Keep("%s\n", goBack)
 	scr.Say("Check the instance with `%s`.\n", doctor)
 }
 
+// upgradeReducedAssurance is what the co-located tier gives up against the isolated one, a security disclosure that a plain upgrade, which draws
+// no summary, ends with, as a plain install does.
+// shortcut: this copies the text of reducedAssuranceNotice (colocated.go, task F8a) until the two branches meet; use that constant then.
+const upgradeReducedAssurance = "On this computer the test runner (the executor) and SuiteWard run as your user, next to your coding agent, so these checks catch mistakes, not a determined agent."
+
+// endPlainUpgrade ends a plain run with the disclosure: a full screen says it in the summary, and a plain run has none.
+func (c *colocatedInstall) endPlainUpgrade(scr *ui.Screen) {
+	if !scr.FullScreen() {
+		c.say("%s\n", upgradeReducedAssurance)
+	}
+}
+
 // goingBack is where the steps of the way back after an upgrade are written down.
-const goingBack = "the steps: docs/backup.md, Going back after an upgrade"
+const goingBack = "The steps are in docs/backup.md, under Going back after an upgrade."
 
 // goBackColocated is the way back after the upgrade of a co-located stack: a restore alone cannot undo an upgrade that migrated, so the stack
 // and its data volumes go first, and the previous release is installed before the backup is restored.
 func goBackColocated(cmd, engine, previousImage, backupPath, scope string) string {
-	return fmt.Sprintf("To go back, remove the stack and its data volumes (`%[8]s uninstall --yes%[1]s`, then `%[2]s volume rm %[3]s %[4]s`), install the previous release (`%[8]s install --image %[5]s%[1]s`), then run `%[8]s restore %[6]s%[1]s` with that kit; migrations only go forward, so it must be the previous release (%[7]s).",
+	return fmt.Sprintf("To go back, remove the installation and its data volumes (`%[8]s uninstall --yes%[1]s`, then `%[2]s volume rm %[3]s %[4]s`), install the previous release (`%[8]s install --image %[5]s%[1]s`), then run `%[8]s restore %[6]s%[1]s` with that kit. It must be the previous release, because database updates only go forward. %[7]s",
 		scope, engine, VolumeData, VolumeDBData, previousImage, quoteArg(backupPath), goingBack, cmd)
 }
 
 // goBackIsolated is the way back after the upgrade of an isolated host: the unit files that the upgrade replaced were kept beside the backup;
 // they go back, systemd reloads them and the service stops, and then the backup is restored.
 func goBackIsolated(cmd, backupPath, unitsDir, scope string) string {
-	return fmt.Sprintf("To go back, copy the unit files that this upgrade replaced, from %s to %s, then run `systemctl --user daemon-reload` and `systemctl --user stop suiteward.service`, and then `%s restore %s%s` with that kit; migrations only go forward, so the units must be the previous release's (%s).",
+	return fmt.Sprintf("To go back, copy the unit files that this upgrade replaced from %s to %s, then run `systemctl --user daemon-reload` and `systemctl --user stop suiteward.service`, and then `%s restore %s%s` with that kit. The units must be the previous release's, because database updates only go forward. %s",
 		unitsKeptBeside(backupPath), unitsDir, cmd, quoteArg(backupPath), scope, goingBack)
 }
 
@@ -346,7 +359,7 @@ const (
 )
 
 // startServicePrompt is what an upgrade asks of a service that does not answer /status, which the backup records.
-const startServicePrompt = "The service is not running, so the backup cannot record its status. Start the installed service now?"
+const startServicePrompt = "The service is not running, so the backup cannot record its status. Start the installed service now? If you answer no, the upgrade stops and nothing is changed."
 
 // ensureServiceUp makes sure /status answers before the backup. A service that does not is started as it is installed, on a terminal
 // and after a yes; otherwise, or when the start does not help, the upgrade refuses. --yes confirms the upgrade plan only: nothing
@@ -355,7 +368,7 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	if _, err := status(ctx); err == nil {
 		return false, nil
 	}
-	refuse := fmt.Errorf("the service is not running, so the backup cannot record its status: start it (%s) and run the upgrade again; --yes confirms the upgrade plan only, it does not start the service", startCommand)
+	refuse := fmt.Errorf("the service is not running, so the backup cannot record its status. Start it with %s, then run the upgrade again. `--yes` only confirms the upgrade plan: it does not start the service. Nothing was changed", startCommand)
 	if !r.term.IsTerminal {
 		return false, refuse
 	}
@@ -364,13 +377,13 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	case errors.Is(err, io.EOF): // the input ended: no answer is not a yes
 		return false, refuse
 	case err != nil:
-		return false, fmt.Errorf("read the answer to the start of the service: %w", err)
+		return false, fmt.Errorf("could not read your answer: %w", err)
 	case !yes:
 		return false, refuse
 	}
-	const manual = "take the backup by hand instead (dump the database and copy the artifacts volume yourself; details: docs/backup.md, Appendix A), then upgrade"
+	const manual = "take the backup by hand instead (dump the database and copy the artifacts volume, the saved files, yourself; details: docs/backup.md, Appendix A), then upgrade"
 	if err := start(ctx); err != nil {
-		return false, fmt.Errorf("start the installed service: %w; %s", err, manual)
+		return false, fmt.Errorf("could not start the installed service: %w; %s", err, manual)
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, startWait)
 	defer cancel()
@@ -386,7 +399,7 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 		}
 	}
 	if lastErr != nil {
-		return true, fmt.Errorf("the service was started, but /status still does not answer (%w): read its logs; or %s", lastErr, manual)
+		return true, fmt.Errorf("the service was started, but it still does not answer on /status (%w). Read its logs; or %s", lastErr, manual)
 	}
 	bar.set(1, "answers")
 	return true, nil
@@ -418,6 +431,6 @@ func refuseUnfinishedInstall(cmd, pendingPath string, settings func() (GitHub, e
 	if !recordWins(&gh, &pending) {
 		return nil
 	}
-	return fmt.Errorf("an earlier install did not finish: it created the App %s and recorded it in %s, and that App's key is the secret %s now. Finish that install first, with a plain `%s install` (it takes the recorded App up), then upgrade",
+	return fmt.Errorf("an earlier install did not finish: it created the GitHub App %s and recorded it in %s, and that App's key is stored as the secret %s. Finish that install first by running `%s install` (it picks up the recorded App), then upgrade. Nothing was changed",
 		pending.Slug, pendingPath, SecretGitHubAppKey, cmd)
 }

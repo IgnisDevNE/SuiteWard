@@ -54,7 +54,7 @@ func Doctor(ctx context.Context, deps Deps, settingsPath, tokenFile string, out 
 func doctorChecks(ctx context.Context, deps Deps, fetch func(context.Context, string) ([]byte, error), settingsPath, tokenFile string) []doctorResult {
 	d := &doctor{deps: deps, fetch: fetch, tokenFile: tokenFile, raw: map[string][]byte{}, units: map[string]map[string]string{}}
 	if err := deps.validate(); err != nil {
-		d.fail("settings", err.Error(), "this is a bug of the installer: report it")
+		d.fail("settings", err.Error(), doctorBugFix)
 		return d.results
 	}
 	d.deps.Exec = boundExec(deps.Exec)
@@ -132,7 +132,9 @@ const (
 	defaultMachine = "podman-machine-default"
 	machineUser    = "user" // the rootless user inside a Podman machine; ssh defaults to root, whose store is rootful
 	probeTimeout   = 5 * time.Second
-	metadataFix    = "as an administrator run `sudo suiteward install host --sha256sums <the SHA256SUMS of the release> --metadata-rule yes`, which adds the nft rule that refuses 169.254.169.254 for the service account, then run doctor again"
+	metadataFix    = "As the administrator, run `sudo suiteward install host --sha256sums <the release's SHA256SUMS file> --metadata-rule yes`: it adds a firewall rule that blocks 169.254.169.254 for the service account. Then run doctor again."
+	// doctorBugFix is the fix of a result that reports a mistake of the installer itself.
+	doctorBugFix = "This is an error in the installer, not in your setup. Please report it."
 	// Connects to the instance metadata address from the database container, which sits on the service network. The probe
 	// answers on its own output, so that an exec that fails is not read as "blocked", and first makes the same kind of
 	// connection to the database's own port: when that fails the probe would be "blocked" for any reason.
@@ -195,7 +197,7 @@ func (d *doctor) fail(name, detail, fix string) {
 
 // skip reports a check that needs another one to pass first.
 func (d *doctor) skip(name, dependency string) {
-	d.fail(name, "not checked: "+dependency+" failed", "fix "+dependency+" first")
+	d.fail(name, "not checked: "+dependency+" failed", "Fix "+dependency+" first, then run doctor again.")
 }
 
 func (d *doctor) needRuntime(name string) bool {
@@ -218,15 +220,15 @@ func (d *doctor) run(ctx context.Context, settingsPath string) {
 	if settingsPath == "" {
 		var err error
 		if settingsPath, err = DefaultSettingsPath(); err != nil {
-			d.fail("settings", err.Error(), "pass the settings file with --settings PATH")
+			d.fail("settings", err.Error(), "Name the settings file with `--settings PATH`.")
 			return
 		}
 	}
 	s, err := LoadSettings(settingsPath)
 	if err != nil {
-		fix := "fix the file named above, or write it again with `" + d.deps.command() + " install`"
+		fix := "Fix the file named above, or write it again with `" + d.deps.command() + " install`."
 		if errors.Is(err, ErrNoSettings) {
-			fix = "run `" + d.deps.command() + " install` first: it writes the settings file doctor reads"
+			fix = "Run `" + d.deps.command() + " install` first: it writes the settings file that doctor reads."
 		}
 		d.fail("settings", err.Error(), fix)
 		return
@@ -273,12 +275,12 @@ func (d *doctor) run(ctx context.Context, settingsPath string) {
 func (d *doctor) checkMachine(ctx context.Context) {
 	out, err := d.deps.Exec(ctx, "podman", []string{"machine", "list", "--format", "json"}, nil)
 	if err != nil {
-		d.fail("machine", "list the Podman machines: "+err.Error(), "check that Podman is installed and on the PATH")
+		d.fail("machine", "doctor could not list the Podman machines: "+err.Error(), "Check that Podman is installed and starts from a terminal.")
 		return
 	}
 	var list []machineEntry
 	if err := json.Unmarshal(out, &list); err != nil {
-		d.fail("machine", "read the Podman machines: "+err.Error(), "check that `podman machine list --format json` works")
+		d.fail("machine", "doctor could not read the list of Podman machines: "+err.Error(), "Check that `podman machine list --format json` works.")
 		return
 	}
 	want := d.s.Connection
@@ -293,11 +295,11 @@ func (d *doctor) checkMachine(ctx context.Context) {
 		pick = 0
 	}
 	if pick < 0 {
-		what := "no Podman machine exists"
+		what := "there is no Podman machine (the small virtual computer that runs Podman's containers)"
 		if want != "" {
 			what = "no Podman machine is called " + want
 		}
-		d.fail("machine", what, "create and start it with `podman machine init` and `podman machine start`, or select the right machine with connection: in the settings")
+		d.fail("machine", what, "Create and start one with `podman machine init` and `podman machine start`, or choose the right one with `connection:` in the settings file.")
 		return
 	}
 	m := list[pick]
@@ -307,9 +309,9 @@ func (d *doctor) checkMachine(ctx context.Context) {
 	}
 	switch {
 	case m.Starting:
-		d.fail("machine", "the Podman machine "+m.Name+" is still starting", "wait until it runs, then run doctor again")
+		d.fail("machine", "the Podman machine "+m.Name+" is still starting", "Wait until it runs, then run doctor again.")
 	case !m.Running:
-		d.fail("machine", "the Podman machine "+m.Name+" is not running", start+" (starting it at logon is not part of the installer)")
+		d.fail("machine", "the Podman machine "+m.Name+" is not running, so SuiteWard is stopped", "Start it with `"+start+"`. The installer does not start it for you at logon.")
 	default:
 		d.machine = machineInfo{Name: m.Name, User: cmp.Or(m.RemoteUsername, machineUser)}
 		d.pass("machine", m.Name+" is running")
@@ -344,7 +346,7 @@ func (d *doctor) checkRuntime(ctx context.Context) {
 		detail += ", connection " + d.s.Connection
 	}
 	if d.deps.GOOS == "windows" {
-		detail += "; the Docker pipe docker_engine is served by " + d.pipeOwner(ctx)
+		detail += "; the Windows Docker pipe (docker_engine) is answered by " + d.pipeOwner(ctx)
 	}
 	d.pass("runtime", detail)
 }
@@ -352,17 +354,17 @@ func (d *doctor) checkRuntime(ctx context.Context) {
 func (d *doctor) runtimeFix(err error) string {
 	switch {
 	case errors.Is(err, ErrRootful):
-		return "select the machine's rootless connection with connection: in the settings file"
+		return "Choose the machine's rootless connection (the one that does not run as the administrator) with `connection:` in the settings file."
 	case errors.Is(err, ErrNotDocker):
-		return "set connection: in the settings to Docker's own context, or install with --runtime podman"
+		return "Set `connection:` in the settings file to Docker's own context, or install again with `--runtime podman`."
 	case errors.Is(err, ErrNoConnection):
-		return "set connection: in the settings file to the machine's rootless connection"
+		return "Set `connection:` in the settings file to the machine's rootless connection."
 	case d.s.Runtime == RuntimeDocker:
-		return "start Docker (Docker Desktop on Windows and macOS) and check that `docker version` answers"
+		return "Start Docker (Docker Desktop on Windows and macOS), then check that `docker version` answers."
 	case d.deps.GOOS != "linux":
-		return "check the Podman machine with `podman machine list`, and start it with `podman machine start`"
+		return "Check the Podman machine with `podman machine list` and start it with `podman machine start`."
 	default:
-		return "check that `podman info` works for this user"
+		return "Check that `podman info` works for your user."
 	}
 }
 
@@ -381,11 +383,11 @@ func (d *doctor) pipeOwner(ctx context.Context) string {
 	case err == nil:
 		return strings.TrimSpace(engine.Name + " " + engine.Version)
 	case errors.Is(err, ErrNotDocker):
-		return "an engine that is not Docker, normally the Podman machine"
+		return "a container program that is not Docker (normally the Podman machine)"
 	case errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist):
-		return "unknown: there is no Docker CLI to ask"
+		return "unknown: there is no Docker program to ask"
 	default:
-		return "nothing that answers"
+		return "nothing (no container program answers)"
 	}
 }
 
@@ -403,7 +405,7 @@ type containerStatus struct {
 func parseContainerStatus(name string, raw []byte) (containerStatus, error) {
 	var list []containerStatus
 	if err := json.Unmarshal(bytes.TrimSpace(raw), &list); err != nil || len(list) != 1 {
-		return containerStatus{}, fmt.Errorf("read the state of %s from its inspect output", name)
+		return containerStatus{}, fmt.Errorf("doctor could not read the state of the container %s", name)
 	}
 	return list[0], nil
 }
@@ -425,13 +427,13 @@ func (d *doctor) checkContainers(ctx context.Context) {
 		case err != nil:
 			problems = append(problems, err.Error())
 		case st.State.Status != "running":
-			problems = append(problems, name+" is "+st.State.Status)
+			problems = append(problems, name+" is not running (it is "+st.State.Status+")")
 		case name == ContainerDB && (st.State.Health == nil || st.State.Health.Status != "healthy"):
-			health := "has no health check"
+			health := "it has no health check"
 			if st.State.Health != nil {
-				health = st.State.Health.Status
+				health = "its health check says " + st.State.Health.Status
 			}
-			problems = append(problems, name+" is running but "+health)
+			problems = append(problems, name+" is running but not healthy ("+health+")")
 		default:
 			states = append(states, name+" running")
 		}
@@ -445,7 +447,7 @@ func (d *doctor) checkContainers(ctx context.Context) {
 			d.raw[ContainerMigrate] = raw
 			var st containerStatus
 			if st, err = parseContainerStatus(ContainerMigrate, raw); err == nil && (st.State.Status != "exited" || st.State.ExitCode != 0) {
-				err = fmt.Errorf("%s is %s with exit code %d, want exited with 0", ContainerMigrate, st.State.Status, st.State.ExitCode)
+				err = fmt.Errorf("%s is %s with exit code %d, but it should have finished with code 0", ContainerMigrate, st.State.Status, st.State.ExitCode)
 			}
 		}
 		if err != nil {
@@ -454,7 +456,7 @@ func (d *doctor) checkContainers(ctx context.Context) {
 	}
 	if len(problems) > 0 {
 		n := d.rt.Name()
-		d.fail("containers", strings.Join(problems, "; "), fmt.Sprintf("read the container's log with `%s logs <container>`, fix the cause and start it with `%s start <container>`", n, n))
+		d.fail("containers", strings.Join(problems, "; "), fmt.Sprintf("Read the container's log with `%s logs <container>`, fix the cause, then start it with `%s start <container>`.", n, n))
 		return
 	}
 	d.pass("containers", strings.Join(states, ", "))
@@ -478,7 +480,7 @@ func (d *doctor) checkRestart(ctx context.Context) {
 		case err != nil:
 			problems = append(problems, err.Error())
 		case in.HostConfig.RestartPolicy.Name != "always":
-			problems = append(problems, fmt.Sprintf("%s has restart policy %q, want always", name, in.HostConfig.RestartPolicy.Name))
+			problems = append(problems, fmt.Sprintf("%s does not restart by itself (its restart policy is %q, it should be \"always\")", name, in.HostConfig.RestartPolicy.Name))
 		}
 	}
 	detail := "restart policy always"
@@ -486,16 +488,16 @@ func (d *doctor) checkRestart(ctx context.Context) {
 		props, err := d.systemctlShow(ctx, d.viaSSH, "podman-restart.service")
 		switch {
 		case err != nil:
-			problems = append(problems, "read podman-restart.service: "+err.Error())
+			problems = append(problems, "doctor could not read podman-restart.service: "+err.Error())
 		case props["UnitFileState"] != "enabled":
 			state := cmp.Or(props["UnitFileState"], "not installed")
-			problems = append(problems, "podman-restart.service is "+state+" for the rootless user, so a reboot leaves the containers stopped")
+			problems = append(problems, "podman-restart.service is "+state+" for your user, so the containers stay stopped after a reboot")
 		default:
 			detail += ", podman-restart.service enabled"
 		}
 	}
 	if len(problems) > 0 {
-		fix := "remove the containers with `" + d.deps.command() + " uninstall` (the data stays), then run `" + d.deps.command() + " install`, which creates them with the restart policy the release defines (an install leaves a running, healthy container as it is)"
+		fix := "Remove the containers with `" + d.deps.command() + " uninstall` (your data stays), then run `" + d.deps.command() + " install`: it creates them so that they restart by themselves. Uninstall comes first because an install leaves a running, healthy container as it is."
 		if d.s.Runtime == RuntimePodman {
 			fix = restartEnableFix
 			if d.viaSSH {
@@ -538,21 +540,21 @@ func (d *doctor) checkUnits(ctx context.Context) {
 		props, err := d.systemctlShow(ctx, false, u.name)
 		switch {
 		case err != nil:
-			problems = append(problems, "read "+u.name+": "+err.Error())
+			problems = append(problems, "doctor could not read "+u.name+": "+err.Error())
 		case props["LoadState"] != "loaded":
-			problems = append(problems, fmt.Sprintf("%s is %s, not loaded", u.name, cmp.Or(props["LoadState"], "unknown")))
+			problems = append(problems, fmt.Sprintf("%s is not loaded (its state is %s)", u.name, cmp.Or(props["LoadState"], "unknown")))
 		case props["ActiveState"] != u.active || props["SubState"] != u.sub:
 			d.units[u.name] = props
-			problems = append(problems, fmt.Sprintf("%s is %s (%s), want %s (%s)", u.name, props["ActiveState"], props["SubState"], u.active, u.sub))
+			problems = append(problems, fmt.Sprintf("%s is %s (%s), but it should be %s (%s)", u.name, props["ActiveState"], props["SubState"], u.active, u.sub))
 		default:
 			d.units[u.name] = props
 		}
 	}
 	if len(problems) > 0 {
-		d.fail("units", strings.Join(problems, "; "), "read the log with `journalctl --user -u suiteward.service -u suiteward-migrate.service -u suiteward-db.service`, fix the cause and run `systemctl --user restart suiteward.service`")
+		d.fail("units", strings.Join(problems, "; "), "Read the log with `journalctl --user -u suiteward.service -u suiteward-migrate.service -u suiteward-db.service`, fix the cause, then run `systemctl --user restart suiteward.service`.")
 		return
 	}
-	d.pass("units", "suiteward-db and suiteward active, suiteward-migrate active (exited)")
+	d.pass("units", "suiteward-db and suiteward run, and suiteward-migrate has finished (it runs once at each start)")
 }
 
 func (d *doctor) checkLinger(ctx context.Context) {
@@ -566,11 +568,11 @@ func (d *doctor) checkLinger(ctx context.Context) {
 	}
 	switch {
 	case err != nil:
-		d.fail("linger", "read the linger setting: "+err.Error(), "check that `loginctl show-user $(id -un) -p Linger` works in this session")
+		d.fail("linger", "doctor could not read the linger setting (whether your user's services keep running after you log out): "+err.Error(), "Check that `loginctl show-user $(id -un) -p Linger` works in this session.")
 	case strings.TrimSpace(string(out)) != "Linger=yes":
-		d.fail("linger", "user "+user+" does not linger, so the service stops when the last session ends", "run `sudo loginctl enable-linger "+user+"`")
+		d.fail("linger", "the user "+user+" does not \"linger\" (keep its services running after logout), so SuiteWard stops when the last session ends", "Run `sudo loginctl enable-linger "+user+"`.")
 	default:
-		d.pass("linger", user+" lingers")
+		d.pass("linger", user+" keeps its services running after logout (linger)")
 	}
 }
 
@@ -587,11 +589,11 @@ func (d *doctor) checkUnitsEnabled() {
 		state := props["UnitFileState"]
 		generated := state == "generated" && slices.Contains(strings.Fields(props["WantedBy"]), "default.target")
 		if state != "enabled" && !generated {
-			problems = append(problems, fmt.Sprintf("%s is %s, not enabled to start at boot", u.name, cmp.Or(state, "unknown")))
+			problems = append(problems, fmt.Sprintf("%s does not start at boot (its state is %s)", u.name, cmp.Or(state, "unknown")))
 		}
 	}
 	if len(problems) > 0 {
-		d.fail("restart", strings.Join(problems, "; "), "check that each quadlet has `WantedBy=default.target` under [Install], then run `systemctl --user daemon-reload`")
+		d.fail("restart", strings.Join(problems, "; "), "Check that each quadlet file (the unit file that defines a container) has `WantedBy=default.target` under `[Install]`, then run `systemctl --user daemon-reload`.")
 		return
 	}
 	d.pass("restart", "the units start at boot through their quadlet [Install]")
@@ -602,7 +604,7 @@ func (d *doctor) checkUnitsEnabled() {
 func (d *doctor) checkPins(ctx context.Context) {
 	var err error
 	var image string
-	detail := "the release images are one digest and the database image is the pinned one: "
+	detail := "the service and database images are the ones this release pins: "
 	switch {
 	case d.s.Tier == config.TierIsolated:
 		image, err = d.unitPins()
@@ -620,7 +622,7 @@ func (d *doctor) checkPins(ctx context.Context) {
 		image, err = dockerPins(d.raw)
 	}
 	if err != nil {
-		d.fail("pins", err.Error(), "install the release again with `"+d.deps.command()+" install --upgrade`, or undo the edit it names")
+		d.fail("pins", err.Error(), "Run `"+d.deps.command()+" install --upgrade` to put the release's images back, or undo the edit that the message names.")
 		return
 	}
 	d.pass("pins", detail+image)
@@ -630,9 +632,9 @@ func (d *doctor) checkPins(ctx context.Context) {
 // are what the next restart will run; this says the running containers are those. It returns the detail of a passing check,
 // which ends with the release image.
 func (d *doctor) runningMatchesUnits(ctx context.Context, image string) (string, error) {
-	detail := "the installed units are consistent with the units of this release, and so are the images the containers run: "
+	detail := "the installed units match this release, and so do the images the containers run: "
 	if d.rt == nil {
-		return "the installed units are consistent with the units of this release; the running containers were not compared because the runtime failed: ", nil
+		return "the installed units match this release; the running containers were not compared because the container program failed: ", nil
 	}
 	postgres, err := PostgresImage()
 	if err != nil {
@@ -649,7 +651,7 @@ func (d *doctor) runningMatchesUnits(ctx context.Context, image string) (string,
 		case err != nil:
 			problems = append(problems, err.Error())
 		case !sameImage(in.Config.Image, c.want):
-			problems = append(problems, fmt.Sprintf("%s runs %s but its unit says %s", c.name, in.Config.Image, c.want))
+			problems = append(problems, fmt.Sprintf("%s runs %s, but its unit file says %s", c.name, in.Config.Image, c.want))
 		}
 	}
 	if len(problems) > 0 {
@@ -661,7 +663,7 @@ func (d *doctor) runningMatchesUnits(ctx context.Context, image string) (string,
 func adoptedImage(a Adopted, err error) (string, error) {
 	var diff *DiffError
 	if errors.As(err, &diff) {
-		return "", fmt.Errorf("the installed stack differs from this release: %s", formatDiffs(diff.Diffs))
+		return "", fmt.Errorf("the installation differs from this release: %s", formatDiffs(diff.Diffs))
 	}
 	return a.Image, err
 }
@@ -685,7 +687,7 @@ func (d *doctor) unitPins() (string, error) {
 	if dir == "" {
 		home := d.deps.Getenv("HOME")
 		if home == "" {
-			return "", errors.New("cannot find the unit directory: HOME is not set")
+			return "", errors.New("doctor cannot find the unit folder because HOME is not set")
 		}
 		dir = filepath.Join(home, ".config")
 	}
@@ -700,7 +702,7 @@ func (d *doctor) unitPins() (string, error) {
 		switch {
 		case errors.Is(err, os.ErrNotExist): // AdoptUnits reports the missing file
 		case err != nil:
-			return "", fmt.Errorf("read the unit %s: %w", name, err)
+			return "", fmt.Errorf("doctor could not read the unit file %s: %w", name, err)
 		default:
 			installed[name] = raw
 		}
@@ -725,13 +727,13 @@ func dockerPins(raw map[string][]byte) (string, error) {
 	}
 	var problems []string
 	if !sameImage(images[ContainerDB], postgres) {
-		problems = append(problems, fmt.Sprintf("%s runs %s, want the pinned %s", ContainerDB, images[ContainerDB], postgres))
+		problems = append(problems, fmt.Sprintf("%s runs %s, but this release pins %s", ContainerDB, images[ContainerDB], postgres))
 	}
 	if !digestImage.MatchString(images[ContainerServe]) {
-		problems = append(problems, fmt.Sprintf("%s runs %s, which is not pinned by a digest", ContainerServe, images[ContainerServe]))
+		problems = append(problems, fmt.Sprintf("%s runs %s, which is not locked to one exact version (no fingerprint)", ContainerServe, images[ContainerServe]))
 	}
 	if migrate, ok := images[ContainerMigrate]; ok && !sameImage(migrate, images[ContainerServe]) {
-		problems = append(problems, fmt.Sprintf("%s runs %s but %s runs %s", ContainerMigrate, migrate, ContainerServe, images[ContainerServe]))
+		problems = append(problems, fmt.Sprintf("%s runs %s, but %s runs %s (they must be the same version)", ContainerMigrate, migrate, ContainerServe, images[ContainerServe]))
 	}
 	if len(problems) > 0 {
 		return "", errors.New(strings.Join(problems, "; "))
@@ -776,8 +778,8 @@ func (d *doctor) checkPorts(ctx context.Context) {
 		return
 	}
 	if _, err := d.get(ctx, "/readyz"); err != nil {
-		d.fail("ports", fmt.Sprintf("GET /readyz on port %d: %v", d.s.HTTPPort, err),
-			"check the containers or units above, and that http_port in the settings is the port the service publishes")
+		d.fail("ports", fmt.Sprintf("the service does not answer on port %d (GET /readyz: %v)", d.s.HTTPPort, err),
+			"Check the container or unit results above, and that `http_port` in the settings file is the port the service uses.")
 		d.skip("healthz", "ports")
 		d.skip("status", "ports")
 		return
@@ -788,13 +790,13 @@ func (d *doctor) checkPorts(ctx context.Context) {
 	body, err := d.get(ctx, "/healthz")
 	if err == nil {
 		if err = json.Unmarshal(body, &health); err != nil {
-			err = errors.New("the answer is not JSON")
+			err = errors.New("the answer is not readable")
 		} else if health.Status != "ok" {
-			err = fmt.Errorf("status %q, want ok", health.Status)
+			err = fmt.Errorf("it says %q instead of \"ok\"", health.Status)
 		}
 	}
 	if err != nil {
-		d.fail("healthz", fmt.Sprintf("GET /healthz on port %d: %v", d.s.HTTPPort, err), "read the service log for why the process is not healthy")
+		d.fail("healthz", fmt.Sprintf("the service answers on port %d but reports that it is not healthy (GET /healthz: %v)", d.s.HTTPPort, err), "Read the service's log to find out why.")
 	} else {
 		d.pass("healthz", "/healthz answers ok")
 	}
@@ -809,42 +811,42 @@ func (d *doctor) checkPorts(ctx context.Context) {
 	}
 	if err == nil {
 		if err = json.Unmarshal(body, &status); err != nil {
-			err = errors.New("the answer is not JSON")
+			err = errors.New("the answer is not readable")
 		} else {
 			d.raw["status"] = body // the executor's results read the execution object, whatever else /status reports
 		}
 	}
 	if err != nil {
-		d.fail("status", fmt.Sprintf("GET /status on port %d: %v", d.s.HTTPPort, err), "read the service log for why /status fails")
+		d.fail("status", fmt.Sprintf("the service's status page does not answer correctly (GET /status on port %d: %v)", d.s.HTTPPort, err), "Read the service's log to find out why.")
 		return
 	}
 	var problems []string
 	if status.Version == "" {
-		problems = append(problems, "no version")
+		problems = append(problems, "no version is reported")
 	}
 	if status.SchemaVersion == nil {
-		problems = append(problems, "no schemaVersion")
+		problems = append(problems, "no database version is reported")
 	}
 	if status.Tier == "" {
-		problems = append(problems, "no tier")
+		problems = append(problems, "no installation type is reported")
 	} else if status.Tier != string(d.s.Tier) {
-		problems = append(problems, fmt.Sprintf("tier %s where the settings say %s", status.Tier, d.s.Tier))
+		problems = append(problems, fmt.Sprintf("the installation type is %s, but the settings file says %s", status.Tier, d.s.Tier))
 	}
 	if n := status.Jobs.Discarded; n == nil {
-		problems = append(problems, "no jobs.discarded")
+		problems = append(problems, "no count of discarded jobs is reported")
 	} else if *n > 0 {
-		problems = append(problems, fmt.Sprintf("%d discarded jobs", *n))
+		problems = append(problems, fmt.Sprintf("%d jobs were discarded (they failed for good)", *n))
 	}
 	if n := status.Outbox.Failed; n == nil {
-		problems = append(problems, "no outbox.failed")
+		problems = append(problems, "no count of failed outbox messages is reported")
 	} else if *n > 0 {
-		problems = append(problems, fmt.Sprintf("%d failed outbox messages", *n))
+		problems = append(problems, fmt.Sprintf("%d messages to GitHub could not be sent (the outbox)", *n))
 	}
 	if len(problems) > 0 {
-		d.fail("status", "/status reports "+strings.Join(problems, ", "), "read the service log, and `suiteward probe` shows whether the worker still completes jobs")
+		d.fail("status", "the service's /status page shows a problem: "+strings.Join(problems, ", "), "Read the service's log. `suiteward probe` shows whether the service still completes its jobs.")
 		return
 	}
-	d.pass("status", fmt.Sprintf("version %s, schema version %d, no failed or discarded", status.Version, *status.SchemaVersion))
+	d.pass("status", fmt.Sprintf("version %s, database version %d, no failed or discarded", status.Version, *status.SchemaVersion))
 }
 
 // ---- metadata and the instance ----
@@ -864,10 +866,10 @@ func (d *doctor) checkHost(ctx context.Context) {
 	out, err := d.deps.Exec(ctx, "podman", args, nil)
 	switch backend := strings.TrimSpace(string(out)); {
 	case err != nil:
-		d.fail("network", "read the Podman network backend: "+err.Error(), "check that `podman info` works for this user")
+		d.fail("network", "doctor could not read Podman's network backend: "+err.Error(), "Check that `podman info` works for your user.")
 	case backend != networkBackend:
-		d.fail("network", fmt.Sprintf("the Podman network backend is %q, want %s", backend, networkBackend),
-			"the isolated tier needs Podman's netavark network backend, which the metadata rule and the service network rely on: install it (`sudo dnf install netavark`), set network_backend = \"netavark\" in containers.conf, then run doctor again")
+		d.fail("network", fmt.Sprintf("Podman uses the network backend %q, but SuiteWard needs %s", backend, networkBackend),
+			"Install netavark with `sudo dnf install netavark`, set `network_backend = \"netavark\"` in `containers.conf`, then run doctor again. The metadata rule and the service network need it.")
 	default:
 		d.pass("network", "the network backend is "+networkBackend)
 	}
@@ -882,10 +884,10 @@ func (d *doctor) checkHost(ctx context.Context) {
 	}
 	switch {
 	case err != nil:
-		d.fail("memory", "read the memory limit of "+ContainerDB+": "+err.Error(), "start the database container, then run doctor again")
+		d.fail("memory", "doctor could not read the memory limit of "+ContainerDB+": "+err.Error(), "Start the database container, then run doctor again.")
 	case in.HostConfig.Memory != dbMemoryBytes:
-		d.fail("memory", fmt.Sprintf("%s has memory limit %d bytes, want %d", ContainerDB, in.HostConfig.Memory, dbMemoryBytes),
-			"the database must run with a 384 MiB limit: check that suiteward-db.container has PodmanArgs=--memory=384m, restart it with `systemctl --user restart suiteward-db.service`, and check that `podman inspect suiteward-db --format {{.HostConfig.Memory}}` prints 402653184 (rootless Podman needs cgroup v2 with the memory controller delegated to the account)")
+		d.fail("memory", fmt.Sprintf("%s has a memory limit of %d bytes, but it should be %d (384 MiB)", ContainerDB, in.HostConfig.Memory, dbMemoryBytes),
+			"Check that `suiteward-db.container` has `PodmanArgs=--memory=384m`, restart it with `systemctl --user restart suiteward-db.service`, and check that `podman inspect suiteward-db --format {{.HostConfig.Memory}}` prints 402653184. Rootless Podman needs cgroup v2 with the memory controller delegated to this account.")
 	default:
 		d.pass("memory", fmt.Sprintf("%s is limited to %d bytes", ContainerDB, dbMemoryBytes))
 	}
@@ -900,15 +902,15 @@ func (d *doctor) checkMetadata(ctx context.Context) {
 	out, err := d.rt.Exec(ctx, ContainerDB, []string{"bash", "-c", metadataProbe}, nil)
 	switch answer := strings.TrimSpace(string(out)); {
 	case err != nil:
-		d.fail("metadata", "the metadata probe could not run in "+ContainerDB+": "+err.Error(), "start the database container, then run doctor again")
+		d.fail("metadata", "doctor could not run the cloud-metadata test inside "+ContainerDB+": "+err.Error(), "Start the database container, then run doctor again.")
 	case answer == "reachable":
-		d.fail("metadata", "169.254.169.254 answers from the service network, so the service can read the instance's credentials", metadataFix)
+		d.fail("metadata", "the cloud provider's metadata address (169.254.169.254) answers from the service's network, so the service could read this server's cloud credentials", metadataFix)
 	case answer == "blocked":
-		d.pass("metadata", "169.254.169.254 is not reachable from the service network")
+		d.pass("metadata", "169.254.169.254 (the cloud metadata address) is not reachable from the service's network")
 	case answer == "control-failed":
-		d.fail("metadata", "the control connection to the database port failed inside "+ContainerDB+", so the metadata probe proves nothing", "check that the database is running and healthy, then run doctor again")
+		d.fail("metadata", "the cloud-metadata test proves nothing: a connection to the database's own port failed inside "+ContainerDB, "Check that the database is running and healthy, then run doctor again.")
 	default:
-		d.fail("metadata", "the metadata probe printed "+strconv.Quote(answer), "check that the database image has bash and timeout, then run doctor again")
+		d.fail("metadata", "the cloud-metadata test printed something unexpected: "+strconv.Quote(answer), "Check that the database image has `bash` and `timeout`, then run doctor again.")
 	}
 }
 
@@ -923,24 +925,24 @@ func (d *doctor) checkInstance(ctx context.Context) {
 	var list []doctorResult
 	jerr := json.Unmarshal(bytes.TrimSpace(out), &list)
 	if jerr == nil && (len(list) == 0 || slices.ContainsFunc(list, func(r doctorResult) bool { return r.Name == "" })) {
-		jerr = errors.New("the list is empty or has an unnamed result")
+		jerr = errors.New("the list of results is empty or has a result without a name")
 	}
 	failed := slices.ContainsFunc(list, func(r doctorResult) bool { return !r.OK })
 	switch {
 	case jerr == nil && (err == nil || failed):
 		d.results = append(d.results, list...)
 	case err != nil:
-		d.fail("instance.check", "`suiteward check --json` in "+ContainerServe+" failed without a result list: "+err.Error(),
+		d.fail("instance.check", "the checks inside the service container (`suiteward check --json` in "+ContainerServe+") failed before they gave any result: "+err.Error(),
 			d.readFix())
 	default:
-		d.fail("instance.check", "`suiteward check --json` printed no JSON result list: "+oneLine(string(out)), d.readFix())
+		d.fail("instance.check", "the checks inside the service container did not print a readable list of results: "+oneLine(string(out)), d.readFix())
 	}
 }
 
 // readFix points to the command whose output says why the instance check has no result list: the runtime hands doctor
 // the error of a command that exited non-zero, but not what it printed, and `check` exits 1 whenever one of its checks fails.
 func (d *doctor) readFix() string {
-	return fmt.Sprintf("read the results with `%s exec %s /suiteward check`; if the command is unknown, update the service image to a release that has it", d.rt.Name(), ContainerServe)
+	return fmt.Sprintf("Run `%s exec %s /suiteward check` to see why. If the command is unknown, update the service image to a release that has it.", d.rt.Name(), ContainerServe)
 }
 
 // queryTimeout bounds one runtime, systemctl or pipe query, so a hung engine or machine is one failure and not a hang.

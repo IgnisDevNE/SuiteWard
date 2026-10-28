@@ -56,6 +56,10 @@ func executorMechanism(goos string) string {
 	}
 }
 
+// errProcessesNotListed is why a first install on Windows sets up no test runner: the listing of the programs that run fails, so the installer
+// could never stop or update one. Running the install again changes nothing, and setUpExecutor leaves that advice out.
+var errProcessesNotListed = errors.New("SuiteWard could not list the programs running on this computer (PowerShell may be restricted here). Without that list it could never stop or update the test runner, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server")
+
 // installExecutor makes the executor of this computer as the settings and this program say: its copy of the program and the pin beside it, the
 // definition that the operating system reads, and the start. What is already as it should be is left alone: an executor that runs, with the same
 // program and the same definition, is not stopped, because it may be in the middle of a job. A program that is replaced, or a definition that
@@ -92,6 +96,13 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 		return plan, err
 	} else if other {
 		return plan, fmt.Errorf("a computer has one test runner, and yours belongs to another instance. This instance left it as it is. To use this instance's own, remove the other instance with `%[1]s uninstall`, then run `%[1]s install` again", d.command())
+	}
+	// state lists the programs when a task is there; a first install has not yet. An executor that the installer can never list again can never be
+	// updated or removed by it (PowerShell in constrained language mode), so it is not set up.
+	if plan.goos == "windows" && !registered {
+		if _, err := plan.listProcesses(ctx, d); err != nil {
+			return plan, fmt.Errorf("%w. Detail: %w", errProcessesNotListed, err)
+		}
 	}
 	if err := os.MkdirAll(plan.dir, 0o700); err != nil {
 		return plan, fmt.Errorf("create %s: %w", plan.dir, err)
@@ -163,7 +174,11 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 	cmd := c.env.Deps.command()
 	if err != nil {
 		c.executorRow = "not set up: " + oneLine(err.Error())
-		scr.Warn("Note: the test runner (the executor) could not be set up: %v. SuiteWard itself runs, but it cannot run tests until the test runner works. Fix the cause, then run `%s install` again. `%s doctor` lists what is missing.\n", err, cmd, cmd)
+		fix := fmt.Sprintf(" Fix the cause, then run `%s install` again.", cmd)
+		if errors.Is(err, errProcessesNotListed) {
+			fix = "" // the install cannot fix a restricted PowerShell, and the error says who can
+		}
+		scr.Warn("Note: the test runner (the executor) could not be set up: %v. SuiteWard itself runs, but it cannot run tests until the test runner works.%s `%s doctor` lists what is missing.\n", err, fix, cmd)
 		return
 	}
 	c.executorRow = executorMechanism(plan.goos) + "; " + plan.binary
@@ -175,7 +190,7 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 		scr.Say("The test runner starts its sandboxes through Docker. Docker's own command line cannot drive Podman: it stops, because it does not know the options the sandboxes need. Podman's docker command (the podman-docker package) does work with Podman. To use Podman, install with `--runtime podman`.\n")
 	}
 	scr.Say("The test runner has one credential, its own token (%s), and it reaches SuiteWard at http://127.0.0.1:%d.\n", plan.tokenFile, c.s.HTTPPort)
-	scr.Say("Keep only one test runner (the executor) for each container engine. When it starts, it removes every container on its engine whose name starts with %s, so a second test runner (one started by hand, say) would remove the sandboxes of the first.\n", sandboxNamePrefix)
+	scr.Say("Keep only one test runner (the executor) for each container program. When it starts, it removes every container of its container program whose name starts with %s, so a second test runner (one started by hand, say) would remove the sandboxes of the first.\n", sandboxNamePrefix)
 	if c.executorPin == "" {
 		scr.Say("The test runner has not been checked against an official release. This is normal for a development build. To check it, run `%s install --upgrade --sha256sums <the release's SHA256SUMS file>` with the program from that release.\n", c.env.Deps.command())
 	}

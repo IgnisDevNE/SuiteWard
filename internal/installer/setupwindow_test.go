@@ -231,6 +231,13 @@ func TestSetupExplainsItselfBeforeAndAfterTheHandOver(t *testing.T) {
 		t.Errorf("what stays in the scrollback is the question, not the result:\n%s", tail)
 	}
 	noRepeats(t, c.tail())
+	// The page before the hand-over names the TOTP secret; the terminal text and the page after it do not name it again.
+	if terminal := out[leave:enter]; strings.Contains(terminal, "TOTP") || !strings.Contains(terminal, "the authenticator secret (as a link and a key)") {
+		t.Errorf("the terminal text repeats the name of the TOTP secret, or lost the secret:\n%s", terminal)
+	}
+	if tail := c.tail(); strings.Contains(tail, "TOTP") {
+		t.Errorf("the page after setup repeats the name of the TOTP secret:\n%s", tail)
+	}
 }
 
 func TestSetupSaysItDidNotFinishWhenItFailsOnTheTerminal(t *testing.T) {

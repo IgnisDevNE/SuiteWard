@@ -260,16 +260,58 @@ func TestInstallDoesNotReplaceTheExecutorWhenTheProcessesCannotBeListedOnWindows
 	}
 }
 
-// A first install has no task and no process: there is nothing to end, and nothing is asked of PowerShell.
-func TestAFirstInstallOnWindowsEndsNothing(t *testing.T) {
+// A first install has no task and no process: there is nothing to end. It lists the programs once all the same, before it creates the task: an
+// executor that the installer could never list again could never be updated or removed by it.
+func TestAFirstInstallOnWindowsEndsNothingAndListsTheProcessesOnceBeforeItCreatesTheTask(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
-	for _, marker := range []string{"/End /TN", "/T /F", "Win32_Process"} {
+	for _, marker := range []string{"/End /TN", "/T /F"} {
 		if got := h.f.find(marker); len(got) != 0 {
 			t.Errorf("a first install called %s: %v", marker, h.f.lines())
 		}
+	}
+	if got := h.f.find("Win32_Process"); len(got) != 1 {
+		t.Errorf("a first install listed the programs %d times, want once: %v", len(got), h.f.lines())
+	}
+	h.assertOrder("Win32_Process", "/Create /TN SuiteWard Executor", "/Run /TN SuiteWard Executor")
+}
+
+// On a computer where PowerShell is restricted (constrained language mode) the listing never works. An executor that was set up there could never be
+// updated or removed by the installer, so the first install does not set one up.
+func TestAFirstInstallOnWindowsSetsUpNoExecutorWhenTheProcessesCannotBeListed(t *testing.T) {
+	for name, tune := range map[string]func(*processTable){
+		"PowerShell fails":                       func(pt *processTable) { pt.listErr = errors.New("powershell: not found") },
+		"the language mode refuses every call":   func(pt *processTable) { pt.silent = true },
+		"a line of the listing is not a process": func(pt *processTable) { pt.junk = "not a process\r\n" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := machineHarnessOn(t, "windows")
+			table := &processTable{stubborn: map[int]bool{}}
+			tune(table)
+			env := h.newEnv()
+			table.install(&env.Deps)
+			args := []string{"--token-file", h.tokenPath(), "--settings", h.settingsPath(), "--runtime", "podman", "--connection", "pm", "--image", testImage}
+			if err := Install(context.Background(), args, env); err != nil {
+				t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
+			}
+			const want = "SuiteWard could not list the programs running on this computer (PowerShell may be restricted here). Without that list it could never stop or update the test runner, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server. Detail: "
+			out := h.out.String()
+			if !strings.Contains(out, want) {
+				t.Errorf("the output lacks %q:\n%s", want, out)
+			}
+			// Running the install again leads nowhere on a computer whose organization restricts PowerShell, so the generic advice is left out.
+			if strings.Contains(out, "Fix the cause") {
+				t.Errorf("the output sends the person to run the install again:\n%s", out)
+			}
+			if len(h.f.find("/Create /TN")) != 0 || len(h.f.find("/Run /TN")) != 0 {
+				t.Errorf("the task was created or started: %v", h.f.lines())
+			}
+			if pathExists(h.executorDir()) {
+				t.Errorf("files of the executor were written to %s", h.executorDir())
+			}
+		})
 	}
 }
 

@@ -47,7 +47,7 @@ func TestTheRestorePageSaysThatTheTypedIdIsAConfirmationAndShowsWhatIsConfirmed(
 		"Safety backup the current state, locked with the recovery key "+archive.Fingerprint(u.settings().BackupRecipient),
 		"Type the instance id "+testInstance+" to confirm",
 	)
-	if row := v.row("Instance"); !strings.Contains(row, testInstance) {
+	if row := v.row("Instance ID"); !strings.Contains(row, testInstance) {
 		t.Errorf("the page does not show the instance of the backup (row %q):\n%s", row, v.dump())
 	}
 	if strings.Contains(v.text(), trimmed) {
@@ -62,17 +62,17 @@ func TestTheRestorePageSaysThatTheTypedIdIsAConfirmationAndShowsWhatIsConfirmed(
 }
 
 // At 80x24 the page keeps the title, the warnings and the question, and still shows which instance is replaced by which backup.
-func TestTheRestorePageStillShowsTheInstanceAndTheReleaseAt80x24(t *testing.T) {
+func TestTheRestorePageStillShowsTheInstanceAndTheVersionAt80x24(t *testing.T) {
 	run, _ := restoreOnScreen(t, 80, 24, config.TierCoLocated)
 	v := run.question(t, 0)
 	if !strings.HasPrefix(v.rows[0], "Restore preview") {
 		t.Errorf("the page is titled %q, want \"Restore preview\"", v.rows[0])
 	}
-	if row := v.row("Instance"); !strings.Contains(row, testInstance) {
+	if row := v.row("Instance ID"); !strings.Contains(row, testInstance) {
 		t.Errorf("the page does not show the instance of the backup (row %q):\n%s", row, v.dump())
 	}
-	if row := v.row("Release"); !strings.Contains(row, "v0.2.0") {
-		t.Errorf("the page does not show the release of the backup (row %q):\n%s", row, v.dump())
+	if row := v.row("Version"); !strings.Contains(row, "v0.2.0") {
+		t.Errorf("the page does not show the version of the backup (row %q):\n%s", row, v.dump())
 	}
 	mustSay(t, v, "This is a confirmation", "This instance runs", "ahead of the restored approved version", "Type the instance id "+testInstance+" to confirm")
 }
@@ -303,7 +303,7 @@ func TestThePurgePageSaysWhatItDeletesInABoxAndThatTheTypedIdIsAConfirmation(t *
 	if !strings.HasPrefix(v.rows[0], "Remove everything of this instance") {
 		t.Errorf("the page is titled %q, want \"Remove everything of this instance\"", v.rows[0])
 	}
-	mustSay(t, v, "Nothing is removed until you confirm", testInstance, "This deletes the database, the artifacts, the secrets and the settings of instance "+testInstance+".", "Type the instance id "+testInstance+" to confirm")
+	mustSay(t, v, "Nothing is removed until you confirm", "Instance ID", "Settings file", testInstance, "This deletes the database, the saved files (artifacts), the secrets and the settings of instance "+testInstance+".", "Type the instance id "+testInstance+" to confirm")
 	if v.row("╭") == "" || !strings.HasPrefix(strings.TrimSpace(v.row("This deletes the database")), "│") {
 		t.Errorf("what the purge deletes is not in a box:\n%s", v.dump())
 	}

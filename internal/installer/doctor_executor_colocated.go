@@ -120,10 +120,10 @@ func (d *doctor) checkExecutorImage(ctx context.Context) {
 		return
 	}
 	if !d.rt.ImageExists(ctx, goprofile.Image) {
-		d.fail("executor.image", "The container engine does not have the Go image that the test runner's sandboxes use ("+goprofile.Image+"). The test runner does not download it, so no test can run.", d.installFix())
+		d.fail("executor.image", "The container program does not have the Go image that the test runner's sandboxes use ("+goprofile.Image+"). The test runner does not download it, so no test can run.", d.installFix())
 		return
 	}
-	d.pass("executor.image", "The container engine has the Go image that the test runner's sandboxes use.")
+	d.pass("executor.image", "The container program has the Go image that the test runner's sandboxes use.")
 }
 
 // startHint is how to start the executor by hand where the operating system keeps it, and where to read why it stopped.

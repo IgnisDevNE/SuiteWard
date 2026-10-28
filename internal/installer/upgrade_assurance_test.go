@@ -8,8 +8,7 @@ import (
 // The co-located tier gives up some assurance against the isolated one, and that is a security disclosure: the plain run of the install ends
 // with it. A plain `install --upgrade` has no summary, so it ends with the same line, once; an upgrade on a separate server never says it.
 func TestAPlainColocatedUpgradeEndsWithTheReducedAssuranceLine(t *testing.T) {
-	// The text of reducedAssuranceNotice (colocated.go, F8a): the test names the sentence, not the constant, until the two branches meet.
-	const line = "On this computer the test runner (the executor) and SuiteWard run as your user, next to your coding agent, so these checks catch mistakes, not a determined agent."
+	const line = reducedAssuranceNotice
 	t.Run("co-located", func(t *testing.T) {
 		u := newUpgradeHarness(t, nil)
 		if err := u.upgrade("--image", testImage, "--yes"); err != nil {

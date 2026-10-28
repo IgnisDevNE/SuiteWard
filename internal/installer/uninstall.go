@@ -274,7 +274,7 @@ func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, q
 			if id == unknownValue { // nothing names it: "instance unknown" would read as a name
 				of = "this instance"
 			}
-			warning = "This deletes the database, the artifacts, the secrets and the settings of " + of + "."
+			warning = "This deletes the database, the saved files (artifacts), the secrets and the settings of " + of + "."
 		}
 		r.screen.Critical("%s", warning)
 		if err := i.refuseUnnamed(ctx, r, id); err != nil {
@@ -307,7 +307,7 @@ func showRemoval(r *Resolver, purge bool, id, engine, settings string, listing [
 		if purge {
 			title = "Remove everything of this instance"
 		}
-		blocks := []ui.Block{ui.Fields(ui.KV{Key: "Instance", Value: id}, ui.KV{Key: "Container program", Value: engine}, ui.KV{Key: "Settings", Value: settings})}
+		blocks := []ui.Block{ui.Fields(ui.KV{Key: "Instance ID", Value: id}, ui.KV{Key: "Container program", Value: engine}, ui.KV{Key: "Settings file", Value: settings})}
 		if yes, _ := r.yes(); r.term.IsTerminal && !yes { // a --yes that cannot be read is refused by the confirmation itself
 			blocks = append([]ui.Block{ui.Para("Nothing is removed until you confirm.")}, blocks...)
 		}

@@ -309,15 +309,11 @@ func upgraded(scr *ui.Screen, image, backupPath, goBack, doctor string) {
 	scr.Say("Check the instance with `%s`.\n", doctor)
 }
 
-// upgradeReducedAssurance is what the co-located tier gives up against the isolated one, a security disclosure that a plain upgrade, which draws
-// no summary, ends with, as a plain install does.
-// shortcut: this copies the text of reducedAssuranceNotice (colocated.go, task F8a) until the two branches meet; use that constant then.
-const upgradeReducedAssurance = "On this computer the test runner (the executor) and SuiteWard run as your user, next to your coding agent, so these checks catch mistakes, not a determined agent."
-
-// endPlainUpgrade ends a plain run with the disclosure: a full screen says it in the summary, and a plain run has none.
+// endPlainUpgrade ends a plain run with the reduced-assurance notice, as a plain install does: a full screen says it in the summary, and a plain run
+// has none.
 func (c *colocatedInstall) endPlainUpgrade(scr *ui.Screen) {
 	if !scr.FullScreen() {
-		c.say("%s\n", upgradeReducedAssurance)
+		c.say("%s\n", reducedAssuranceNotice)
 	}
 }
 
@@ -381,7 +377,7 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	case !yes:
 		return false, refuse
 	}
-	const manual = "take the backup by hand instead (dump the database and copy the artifacts volume, the saved files, yourself; details: docs/backup.md, Appendix A), then upgrade"
+	const manual = "take the backup by hand instead (dump the database and copy the saved files (artifacts) yourself; details: docs/backup.md, Appendix A), then upgrade"
 	if err := start(ctx); err != nil {
 		return false, fmt.Errorf("could not start the installed service: %w; %s", err, manual)
 	}

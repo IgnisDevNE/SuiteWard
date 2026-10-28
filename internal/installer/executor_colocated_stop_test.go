@@ -499,3 +499,28 @@ func TestAMalformedLineOfTheListingIsNeverEchoed(t *testing.T) {
 		})
 	}
 }
+
+// Another instance's executor has the name of ours: what runs is decided by this instance's own binary path, not by the image name. Here nothing of
+// this instance runs, and the definition is the one this build makes, so the install starts the task (it does not take another's program for ours).
+func TestAnInstallAgainStartsTheTaskWhenOnlyAnotherInstancesExecutorRunsOnWindows(t *testing.T) {
+	first := machineHarnessOn(t, "windows")
+	if err := first.podman(); err != nil {
+		t.Fatal(err)
+	}
+	again := machineHarnessOn(t, "windows")
+	again.dir, again.exe = first.dir, first.program()
+	again.have(kindSecret, SecretMCPAuth, SecretExecutorAuth)
+	again.first("/Query /TN SuiteWard Executor", "")
+	again.f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`) // by name, another instance's program counts
+	table := &processTable{procs: anotherInstancesProcesses(again.dir), stubborn: map[int]bool{}}
+	env := again.newEnv()
+	table.install(&env.Deps)
+	args := []string{"--token-file", again.tokenPath(), "--settings", again.settingsPath(), "--runtime", "podman", "--connection", "pm", "--image", testImage}
+	if err := Install(context.Background(), args, env); err != nil {
+		t.Fatal(err)
+	}
+	again.assertOrder("/Run /TN SuiteWard Executor")
+	if left := table.alive(); !slices.Equal(left, survivors) {
+		t.Errorf("another instance's processes were ended: %v", left)
+	}
+}

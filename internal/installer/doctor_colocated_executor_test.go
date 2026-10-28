@@ -90,6 +90,7 @@ func healthyColocatedExecutor(t *testing.T, f *fakeEngine) {
 	switch f.goos {
 	case "windows":
 		f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`)
+		f.on("Win32_Process", listingOf([]osProc{{pid: 4242, parent: 4, name: executorBinaryName("windows"), exe: files.binary, cmd: `"` + files.binary + `" execute`}}))
 	case "darwin":
 		f.on("=-u", "501\n").on("=print gui/501/"+executorLabel, "state = running\n")
 	default:
@@ -174,6 +175,7 @@ func TestDoctorColocatedExecutorFailures(t *testing.T) {
 		{"not registered on Windows", "windows", nil, []rule{{match: "/Query /TN", err: errors.New("error: the system cannot find the file specified")}}, "executor.lifecycle", func(coloExecFiles) []string { return []string{"scheduled task"} }, "install"},
 		{"not running on Linux", "linux", nil, []rule{{match: userUnit, out: "LoadState=loaded\nActiveState=inactive\nSubState=dead\n"}}, "executor.running", func(coloExecFiles) []string { return []string{"not running"} }, "systemctl --user start suiteward-executor.service"},
 		{"not running on Windows", "windows", nil, []rule{{match: "IMAGENAME eq suiteward-executor.exe", out: "INFO: No tasks are running which match the specified criteria."}}, "executor.running", func(coloExecFiles) []string { return []string{"not running"} }, "schtasks /Run"},
+		{"not running on Windows while only another instance's executor runs", "windows", nil, []rule{{match: "Win32_Process", out: listingOf([]osProc{{pid: 9, name: "suiteward-executor.exe", exe: `C:\other\executor\suiteward-executor.exe`, cmd: `"C:\other\executor\suiteward-executor.exe" execute`}})}}, "executor.running", func(coloExecFiles) []string { return []string{"not running"} }, "schtasks /Run"},
 		{"not running on macOS", "darwin", nil, []rule{{match: "=print gui/501/" + executorLabel, out: "state = waiting\n"}}, "executor.running", func(coloExecFiles) []string { return []string{"not running"} }, "launchctl kickstart"},
 	}
 	for _, c := range cases {

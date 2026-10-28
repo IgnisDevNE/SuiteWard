@@ -31,7 +31,14 @@ const (
 	execBinaryPath   = execLibDir + "/suiteward-executor"
 	execPinFile      = execLibDir + "/executor.pin"
 	execUnitFile     = "/etc/systemd/user/suiteward-executor.service"
-	execUserSystemd  = "--user --machine=suiteward-exec@.host"
+	execBus          = "/run/user/1002/bus"
+
+	// Every command of the host step that runs as the executor's account is `runuser` with the account's own user bus, never machined: the login
+	// session that `--machine=<user>@.host` opens fails on EL9 with SELinux enforcing when there is no terminal.
+	execAs      = "-u suiteward-exec -- env XDG_RUNTIME_DIR=/run/user/1002 DBUS_SESSION_BUS_ADDRESS=unix:path=" + execBus
+	execUserRun = execAs + " systemd-run --user --wait --collect"
+	execUserctl = execAs + " systemctl --user"
+	execWaitEnd = " systemctl --user is-system-running --wait" // after `timeout <seconds>`, which bounds the wait
 )
 
 // executorPaths are the files of the executor that the fake answers `cat` for; a path that is not in files is not there.
@@ -59,7 +66,22 @@ func sha256File(t *testing.T, path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// legacyAsModern answers the machined form of a command as the runuser form, which the RED commit needs so that only the tests that pin the new form fail.
+// The fix commit removes it.
+func legacyAsModern(c call) call {
+	const machine = "--user --machine=suiteward-exec@.host"
+	line := c.line()
+	switch {
+	case c.name == "systemd-run" && strings.HasPrefix(line, machine+" --wait --collect "):
+		return call{name: "runuser", args: strings.Fields(execUserRun + " " + strings.TrimPrefix(line, machine+" --wait --collect "))}
+	case c.name == "systemctl" && strings.HasPrefix(line, machine+" "):
+		return call{name: "runuser", args: strings.Fields(execUserctl + " " + strings.TrimPrefix(line, machine+" "))}
+	}
+	return c
+}
+
 func (h *hostFake) answerExecutor(c call) (out []byte, handled bool, err error) {
+	c = legacyAsModern(c)
 	line := c.line()
 	fail := errors.New(c.name + ": exit status 1")
 	switch {
@@ -107,13 +129,13 @@ func (h *hostFake) answerExecutor(c call) (out []byte, handled bool, err error) 
 func (h *hostFake) answerExecutorImage(c call) (out []byte, handled bool, err error) {
 	line := c.line()
 	switch {
-	case c.name == "systemd-run" && strings.Contains(line, execUserSystemd) && strings.Contains(line, "podman pull "+goprofile.Image):
+	case c.name == "runuser" && strings.HasPrefix(line, execUserRun) && strings.Contains(line, "podman pull "+goprofile.Image):
 		if h.pullFails {
 			return nil, true, errors.New(c.name + ": exit status 1")
 		}
 		h.imagePulled = !h.pullLeavesNothing
 		return nil, true, nil
-	case c.name == "systemd-run" && strings.Contains(line, execUserSystemd) && strings.Contains(line, "podman image exists "+goprofile.Image):
+	case c.name == "runuser" && strings.HasPrefix(line, execUserRun) && strings.Contains(line, "podman image exists "+goprofile.Image):
 		if !h.imagePulled {
 			return nil, true, errors.New(c.name + ": exit status 1")
 		}
@@ -126,15 +148,23 @@ func (h *hostFake) answerExecutorImage(c call) (out []byte, handled bool, err er
 func (h *hostFake) answerExecutorUnits(c call) (out []byte, handled bool, err error) {
 	line := c.line()
 	switch {
-	case c.name != "systemctl":
-		return nil, false, nil
-	case line == "restart user@1002.service":
+	case c.name == "systemctl" && line == "restart user@1002.service":
 		h.controllers = h.afterRestart
 		return nil, true, nil
-	case strings.Contains(line, execUserSystemd) && strings.Contains(line, "enable --now suiteward-executor.service"):
+	case c.name != "runuser":
+		return nil, false, nil
+	case strings.HasPrefix(line, execAs+" timeout ") && strings.HasSuffix(line, execWaitEnd):
+		if h.managerStuck {
+			return nil, true, errors.New("timeout: exit status 124")
+		}
+		if h.managerState != "running" { // is-system-running prints its state and exits non-zero for anything but running
+			return []byte(h.managerState + "\n"), true, errors.New("systemctl: exit status 1")
+		}
+		return []byte("running\n"), true, nil
+	case strings.HasPrefix(line, execUserctl+" enable --now suiteward-executor.service"):
 		h.execEnabled = true
 		return nil, true, nil
-	case strings.Contains(line, execUserSystemd) && strings.Contains(line, "show") && strings.HasSuffix(line, "suiteward-executor.service"):
+	case strings.HasPrefix(line, execUserctl+" show") && strings.HasSuffix(line, "suiteward-executor.service"):
 		if !h.execRunning && !h.execEnabled {
 			return []byte("inactive\n"), true, nil // a unit that was not there before the step
 		}
@@ -262,7 +292,7 @@ func TestPrepareHostRejectsTheMetadataAddressesForTheExecutorByDestinationWithou
 		t.Errorf("the consented rule of the service account is not touched: %v", h.lines())
 	}
 	// The rules load before the executor can run anything.
-	if rules, start := hostCallIndex(h, "systemctl", "enable --now suiteward-exec-block.service"), hostCallIndex(h, "systemctl", execUserSystemd+" enable --now suiteward-executor.service"); rules < 0 || start < rules {
+	if rules, start := hostCallIndex(h, "systemctl", "enable --now suiteward-exec-block.service"), hostCallIndex(h, "runuser", execUserctl+" enable --now suiteward-executor.service"); rules < 0 || start < rules {
 		t.Errorf("the rules (%d) must be loaded before the executor starts (%d)", rules, start)
 	}
 }
@@ -273,7 +303,7 @@ func TestPrepareHostFailsWhenTheExecutorRulesAreNotLoaded(t *testing.T) {
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || !strings.Contains(err.Error(), "test runner rule (the firewall rule) is not loaded") {
 		t.Fatalf("rules that are not loaded must stop the run before the executor starts, got %v", err)
 	}
-	if h.has("systemctl", "suiteward-executor.service") {
+	if h.has("runuser", "suiteward-executor.service") {
 		t.Errorf("the executor was started although its rules are not loaded: %v", h.lines())
 	}
 }
@@ -383,7 +413,7 @@ func TestPrepareHostRefusesACopyThatIsNotTheProgram(t *testing.T) {
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || !strings.Contains(err.Error(), "executor") || !strings.Contains(err.Error(), "SHA-256") {
 		t.Fatalf("a copy whose hash is not the program's must stop the run, got %v", err)
 	}
-	if h.has("systemctl", "suiteward-executor.service") {
+	if h.has("runuser", "suiteward-executor.service") {
 		t.Errorf("the executor was started after a bad copy: %v", h.lines())
 	}
 }
@@ -409,7 +439,7 @@ func TestPrepareHostRefusesABinaryThatTheSumsDoNotList(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "SHA256SUMS") {
 		t.Fatalf("a program that the release does not list must be refused naming SHA256SUMS, got %v", err)
 	}
-	if h.has("install", "-m 0755 -o root -g root") || h.has("systemctl", "suiteward-executor.service") {
+	if h.has("install", "-m 0755 -o root -g root") || h.has("runuser", "suiteward-executor.service") {
 		t.Errorf("nothing of the executor is installed or started: %v", h.lines())
 	}
 	for _, c := range h.calls { // the refusal comes before every step: podman, the accounts, the rules, the token
@@ -473,8 +503,8 @@ func TestPrepareHostWritesTheExecutorUnitForTheUserManagerOfTheExecutorOnly(t *t
 		}
 	}
 	for _, want := range []string{"daemon-reload", "enable --now suiteward-executor.service"} {
-		if !h.has("systemctl", execUserSystemd+" "+want) {
-			t.Errorf("missing systemctl %s %s: %v", execUserSystemd, want, h.lines())
+		if !h.has("runuser", execUserctl+" "+want) {
+			t.Errorf("missing systemctl --user %s: %v", want, h.lines())
 		}
 	}
 	for _, c := range h.callsTo("systemctl") {
@@ -525,7 +555,7 @@ func TestPrepareHostRestartsAnExecutorThatRunsOldFiles(t *testing.T) {
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	if !h.has("systemctl", execUserSystemd+" restart suiteward-executor.service") {
+	if !h.has("runuser", execUserctl+" restart suiteward-executor.service") {
 		t.Errorf("an executor that runs a replaced binary is restarted: %v", h.lines())
 	}
 }
@@ -591,7 +621,7 @@ func TestPrepareHostRestartsARunningExecutorOnlyWhenItMakesANewToken(t *testing.
 			if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 				t.Fatal(err)
 			}
-			if got := h.has("systemctl", execUserSystemd+" restart suiteward-executor.service"); got != tc.restarted {
+			if got := h.has("runuser", execUserctl+" restart suiteward-executor.service"); got != tc.restarted {
 				t.Errorf("restarted %v, want %v: %v", got, tc.restarted, h.lines())
 			}
 		})

@@ -17,6 +17,9 @@ import (
 // ServiceAccount is the account the isolated stack runs as.
 const ServiceAccount = "suiteward"
 
+// hostProgram is where the install guide puts the program.
+const hostProgram = "/usr/local/bin/suiteward"
+
 const (
 	metadataAddress = "169.254.169.254"
 	imdsUnit        = "suiteward-imds-block.service"

@@ -48,6 +48,9 @@ func TestIsolatedInstallRefusesSHA256SUMSAndNamesTheHostStep(t *testing.T) {
 	if !errors.Is(err, ErrUsage) || !strings.Contains(err.Error(), "install host --sha256sums") {
 		t.Fatalf("want a usage error that names `sudo suiteward install host --sha256sums`, got %v", err)
 	}
+	if !strings.Contains(err.Error(), "`sudo /usr/local/bin/suiteward install host --sha256sums") {
+		t.Errorf("the host step is named by the path that sudo finds: %v", err)
+	}
 }
 
 func TestIsolatedUpgradeRefusesSHA256SUMSAndNamesTheHostStep(t *testing.T) {
@@ -55,5 +58,8 @@ func TestIsolatedUpgradeRefusesSHA256SUMSAndNamesTheHostStep(t *testing.T) {
 	err := u.upgrade("--image", testDigest, "--yes", "--sha256sums", "/root/release/SHA256SUMS")
 	if !errors.Is(err, ErrUsage) || !strings.Contains(err.Error(), "install host --sha256sums") {
 		t.Fatalf("want a usage error that names `sudo suiteward install host --sha256sums`, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "`sudo /usr/local/bin/suiteward install host --sha256sums") {
+		t.Errorf("the host step is named by the path that sudo finds: %v", err)
 	}
 }

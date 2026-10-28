@@ -62,6 +62,11 @@ func (d Deps) suggest(sub string, args ...string) string {
 	return strings.Join(append(words, args...), " ")
 }
 
+// suggestHostStep is the host step as an administrator runs it, through sudo.
+func (d Deps) suggestHostStep(args ...string) string {
+	return "sudo " + d.suggest("install host", args...)
+}
+
 // serviceCommands are the subcommands whose bare spelling a row of the service may ask to have written with the flags of the instance.
 var serviceCommands = []string{"enroll", "install"}
 

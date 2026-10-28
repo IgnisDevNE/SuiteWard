@@ -144,3 +144,23 @@ func TestTheSummaryDeletesTheFileOfARepositoryThatIsEnforced(t *testing.T) {
 		t.Errorf("the summary does not name the file that is left:\n%s", tail)
 	}
 }
+
+// A pass that needs a look is not an enforced protection: its file stays.
+func TestTheSummaryKeepsTheFileOfAProtectionThatPassesWithAWarning(t *testing.T) {
+	withTerminal(t, true)
+	h := newHarness(t, "linux")
+	h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
+	h.first("exec -i suiteward /suiteward check --json", `[{"name":"protection.Acme/api","ok":true,"warning":true,"detail":"not configured: GitHub is off in this instance","fix":"run suiteward install again"}]`)
+	if _, err := writeRuleset(h.dir, "Acme/api", []byte("{}\n")); err != nil {
+		t.Fatal(err)
+	}
+	c := newTermConsole(&bytes.Buffer{})
+	env := h.newEnv()
+	env.OpenScreen = c.open
+	if err := Install(liveContext(t), colocatedArgs(h), env); err != nil {
+		t.Fatal(err)
+	}
+	if !rulesetFileExists(t, h.dir, "Acme/api") {
+		t.Error("the file went although the protection only passes with a warning")
+	}
+}

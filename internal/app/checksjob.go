@@ -326,7 +326,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			}
 		}
 	}
-	countsErr := errors.Join(j.restoreCounts(ctx, s, x, &d, &executed), j.approvalCounts(ctx, s, x, d.result, &executed))
+	countsErr := errors.Join(j.restoreCounts(ctx, s, x, &d, &executed), j.approvalCounts(ctx, s, x, &d, &executed))
 	if cancelled := ctx.Err(); cancelled != nil { // restoreCounts left the check as it was; a stopping run publishes nothing
 		return "", cancelled
 	}
@@ -356,8 +356,8 @@ func (x *executionRun) namesMode(r checks.Result) bool {
 // check: the approval is what is missing, and the reason keeps its precedence. The owner reads the counts before approving, because a head can fail the approved tests that its
 // own change edits. A run that is pending, unavailable or not wanted adds nothing. The check is written once per state, so these counts go out with the message the ledger
 // writes next. The failure of the read is returned, once the check is published.
-func (j *checksJob) approvalCounts(ctx context.Context, s *pullState, x *executionRun, r checks.Result, executed *executionOutcome) error {
-	if r.Reason != reasonApprovalMissing || !x.known || x.policy.canonical != domain.CanonicalLevelRequired {
+func (j *checksJob) approvalCounts(ctx context.Context, s *pullState, x *executionRun, d *pullDecision, executed *executionOutcome) error {
+	if d.result.Reason != reasonApprovalMissing || !x.known || x.policy.canonical != domain.CanonicalLevelRequired {
 		return nil
 	}
 	job, found, err := j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical, artifact.Digest{})

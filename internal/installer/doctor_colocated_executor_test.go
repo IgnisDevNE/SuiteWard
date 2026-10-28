@@ -156,6 +156,23 @@ func TestDoctorChecksAnExistingWindowsExecutorInAFolderWithAPercentSign(t *testi
 	wantOK(t, res, "executor.token", "executor.binary", "executor.lifecycle", "executor.running")
 }
 
+// With none registered there, the install would refuse the folder too: doctor says why, once, and checks no other row of the test runner, because
+// the fix of each would be an install that cannot work.
+func TestDoctorSaysThatNoWindowsExecutorCanBeSetUpInAFolderWithAPercentSign(t *testing.T) {
+	notRegistered := rule{match: "/Query /TN", err: errors.New("error: the system cannot find the file specified")}
+	f, s := colocated{goos: "windows", folder: "50%off", over: []rule{notRegistered}}.build(t)
+	code, res, names := runDoctor(t, f, s)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	wantFail(t, res, "executor.lifecycle", "percent sign")
+	for _, name := range names {
+		if strings.HasPrefix(name, "executor.") && name != "executor.lifecycle" {
+			t.Errorf("%s is checked beside a folder that no install accepts: %+v", name, res[name])
+		}
+	}
+}
+
 func removeFile(t *testing.T, path string) {
 	t.Helper()
 	if err := os.Remove(path); err != nil {

@@ -78,6 +78,9 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	if err != nil {
 		return executorPlan{}, err
 	}
+	if err := plan.refuseNew(); err != nil {
+		return executorPlan{}, err
+	}
 	sid, err := windowsSID(d)
 	if err != nil {
 		return plan, err

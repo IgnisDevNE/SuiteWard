@@ -67,6 +67,9 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	if stateErr == nil {
 		other, stateErr = plan.foreign(registered)
 	}
+	if stateErr == nil && !registered && d.failRefusedFolder(plan) {
+		return // nothing is there, and an install would refuse the folder: no other row is checked, because its fix would be that install
+	}
 	fix, notRunning := d.installFix(), plan.startHint()
 	if other { // no install makes this instance an executor of its own while that one is registered
 		fix = d.anotherInstanceFix()
@@ -109,6 +112,16 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	})
 	d.checkExecutorImage(ctx)
 	d.checkExecutorLoopback(ctx)
+}
+
+// failRefusedFolder is the result of a computer that has no test runner in a folder that an install refuses (refuseNew): running the install again
+// does not help, so the message says what to. It reports whether the folder is refused.
+func (d *doctor) failRefusedFolder(plan executorPlan) bool {
+	err := plan.refuseNew()
+	if err != nil {
+		d.fail("executor.lifecycle", err.Error(), "Do what the message says, then run `"+d.deps.suggest("doctor")+"` again.")
+	}
+	return err != nil
 }
 
 // checkExecutorImage asks the engine that runs the sandboxes whether it has the Go image under its digest: the executor starts them with

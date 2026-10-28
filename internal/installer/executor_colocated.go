@@ -103,11 +103,6 @@ func planExecutor(d Deps, tokenFile string, s Settings, engineDir string) (execu
 		// Built with a backslash, not filepath.Join: the path of a Windows computer is read on any system. An empty SystemRoot reads C:\Windows, as
 		// an empty ProgramFiles reads C:\Program Files.
 		p.system = strings.TrimRight(cmp.Or(d.Getenv("SystemRoot"), `C:\Windows`), `\`) + `\System32`
-		// Windows reads %name% in the arguments and the working directory of a scheduled task, and cmd reads it in the command line: a folder with a
-		// percent sign would not reach the script as written, so the install says so instead of writing a definition that does not work.
-		if strings.Contains(p.dir, "%") {
-			return executorPlan{}, fmt.Errorf("the folder of the test runner, `%s`, has a percent sign (%%) in its path, which Windows reads as the name of a variable in the scheduled task. Use a folder without one: pass `--token-file` with another path", p.dir)
-		}
 		if engineDir != "" {
 			p.env = append(p.env, envEntry{"PATH", engineDir + ";%PATH%"}) // the one value that is meant to be expanded
 		}
@@ -141,6 +136,17 @@ func planExecutor(d Deps, tokenFile string, s Settings, engineDir string) (execu
 		}
 	}
 	return p, nil
+}
+
+// refuseNew is why a test runner cannot be set up in this plan's folder. Windows reads %name% in the arguments and the working directory of a
+// scheduled task, and cmd reads it in the command line: a folder with a percent sign would not reach the script as written, so a new install says
+// so instead of writing a definition that does not work. The plan itself is not refused: a test runner that an earlier build made in such a folder is
+// still checked by doctor and removed by the uninstall, which name its processes by the paths the operating system lists for them.
+func (p executorPlan) refuseNew() error {
+	if p.goos == "windows" && strings.Contains(p.dir, "%") {
+		return fmt.Errorf("the folder of the test runner, `%s`, has a percent sign (%%) in its path, which Windows reads as the name of a variable in the scheduled task. Use a folder without one: pass `--token-file` with another path", p.dir)
+	}
+	return nil
 }
 
 func envValues(env []envEntry) []string {

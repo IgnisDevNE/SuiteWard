@@ -271,6 +271,31 @@ func TestSetLead(t *testing.T) {
 	}
 }
 
+// A set that is not final says nothing yet: its lead is none, so that no caller reads "nothing needs your attention" on a head that is still waiting.
+func TestSetLeadOfASetThatIsNotFinalIsNone(t *testing.T) {
+	tests := []struct {
+		name  string
+		edits []edit
+	}{
+		{"the canonical run is pending", []edit{withCanonical(execution.JobPending)}},
+		{"the canonical run is leased and the receipt failed", []edit{withCanonical(execution.JobLeased), withReceiptCounts(execution.ReceiptCounts{Fails: 1})}},
+		{"the receipt is pending and the canonical run is clean", []edit{withReceipt(execution.JobPending)}},
+		{"the receipt is pending and weakened is counted", []edit{withReceipt(execution.JobPending), withWeakened(2)}},
+		{"the canonical plan has no job yet", []edit{withNoCanonicalJob}},
+		{"the receipt plan has no job yet", []edit{withNoReceiptJob}},
+		{"the run has not decided whether the receipt applies", []edit{withUndecided}},
+		{"the policy was not read", []edit{withLevels(0, 0)}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSet(tc.edits...)
+			if got := s.Lead(); s.Final() || got != 0 {
+				t.Errorf("Lead() = %d, want 0 (the set is final: %v, and must not be)", got, s.Final())
+			}
+		})
+	}
+}
+
 func TestSetHolds(t *testing.T) {
 	const (
 		advisory       = execution.CanonicalLevelAdvisory

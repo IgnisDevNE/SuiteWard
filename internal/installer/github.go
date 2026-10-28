@@ -1464,7 +1464,11 @@ func setupHere(ctx context.Context, cmd string, rt Runtime, scr *ui.Screen, out 
 	if note != "" {
 		ghSay(out, "\n%s", note)
 	}
-	ghSay(out, "\nSetup makes you the owner and shows an authenticator secret (the TOTP secret, as a link and a key), only on this terminal. Stop any screen recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log what setup prints.\n")
+	secret := "an authenticator secret (the TOTP secret, as a link and a key)"
+	if scr.FullScreen() { // the page before setup has named it
+		secret = "the authenticator secret (as a link and a key)"
+	}
+	ghSay(out, "\nSetup makes you the owner and shows %s, only on this terminal. Stop any screen recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log what setup prints.\n", secret)
 	execErr := rt.ExecTTY(ctx, ContainerServe, argv)
 	var waitErr error
 	if scr.FullScreen() { // the screen comes back when this returns, so the secret stays on the terminal until the user has copied it
@@ -1491,7 +1495,7 @@ func afterSetup(scr *ui.Screen, cmd string, err error) error {
 		}
 		return fmt.Errorf("setup failed: %w", err)
 	}
-	scr.Page("Setup finished", ui.Para("The authenticator secret (the TOTP secret) was shown only in setup's terminal: the installer did not see, keep or log it. From now on, approving a change needs the six-digit code from your authenticator app."))
+	scr.Page("Setup finished", ui.Para("The authenticator secret was shown only in setup's terminal: the installer did not see, keep or log it. From now on, approving a change needs the six-digit code from your authenticator app."))
 	return nil
 }
 

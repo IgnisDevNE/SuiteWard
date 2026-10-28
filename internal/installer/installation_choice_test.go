@@ -16,6 +16,10 @@ import (
 // ADR 0029, section 7: the commands that work on an installation ask which one when there are several, and a choice is not a flag that was typed.
 
 // choiceDeps is the machine of the question: the files it names are the ones of the test.
+// noSettingsWayOut is what the refusal adds for a stack that has no settings file (a first install that failed before it saved them, while other
+// installations are listed): such a stack is named by its token file and its engine.
+const noSettingsWayOut = " A stack that has no settings file is named with `--token-file <file>` plus `--runtime` and `--connection`."
+
 func choiceDeps(t *testing.T) Deps {
 	t.Helper()
 	f := newFake(runtime.GOOS)
@@ -209,7 +213,7 @@ func TestSeveralInstallationsWithNoTerminalRefuseAndNameTheFlags(t *testing.T) {
 	term, out := fakeTerminal(false, "")
 	r := newTestResolver(t, nil, nil, term)
 	err := r.chooseInstallation(choiceDeps(t))
-	want := "This computer has several SuiteWard installations (" + i.def + ", " + i.second + "). Say which one with `--settings <file>` and `--token-file <file>`."
+	want := "This computer has several SuiteWard installations (" + i.def + ", " + i.second + "). Say which one with `--settings <file>` and `--token-file <file>`." + noSettingsWayOut
 	if err == nil || err.Error() != want {
 		t.Errorf("the refusal is %v, want %q", err, want)
 	}
@@ -372,7 +376,7 @@ func TestAnUnattendedRunRefusesSeveralInstallationsAndNeverAsks(t *testing.T) {
 	} {
 		r, out := plainResolver(t, flags, nil, i.second+"\n")
 		err := r.chooseInstallation(choiceDeps(t))
-		want := "This computer has several SuiteWard installations (" + i.def + ", " + i.second + "). Say which one with `--settings <file>` and `--token-file <file>`."
+		want := "This computer has several SuiteWard installations (" + i.def + ", " + i.second + "). Say which one with `--settings <file>` and `--token-file <file>`." + noSettingsWayOut
 		if err == nil || err.Error() != want || out.Len() != 0 || len(r.chosen) != 0 {
 			t.Errorf("%s on a terminal: err %v, output %q, chosen %v: want the refusal and no question", name, err, out.String(), r.chosen)
 		}

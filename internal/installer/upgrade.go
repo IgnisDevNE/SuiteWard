@@ -377,7 +377,7 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	case !yes:
 		return false, refuse
 	}
-	const manual = "take the backup by hand instead (dump the database and copy the artifacts volume, the saved files, yourself; details: docs/backup.md, Appendix A), then upgrade"
+	const manual = "take the backup by hand instead (dump the database and copy the saved files (artifacts) yourself; details: docs/backup.md, Appendix A), then upgrade"
 	if err := start(ctx); err != nil {
 		return false, fmt.Errorf("could not start the installed service: %w; %s", err, manual)
 	}

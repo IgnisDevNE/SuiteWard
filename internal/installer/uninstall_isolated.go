@@ -31,7 +31,7 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, env Env
 	}
 	question := "Stop SuiteWard and remove its units (its service files)? Your data stays."
 	if purge {
-		question = "Stop SuiteWard, remove its units, and delete the secrets, the volumes (this deletes the database and the saved files), the network, the GitHub env file and the settings file?"
+		question = "Stop SuiteWard, remove its units, and delete the secrets, the volumes (this deletes the database and the saved files, called artifacts), the network, the GitHub env file and the settings file?"
 	}
 	port := s.HTTPPort // the units that are gone (a purge after an earlier uninstall) leave the port the settings name
 	if st.found {

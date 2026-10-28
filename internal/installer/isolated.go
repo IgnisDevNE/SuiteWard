@@ -63,7 +63,7 @@ func openIsolatedHost(ctx context.Context, s Settings, d Deps) (isolatedHost, er
 		return isolatedHost{}, err
 	}
 	if d.GOOS != "linux" {
-		return isolatedHost{}, fmt.Errorf("the isolated tier runs on Linux, this system is %s", d.GOOS)
+		return isolatedHost{}, fmt.Errorf("an installation on a separate server runs on Linux only, and this system is %s", d.GOOS)
 	}
 	run := func(name string, args ...string) (string, error) {
 		b, err := d.Exec(ctx, name, args, nil)
@@ -698,7 +698,7 @@ func chooseImage(cmd string, r *Resolver, installedDigest string, neverStarted f
 	}
 	repo, digest, _ := strings.Cut(image, "@") // parseImage made sure there is a digest
 	if withoutTag(repo) != releaseImageRepo {
-		return "", fmt.Errorf("%w: the isolated tier runs %s only, not %s", ErrNotDigestImage, releaseImageRepo, image)
+		return "", fmt.Errorf("%w: an installation on a separate server runs %s only, not %s", ErrNotDigestImage, releaseImageRepo, image)
 	}
 	if installedDigest != "" && digest != installedDigest {
 		never, err := neverStarted()

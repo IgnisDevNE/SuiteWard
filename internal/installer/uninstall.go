@@ -274,7 +274,7 @@ func (i instance) confirmRemoval(ctx context.Context, r *Resolver, purge bool, q
 			if id == unknownValue { // nothing names it: "instance unknown" would read as a name
 				of = "this instance"
 			}
-			warning = "This deletes the database, the artifacts, the secrets and the settings of " + of + "."
+			warning = "This deletes the database, the saved files (artifacts), the secrets and the settings of " + of + "."
 		}
 		r.screen.Critical("%s", warning)
 		if err := i.refuseUnnamed(ctx, r, id); err != nil {

@@ -223,10 +223,10 @@ func TestTheDockerPageFitsTheSmallestWindowAndItsPointsHangUnderTheirText(t *tes
 
 // A backup of the other tier adds a warning to a page that has few rows for it: the warning is short on a full screen, and the page still
 // shows which instance is replaced by which backup at 80x24.
-func TestTheRestorePageOfABackupOfAnotherTierStillShowsTheInstanceAndTheReleaseAt80x24(t *testing.T) {
+func TestTheRestorePageOfABackupOfAnotherTierStillShowsTheInstanceAndTheVersionAt80x24(t *testing.T) {
 	run, _ := restoreOnScreen(t, 80, 24, config.TierIsolated)
 	v := run.question(t, 0)
-	for _, fact := range []string{"  Instance", "  Release"} {
+	for _, fact := range []string{"  Instance ID", "  Version"} {
 		if row := v.row(fact); !strings.HasPrefix(row, fact) {
 			t.Errorf("the page does not show the fact %q of the backup (row %q):\n%s", strings.TrimSpace(fact), row, v.dump())
 		}
@@ -378,7 +378,7 @@ func TestThePurgeBoxOfAnInstanceWithNoIdSaysThisInstance(t *testing.T) {
 		t.Fatalf("Uninstall: %v\n%s", err, run.output())
 	}
 	v := run.question(t, 0)
-	mustSay(t, v, "This deletes the database, the artifacts, the secrets and the settings of this instance.", "Type the instance id "+unknownValue+" to confirm")
+	mustSay(t, v, "This deletes the database, the saved files (artifacts), the secrets and the settings of this instance.", "Type the instance id "+unknownValue+" to confirm")
 	if strings.Contains(v.text(), "of instance "+unknownValue) {
 		t.Errorf("the box calls the instance %q:\n%s", unknownValue, v.dump())
 	}

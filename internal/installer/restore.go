@@ -467,7 +467,7 @@ func (x *restoreRun) preview() error {
 
 // previewOrder is the order of the facts on the page of the confirmation. A window that is too small trims the page from its end, so the
 // facts that say what is being replaced by what come first.
-var previewOrder = []string{"Instance", "Release", "Owner", "Repositories", "Installation type", "Made", "Database version", "Safety backup", "Backup"}
+var previewOrder = []string{"Instance ID", "Version", "Owner", "Repositories", "Installation type", "Made", "Database version", "Safety backup", "Backup"}
 
 // previewPage is the page of the confirmation on a full screen: what it is, what runs now, and what the backup holds. The warnings that
 // follow it outlast it when the window is too small for all of it.
@@ -510,8 +510,8 @@ func (x *restoreRun) backupFacts(compact bool) (source string, facts []ui.KV) {
 	}
 	return source, []ui.KV{
 		{Key: "Made", Value: x.info.CreatedAt.UTC().Format(time.RFC3339)},
-		{Key: "Release", Value: release},
-		{Key: "Instance", Value: x.doc.Instance},
+		{Key: "Version", Value: release},
+		{Key: "Instance ID", Value: x.doc.Instance},
 		{Key: "Installation type", Value: cmp.Or(installationTypeWords(x.info.Tier), "not recorded")},
 		{Key: "Owner", Value: owner},
 		{Key: "Repositories", Value: repos},
@@ -525,8 +525,8 @@ func (x *restoreRun) instanceFacts() []ui.KV {
 		return nil
 	}
 	return []ui.KV{
-		{Key: "Release", Value: x.current.Version},
-		{Key: "Instance", Value: x.current.Instance},
+		{Key: "Version", Value: x.current.Version},
+		{Key: "Instance ID", Value: x.current.Instance},
 		{Key: "Owner", Value: cmp.Or(x.current.owner(), "none enrolled")},
 		{Key: "Database version", Value: strconv.Itoa(x.current.SchemaVersion)},
 	}
@@ -795,7 +795,7 @@ func (x *restoreRun) summary() []ui.KV {
 	rows := summaryRows{
 		{Key: "Restored", Value: x.restored()},
 		{Key: "Instance ID", Value: x.doc.Instance},
-		{Key: "Release", Value: x.after.Version},
+		{Key: "Version", Value: x.after.Version},
 	}
 	rows.add("Backup before", x.safety)
 	if x.mayHaveRepositories() {

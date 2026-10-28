@@ -182,7 +182,7 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 		scr.Say("The test runner starts its sandboxes through Docker. Docker's own command line cannot drive Podman: it stops, because it does not know the options the sandboxes need. Podman's docker command (the podman-docker package) does work with Podman. To use Podman, install with `--runtime podman`.\n")
 	}
 	scr.Say("The test runner has one credential, its own token (%s), and it reaches SuiteWard at http://127.0.0.1:%d.\n", plan.tokenFile, c.s.HTTPPort)
-	scr.Say("Keep only one test runner (the executor) for each container engine. When it starts, it removes every container on its engine whose name starts with %s, so a second test runner (one started by hand, say) would remove the sandboxes of the first.\n", sandboxNamePrefix)
+	scr.Say("Keep only one test runner (the executor) for each container program. When it starts, it removes every container of its container program whose name starts with %s, so a second test runner (one started by hand, say) would remove the sandboxes of the first.\n", sandboxNamePrefix)
 	if c.executorPin == "" {
 		scr.Say("The test runner has not been checked against an official release. This is normal for a development build. To check it, run `%s install --upgrade --sha256sums <the release's SHA256SUMS file>` with the program from that release.\n", c.env.Deps.command())
 	}

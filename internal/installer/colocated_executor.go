@@ -57,8 +57,9 @@ func executorMechanism(goos string) string {
 }
 
 // errProcessesNotListed is why a first install on Windows sets up no test runner: the listing of the programs that run fails, so the installer
-// could never stop or update one. Running the install again changes nothing, and setUpExecutor leaves that advice out.
-var errProcessesNotListed = errors.New("SuiteWard could not list the programs running on this computer (PowerShell may be restricted here). Without that list it could never stop or update the test runner, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server")
+// could never stop or update one. Running the install again changes nothing, and setUpExecutor leaves that advice out. It follows the listing's
+// own error, which already says that the programs could not be listed.
+var errProcessesNotListed = errors.New("PowerShell may be restricted here. Without that list, SuiteWard could never stop or update the test runner, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server")
 
 // installExecutor makes the executor of this computer as the settings and this program say: its copy of the program and the pin beside it, the
 // definition that the operating system reads, and the start. What is already as it should be is left alone: an executor that runs, with the same
@@ -101,7 +102,7 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	// updated or removed by it (PowerShell in constrained language mode), so it is not set up.
 	if plan.goos == "windows" && !registered {
 		if _, err := plan.listProcesses(ctx, d); err != nil {
-			return plan, fmt.Errorf("%w. Detail: %w", errProcessesNotListed, err)
+			return plan, fmt.Errorf("%w. %w", err, errProcessesNotListed)
 		}
 	}
 	if err := os.MkdirAll(plan.dir, 0o700); err != nil {

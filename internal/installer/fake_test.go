@@ -37,9 +37,9 @@ type fakeEngine struct {
 	goos  string
 	env   map[string]string
 	exe   string // the program of this run for Deps.Executable; empty means the test binary
-	// idleListing makes a listing of the programs that run (Win32_Process) that no rule answers say that none runs, and end as it should. Only the install
-	// harnesses of Windows set it, because a first install lists once. Without it an unruled listing is empty and unfinished, so a code path that lists
-	// where it should not fails loudly.
+	// idleListing makes a listing of the programs that run (Win32_Process) that no rule answers say that none runs, and end as it should. Only a test
+	// that makes a first install on Windows sets it, because a first install lists once. Without it an unruled listing is empty and unfinished, so a
+	// code path that lists where it should not fails loudly.
 	idleListing bool
 }
 

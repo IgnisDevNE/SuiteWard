@@ -150,6 +150,7 @@ func utf16le(t *testing.T, raw []byte) string {
 
 func TestInstallStartsTheExecutorAsAScheduledTaskAtLogonOnWindows(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	if err := h.podman("--http-port", "18081", "--mcp-port", "18091"); err != nil {
 		t.Fatal(err)
 	}
@@ -214,6 +215,7 @@ func TestTheScheduledTaskOfTheExecutorRunsItsScriptThroughAHeadlessConsole(t *te
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := machineHarnessOn(t, "windows")
+			h.f.idleListing = true // a first install lists the programs that run once
 			h.dir = filepath.Join(h.dir, "Ana & Pedro (work)") // a folder name that cmd reads as an operator and a group
 			if err := os.MkdirAll(h.dir, 0o700); err != nil {
 				t.Fatal(err)
@@ -246,6 +248,7 @@ func TestTheScheduledTaskOfTheExecutorRunsItsScriptThroughAHeadlessConsole(t *te
 // are 5 seconds apart. What a person reads in the script and in its log says "test runner".
 func TestTheWrapperOfTheWindowsTaskStartsTheExecutorAgainAfterAPause(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -278,6 +281,7 @@ func TestTheWrapperOfTheWindowsTaskStartsTheExecutorAgainAfterAPause(t *testing.
 
 func TestTheInstallSaysThatTheExecutorOfWindowsHasNoWindow(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -337,6 +341,7 @@ func TestInstallReplacesTheExecutorsProgramAndRestartsIt(t *testing.T) {
 
 func TestInstallStopsAScheduledTaskBeforeItReplacesTheProgramItHolds(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -361,6 +366,7 @@ func TestInstallStopsAScheduledTaskBeforeItReplacesTheProgramItHolds(t *testing.
 
 func TestInstallOnlyWarnsWhenTheExecutorCannotBeStarted(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	h.f.fail("/Create /TN", errors.New("schtasks: Access is denied"))
 	if err := h.podman(); err != nil {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
@@ -376,6 +382,7 @@ func TestInstallOnlyWarnsWhenTheExecutorCannotBeStarted(t *testing.T) {
 
 func TestTheExecutorOfADockerStackUsesTheEngineTheInstallerChose(t *testing.T) {
 	h := dockerHarness(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	h.f.env["ProgramFiles"] = `C:\Program Files`
 	if err := h.docker("--connection", "desktop-linux"); err != nil {
 		t.Fatal(err)
@@ -420,6 +427,7 @@ func TestTheExecutorOfEveryOperatingSystemHoldsNoCredentialOfTheService(t *testi
 	for _, goos := range []string{"linux", "darwin", "windows"} {
 		t.Run(goos, func(t *testing.T) {
 			h := machineHarnessOn(t, goos)
+			h.f.idleListing = goos == "windows" // a first install on Windows lists the programs that run once
 			if goos == "darwin" {
 				h.f.on("=-u", "501\n")
 			}
@@ -741,6 +749,7 @@ func TestTheInstallRefusesAPercentSignInTheFolderOfTheWindowsExecutor(t *testing
 // silently. The first thing the wrapper does is switch the console to UTF-8.
 func TestTheWrapperOfTheWindowsTaskSwitchesTheConsoleToUTF8First(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	h.dir = filepath.Join(h.dir, "João")
 	if err := os.MkdirAll(h.dir, 0o700); err != nil {
 		t.Fatal(err)

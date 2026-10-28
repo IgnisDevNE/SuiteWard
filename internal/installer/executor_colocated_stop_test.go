@@ -157,6 +157,7 @@ type reinstalled struct {
 func reinstallOnWindows(t *testing.T, procs func(wrapper, binary string) []osProc, tune func(*processTable)) reinstalled {
 	t.Helper()
 	first := machineHarnessOn(t, "windows")
+	first.f.idleListing = true // a first install lists the programs that run once
 	if err := first.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -264,6 +265,7 @@ func TestInstallDoesNotReplaceTheExecutorWhenTheProcessesCannotBeListedOnWindows
 // executor that the installer could never list again could never be updated or removed by it.
 func TestAFirstInstallOnWindowsEndsNothingAndListsTheProcessesOnceBeforeItCreatesTheTask(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -288,6 +290,7 @@ func TestAFirstInstallOnWindowsSetsUpNoExecutorWhenTheProcessesCannotBeListed(t 
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := machineHarnessOn(t, "windows")
+			h.f.idleListing = true // a first install lists the programs that run once
 			table := &processTable{stubborn: map[int]bool{}}
 			tune(table)
 			env := h.newEnv()
@@ -343,6 +346,7 @@ func TestAnInstallFromBeforeTheHeadlessConsoleIsReplacedAndItsOldTreeEnded(t *te
 	for _, via := range []string{"install", "install --upgrade"} {
 		t.Run(via, func(t *testing.T) {
 			first := machineHarnessOn(t, "windows")
+			first.f.idleListing = true // a first install lists the programs that run once
 			if err := first.podman(); err != nil {
 				t.Fatal(err)
 			}
@@ -451,6 +455,7 @@ func TestUninstallKeepsTheExecutorWhenItCannotBeEndedOnWindowsAndSaysSo(t *testi
 // sandboxes. The install ends what is left first.
 func TestAnInstallAgainEndsAWrapperThatIsLeftWhenNothingChangedOnWindows(t *testing.T) {
 	first := machineHarnessOn(t, "windows")
+	first.f.idleListing = true // a first install lists the programs that run once
 	if err := first.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -543,6 +548,7 @@ func TestAMalformedLineOfTheListingIsNeverEchoed(t *testing.T) {
 // this instance runs, and the definition is the one this build makes, so the install starts the task (it does not take another's program for ours).
 func TestAnInstallAgainStartsTheTaskWhenOnlyAnotherInstancesExecutorRunsOnWindows(t *testing.T) {
 	first := machineHarnessOn(t, "windows")
+	first.f.idleListing = true // a first install lists the programs that run once
 	if err := first.podman(); err != nil {
 		t.Fatal(err)
 	}

@@ -12,6 +12,7 @@ import (
 // install of the same instance still updates the executor, and an uninstall still removes it.
 func TestInstallKnowsItsOwnScheduledTaskWhenTheProfilePathIsNotASCIIAndTheAnswerIsInACodePage(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	h.dir = filepath.Join(h.dir, "João")
 	if err := os.MkdirAll(h.dir, 0o700); err != nil {
 		t.Fatal(err)

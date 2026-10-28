@@ -62,6 +62,27 @@ func (d Deps) suggest(sub string, args ...string) string {
 	return strings.Join(append(words, args...), " ")
 }
 
+// serviceCommands are the subcommands whose bare spelling a row of the service may ask to have written with the flags of the instance.
+var serviceCommands = []string{"enroll", "install"}
+
+// writeCommands is a fix of a row of the service with each command that the row says it names (named) written as every other hint is, with the
+// flags that name the instance (suggest): the service writes the bare name, because it cannot know them. The row comes from another process, so
+// only a subcommand of serviceCommands is written, and only where the fix spells it; any other name leaves the fix as it came. A bare command
+// that stood between backticks stays between them, and one that did not gets them, because the flags make it longer than a word.
+func (d Deps) writeCommands(fix string, named []string) string {
+	var pairs []string
+	for _, sub := range serviceCommands {
+		if slices.Contains(named, sub) {
+			bare, written := selfName+" "+sub, "`"+d.suggest(sub)+"`"
+			pairs = append(pairs, "`"+bare+"`", written, bare, written)
+		}
+	}
+	if len(pairs) == 0 {
+		return fix
+	}
+	return strings.NewReplacer(pairs...).Replace(fix) // one pass over the service's text: what it writes is not read again
+}
+
 // onIsolated is d for the install and the upgrade of the isolated tier, whose hints name it with --tier isolated: a host that was set up by
 // hand has no settings file to say it.
 func (d Deps) onIsolated() Deps {

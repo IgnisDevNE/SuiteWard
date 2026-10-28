@@ -183,6 +183,7 @@ func Evaluate(f Facts, appID int64, testCheck string) Result {
 	for _, c := range findings {
 		if c == MissingTestCheck && testCheck == "" {
 			res.Instructions = append(res.Instructions, setupInstruction)
+			res.Commands = append(res.Commands, "enroll")
 			continue
 		}
 		res.Instructions = append(res.Instructions, instructions[c])

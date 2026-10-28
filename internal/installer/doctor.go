@@ -934,7 +934,10 @@ func (d *doctor) checkInstance(ctx context.Context) {
 	failed := slices.ContainsFunc(list, func(r doctorResult) bool { return !r.OK })
 	switch {
 	case jerr == nil && (err == nil || failed):
-		d.results = append(d.results, list...)
+		for _, r := range list {
+			r.Fix = d.deps.writeCommands(r.Fix, r.Commands)
+			d.results = append(d.results, r)
+		}
 	case err != nil:
 		d.fail("instance.check", "the checks inside the service container (`suiteward check --json` in "+ContainerServe+") failed before they gave any result: "+err.Error(),
 			d.readFix())

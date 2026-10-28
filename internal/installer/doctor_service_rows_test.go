@@ -1,8 +1,15 @@
 package installer
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // The rows that doctor takes from the service (`suiteward check --json`) name a command of the program by its bare name, because the service cannot
@@ -57,6 +64,39 @@ func TestDoctorIgnoresACommandsKeyThatTheFixDoesNotSpell(t *testing.T) {
 	for name, want := range map[string]string{"a": fix, "b": "fix the check", "c": fix} {
 		if got := res[name].Fix; got != want {
 			t.Errorf("%s: the fix is %q, want it as the service wrote it: %q", name, got, want)
+		}
+	}
+}
+
+// The import of the ruleset file replaces the instruction of a check only when it is the whole fix; the instruction to enroll is never one that an
+// import fixes, so it stays. doctor has written that command with the flags of the instance, and a program that is run by another name has no
+// "suiteward enroll" in it, so the summary reads the row's key too.
+func TestTheSummaryKeepsTheEnrollInstructionWhenTheProgramIsRunByAnotherName(t *testing.T) {
+	const program = "/opt/sw/ward"
+	raw, err := json.Marshal([]doctorResult{protectionResult("Acme/api", protection.Facts{}, "")}) // no test check yet: the evaluator asks for enroll
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, s := colocated{checkOut: string(raw)}.build(t)
+	t.Chdir(t.TempDir())
+	const path = "settings.yaml"
+	if err := SaveSettings(path, s); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeRuleset(".", "Acme/api", []byte("{}\n")); err != nil {
+		t.Fatal(err)
+	}
+	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}}
+	env.Deps.Command = program
+	var rows summaryRows
+	rows.addDoctor(context.Background(), env, path, coloTokenFile(t, f), env.Deps.suggest("doctor"))
+	i := slices.IndexFunc(rows, func(kv ui.KV) bool { return kv.Key == "" && strings.Contains(kv.Value, "protection.Acme/api") })
+	if i < 0 {
+		t.Fatalf("the summary has no warning for the repository: %+v", rows)
+	}
+	for _, want := range []string{"import the ruleset file", "`" + program + " enroll`"} {
+		if !strings.Contains(rows[i].Value, want) {
+			t.Errorf("the warning lacks %q:\n%s", want, rows[i].Value)
 		}
 	}
 }

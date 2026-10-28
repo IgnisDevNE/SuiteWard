@@ -97,7 +97,7 @@ func protectionResult(repo string, facts protection.Facts, testCheck string) doc
 	for i, c := range res.Findings {
 		codes[i] = string(c)
 	}
-	return doctorResult{Name: "protection." + repo, Detail: string(res.Kind) + ": " + strings.Join(codes, ", "), Fix: strings.Join(res.Instructions, " ")}
+	return doctorResult{Name: "protection." + repo, Detail: string(res.Kind) + ": " + strings.Join(codes, ", "), Fix: strings.Join(res.Instructions, " "), Commands: res.Commands}
 }
 
 // The ruleset file fixes what the ruleset requires: the contract check, the test check and that branches are up to date. It replaces the

@@ -111,8 +111,11 @@ var rulesetFindings = []string{string(protection.MissingContractCheck), string(p
 
 // What the evaluator says that an import does not fix: the setup instruction (no test check is configured yet) and the caveat of a ruleset
 // whose bypass list cannot be seen. A test passes the sentences of the real evaluator through importRulesetFix, so a rewording fails there.
+// A service that sends the commands of its rows says it with "enroll" too: doctor has then written the command with the flags of the instance
+// (and, for a program run by its path, without the words of the mark), so the data is what is read first.
 const (
 	setupInstructionMark = "suiteward enroll"
+	setupInstructionCmd  = "enroll"
 	bypassCaveatMark     = "bypass list"
 )
 
@@ -136,7 +139,7 @@ func importRulesetFix(r doctorResult, dir string) string {
 		return r.Fix // the install that wrote it may have been another one, or the file moved: the check's own fix is all there is
 	}
 	imports := "import the ruleset file " + file + " on GitHub (open the repository's Settings, then Rules, choose New ruleset, then Import a ruleset)"
-	if slices.ContainsFunc(findings, func(code string) bool { return !fixed(code) }) || strings.Contains(r.Fix, setupInstructionMark) || strings.Contains(r.Fix, bypassCaveatMark) {
+	if slices.ContainsFunc(findings, func(code string) bool { return !fixed(code) }) || slices.Contains(r.Commands, setupInstructionCmd) || strings.Contains(r.Fix, setupInstructionMark) || strings.Contains(r.Fix, bypassCaveatMark) {
 		return imports + ". " + r.Fix
 	}
 	return imports

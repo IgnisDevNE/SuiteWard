@@ -60,6 +60,12 @@ type selfCheckResult struct {
 	Commands []string `json:"commands,omitempty"`
 }
 
+// naming says which subcommands the fix of the result names by their bare name (the Commands key).
+func (r selfCheckResult) naming(commands ...string) selfCheckResult {
+	r.Commands = commands
+	return r
+}
+
 func checkPassed(name, detail string) selfCheckResult {
 	return selfCheckResult{Name: name, OK: true, Detail: detail}
 }
@@ -73,7 +79,7 @@ const notConfiguredFix = "run `suiteward install` again with --github yes (or th
 
 // checkNotConfigured is the result of a GitHub check of an instance installed without GitHub: it passes, as a warning.
 func checkNotConfigured(name string) selfCheckResult {
-	return selfCheckResult{Name: name, OK: true, Warning: true, Detail: "not configured: GitHub is off in this instance", Fix: notConfiguredFix}
+	return selfCheckResult{Name: name, OK: true, Warning: true, Detail: "not configured: GitHub is off in this instance", Fix: notConfiguredFix}.naming("install")
 }
 
 // checkSkipped is the result of a check that needs another one to pass first.
@@ -393,9 +399,9 @@ func selfCheckProtection(repo string, result protection.Result) selfCheckResult 
 		}
 		return checkPassed(name, detail)
 	case protection.KindFindings:
-		return checkFailed(name, string(result.Kind)+": "+strings.Join(codeStrings(result.Findings), ", "), instructions)
+		return checkFailed(name, string(result.Kind)+": "+strings.Join(codeStrings(result.Findings), ", "), instructions).naming(result.Commands...)
 	default: // enforcement-unavailable and unknown name themselves
-		return checkFailed(name, string(result.Kind), instructions)
+		return checkFailed(name, string(result.Kind), instructions).naming(result.Commands...)
 	}
 }
 
@@ -496,5 +502,5 @@ var selfCheckDatabaseTimeout = 15 * time.Second
 // checkNoOwner is the failure of an instance with GitHub whose owner is not enrolled yet.
 func checkNoOwner() selfCheckResult {
 	return checkFailed(nameOwnerEnrolled, "no owner is enrolled",
-		"run `suiteward enroll` where you ran `suiteward install` (as `suiteward` on an isolated host), on a real terminal with session recording off (see the install guide)")
+		"run `suiteward enroll` where you ran `suiteward install` (as `suiteward` on an isolated host), on a real terminal with session recording off (see the install guide)").naming("enroll", "install")
 }

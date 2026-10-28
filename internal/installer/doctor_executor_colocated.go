@@ -16,8 +16,12 @@ import (
 // The rows do not repeat that reduced assurance: the install's summary and the page that introduces this tier say it once (owner decision 19).
 // Their texts are for a person with little technical background (work/m21-briefs/plain-language.md): what happened, whether it is a problem, what to do.
 
-// installFix is the fix of a result that an install of this release makes right.
+// installFix is the fix of a result that an install of this release makes right. A test runner in a folder that an install refuses has none that
+// the install can make: it is removed (the uninstall does that), and another is set up in a folder that the install accepts.
 func (d *doctor) installFix() string {
+	if d.refusedFolder != nil {
+		return "An install cannot set up the test runner in this folder, because of the percent sign (%) in its path. Run `" + d.deps.suggest("uninstall") + "` to remove it (your data stays), then run `" + d.deps.suggest("install") + "` with `--token-file` set to a file in a folder that has no percent sign."
+	}
 	return "Run `" + d.deps.suggest("install", "--upgrade") + "` if the service is from an earlier release. Otherwise run `" + d.deps.suggest("install") + "` again. Either one sets up the test runner again."
 }
 
@@ -67,7 +71,8 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	if stateErr == nil {
 		other, stateErr = plan.foreign(registered)
 	}
-	if stateErr == nil && !registered && d.failRefusedFolder(plan) {
+	d.refusedFolder = plan.refuseNew()
+	if stateErr == nil && !registered && d.failRefusedFolder() {
 		return // nothing is there, and an install would refuse the folder: no other row is checked, because its fix would be that install
 	}
 	fix, notRunning := d.installFix(), plan.startHint()
@@ -116,12 +121,11 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 
 // failRefusedFolder is the result of a computer that has no test runner in a folder that an install refuses (refuseNew): running the install again
 // does not help, so the message says what to. It reports whether the folder is refused.
-func (d *doctor) failRefusedFolder(plan executorPlan) bool {
-	err := plan.refuseNew()
-	if err != nil {
-		d.fail("executor.lifecycle", err.Error(), "Do what the message says, then run `"+d.deps.suggest("doctor")+"` again.")
+func (d *doctor) failRefusedFolder() bool {
+	if d.refusedFolder != nil {
+		d.fail("executor.lifecycle", d.refusedFolder.Error(), "Do what the message says, then run `"+d.deps.suggest("doctor")+"` again.")
 	}
-	return err != nil
+	return d.refusedFolder != nil
 }
 
 // checkExecutorImage asks the engine that runs the sandboxes whether it has the Go image under its digest: the executor starts them with

@@ -185,6 +185,7 @@ type doctor struct {
 	raw           map[string][]byte
 	units         map[string]map[string]string // isolated: `systemctl show` of each unit
 	results       []doctorResult
+	refusedFolder error // co-located Windows: why an install would refuse the folder of the test runner (refuseNew), when it would
 }
 
 func (d *doctor) pass(name, detail string) {

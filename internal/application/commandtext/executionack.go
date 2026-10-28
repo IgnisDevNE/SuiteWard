@@ -25,12 +25,20 @@ func executionAck(a Ack) string {
 		)
 	case Unblocked:
 		return paragraphs(
-			"Unblock recorded by "+who+" for the current head of this pull request. SuiteWard lifted what was unavailable on it: "+liftedPlans(a.Plans)+".",
+			"Unblock recorded by "+who+" for the current head of this pull request. SuiteWard lifted what was unavailable on it: "+liftedPlans(a.Plans)+"."+stoppedWaiting(a.Ended),
 			"The checks will state that the owner unblocked this head and that the tests did not run. The unblock changes no result: a run that is pending, failing or complete stays as it is.",
 			"A new push is a new head and needs a new unblock if its run is unavailable too.",
 		)
 	}
 	return notInGroup(a.Outcome)
+}
+
+// stoppedWaiting is the sentence for an unblock that ended an open run, because the test runner was not responding: empty when it ended none.
+func stoppedWaiting(ended Plans) string {
+	if ended == (Plans{}) {
+		return ""
+	}
+	return " SuiteWard stopped waiting for the test runner, which was not responding."
 }
 
 // liftedPlans names the runs an unblock lifted.

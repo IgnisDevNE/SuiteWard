@@ -47,8 +47,10 @@ func (j *commandsJob) setMode(ctx context.Context, enrollment owner.State, c com
 	return j.record(ctx, c, commands.ModeSet, "", &ack)
 }
 
-// unblock decides a /suiteward unblock whose code was verified and consumed, on the pull request as the synchronization observed it: a fork, a pull request that
-// is not open, and a head with nothing unavailable are refused (the code stays consumed), and otherwise the unavailable jobs of the head are lifted.
+// unblock decides a /suiteward unblock whose code was verified and consumed, on the pull request as the synchronization observed it (docs/contracts/runtime.md,
+// "The early unblock and its hold"): a fork and a pull request that is not open are refused (the code stays consumed). Otherwise it lifts the wanted jobs of the head
+// that are unavailable now and, while the runner does not respond, ends and lifts the ones that wait for it. With nothing to lift it is refused with runner-responding
+// when a wanted job waits for a runner that responds, and with not-unavailable otherwise.
 func (j *commandsJob) unblock(ctx context.Context, enrollment owner.State, c commands.Candidate, pull githubsync.PullState) error {
 	switch {
 	case isFork(pull.HeadRepo, c.Repo):
@@ -56,28 +58,37 @@ func (j *commandsJob) unblock(ctx context.Context, enrollment owner.State, c com
 	case !pull.NotOpenSince.IsZero():
 		return j.refuse(ctx, enrollment, c, commands.UnblockRefused, reasonNotOpen)
 	}
-	jobs, plans, err := j.liftable(ctx, c, pull.HeadSHA)
+	lift, err := j.liftable(ctx, c, pull.HeadSHA)
 	if err != nil {
 		return err
 	}
-	if len(jobs) == 0 {
+	switch {
+	case len(lift.jobs) > 0:
+	case lift.waiting:
+		return j.refuse(ctx, enrollment, c, commands.UnblockRefused, reasonRunnerResponding)
+	default:
 		return j.refuse(ctx, enrollment, c, commands.UnblockRefused, reasonNotUnavailable)
 	}
-	ack, err := newUnblockedAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, c.Comment.CommentID, enrollment.Owner.Login, plans)
+	ack, err := newUnblockedAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, c.Comment.CommentID, enrollment.Owner.Login, lift.plans, lift.ended)
 	if err != nil {
 		return &opaque{what: "build the acknowledgment", cause: err}
 	}
-	observed := make([]execution.UnblockJob, len(jobs))
-	for i, job := range jobs {
-		observed[i] = execution.UnblockJob{ID: job.ID, State: job.State, LeaseID: job.LeaseID}
-	}
 	entry := j.entry(c, commands.Unblocked, "")
-	return j.written(j.executions.RecordUnblock(ctx, entry, &ack, pull.HeadSHA, observed, entry.DecidedAt))
+	return j.written(j.executions.RecordUnblock(ctx, entry, &ack, pull.HeadSHA, lift.jobs, entry.DecidedAt))
 }
 
-// liftable lists the jobs of the head that an unblock lifts, and their plans: the canonical job when the canonical level is not off, and the receipt job when the
-// receipt level is not off and the receipt applies to the revision of the pull request, each when it is the job of its plan now and is unavailable.
-func (j *commandsJob) liftable(ctx context.Context, c commands.Candidate, head string) (jobs []execution.Job, plans commandtext.Plans, err error) {
+// liftSet is what an unblock does to the head: the jobs it lifts, each as the command read it (the store ends an open one only while it is still so), the plans of
+// those jobs and the plans whose open job it ends. waiting says that a wanted job waits for the runner, which responds, so that it is neither lifted nor ended.
+type liftSet struct {
+	jobs         []execution.UnblockJob
+	plans, ended commandtext.Plans
+	waiting      bool
+}
+
+// liftable reads the wanted jobs of the head: the canonical job when the canonical level is not off, and the receipt job when the receipt level is not off and the
+// receipt applies to the revision of the pull request, each when it is the job of its plan now. An unavailable one is lifted. One that waits for the runner (leased,
+// or pending for a reason other than GitHub) is ended and lifted when the runner is silent, and is left alone, to run as before, when it responds.
+func (j *commandsJob) liftable(ctx context.Context, c commands.Candidate, head string) (lift liftSet, err error) {
 	view, err := j.reads().receiptView(ctx, c.RepositoryID, func(ctx context.Context, tx governance.Tx) (contract.Proposal, bool, error) {
 		id, found, err := tx.ChangeProposalFor(ctx, carrierID(c.RepositoryID, c.PullNumber))
 		if err != nil || !found {
@@ -87,36 +98,74 @@ func (j *commandsJob) liftable(ctx context.Context, c commands.Candidate, head s
 		return proposal, err == nil, err
 	})
 	if err != nil {
-		return nil, commandtext.Plans{}, err
+		return liftSet{}, err
 	}
 	canonicalLevel, receiptLevel, err := j.levels(ctx, view.canonical)
 	if err != nil {
-		return nil, commandtext.Plans{}, err
+		return liftSet{}, err
 	}
 	if canonicalLevel != domain.CanonicalLevelOff {
 		job, found, err := j.reads().gateJob(ctx, c.RepositoryID, c.PullNumber, head, execution.PlanCanonical, artifact.Digest{})
 		if err != nil {
-			return nil, commandtext.Plans{}, err
+			return liftSet{}, err
 		}
-		if found && job.State == execution.StateUnavailable {
-			jobs, plans.Canonical = append(jobs, job), true
-		}
+		lift.add(execution.PlanCanonical, job, j.action(job, found))
 	}
 	if receiptLevel == domain.ReceiptLevelOff {
-		return jobs, plans, nil
+		return lift, nil
 	}
 	applies, governing, err := j.reads().receiptApplies(ctx, view)
 	if err != nil || !applies {
-		return jobs, plans, err
+		return lift, err
 	}
 	job, found, err := j.reads().gateJob(ctx, c.RepositoryID, c.PullNumber, head, execution.PlanReceipt, governing)
 	if err != nil {
-		return nil, commandtext.Plans{}, err
+		return liftSet{}, err
 	}
-	if found && job.State == execution.StateUnavailable {
-		jobs, plans.Receipt = append(jobs, job), true
+	lift.add(execution.PlanReceipt, job, j.action(job, found))
+	return lift, nil
+}
+
+// liftAction is what an unblock does to the job of a plan.
+type liftAction uint8
+
+const (
+	leaveJob liftAction = iota // nothing to lift: no job, or one that is complete or cancelled, or that waits on GitHub
+	liftJob                    // it is unavailable already: lift it as it is
+	endJob                     // it waits for a runner that does not respond: end it for no-executor and lift it
+	waitJob                    // it waits for a runner that responds: leave it to run, and refuse the unblock if nothing else is lifted
+)
+
+// action decides what an unblock does to the job that the gates read for a plan. The silence of the runner is read when a job waits for it, once for each job.
+func (j *commandsJob) action(job execution.Job, found bool) liftAction {
+	switch {
+	case !found:
+		return leaveJob
+	case job.State == execution.StateUnavailable:
+		return liftJob
+	case !job.WaitsForRunner():
+		return leaveJob
+	case j.liveness.Silent(j.now()):
+		return endJob
 	}
-	return jobs, plans, nil
+	return waitJob
+}
+
+// add puts the job of a plan in the set as its action says.
+func (s *liftSet) add(plan execution.Plan, job execution.Job, action liftAction) {
+	switch action {
+	case waitJob:
+		s.waiting = true
+		return
+	case leaveJob:
+		return
+	}
+	s.jobs = append(s.jobs, execution.UnblockJob{ID: job.ID, State: job.State, LeaseID: job.LeaseID})
+	if plan == execution.PlanCanonical {
+		s.plans.Canonical, s.ended.Canonical = true, action == endJob
+	} else {
+		s.plans.Receipt, s.ended.Receipt = true, action == endJob
+	}
 }
 
 // levels are the levels of the effective policy, from the declaration of the Suite's current canonical version: off and off before the first version and when the

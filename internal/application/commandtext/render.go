@@ -974,6 +974,8 @@ var refusals = map[Outcome]refusalSet{
 		NotOpen: {notOpenReason, "Comment `/suiteward unblock <code>` on an open pull request. " + codeUsedAgain, ""},
 		NotUnavailable: {"no run of this head is unavailable, so there is nothing to unblock",
 			"An unblock lifts only a run that is unavailable on the current head: a pending, failing or complete run is never lifted. " + codeUsedAgain, ""},
+		// RunnerResponding is told in the contract's own words, not in the template of refused (see refusal): reason is the whole first paragraph.
+		RunnerResponding: {"The test runner is responding, so the tests of this commit will run. Nothing was unblocked.", codeUsedAgain, ""},
 	}},
 }
 
@@ -983,6 +985,9 @@ func refusal(a Ack) string {
 	text, known := set.reasons[a.Refusal]
 	if !known {
 		panic(fmt.Sprintf("commandtext: unknown refusal %d of outcome %d", a.Refusal, a.Outcome))
+	}
+	if a.Outcome == UnblockRefused && a.Refusal == RunnerResponding {
+		return paragraphs(text.reason, text.next)
 	}
 	if a.Outcome == SuggestRefused && a.Refusal == InvalidSource && a.Base != 0 {
 		_, file := baseNames(a.Base)

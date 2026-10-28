@@ -118,7 +118,7 @@ func TestUnblockLiftsNothingThatIsNotWantedNow(t *testing.T) {
 
 		x.mustRun()
 
-		x.requireEntry(500, commands.UnblockRefused, map[string]any{"reason": "not-unavailable"})
+		x.requireEntry(500, commands.UnblockRefused, map[string]any{"reason": "runner-responding"}) // the fresh job waits for a runner that responds
 		x.requireUnblocks(500)
 		for _, j := range []execution.Job{old, newer} {
 			if unblocked, err := x.store.Unblocked(t.Context(), j.ID, cjOrigin); err != nil || unblocked {

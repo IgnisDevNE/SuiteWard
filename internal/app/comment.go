@@ -73,6 +73,7 @@ type ackPayload struct {
 	Mode          string               `json:"mode,omitempty"`          // mode-set: the mode recorded; receipt-refused: the mode the approve carried, when it carried one
 	Counts        *ackCounts           `json:"counts,omitempty"`        // receipt-refused for mode-not-met, and only for it: the receipt of the head
 	Plans         []string             `json:"plans,omitempty"`         // unblocked: the plans of the lifted jobs, canonical and receipt, each at most once
+	Ended         []string             `json:"ended,omitempty"`         // unblocked: the plans whose open job the command ended, a subset of the plans, in the same order
 	Branch        string               `json:"branch,omitempty"`        // declaration-missing and scope-notice: the pull request's head ref. Also a refusal that asks to fix .suiteward.yml: the branch of the file to edit
 	Suggestion    []string             `json:"suggestion,omitempty"`    // declaration-missing: the include patterns inventory.Suggest found
 	Runner        []string             `json:"runner,omitempty"`        // and the runner patterns,
@@ -182,6 +183,7 @@ const (
 	reasonScopeNotice        = "scope-notice"        // a suggested reply rendered by commandtext.ScopeNoticeComment, which is not an Ack either
 	reasonNothingUncovered   = "nothing-uncovered"   // a suggested reply that every test-like path of the head is in the scope
 	reasonNotUnavailable     = "not-unavailable"     // an unblock of a head with no unavailable run
+	reasonRunnerResponding   = "runner-responding"   // an unblock of a head whose run waits for a runner that responds
 )
 
 var (
@@ -191,7 +193,8 @@ var (
 	suggestRefusals = map[string]commandtext.Refusal{reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen, refusalInvalidSource: commandtext.InvalidSource}
 	// modeRefusals and unblockRefusals are the reasons of mode-refused and unblock-refused.
 	modeRefusals    = map[string]commandtext.Refusal{reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen}
-	unblockRefusals = map[string]commandtext.Refusal{reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen, reasonNotUnavailable: commandtext.NotUnavailable}
+	unblockRefusals = map[string]commandtext.Refusal{reasonFork: commandtext.Fork, reasonNotOpen: commandtext.NotOpen, reasonNotUnavailable: commandtext.NotUnavailable,
+		reasonRunnerResponding: commandtext.RunnerResponding}
 	// gateReasons are the reasons of receipt-refused: the names of the domain's gate, which refuse an approve.
 	gateReasons = map[string]domain.Reason{string(domain.ReasonReceiptPending): domain.ReasonReceiptPending, string(domain.ReasonReceiptUnavailable): domain.ReasonReceiptUnavailable,
 		string(domain.ReasonModeRequired): domain.ReasonModeRequired, string(domain.ReasonModeNotMet): domain.ReasonModeNotMet}
@@ -245,7 +248,9 @@ func reasonFits(d commands.Disposition, reason string) bool {
 }
 
 // hasExecution is whether the payload holds any field that only the acknowledgments of the execution commands use.
-func (a ackPayload) hasExecution() bool { return a.Mode != "" || a.Counts != nil || a.Plans != nil }
+func (a ackPayload) hasExecution() bool {
+	return a.Mode != "" || a.Counts != nil || a.Plans != nil || a.Ended != nil
+}
 
 // receiptCounts is the counts the renderer takes for the receipt of a refusal.
 func (c ackCounts) receiptCounts() domain.ReceiptCounts {
@@ -338,6 +343,9 @@ func (a ackPayload) validateRejected() error {
 	if _, ok := plansOf(a.Plans); !ok {
 		return errors.New("the plans are not canonical and receipt, each at most once")
 	}
+	if _, ok := plansOf(a.Ended); !ok {
+		return errors.New("the ended plans are not canonical and receipt, each at most once")
+	}
 	if gateCounts := a.Disposition == string(commands.ReceiptRefused) && a.Reason == string(domain.ReasonModeNotMet); (a.Counts != nil) != gateCounts {
 		return errors.New("counts fit the refusal of a mode that the receipt did not meet, and only it")
 	}
@@ -414,9 +422,9 @@ func newModeSetAck(target commentTarget, comment int64, ownerLogin string, mode 
 	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.ModeSet), Comment: comment, Owner: ownerLogin, Mode: mode.String()})
 }
 
-// newUnblockedAck builds the acknowledgment of an unblock that lifted the jobs of these plans.
-func newUnblockedAck(target commentTarget, comment int64, ownerLogin string, plans commandtext.Plans) (governance.OutboxMessage, error) {
-	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.Unblocked), Comment: comment, Owner: ownerLogin, Plans: planNames(plans)})
+// newUnblockedAck builds the acknowledgment of an unblock that lifted the jobs of these plans, and ended the open jobs of ended, some of them.
+func newUnblockedAck(target commentTarget, comment int64, ownerLogin string, plans, ended commandtext.Plans) (governance.OutboxMessage, error) {
+	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.Unblocked), Comment: comment, Owner: ownerLogin, Plans: planNames(plans), Ended: planNames(ended)})
 }
 
 // newReceiptRefusedAck builds the refusal of an approve of reference (P<n>-R<m>) by the receipt gate, for the reason it gave. mode is the mode the approve
@@ -775,6 +783,7 @@ func rejectedAckOf(a ackPayload) commandtext.Ack {
 	}
 	ack.Mode, _ = domain.ParseMode(a.Mode) // validated: none for no mode
 	ack.Plans, _ = plansOf(a.Plans)        // validated
+	ack.Ended, _ = plansOf(a.Ended)        // validated
 	if a.Counts != nil {
 		ack.Counts, ack.Markers = a.Counts.receiptCounts(), a.Counts.Markers
 	}

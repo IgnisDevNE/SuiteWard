@@ -2,6 +2,9 @@ package execution
 
 import (
 	"errors"
+	"fmt"
+	"slices"
+	"strconv"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
@@ -51,10 +54,12 @@ type Job struct {
 }
 
 // HasOutcome says that the job is complete or unavailable.
-func (j Job) HasOutcome() bool { return false }
+func (j Job) HasOutcome() bool { return j.State == JobComplete || j.State == JobUnavailable }
 
 // WaitsForRunner says that the job waits for the test runner: it is leased, or pending for a reason other than a failing read of GitHub, which has its own bound.
-func (j Job) WaitsForRunner() bool { return false }
+func (j Job) WaitsForRunner() bool {
+	return j.State == JobLeased || (j.State == JobPending && j.Reason != JobReasonGitHubUnavailable)
+}
 
 // HeadReason is the reason that the Contract check of a head would have before the canonical gate decides, as far as the comments need it.
 type HeadReason uint8
@@ -89,16 +94,49 @@ type Set struct {
 
 // Final says that the set is ready to be reported: the policy was read, the run decided whether the receipt applies, at least one run is wanted, and every wanted
 // run has a job that is complete or unavailable.
-func (s Set) Final() bool { return false }
+func (s Set) Final() bool {
+	if s.CanonicalLevel == 0 || s.ReceiptLevel == 0 || !s.ReceiptDecided {
+		return false
+	}
+	jobs := s.wantedJobs()
+	return len(jobs) > 0 && !slices.ContainsFunc(jobs, func(j Job) bool { return !j.HasOutcome() })
+}
+
+func (s Set) wantsCanonical() bool { return s.CanonicalLevel != CanonicalLevelOff }
+
+func (s Set) wantsReceipt() bool { return s.ReceiptLevel != ReceiptLevelOff && s.ReceiptApplies }
+
+// wantedJobs are the jobs of the plans that the head wants, the canonical one first.
+func (s Set) wantedJobs() []Job {
+	var jobs []Job
+	if s.wantsCanonical() {
+		jobs = append(jobs, s.CanonicalJob)
+	}
+	if s.wantsReceipt() {
+		jobs = append(jobs, s.ReceiptJob)
+	}
+	return jobs
+}
 
 // JobPair is the jobs of a set, 0 for a plan with none. Its String is the end of the outbox key of a comment: <canonical job>-<receipt job>.
 type JobPair struct{ Canonical, Receipt int64 }
 
 // String is the pair as the key writes it.
-func (p JobPair) String() string { return "" }
+func (p JobPair) String() string {
+	return strconv.FormatInt(p.Canonical, 10) + "-" + strconv.FormatInt(p.Receipt, 10)
+}
 
 // Jobs are the jobs of the set that a results comment names, 0 for a plan that is not wanted.
-func (s Set) Jobs() JobPair { return JobPair{} }
+func (s Set) Jobs() JobPair {
+	return JobPair{Canonical: idIf(s.wantsCanonical(), s.CanonicalJob), Receipt: idIf(s.wantsReceipt(), s.ReceiptJob)}
+}
+
+func idIf(wanted bool, j Job) int64 {
+	if wanted {
+		return j.ID
+	}
+	return 0
+}
 
 // Waiting is what a head that reads not responding says: the jobs that wait for the runner, and whether the unblock is offered.
 type Waiting struct {
@@ -108,7 +146,18 @@ type Waiting struct {
 
 // NotResponding says whether the head reads not responding: the runner is silent (the caller decides it from its clock) and a wanted job of the head waits for it.
 // The unblock is offered when a job that waits also holds something back.
-func (s Set) NotResponding(silent bool) (Waiting, bool) { return Waiting{}, false }
+func (s Set) NotResponding(silent bool) (Waiting, bool) {
+	canonical := s.wantsCanonical() && s.CanonicalJob.WaitsForRunner()
+	receipt := s.wantsReceipt() && s.ReceiptJob.WaitsForRunner()
+	if !silent || (!canonical && !receipt) {
+		return Waiting{}, false
+	}
+	holds := s.Holds()
+	return Waiting{
+		Jobs:    JobPair{Canonical: idIf(canonical, s.CanonicalJob), Receipt: idIf(receipt, s.ReceiptJob)},
+		Unblock: (canonical && holds.Canonical) || (receipt && holds.Receipt),
+	}, true
+}
 
 // Lead says what the first sentence of a results comment is about.
 type Lead uint8
@@ -122,14 +171,49 @@ const (
 )
 
 // Lead is the lead of the set.
-func (s Set) Lead() Lead { return 0 }
+func (s Set) Lead() Lead {
+	jobs := s.wantedJobs()
+	unavailable := countJobs(jobs, JobUnavailable)
+	switch {
+	case len(jobs) == 0:
+		return 0
+	case unavailable == len(jobs):
+		return LeadNotRun
+	case unavailable > 0 && countJobs(jobs, JobComplete) > 0:
+		return LeadPartial
+	case s.needsFix() || s.Weakened > 0:
+		return LeadAttention
+	}
+	return LeadClean
+}
+
+func countJobs(jobs []Job, state JobState) int {
+	n := 0
+	for _, j := range jobs {
+		if j.State == state {
+			n++
+		}
+	}
+	return n
+}
+
+// needsFix says that a wanted run is complete and has a FAIL, FAILS, MISSING or FLAKY test, or a changed test file that does not parse.
+func (s Set) needsFix() bool {
+	return (s.wantsCanonical() && s.CanonicalJob.State == JobComplete && s.CanonicalCounts.Blocking() > 0) ||
+		(s.wantsReceipt() && s.ReceiptJob.State == JobComplete && s.ReceiptCounts.Blocking() > 0)
+}
 
 // Holds says which runs hold something back, which is only where the gate of the run acts now.
 type Holds struct{ Canonical, Receipt bool }
 
 // Holds says what the set holds back: the canonical run holds the head under canonical required when the head would otherwise pass and its job is the one the gate
 // reads; the receipt run holds the approve under required, and under before-approval while it is not final.
-func (s Set) Holds() Holds { return Holds{} }
+func (s Set) Holds() Holds {
+	return Holds{
+		Canonical: s.wantsCanonical() && !s.Earlier && s.CanonicalLevel == CanonicalLevelRequired && s.HeadReason == HeadReasonGate,
+		Receipt:   s.wantsReceipt() && (s.ReceiptLevel == ReceiptLevelRequired || (s.ReceiptLevel == ReceiptLevelBeforeApproval && !s.ReceiptJob.HasOutcome())),
+	}
+}
 
 // Next is the next step that a results comment names.
 type Next uint8
@@ -152,12 +236,60 @@ func ParseNext(s string) (Next, error) { return parseEnum(nextNames, s, ErrInval
 func (n Next) String() string { return nextNames[n] }
 
 // Next decides the next step of the set, the first that matches.
-func (s Set) Next() (Next, error) { return 0, nil }
+func (s Set) Next() (Next, error) {
+	holds := s.Holds()
+	if (holds.Canonical && lost(s.CanonicalJob)) || (holds.Receipt && lost(s.ReceiptJob)) {
+		return NextUnblock, nil
+	}
+	if s.HeadReason == HeadReasonApprovalMissing {
+		blocked, err := s.approveBlocked()
+		switch {
+		case err != nil:
+			return 0, err
+		case blocked:
+			return NextBlocked, nil
+		}
+		return NextApprove, nil
+	}
+	if s.needsFix() {
+		return NextFix, nil
+	}
+	return NextNone, nil
+}
+
+// lost says that a run is unavailable and the owner has not unblocked it.
+func lost(j Job) bool { return j.State == JobUnavailable && !j.Unblocked }
+
+// approveBlocked says that every approve would be refused for its mode (mode-not-met) and would use its code: the receipt is required, complete and not empty, and
+// none of fix, feature and refactor is met.
+func (s Set) approveBlocked() (bool, error) {
+	if !s.wantsReceipt() || s.ReceiptLevel != ReceiptLevelRequired || s.ReceiptJob.State != JobComplete || s.ReceiptCounts.Empty() {
+		return false, nil
+	}
+	for _, mode := range []Mode{ModeFix, ModeFeature, ModeRefactor} {
+		reason, err := s.ReceiptLevel.ApproveGate(RunComplete, s.ReceiptCounts, mode, false)
+		if err != nil {
+			return false, fmt.Errorf("decide the approve of mode %s: %w", mode, err)
+		}
+		if reason == ReasonNone {
+			return false, nil
+		}
+	}
+	return true, nil
+}
 
 // EarlierCanonical is the canonical job that came before an approval. gate is the canonical job that the gate reads now; when it is governed by another manifest
 // than the canonical version's, the head is approved, and the earlier job is the newest of jobs (the canonical jobs of the head, oldest first, none cancelled) that
 // has an outcome and is governed by canonicalManifest. ok is false for a head that is not approved and for one with no such job.
 func EarlierCanonical(jobs []Job, gate Job, canonicalManifest artifact.Digest) (job Job, ok bool) {
+	if canonicalManifest.IsZero() || gate.Governing.IsZero() || gate.Governing == canonicalManifest {
+		return Job{}, false
+	}
+	for _, j := range slices.Backward(jobs) {
+		if j.HasOutcome() && j.Governing == canonicalManifest {
+			return j, true
+		}
+	}
 	return Job{}, false
 }
 
@@ -165,4 +297,14 @@ func EarlierCanonical(jobs []Job, gate Job, canonicalManifest artifact.Digest) (
 // final and has something to say. earlier is the zero Set for a head with no earlier set. The later set is written unless the leads of both sets are "nothing needs
 // attention", so that a later set corrects an earlier one that reported something, a head that is clean before and after keeps one comment, and a head with no
 // earlier set always gets its comment.
-func ResultsSets(earlier, later Set) []Set { return nil }
+func ResultsSets(earlier, later Set) []Set {
+	var sets []Set
+	hasEarlier := earlier.Earlier && earlier.Final()
+	if hasEarlier {
+		sets = append(sets, earlier)
+	}
+	if later.Final() && (!hasEarlier || earlier.Lead() != LeadClean || later.Lead() != LeadClean) {
+		sets = append(sets, later)
+	}
+	return sets
+}

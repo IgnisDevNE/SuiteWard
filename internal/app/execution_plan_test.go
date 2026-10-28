@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"testing"
 	"time"
@@ -613,4 +614,33 @@ func TestChecksPlanNoJobWhenTheManifestOfTheCanonicalCannotBeKept(t *testing.T) 
 	w.content.putErr = nil
 	w.execRun()
 	requireSpec(t, w.onlyJob(4, bootHead, execution.PlanCanonical), execSpec(w, execution.PlanCanonical, bootHead, 4))
+}
+
+// A canonical job governed by a revision whose manifest the store lacks (a revision recorded before M1.13, or an object that was lost) can never be leased, and
+// the lease takes the oldest candidate: such a job would stop every lease of the instance. The step fails instead, as for any step error, and no such job is
+// planned; the next run, with the object present, plans it.
+func TestChecksPlanNoCanonicalJobForARevisionWhoseManifestIsNotStored(t *testing.T) {
+	w := newExecWorld(t, execDecl)
+	w.execPull(execHeadFiles(execDecl, "v2"))
+	digest := w.revisionManifest(2, 1)
+	stored := w.content.bytes[digest.String()]
+	delete(w.content.bytes, digest.String())
+	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
+	w.check.liveness.Saw(w.clock.Add(time.Minute))
+
+	if err := w.runChecks(); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("checks run = %v, want the step of pull 5 to fail on the manifest of the revision, which the store lacks", err)
+	}
+
+	governed := func(job execution.Job) bool { return job.GoverningDigest == digest }
+	if jobs := w.headJobs(5, cjHead2, execution.PlanCanonical); slices.ContainsFunc(jobs, governed) {
+		t.Fatalf("the head has the canonical jobs %+v, want none governed by a manifest that the store lacks", jobs)
+	}
+
+	w.content.bytes[digest.String()] = stored
+	w.execRun()
+
+	if jobs := w.headJobs(5, cjHead2, execution.PlanCanonical); !slices.ContainsFunc(jobs, governed) {
+		t.Fatalf("the head has the canonical jobs %+v, want one governed by the revision once its manifest is stored", jobs)
+	}
 }

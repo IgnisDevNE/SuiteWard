@@ -39,7 +39,7 @@ func (l *Liveness) LastSeen() time.Time {
 	return l.lastSeen
 }
 
-// LastRequest is the time of the last lease request or heartbeat that arrived, false until the first Saw: a restart of the service
+// LastRequest is the time of the last lease request, heartbeat or result post that arrived, false until the first Saw: a restart of the service
 // alone never counts as an executor. It drives recovery.
 func (l *Liveness) LastRequest() (time.Time, bool) {
 	l.mu.Lock()

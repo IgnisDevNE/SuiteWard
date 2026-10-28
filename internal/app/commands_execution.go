@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
@@ -89,6 +90,7 @@ type liftSet struct {
 // receipt applies to the revision of the pull request, each when it is the job of its plan now. An unavailable one is lifted. One that waits for the runner (leased,
 // or pending for a reason other than GitHub) is ended and lifted when the runner is silent, and is left alone, to run as before, when it responds.
 func (j *commandsJob) liftable(ctx context.Context, c commands.Candidate, head string) (lift liftSet, err error) {
+	silent := sync.OnceValue(func() bool { return j.liveness.Silent(j.now()) }) // read once for the command, when a job waits for the runner: both plans see the same runner
 	view, err := j.reads().receiptView(ctx, c.RepositoryID, func(ctx context.Context, tx governance.Tx) (contract.Proposal, bool, error) {
 		id, found, err := tx.ChangeProposalFor(ctx, carrierID(c.RepositoryID, c.PullNumber))
 		if err != nil || !found {
@@ -109,7 +111,7 @@ func (j *commandsJob) liftable(ctx context.Context, c commands.Candidate, head s
 		if err != nil {
 			return liftSet{}, err
 		}
-		lift.add(execution.PlanCanonical, job, j.action(job, found))
+		lift.add(execution.PlanCanonical, job, action(job, found, silent))
 	}
 	if receiptLevel == domain.ReceiptLevelOff {
 		return lift, nil
@@ -122,7 +124,7 @@ func (j *commandsJob) liftable(ctx context.Context, c commands.Candidate, head s
 	if err != nil {
 		return liftSet{}, err
 	}
-	lift.add(execution.PlanReceipt, job, j.action(job, found))
+	lift.add(execution.PlanReceipt, job, action(job, found, silent))
 	return lift, nil
 }
 
@@ -136,8 +138,8 @@ const (
 	waitJob                    // it waits for a runner that responds: leave it to run, and refuse the unblock if nothing else is lifted
 )
 
-// action decides what an unblock does to the job that the gates read for a plan. The silence of the runner is read when a job waits for it, once for each job.
-func (j *commandsJob) action(job execution.Job, found bool) liftAction {
+// action decides what an unblock does to the job that the gates read for a plan, given whether the runner is silent, which it asks only when a job waits for it.
+func action(job execution.Job, found bool, silent func() bool) liftAction {
 	switch {
 	case !found:
 		return leaveJob
@@ -145,7 +147,7 @@ func (j *commandsJob) action(job execution.Job, found bool) liftAction {
 		return liftJob
 	case !job.WaitsForRunner():
 		return leaveJob
-	case j.liveness.Silent(j.now()):
+	case silent():
 		return endJob
 	}
 	return waitJob

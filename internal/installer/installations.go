@@ -3,6 +3,7 @@ package installer
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // installationsFile is the list of the installations that installs made on this computer, beside the default settings file.
@@ -139,6 +141,36 @@ func forgetInstallation(goos, settingsPath string) error {
 	}
 	list.Installations = kept
 	return writeInstallations(path, list)
+}
+
+// listInstallation adds the installation whose settings were just saved to the list. A list that cannot be written is a warning and not a
+// failure: the installation works, and its entry returns at the next upgrade.
+func listInstallation(scr *ui.Screen, d Deps, settingsPath, tokenFile string, s Settings, instance string) {
+	if err := recordInstallation(d.GOOS, settingsPath, tokenFile, s, instance); err != nil {
+		scr.Warn("Could not update the list of installations: %v. The installation itself works. To add it to the list, run `%s` later.", err, d.suggest("install", "--upgrade"))
+	}
+}
+
+// unlistInstallation takes the installation whose settings a purge removed out of the list. A list that cannot be written is a warning: an entry
+// whose settings file is gone is skipped by every command.
+func unlistInstallation(scr *ui.Screen, d Deps, settingsPath string) {
+	if err := forgetInstallation(d.GOOS, settingsPath); err != nil {
+		scr.Warn("Could not take the installation out of the list of installations: %v. This does no harm: an entry whose settings file is gone is skipped.", err)
+	}
+}
+
+// noteInstance wraps a reader of /status so that the instance id of the first answer that names one is kept in id: the list records what the run
+// reads anyway, and the run asks for nothing more.
+func noteInstance(id *string, status func(context.Context) ([]byte, error)) func(context.Context) ([]byte, error) {
+	return func(ctx context.Context) ([]byte, error) {
+		body, err := status(ctx)
+		if err == nil && *id == "" {
+			if doc, parseErr := parseStatus(body); parseErr == nil {
+				*id = doc.Instance
+			}
+		}
+		return body, err
+	}
 }
 
 // candidate is an installation a command may work on.

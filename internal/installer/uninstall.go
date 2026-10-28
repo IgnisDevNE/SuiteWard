@@ -157,6 +157,7 @@ func removeStack(ctx context.Context, r *Resolver, d Deps, rt Runtime, purge boo
 	if err := purgeState(ctx, rt, remove, settingsPath); err != nil {
 		return err
 	}
+	unlistInstallation(r.screen, d, settingsPath)
 	r.say("Deleted the volumes, the secrets, %s. Backups under %s (or the --backup-dir an upgrade was given) are kept.\n", removed, backupParent(r, filepath.Dir(token.path)))
 	if token.kept {
 		r.say("Kept the access token file %s: it may belong to another instance. Delete it yourself if it is this instance's.\n", token.path)

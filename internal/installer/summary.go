@@ -80,12 +80,16 @@ func (s *summaryRows) addDoctor(ctx context.Context, env Env, settingsPath, toke
 	}
 }
 
-// installationTypeWords is how the summary says where SuiteWard runs: in words, not as the name of the tier.
-func installationTypeWords(t config.Tier) string {
-	if t == config.TierIsolated {
+// installationTypeWords says an installation type as the screens do, in words and not as the name of the tier: "on this computer" for the co-located
+// tier, "on a separate server" for the isolated one. A value this installer does not know is shown as it is, and "" stays empty.
+func installationTypeWords(tier string) string {
+	switch tier {
+	case string(config.TierCoLocated):
+		return "on this computer"
+	case string(config.TierIsolated):
 		return "on a separate server"
 	}
-	return "on this computer"
+	return tier
 }
 
 // dropImported deletes the ruleset file of a repository whose protection passes: the import worked, and the install no longer needs the
@@ -184,7 +188,7 @@ func (c *colocatedInstall) answersHere(ctx context.Context) bool {
 // /status; after an enrollment that gave up there is no version to wait for, and the Owner row says so. The Instance row is the instance id
 // and the Release row the version of the service, as /status reports them.
 func (c *colocatedInstall) commonSummary(ctx context.Context, rows *summaryRows) {
-	rows.add("Installation type", installationTypeWords(c.s.Tier))
+	rows.add("Installation type", installationTypeWords(string(c.s.Tier)))
 	rows.add("Container program", engineLine(c.rt.Engine()))
 	if !c.statusDead {
 		version, id := instanceStatus(ctx, func(ctx context.Context) ([]byte, error) {
@@ -228,7 +232,7 @@ func (c *colocatedInstall) upgradeSummary(ctx context.Context, t installTarget) 
 // isolatedSummary is the summary of the isolated tier: what an install or an upgrade of it share, then its own rows (an upgrade's is Image).
 func isolatedSummary(ctx context.Context, env Env, host isolatedHost, s Settings, own ...ui.KV) []ui.KV {
 	var rows summaryRows
-	rows.add("Installation type", installationTypeWords(s.Tier))
+	rows.add("Installation type", installationTypeWords(string(s.Tier)))
 	rows.add("Container program", engineLine(host.rt.Engine()))
 	address := statusURL(s.HTTPPort)
 	version, id := instanceStatus(ctx, func(ctx context.Context) ([]byte, error) { return env.httpGet()(ctx, address) })

@@ -394,3 +394,31 @@ func TestUninstallKeepsTheExecutorWhenItCannotBeEndedOnWindowsAndSaysSo(t *testi
 		t.Errorf("the stack was not removed: %v", un.f.calls)
 	}
 }
+
+// `schtasks /End` ends only the console host of the task, so a wrapper is left, waiting or running (what an earlier release's documents told people
+// to run, and what a closed console host leaves). An install again with nothing changed finds the task registered and no program running, and
+// starts the task: the wrapper that is left would start a second program next to the new one, and two executors on one engine remove each other's
+// sandboxes. The install ends what is left first.
+func TestAnInstallAgainEndsAWrapperThatIsLeftWhenNothingChangedOnWindows(t *testing.T) {
+	first := machineHarnessOn(t, "windows")
+	if err := first.podman(); err != nil {
+		t.Fatal(err)
+	}
+	again := machineHarnessOn(t, "windows")
+	again.dir, again.exe = first.dir, first.program() // the same program and the same definition: nothing changes
+	again.have(kindSecret, SecretMCPAuth, SecretExecutorAuth)
+	again.first("/Query /TN SuiteWard Executor", "") // the task is registered, and no program runs: tasklist finds none
+	wrapper := filepath.Join(again.executorDir(), "run.cmd")
+	left := treeOf(100, wrapper, again.executorBinary())[1:2] // the wrapper of the console host that ended
+	table := &processTable{procs: slices.Concat(left, anotherInstancesProcesses(again.dir)), stubborn: map[int]bool{}}
+	env := again.newEnv()
+	table.install(&env.Deps)
+	args := []string{"--token-file", again.tokenPath(), "--settings", again.settingsPath(), "--runtime", "podman", "--connection", "pm", "--image", testImage}
+	if err := Install(context.Background(), args, env); err != nil {
+		t.Fatal(err)
+	}
+	if left := table.alive(); !slices.Equal(left, survivors) {
+		t.Errorf("the processes left are %v, want only the others' %v", left, survivors)
+	}
+	again.assertOrder("/T /F /PID", "/Run /TN SuiteWard Executor")
+}

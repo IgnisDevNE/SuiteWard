@@ -1,7 +1,7 @@
 # SuiteWard engineering plan
 
-- **Updated:** 2026-10-27 (phase M2.1, canonical execution and the receipt with the Go profile, is in progress; the latest release is the pre-release `v0.4.0-alpha.3`)
-- **Status:** The MVP phases through M1.11 are delivered and released as `v0.2.0` (2026-10-22), after the security hardening phase [SH](plan/phases/SH.md). The installer phases M1.12 to M1.15 are released as alphas. [M2.1](plan/phases/M2.1.md), canonical execution and the receipt with the Go profile, is in progress.
+- **Updated:** 2026-10-28 (phase M2.1, canonical execution and the receipt with the Go profile, is merged ([#60](https://github.com/IgnisDevNE/SuiteWard/pull/60)) and released as the pre-release `v0.5.0-alpha.1`, the latest, and verified live on both tiers)
+- **Status:** The MVP phases through M1.11 are delivered and released as `v0.2.0` (2026-10-22), after the security hardening phase [SH](plan/phases/SH.md). The installer phases M1.12 to M1.15 are released as alphas. [M2.1](plan/phases/M2.1.md), canonical execution and the receipt with the Go profile, is merged ([#60](https://github.com/IgnisDevNE/SuiteWard/pull/60)) and released as the pre-release `v0.5.0-alpha.1`, verified live on both tiers.
 
 This plan builds on the [project baseline](project-baseline.md) and the [accepted ADRs](decisions/README.md). It concerns how SuiteWard itself is developed; the product's rules for governing customer repositories are separate.
 
@@ -16,7 +16,7 @@ This plan builds on the [project baseline](project-baseline.md) and the [accepte
 - Use standard Go `testing`, structured `log/slog`, explicit errors, and manual dependency composition. See the [development guide](development-guide.md).
 - Test-first for authority, consent, promotion, idempotency, concurrency, and adapter behavior; the `sw-reviewer` subagent checks the order. See [ADR 0025](decisions/0025-test-driven-development.md) and the [TDD rule](tdd.md).
 - Required checks cover Windows/Linux build and tests, formatting and static analysis, Linux race and vulnerability checks, and real PostgreSQL checks for the persistence adapter. Patch coverage is 90% and required; project coverage is informational. See the [CI and coverage guide](ci-and-coverage.md).
-- Preserve the roadmap: M0 proves the domain; M1 delivers integrity governance ("tamper-evident, human-approved test contract"); M2 is canonical execution (M2.1 the engine, the receipt and the Go profile, then Python and TypeScript); M3 adds justified supply-chain hardening.
+- Preserve the roadmap: M0 proves the domain; M1 delivers integrity governance ("tamper-evident, human-approved test contract"); M2 is canonical execution (M2.1 the engine, the receipt and the Go profile, then Python and TypeScript); M3 is security and trust (the TOTP secret at rest, the forced resource limit, an egress allow-list, the fork merge command, owner recovery, the backup shortcuts, an evaluation of remote attestation; the order is in the [roadmap](plan/README.md#roadmap)).
 
 ## Task design rules
 

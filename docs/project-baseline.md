@@ -1,7 +1,7 @@
 # SuiteWard project baseline
 
-- **Updated:** 2026-10-27 (phase M2.1, canonical execution and the receipt with the Go profile, is in progress; the latest release is the pre-release `v0.4.0-alpha.3`)
-- **Stage:** the MVP `v0.2.0` is released (2026-10-22) and the installer phases M1.12 to M1.15 are released as alphas. [M2.1](plan/phases/M2.1.md) is in progress: SuiteWard runs the approved tests, and the tests a pull request adds or changes, in sandboxes driven by a separate executor, where the canonical declaration names a profile. The [delivery plan](plan/README.md) lists each phase.
+- **Updated:** 2026-10-28 (phase M2.1, canonical execution and the receipt with the Go profile, is merged ([#60](https://github.com/IgnisDevNE/SuiteWard/pull/60)) and released as the pre-release `v0.5.0-alpha.1`, the latest, and verified live on both tiers)
+- **Stage:** the MVP `v0.2.0` is released (2026-10-22) and the installer phases M1.12 to M1.15 are released as alphas. [M2.1](plan/phases/M2.1.md) is merged ([#60](https://github.com/IgnisDevNE/SuiteWard/pull/60)) and released as the pre-release `v0.5.0-alpha.1`: SuiteWard runs the approved tests, and the tests a pull request adds or changes, in sandboxes driven by a separate executor, where the canonical declaration names a profile. The [delivery plan](plan/README.md) lists each phase.
 
 ## Product identity and audience
 

@@ -1,7 +1,7 @@
 # ADR 0028: Canonical execution and the receipt
 
 - **Date:** 2026-10-26
-- **Status:** Accepted for phase M2.1 (the Go profile). Built on the phase branch, not merged or released yet. Live, the executor on the co-located tier ran on Windows with Docker and a development build, and on a throwaway AlmaLinux 9 distro the sandbox tests ran under rootless Podman and the host step ran. The isolated flow runs after the merge, on the published alpha (owner decision 15 of the [phase page](../plan/phases/M2.1.md)). Python (M2.2) and TypeScript (M2.3) follow.
+- **Status:** Accepted for phase M2.1 (the Go profile), merged ([#60](https://github.com/IgnisDevNE/SuiteWard/pull/60)) and released as the pre-release `v0.5.0-alpha.1`. Live, the executor on the co-located tier ran on Windows with Docker and a development build, and on a throwaway AlmaLinux 9 distro the sandbox tests ran under rootless Podman and the host step ran. After the merge the isolated flow ran too, on the published alpha (owner decision 15 of the [phase page](../plan/phases/M2.1.md)). Python (M2.2) and TypeScript (M2.3) follow.
 - **Product:** SuiteWard
 - **Scope:** Running the protected tests in disposable sandboxes: canonical execution on every head, the receipt of the tests a pull request adds or changes, the policy that turns them on, the owner's unblock, the executor, and the evidence they leave.
 - **Amends:** [ADR 0008](0008-progressive-integrity-and-execution.md) (the definition of M2). It also changes three statements of [ADR 0015](0015-required-contract-check.md), which carries its own note.

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 )
 
 // What `suiteward doctor` says of the executor on the co-located tier: the files an install leaves beside the token copies, which doctor finds from
@@ -331,6 +333,37 @@ func TestDoctorColocatedLoopbackOfAPodmanMachineThatDoesNotAnswerFromThisCompute
 			}
 			if !strings.Contains(got.Fix, "podman machine") {
 				t.Errorf("the fix must name the machine: %q", got.Fix)
+			}
+		})
+	}
+}
+
+// In a folder that an install refuses, an install does not set up the test runner, so no fix promises that it does: the rows that an install still
+// makes right (the token copy, the Go image, the service's token) say what to run and no more, and a test runner that runs but is not seen by the
+// service has no install to fix it, so its fix is the way out of the folder.
+func TestDoctorPromisesNoTestRunnerFromAnInstallInAFolderWithAPercentSign(t *testing.T) {
+	const percent = "50%off"
+	noToken := okStatus[:len(okStatus)-1] + `,"execution":{"enabled":false,"jobs":{"pending":0},"lastSeenAt":"2026-10-27T00:00:00Z"}}`
+	for name, c := range map[string]struct {
+		with colocated
+		edit func(t *testing.T, files coloExecFiles)
+		row  string
+		want string // what the fix says
+	}{
+		"no token copy":      {colocated{goos: "windows", folder: percent}, func(t *testing.T, files coloExecFiles) { removeFile(t, files.token) }, "executor.token", "install"},
+		"no Go image":        {colocated{goos: "windows", folder: percent, over: []rule{{match: "image inspect " + goprofile.Image, err: errors.New("no such image")}}}, nil, "executor.image", "install"},
+		"the service has no": {colocated{goos: "windows", folder: percent, status: noToken}, nil, "executor.running", "install --upgrade"},
+		"not seen":           {colocated{goos: "windows", folder: percent, status: coloStatus(10 * time.Minute)}, nil, "executor.running", "suiteward uninstall"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, s := c.with.build(t)
+			if c.edit != nil {
+				c.edit(t, coloExecFilesOf(t, f))
+			}
+			_, res, _ := runDoctor(t, f, s)
+			fix := res[c.row].Fix
+			if res[c.row].OK || !strings.Contains(fix, c.want) || strings.Contains(fix, "sets up the test runner") || strings.Contains(fix, "same token and port") {
+				t.Errorf("%s: %+v, want a failure whose fix says %q and does not promise that an install sets up the test runner", c.row, res[c.row], c.want)
 			}
 		})
 	}

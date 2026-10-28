@@ -241,13 +241,20 @@ func TestTheScheduledTaskOfTheExecutorRunsItsScriptThroughAHeadlessConsole(t *te
 }
 
 // The wrapper is what brings the executor back (owner decision 18): Task Scheduler's RestartOnFailure does not restart an action that exited, so a
-// closed console, a crash or an exit starts the program again after about a minute. The pause is ping, which reads no console (timeout does).
+// closed console, a crash or an exit starts the program again after about 5 seconds (owner decision 4 of M2.1b: a head reads "test runner not
+// responding" after about 30 s, so a routine restart must not trip it). The pause is ping, which reads no console (timeout does): 6 echo requests
+// are 5 seconds apart. What a person reads in the script and in its log says "test runner".
 func TestTheWrapperOfTheWindowsTaskStartsTheExecutorAgainAfterAPause(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(h.readHome("executor/run.cmd")), "\r\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "rem ") && strings.Contains(strings.ToLower(line), "executor") {
+			t.Errorf("the comment of the wrapper says executor, not test runner: %s", line)
+		}
+	}
 	start := `"` + h.executorBinary() + `" execute >> "` + filepath.Join(h.executorDir(), "executor.log") + `" 2>&1`
 	at := func(from int, want string) int {
 		t.Helper()
@@ -261,7 +268,8 @@ func TestTheWrapperOfTheWindowsTaskStartsTheExecutorAgainAfterAPause(t *testing.
 	}
 	label := at(0, ":again")
 	run := at(label, start)
-	pause := at(run, `"%SystemRoot%\System32\ping.exe" -n 61 127.0.0.1 >nul`)
+	said := at(run, " The test runner stopped. It starts again in 5 seconds.") // the log is read by a person, through doctor's pointer
+	pause := at(said, `"%SystemRoot%\System32\ping.exe" -n 6 127.0.0.1 >nul`)
 	at(pause, "goto again")
 	if strings.Contains(strings.Join(lines, "\n"), "timeout") {
 		t.Error("the wrapper pauses with timeout, which reads the console")
@@ -279,6 +287,9 @@ func TestTheInstallSaysThatTheExecutorOfWindowsHasNoWindow(t *testing.T) {
 	}
 	if strings.Contains(out, "console window") || strings.Contains(out, "Closing the window") {
 		t.Errorf("the output still says that a window shows and that closing it stops the executor:\n%s", out)
+	}
+	if !strings.Contains(out, "starts again after about 5 seconds") || strings.Contains(out, "after a minute") {
+		t.Errorf("the output must say that the test runner starts again after about 5 seconds, as the script makes it:\n%s", out)
 	}
 }
 

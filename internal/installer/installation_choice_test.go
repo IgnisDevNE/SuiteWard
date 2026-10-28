@@ -146,6 +146,28 @@ func TestARowSaysWhatTheInstallationIs(t *testing.T) {
 	}
 }
 
+// The question has no key of its own: a flag or an answers-file key of its name is not an answer to it, so no key of the answers file changes meaning.
+func TestNoFlagAndNoAnswersKeyAnswersTheQuestionWhichInstallation(t *testing.T) {
+	i := twoInstallations(t)
+	for name, c := range map[string]struct{ flags, answers map[string]string }{
+		"a flag":      {map[string]string{"installation": i.second}, nil},
+		"an answer":   {nil, map[string]string{"installation": i.second}},
+		"both":        {map[string]string{"installation": i.second}, map[string]string{"installation": i.second}},
+	} {
+		r, out := plainResolver(t, c.flags, c.answers, "\n") // Enter takes the default installation
+		if err := r.chooseInstallation(choiceDeps(t)); err != nil || len(r.chosen) != 0 {
+			t.Errorf("%s: err %v, chosen %v: want the question asked and the default installation taken", name, err, r.chosen)
+		}
+		if !strings.Contains(out.String(), "Installation (type the settings file of one of them)") {
+			t.Errorf("%s: the question was not asked:\n%s", name, out.String())
+		}
+	}
+	r, c := keyResolver(t, false, nil, map[string]string{"installation": i.second}, "\r")
+	if err := r.chooseInstallation(choiceDeps(t)); err != nil || len(r.chosen) != 0 || !strings.Contains(c.out.String(), "Which installation?") {
+		t.Errorf("on a full screen: err %v, chosen %v, want the page and the default installation\n%s", err, r.chosen, c.out.String())
+	}
+}
+
 // plainResolver is a resolver on a terminal with a plain screen, which types input.
 func plainResolver(t *testing.T, flags, answers map[string]string, input string) (*Resolver, *bytes.Buffer) {
 	t.Helper()

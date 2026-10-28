@@ -26,7 +26,7 @@ func awaiting(counts *commandtext.CheckExecution, mode bool) commandtext.Check {
 
 func TestCheckSummaryOfAMissingApprovalNamesTheModeWhenTheReceiptIsRequired(t *testing.T) {
 	_, summary := checkText(t, awaiting(nil, true))
-	for _, w := range []string{modeCommand, "name the mode of this change", "Replace `<fix|feature|refactor>` with the mode of this change and `<code>` with a current code from your authenticator app."} {
+	for _, w := range []string{modeCommand, "say what kind of change it is (its mode) and comment:", "Replace `<fix|feature|refactor>` with the mode of this change and `<code>` with a current code from your authenticator app."} {
 		if !strings.Contains(summary, w) {
 			t.Errorf("summary lacks %q:\n%s", w, summary)
 		}

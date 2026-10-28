@@ -198,7 +198,7 @@ func CheckSummary(c Check) (title, summary string) {
 	next, command := reason.next, ""
 	switch {
 	case c.Reason == "approval-missing" && c.ApproveMode: // the receipt gate refuses an approve with no mode under a required receipt, and consumes its code
-		next, command = "To approve this exact revision, name the mode of this change and comment:", modeApproveCommand(ref)
+		next, command = "To approve this exact revision, say what kind of change it is (its mode) and comment:", modeApproveCommand(ref)
 	case c.Reason == "approval-missing":
 		command = codeCommand("approve", ref)
 	case c.Reason == "canonical-unavailable":

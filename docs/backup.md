@@ -157,7 +157,7 @@ To start the service again, co-located, run `suiteward install` with the options
 
 An upgrade that migrated cannot be undone by a restore alone: the backup is of the previous release, and migrations only go forward. The way back is to run the previous release on the instance, and then to restore the backup that the upgrade made. Both steps exist, but the whole way back has not been rehearsed end to end, on either tier or on Docker (an upgrade that also moved the PostgreSQL pin may need more): rehearse it ([section 5](#5-rehearse)) before you rely on it.
 
-- **Co-located (Podman):** remove the stack and its data volumes, install the previous release, and restore. The restore then replaces the empty data. Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.1](install.md#5-install-co-located)), and pass `--connection <name>` to the `suiteward` commands when the install used one.
+- **Co-located (Podman):** remove the stack and its data volumes, install the previous release, and restore. The restore then replaces the empty data. Run every `podman` command in the PowerShell session where you selected the rootless connection ([install guide, step 5.1](install.md#5-install-co-located)), and pass `--connection <name>` to the `suiteward` commands when the install used one. The commands below are for the default instance. An instance that has a settings file of its own adds its `--settings` and `--token-file` to each `suiteward` command, as the way back that the upgrade prints does.
 
   ```powershell
   suiteward uninstall --yes
@@ -707,7 +707,7 @@ The installer creates the volumes and the roles only when it runs, and a run als
 
    Expect a list of entries under `artifacts/` and no error.
 
-3. Remove the stack's containers and data volumes, then start a clean stack of the same version. Take the index digest of that release from its release notes, verify it with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` (on this PC, with cosign 3.x; [install guide, step 10.4](install.md#10-running-on-a-separate-host-operators)), and pass it to `--image`. The `version` in `status.json` names the release (the release you upgrade to, for a backup from v0.1.x).
+3. Remove the stack's containers and data volumes, then start a clean stack of the same version. Take the index digest of that release from its release notes, verify it with `pwsh ./scripts/verify-release.ps1 -Reference ghcr.io/ignisdevne/suiteward@sha256:<index>` (on this PC, with cosign 3.x; [install guide, step 10.4](install.md#10-running-on-a-separate-host-operators)), and pass it to `--image`. The `version` in `status.json` names the release (the release you upgrade to, for a backup from v0.1.x). The commands below are for the default instance: an instance that has a settings file of its own adds its `--settings` and `--token-file` to `suiteward uninstall` and `suiteward install`.
 
    ```powershell
    suiteward uninstall --yes

@@ -296,9 +296,14 @@ func TestAFirstInstallOnWindowsSetsUpNoExecutorWhenTheProcessesCannotBeListed(t 
 			if err := Install(context.Background(), args, env); err != nil {
 				t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
 			}
-			const want = "SuiteWard cannot check the processes on this computer (PowerShell is restricted here), so it does not set up the test runner. Nothing was changed."
-			if out := h.out.String(); !strings.Contains(out, want) {
+			const want = "SuiteWard could not list the programs running on this computer (PowerShell may be restricted here). Without that list it could never stop or update the test runner, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server. Detail: "
+			out := h.out.String()
+			if !strings.Contains(out, want) {
 				t.Errorf("the output lacks %q:\n%s", want, out)
+			}
+			// Running the install again leads nowhere on a computer whose organization restricts PowerShell, so the generic advice is left out.
+			if strings.Contains(out, "Fix the cause") {
+				t.Errorf("the output sends the person to run the install again:\n%s", out)
 			}
 			if len(h.f.find("/Create /TN")) != 0 || len(h.f.find("/Run /TN")) != 0 {
 				t.Errorf("the task was created or started: %v", h.f.lines())

@@ -72,8 +72,12 @@ func healthyColocatedExecutor(t *testing.T, f *fakeEngine) {
 		files.binary: coloProgramText,
 		files.pin:    hex.EncodeToString(sum[:]) + "  " + testReleaseAsset(f.goos) + "\n", // made from a release's sums
 	}
-	if f.goos == "windows" { // a registered task is this instance's when this instance made the two files of it
-		made[filepath.Join(files.dir, executorWrapperName)], made[filepath.Join(files.dir, "task.xml")] = "the wrapper", "the task"
+	if f.goos == "windows" { // a registered task is this instance's when this instance made the two files of it; the task is the current definition
+		plan, err := planExecutor(f.deps(), coloTokenFile(t, f), Settings{HTTPPort: DefaultHTTPPort, Runtime: RuntimePodman}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		made[plan.wrapper], made[plan.taskXML] = plan.windowsWrapper(), string(plan.windowsTask(testSID))
 	}
 	for path, content := range made {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -110,6 +114,26 @@ func TestDoctorColocatedExecutorIsHealthyOnEveryOperatingSystem(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The task of an earlier build (the wrapper run by itself, with a window and RestartOnFailure) is registered by this instance and is not the one this
+// build makes: doctor reads it as a difference that `install --upgrade` fixes, and still says that the executor runs.
+func TestDoctorColocatedWindowsTaskOfAnEarlierBuildIsADifferenceThatAnUpgradeFixes(t *testing.T) {
+	f, s := colocated{goos: "windows"}.build(t)
+	plan, err := planExecutor(f.deps(), coloTokenFile(t, f), Settings{HTTPPort: DefaultHTTPPort, Runtime: RuntimePodman}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, plan.taskXML, string(legacyTask(plan)))
+	code, res, _ := runDoctor(t, f, s)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	wantFail(t, res, "executor.lifecycle", "window")
+	if !strings.Contains(res["executor.lifecycle"].Fix, "install --upgrade") {
+		t.Errorf("the fix %q must name the upgrade", res["executor.lifecycle"].Fix)
+	}
+	wantOK(t, res, "executor.running")
 }
 
 func removeFile(t *testing.T, path string) {

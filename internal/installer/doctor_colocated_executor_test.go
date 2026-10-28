@@ -173,6 +173,29 @@ func TestDoctorSaysThatNoWindowsExecutorCanBeSetUpInAFolderWithAPercentSign(t *t
 	}
 }
 
+// The test runner that is registered may be another instance's: it holds the one place of the computer, but this instance's folder is one that no
+// install accepts, so removing the other instance would free a place that this instance's install refuses. Doctor says why no install can set one up,
+// once, and does not send the person to remove another instance for nothing.
+func TestDoctorDoesNotAskToRemoveAnotherInstanceWhenThisFolderHasAPercentSign(t *testing.T) {
+	f, s := colocated{goos: "windows", folder: "50%off"}.build(t)
+	files := coloExecFilesOf(t, f)
+	removeFile(t, filepath.Join(files.dir, executorWrapperName)) // a registered task whose two files this instance did not make is another instance's
+	removeFile(t, filepath.Join(files.dir, "task.xml"))
+	code, res, names := runDoctor(t, f, s)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	wantFail(t, res, "executor.lifecycle", "percent sign")
+	if fix := res["executor.lifecycle"].Fix; strings.Contains(fix, "another instance") || strings.Contains(fix, "uninstall") {
+		t.Errorf("the fix %q sends the person to remove another instance, and the install that follows is refused", fix)
+	}
+	for _, name := range names {
+		if strings.HasPrefix(name, "executor.") && name != "executor.lifecycle" {
+			t.Errorf("%s is checked beside a folder that no install accepts: %+v", name, res[name])
+		}
+	}
+}
+
 // An install would refuse the folder of such a test runner too, so the fix of a row that an install fixes elsewhere ("install --upgrade") cannot be
 // the install: the way out is to remove the test runner, which the uninstall does, and set up another in a folder without a percent sign.
 func TestDoctorSendsATestRunnerInAFolderWithAPercentSignThroughAnUninstall(t *testing.T) {

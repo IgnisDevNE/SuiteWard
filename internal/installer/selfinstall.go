@@ -112,7 +112,7 @@ func (d Deps) writeCommands(fix string, named []string) string {
 
 // commandWord says whether fix[from:to], the program's name and a subcommand, is a whole command, and where it stands with its backticks. It is
 // one when it is exactly between a pair of backticks, or when it stands alone: after the start of the text, a space or an opening bracket, and
-// before the end of the text, a punctuation mark or a space that no flag follows (a flag belongs to the command, and the instance's flags would go
+// before the end of the text, a line break, a punctuation mark or a space that no flag follows (a flag belongs to the command, and the instance's flags would go
 // before it). Inside a longer backticked command, glued to a word or followed by one it is not.
 func commandWord(fix string, from, to int) (first, last int, whole bool) {
 	var before, after byte
@@ -133,7 +133,7 @@ func commandWord(fix string, from, to int) (first, last int, whole bool) {
 		rest := strings.TrimLeft(fix[to:], " ")
 		return from, to, rest == "" || rest[0] != '-'
 	default:
-		return from, to, strings.ContainsRune(".,;:!?)", rune(after))
+		return from, to, strings.ContainsRune(".,;:!?)\n\r", rune(after))
 	}
 }
 

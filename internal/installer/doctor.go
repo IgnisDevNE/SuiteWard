@@ -70,6 +70,9 @@ type doctorResult struct {
 	Detail  string `json:"detail"`
 	Fix     string `json:"fix"`
 	Warning bool   `json:"warning,omitempty"` // a passing result that needs a look; it does not change the exit code
+	// Commands are the subcommands of this program that Fix of a row of the service names by its bare name: `suiteward check --json` says which,
+	// because the service cannot know the flags of the instance (see commands). An older service sends none.
+	Commands []string `json:"commands,omitempty"`
 }
 
 // needsALook says that a result is not a plain pass: a failure, or a pass that doctor warns about.
@@ -185,6 +188,7 @@ type doctor struct {
 	raw           map[string][]byte
 	units         map[string]map[string]string // isolated: `systemctl show` of each unit
 	results       []doctorResult
+	refusedFolder error // co-located Windows: why an install would refuse the folder of the test runner (refuseNew), when it would
 }
 
 func (d *doctor) pass(name, detail string) {
@@ -930,7 +934,10 @@ func (d *doctor) checkInstance(ctx context.Context) {
 	failed := slices.ContainsFunc(list, func(r doctorResult) bool { return !r.OK })
 	switch {
 	case jerr == nil && (err == nil || failed):
-		d.results = append(d.results, list...)
+		for _, r := range list {
+			r.Fix = d.deps.writeCommands(r.Fix, r.Commands)
+			d.results = append(d.results, r)
+		}
 	case err != nil:
 		d.fail("instance.check", "the checks inside the service container (`suiteward check --json` in "+ContainerServe+") failed before they gave any result: "+err.Error(),
 			d.readFix())

@@ -54,6 +54,16 @@ type selfCheckResult struct {
 	Fix    string `json:"fix"`
 	// Warning marks a passing result that needs a look, such as GitHub not being configured; it is in the JSON only when set.
 	Warning bool `json:"warning,omitempty"`
+	// Commands are the subcommands of this program that Fix names by its bare name ("suiteward install"), in the JSON only when there are some.
+	// The service cannot know the --settings and --token-file of the instance a person works on, so the installer that runs doctor writes each
+	// of these with those flags. The sentence of Fix stays complete without them, for a reader that does not know the key.
+	Commands []string `json:"commands,omitempty"`
+}
+
+// naming says which subcommands the fix of the result names by their bare name (the Commands key).
+func (r selfCheckResult) naming(commands ...string) selfCheckResult {
+	r.Commands = commands
+	return r
 }
 
 func checkPassed(name, detail string) selfCheckResult {
@@ -69,7 +79,7 @@ const notConfiguredFix = "run `suiteward install` again with --github yes (or th
 
 // checkNotConfigured is the result of a GitHub check of an instance installed without GitHub: it passes, as a warning.
 func checkNotConfigured(name string) selfCheckResult {
-	return selfCheckResult{Name: name, OK: true, Warning: true, Detail: "not configured: GitHub is off in this instance", Fix: notConfiguredFix}
+	return selfCheckResult{Name: name, OK: true, Warning: true, Detail: "not configured: GitHub is off in this instance", Fix: notConfiguredFix}.naming("install")
 }
 
 // checkSkipped is the result of a check that needs another one to pass first.
@@ -389,9 +399,9 @@ func selfCheckProtection(repo string, result protection.Result) selfCheckResult 
 		}
 		return checkPassed(name, detail)
 	case protection.KindFindings:
-		return checkFailed(name, string(result.Kind)+": "+strings.Join(codeStrings(result.Findings), ", "), instructions)
+		return checkFailed(name, string(result.Kind)+": "+strings.Join(codeStrings(result.Findings), ", "), instructions).naming(result.Commands...)
 	default: // enforcement-unavailable and unknown name themselves
-		return checkFailed(name, string(result.Kind), instructions)
+		return checkFailed(name, string(result.Kind), instructions).naming(result.Commands...)
 	}
 }
 
@@ -446,8 +456,7 @@ func selfCheckDatabaseResults(ctx context.Context, cfg config.Config) (schema, r
 		warning.Detail = "no owner is enrolled, and setup needs GitHub, which is not configured"
 		return schema, role, warning, nil
 	case !found:
-		return schema, role, checkFailed(nameOwnerEnrolled, "no owner is enrolled",
-			"run `suiteward enroll` where you ran `suiteward install` (as `suiteward` on an isolated host), on a real terminal with session recording off (see the install guide)"), nil
+		return schema, role, checkNoOwner(), nil
 	}
 	return schema, role, checkPassed(nameOwnerEnrolled, fmt.Sprintf("%s is enrolled for %d repositories, tier %s", state.Owner.Login, len(state.Projects), state.Tier)), state.Projects
 }
@@ -489,3 +498,9 @@ func formatPermissions(permissions map[string]string) string {
 
 // selfCheckDatabaseTimeout bounds the database checks together, so a host that never answers cannot hang `check`.
 var selfCheckDatabaseTimeout = 15 * time.Second
+
+// checkNoOwner is the failure of an instance with GitHub whose owner is not enrolled yet.
+func checkNoOwner() selfCheckResult {
+	return checkFailed(nameOwnerEnrolled, "no owner is enrolled",
+		"run `suiteward enroll` where you ran `suiteward install` (as `suiteward` on an isolated host), on a real terminal with session recording off (see the install guide)").naming("enroll", "install")
+}

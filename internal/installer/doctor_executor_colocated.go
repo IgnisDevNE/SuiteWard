@@ -16,9 +16,26 @@ import (
 // The rows do not repeat that reduced assurance: the install's summary and the page that introduces this tier say it once (owner decision 19).
 // Their texts are for a person with little technical background (work/m21-briefs/plain-language.md): what happened, whether it is a problem, what to do.
 
-// installFix is the fix of a result that an install of this release makes right.
+// installFix is the fix of a result that an install of this release makes right. In a folder that an install refuses (refuseNew) it does not set
+// up the test runner, so it does not promise that.
 func (d *doctor) installFix() string {
-	return "Run `" + d.deps.suggest("install", "--upgrade") + "` if the service is from an earlier release. Otherwise run `" + d.deps.suggest("install") + "` again. Either one sets up the test runner again."
+	fix := "Run `" + d.deps.suggest("install", "--upgrade") + "` if the service is from an earlier release. Otherwise run `" + d.deps.suggest("install") + "` again."
+	if d.refusedFolder != nil {
+		return fix
+	}
+	return fix + " Either one sets up the test runner again."
+}
+
+// executorFix is the fix of a result about the test runner itself (its program, its registration). In a folder that an install refuses, an install
+// makes none of these right: the test runner is removed (the uninstall does that), and another is set up in a folder that the install accepts.
+// The token copy and the Go image are made by an install whatever becomes of the test runner, so their rows keep installFix.
+func (d *doctor) executorFix() string {
+	if d.refusedFolder != nil {
+		fresh := d.deps // the install of the other folder names this instance's settings, and a token file to fill in: the old one is the refused one
+		fresh.instance.tokenFile = ""
+		return "An install cannot set up the test runner in this folder, because of the percent sign (%) in its path. To move this instance to another folder, run `" + d.deps.suggest("uninstall") + "`, which removes this instance's containers and its test runner (your data stays), then run `" + fresh.suggest("install", "--token-file <a file in a folder without a percent sign>") + "`, which sets it up again with a new access token file, so point your coding agent's client at it."
+	}
+	return d.installFix()
 }
 
 // anotherInstanceFix is the fix of an executor that is registered for another instance: an install of this one skips it, so it is that instance's removal that frees the place.
@@ -67,7 +84,13 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	if stateErr == nil {
 		other, stateErr = plan.foreign(registered)
 	}
-	fix, notRunning := d.installFix(), plan.startHint()
+	d.refusedFolder = plan.refuseNew()
+	// Nothing of this instance is there (or another instance's holds the place), and an install would refuse the folder even once that one is removed:
+	// no other row is checked, because its fix would be that install.
+	if stateErr == nil && (!registered || other) && d.failRefusedFolder() {
+		return
+	}
+	fix, notRunning := d.executorFix(), plan.startHint()
 	if other { // no install makes this instance an executor of its own while that one is registered
 		fix = d.anotherInstanceFix()
 		notRunning = fix
@@ -80,15 +103,15 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	}
 	switch {
 	case stateErr != nil:
-		d.fail("executor.lifecycle", "Doctor could not ask the operating system about the test runner: "+stateErr.Error(), d.installFix())
+		d.fail("executor.lifecycle", "Doctor could not ask the operating system about the test runner: "+stateErr.Error(), d.executorFix())
 	case other:
 		d.fail("executor.lifecycle", "The test runner on this computer belongs to another instance, not to the one that uses the token file `"+tokenFile+"`. A computer has one test runner.", fix)
 	case !registered:
-		d.fail("executor.lifecycle", "The test runner is not set up on this computer. It should be "+executorMechanism(plan.goos)+".", d.installFix())
+		d.fail("executor.lifecycle", "The test runner is not set up on this computer. It should be "+executorMechanism(plan.goos)+".", d.executorFix())
 	case definitionErr != nil:
-		d.fail("executor.lifecycle", "Doctor could not read the test runner's task definition: "+definitionErr.Error(), d.installFix())
+		d.fail("executor.lifecycle", "Doctor could not read the test runner's task definition: "+definitionErr.Error(), d.executorFix())
 	case !current:
-		d.fail("executor.lifecycle", "The scheduled task of the test runner is not the one this version of SuiteWard makes (it may come from an older version, or it was changed). This needs your action.", d.installFix())
+		d.fail("executor.lifecycle", "The scheduled task of the test runner is not the one this version of SuiteWard makes (it may come from an older version, or it was changed). This needs your action.", d.executorFix())
 	default:
 		d.pass("executor.lifecycle", "The test runner is set up as "+executorMechanism(plan.goos)+".")
 	}
@@ -105,10 +128,30 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	}, runningFixes{
 		noToken:    d.installFix(),
 		notRunning: notRunning,
-		notSeen:    "Read the test runner's log (" + plan.logWhere() + ") to see why. Then run `" + d.deps.suggest("install") + "` again: it makes the service and the test runner use the same token and port.",
+		notSeen:    d.notSeenFix(plan),
 	})
 	d.checkExecutorImage(ctx)
 	d.checkExecutorLoopback(ctx)
+}
+
+// notSeenFix is the fix of a test runner that runs and that the service has not seen lately: its log says why, and an install makes the service
+// and the test runner use the same token and port. In a folder that an install refuses there is no such install: it is the way out of the folder.
+func (d *doctor) notSeenFix(plan executorPlan) string {
+	read := "Read the test runner's log (" + plan.logWhere() + ") to see why. "
+	if d.refusedFolder != nil {
+		return read + d.executorFix()
+	}
+	return read + "Then run `" + d.deps.suggest("install") + "` again: it makes the service and the test runner use the same token and port."
+}
+
+// failRefusedFolder is the result of a computer that has no test runner of this instance in a folder that an install refuses (refuseNew): running
+// the install again does not help, nor does removing the test runner of another instance, so the message says what to do. It reports whether the
+// folder is refused.
+func (d *doctor) failRefusedFolder() bool {
+	if d.refusedFolder != nil {
+		d.fail("executor.lifecycle", d.refusedFolder.Error(), "Do what the message says, then run `"+d.deps.suggest("doctor")+"` again.")
+	}
+	return d.refusedFolder != nil
 }
 
 // checkExecutorImage asks the engine that runs the sandboxes whether it has the Go image under its digest: the executor starts them with

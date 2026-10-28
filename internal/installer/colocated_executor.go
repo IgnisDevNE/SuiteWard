@@ -57,8 +57,10 @@ func executorMechanism(goos string) string {
 }
 
 // errProcessesNotListed is why a first install on Windows sets up no test runner: the listing of the programs that run fails, so the installer
-// could never stop or update one. Running the install again changes nothing, and setUpExecutor leaves that advice out.
-var errProcessesNotListed = errors.New("SuiteWard could not list the programs running on this computer (PowerShell may be restricted here). Without that list it could never stop or update the test runner, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server")
+// could never stop or update one. Running the install again changes nothing, and setUpExecutor leaves that advice out. It follows the listing's
+// own error, which already says that the programs could not be listed and, when a policy stopped PowerShell, that it did: the note does not say
+// either a second time, and keeps the advice to ask an administrator.
+var errProcessesNotListed = errors.New("SuiteWard could never stop or update the test runner without that list, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server")
 
 // installExecutor makes the executor of this computer as the settings and this program say: its copy of the program and the pin beside it, the
 // definition that the operating system reads, and the start. What is already as it should be is left alone: an executor that runs, with the same
@@ -75,6 +77,9 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	}
 	plan, err := planExecutor(d, c.tokenFile, c.s, engineBinDir(c.rt))
 	if err != nil {
+		return executorPlan{}, err
+	}
+	if err := plan.refuseNew(); err != nil {
 		return executorPlan{}, err
 	}
 	sid, err := windowsSID(d)
@@ -101,7 +106,7 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	// updated or removed by it (PowerShell in constrained language mode), so it is not set up.
 	if plan.goos == "windows" && !registered {
 		if _, err := plan.listProcesses(ctx, d); err != nil {
-			return plan, fmt.Errorf("%w. Detail: %w", errProcessesNotListed, err)
+			return plan, fmt.Errorf("%w. %w", err, errProcessesNotListed)
 		}
 	}
 	if err := os.MkdirAll(plan.dir, 0o700); err != nil {
@@ -184,7 +189,7 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 	c.executorRow = executorMechanism(plan.goos) + "; " + plan.binary
 	scr.Check("The test runner (the executor) is set up as %s. It runs a copy of this program: %s.\n", executorMechanism(plan.goos), plan.binary)
 	if plan.goos == "windows" {
-		scr.Say("The test runner has no window. It runs in the background, and if it stops it starts again after a minute.\n")
+		scr.Say("The test runner has no window. It runs in the background, and if it stops it starts again after about %d seconds.\n", executorRestartSeconds)
 	}
 	if c.s.Runtime == RuntimeDocker {
 		scr.Say("The test runner starts its sandboxes through Docker. Docker's own command line cannot drive Podman: it stops, because it does not know the options the sandboxes need. Podman's docker command (the podman-docker package) does work with Podman. To use Podman, install with `--runtime podman`.\n")

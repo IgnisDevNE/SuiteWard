@@ -81,3 +81,26 @@ func TestTheIsolatedInstallDoesNotSayTheColocatedTierHasReducedAssurance(t *test
 		t.Errorf("the isolated install speaks of the reduced assurance of the other tier:\n%s", out.String())
 	}
 }
+
+// A window too small for the whole summary drops the warnings, from the end, and then the rows that are not key rows. The notice is a security
+// disclosure, so it is one of the rows that stay (and it is not repeated in the warnings): on the smallest window of a full screen, 60x20, where
+// the checks' warnings alone fill the page, the summary still says it.
+func TestTheSummaryOfAColocatedInstallKeepsTheReducedAssuranceNoticeOnTheSmallestWindow(t *testing.T) {
+	withTerminal(t, true)
+	h := newHarness(t, "linux")
+	h.github = func(context.Context, githubEnv) (GitHubResult, error) { return githubResult(), nil }
+	c := sizedConsole{termConsole: newTermConsole(&bytes.Buffer{}), w: 60, h: 20}
+	env := h.newEnv()
+	env.OpenScreen = c.open
+	if err := Install(liveContext(t), colocatedArgs(h), env); err != nil {
+		t.Fatal(err)
+	}
+	out := c.out.String()
+	page := pageText(t, out[:strings.LastIndex(out, leaveAlt)], 60, 20)
+	if !strings.Contains(page, trimmed) {
+		t.Fatalf("the window is not too small for the summary, so the test shows nothing:\n%s", page)
+	}
+	if !strings.Contains(page, reducedAssuranceKey) {
+		t.Errorf("the summary page lost the reduced-assurance notice when it was trimmed to 60x20:\n%s", page)
+	}
+}

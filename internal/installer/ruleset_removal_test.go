@@ -83,7 +83,10 @@ func TestTheRulesetFileStaysWhileTheProtectionNeedsTheImport(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !rulesetFileExists(t, env.SettingsDir, "acme/app") {
-			t.Error("the file went although the protection still needs the import")
+			t.Fatal("the file went although the protection still needs the import")
+		}
+		if raw, _ := os.ReadFile(rulesetPath(env.SettingsDir, "acme/app")); string(raw) != goldenRuleset {
+			t.Errorf("ruleset file:\n%s", raw)
 		}
 	})
 }

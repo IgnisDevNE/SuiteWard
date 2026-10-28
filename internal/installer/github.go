@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -1120,6 +1121,7 @@ func importRulesets(ctx context.Context, env githubEnv, a ghAccess, res GitHubRe
 		return pauseForImport(ctx, scr, env.Command, env.WebURL, reader, res, repos, files)
 	}
 	results, lines := readProtections(ctx, reader, res, repos)
+	dropImported(scr, repos, files, results)
 	keepProtection(scr, env.Command, lines)
 	return results, nil
 }
@@ -1155,9 +1157,25 @@ func warnPrivate(scr *ui.Screen, r repoInfo) {
 	}
 }
 
-// keepImports prints, as lines that stay, the file and the rules page of each repository that is not protected: what is left to do once
-// the page of the pause is gone.
+// dropImported deletes the ruleset file of each repository whose protection reads as enforced: the import worked, and the file is not
+// needed any more (owner decision 20). A protection that still needs the import, or whose enforcement is unavailable, keeps its file.
+func dropImported(scr *ui.Screen, repos []repoInfo, files map[string]string, results map[string]protection.Result) {
+	for _, r := range repos {
+		if results[r.name].Kind != protection.KindEnforced || files[r.name] == "" {
+			continue
+		}
+		if err := os.Remove(files[r.name]); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			scr.Warn("Could not delete the ruleset file %s (%v). You do not need it any more, so you can delete it yourself.\n", files[r.name], err)
+			continue
+		}
+		scr.Keep("The ruleset file of %s was deleted: the import worked.\n", r.name)
+	}
+}
+
+// keepImports first deletes the files that are done (dropImported), then prints, as lines that stay, the file and the rules page of each
+// repository that is not protected: what is left to do once the page of the pause is gone.
 func keepImports(scr *ui.Screen, webURL string, repos []repoInfo, files map[string]string, results map[string]protection.Result) {
+	dropImported(scr, repos, files, results)
 	for _, r := range repos {
 		if results[r.name].Kind != protection.KindEnforced {
 			keepImport(scr, r, files[r.name])

@@ -3,7 +3,9 @@ package installer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -64,14 +66,29 @@ func (s *summaryRows) addDoctor(ctx context.Context, env Env, settingsPath, toke
 	}
 	passed, warned, failed := doctorCounts(results)
 	s.add("Doctor", fmt.Sprintf("%d ok, %d warnings, %d failures", passed, warned, failed))
+	dir := filepath.Dir(settingsPath)
 	for _, r := range results {
+		s.dropImported(r, dir)
 		if r.needsALook() {
-			r.Fix = importRulesetFix(r, filepath.Dir(settingsPath))
+			r.Fix = importRulesetFix(r, dir)
 			s.warn(r.line())
 		}
 	}
 	if warned+failed > 0 {
 		s.add("Check again", again)
+	}
+}
+
+// dropImported deletes the ruleset file of a repository whose protection passes: the import worked, and the install no longer needs the
+// file (owner decision 20). A repository that is not protected yet keeps it, and importRulesetFix names it.
+func (s *summaryRows) dropImported(r doctorResult, dir string) {
+	repo, isProtection := strings.CutPrefix(r.Name, "protection.")
+	if !isProtection || !r.OK {
+		return
+	}
+	file := rulesetPath(dir, repo)
+	if err := os.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		s.warn(fmt.Sprintf("Could not delete the ruleset file %s (%v). You do not need it any more, so you can delete it yourself.", file, err))
 	}
 }
 

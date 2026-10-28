@@ -5,6 +5,7 @@
 - **Product:** SuiteWard
 - **Scope:** Running the protected tests in disposable sandboxes: canonical execution on every head, the receipt of the tests a pull request adds or changes, the policy that turns them on, the owner's unblock, the executor, and the evidence they leave.
 - **Amends:** [ADR 0008](0008-progressive-integrity-and-execution.md) (the definition of M2). It also changes three statements of [ADR 0015](0015-required-contract-check.md), which carries its own note.
+- **M2.1b note (2026-10-28):** the unblock of section 7 and the recovery of section 5 change for a runner that does not respond. See the [note](#note-2026-10-28-the-unblock-lifts-a-pending-run-since-m21b) at the end ([ADR 0029](0029-results-communication.md)).
 - **Related:** [ADR 0002](0002-exact-revision-approval.md), [ADR 0007](0007-canonical-contract-authority.md), [ADR 0013](0013-protected-scope-and-agent-assisted-review.md), [ADR 0027](0027-agent-human-trust-separation.md), D-APPROVAL-CONTEXT, D-COMMANDS and D-CHECKS in the [decision register](../plan/decisions.md), the [M2.1 phase page](../plan/phases/M2.1.md), the [runtime contract](../contracts/runtime.md#execution-m21-normative), the [persistence contract](../contracts/persistence.md#execution-m21-normative) and the [threat model](../security/threat-model.md).
 
 Names, sizes and durations that the contracts mark with † are choices of task A0, made inside this decision. The integrator may change them under the register's rule on implementation choices. The deferred work at the end is not such a choice.
@@ -264,3 +265,11 @@ Deferred:
 - **Python and TypeScript install steps** run package code. Their safety is decided with M2.2 and M2.3.
 - **Pruning** of old per-test rows is not done in M2.1.
 - **Execution by a managed service** stays with [D-MANAGED-EXECUTION](../plan/decisions.md#open).
+
+## Note 2026-10-28: the unblock lifts a pending run since M2.1b
+
+Section 7 says that an unblock never lifts "a pending run", and section 5 says that an unblock given for the old job does not carry over when a fresh job replaces a `no-executor` job. Owner decisions 5 and 6 of phase M2.1b change both, for a test runner that does not respond ([ADR 0029](0029-results-communication.md), decisions 5 and 6; the [runtime contract](../contracts/runtime.md#the-early-unblock-and-its-hold)). Everything else in this record stands.
+
+- **A pending run can be unblocked, when the runner does not respond.** A head reads *not responding* when no executor was seen for about 30 seconds and a wanted job of the head waits for the runner. From then on `/suiteward unblock <code>` ends the head's open jobs as `unavailable` (`no-executor`) and lifts them in the same transaction, with the jobs that are `unavailable` already. A run that a responding executor holds is refused (`runner-responding`). The unblock still needs the owner's TOTP code, still binds to the jobs it names and still lifts only the gates: it never lifts a failing, missing or flaky test.
+- **An unblock holds.** The recovery rule does not replace a `no-executor` job that the owner unblocked, so the executor that comes back runs nothing for that head, and the next push runs as usual. A `no-executor` outcome that the owner unblocked after the lease wait holds in the same way. A job that ended for `executor-not-configured` is still replaced once a token is configured. SuiteWard warns on the pull request, once, that the head was unblocked and that its tests did not run, when the runner is seen again.
+- **The wait is shorter.** The consequence "the unblock is reachable once the run reads `unavailable`, which a missing executor does after the lease wait" now holds from about 30 seconds on. `EXECUTOR_LEASE_WAIT` is unchanged: it still ends the pending jobs as `unavailable` (`no-executor`).

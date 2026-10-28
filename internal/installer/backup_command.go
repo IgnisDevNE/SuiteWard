@@ -32,7 +32,7 @@ func Backup(ctx context.Context, args []string, env Env) (err error) {
 	}
 	set := newFlagSet("backup")
 	instanceFlags(set)
-	set.String("to", "", "the folder the backup file is written to (default: a backups folder beside the saved MCP token file; on a separate server, in ~/.config/suiteward of the service account)")
+	set.String("to", "", "the folder the backup file is written to (default: a backups folder beside the saved access token file; on a separate server, in ~/.config/suiteward of the service account)")
 	flags, err := parse(set, args, env.Term.Out)
 	if err != nil {
 		return err
@@ -84,7 +84,7 @@ func Backup(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return backupFailed(run.abort(err), false)
 	}
-	scr.Keep("The backup is in %s. It holds the TOTP secret (behind your authenticator codes), locked with the recovery key %s. Keep the recovery kit off this computer.\n", path, archive.Fingerprint(inst.s.BackupRecipient))
+	scr.Keep("The backup is in %s. It holds the authenticator secret (the TOTP secret), locked with the recovery key %s. Keep the recovery kit off this computer.\n", path, archive.Fingerprint(inst.s.BackupRecipient))
 	scr.Keep("To restore it, run `%s restore %s` with that kit.\n", env.Deps.command(), quoteArg(path))
 	return showSummary(scr, func() []ui.KV { return backupSummary(path, run.doc, inst.s.BackupRecipient) })
 }
@@ -97,7 +97,7 @@ func backupSummary(path string, doc statusDoc, recipient string) []ui.KV {
 	return []ui.KV{
 		{Key: "Backup", Value: path},
 		{Key: "Size", Value: size},
-		{Key: "Instance", Value: doc.Instance},
+		{Key: "Instance ID", Value: doc.Instance},
 		{Key: "Version", Value: doc.Version},
 		{Key: "Recovery key", Value: archive.Fingerprint(recipient)},
 	}

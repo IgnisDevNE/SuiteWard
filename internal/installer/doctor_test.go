@@ -387,7 +387,7 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 		{"a health answer that is not JSON", colocated{health: `<html>`}, "healthz", []string{"/healthz"}},
 		{"failed outbox messages", colocated{status: `{"version":"v","schemaVersion":20,"jobs":{"discarded":0},"outbox":{"failed":2}}`}, "status", []string{"outbox", "2"}},
 		{"discarded jobs", colocated{status: `{"version":"v","schemaVersion":20,"jobs":{"discarded":1},"outbox":{"failed":0}}`}, "status", []string{"discarded", "1"}},
-		{"no schema version", colocated{status: `{"version":"v","jobs":{"discarded":0},"outbox":{"failed":0}}`}, "status", []string{"schema version"}},
+		{"no schema version", colocated{status: `{"version":"v","jobs":{"discarded":0},"outbox":{"failed":0}}`}, "status", []string{"database version"}},
 		{"another tier than the settings", colocated{status: strings.Replace(okStatus, `"tier":"co-located"`, `"tier":"isolated"`, 1)}, "status", []string{"installation type", "isolated", "co-located"}},
 		{"no tier", colocated{status: strings.Replace(okStatus, `"tier":"co-located",`, ``, 1)}, "status", []string{"installation type"}},
 		{"a status that is not JSON", colocated{status: `<html>`}, "status", []string{"/status"}},

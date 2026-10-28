@@ -64,7 +64,7 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, env Env
 		if err := os.Remove(executorHandoverFile(host.configDir)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("remove %s: %w", executorHandoverFile(host.configDir), err)
 		}
-		_, _ = fmt.Fprintf(out, "Removed the volumes, the secrets, the network, the copy of the executor's token, %s and %s. Backups under %s are kept.\n", host.envPath, host.settingsPath, filepath.Join(host.configDir, "backups"))
+		_, _ = fmt.Fprintf(out, "Removed the volumes, the secrets, the network, the copy of the test runner's token, %s and %s. Backups under %s are kept.\n", host.envPath, host.settingsPath, filepath.Join(host.configDir, "backups"))
 	} else {
 		_, _ = fmt.Fprintf(out, "The volumes (your data), the secrets and the settings are kept. Run install again to start SuiteWard, or use `--purge` to remove them too.\n")
 	}

@@ -42,9 +42,9 @@ func (d *doctor) checkExecutorIsolated(ctx context.Context) {
 	d.checkExecutorUnit(ctx)
 	d.checkExecutorBinary(ctx)
 	d.checkExecutorRunning(ctx, d.isolatedProcess, runningFixes{
-		noToken:    "As the administrator, run `" + d.hostStep() + "`. Then run `" + d.deps.command() + " install --tier isolated` as the service account: it gives the service the executor's token and restarts it.",
+		noToken:    "As the administrator, run `" + d.hostStep() + "`. Then run `" + d.deps.command() + " install --tier isolated` as the service account: it gives the service the test runner's token and restarts it.",
 		notRunning: "To see why, run `sudo journalctl _SYSTEMD_USER_UNIT=" + executorUnitName + " -n 50 --no-pager`. To start it, run `" + d.hostStep() + "` as the administrator.",
-		notSeen:    "Read the executor's log. Then, as the administrator, run `" + d.hostStep() + "` again and run the install as the service account, so that both use one token and one port.",
+		notSeen:    "Read the test runner's log. Then, as the administrator, run `" + d.hostStep() + "` again and run the install as the service account, so that both use one token and one port.",
 	})
 	// The storage of the executor's Podman is its own, and this account cannot read it: the host step is what pulls the image and checks it by digest.
 	d.pass("executor.image", "doctor does not check the Go image of the sandboxes (the locked-down containers that run tests): it is stored under "+ExecutorAccount+", which this account cannot read. The host step downloads it and checks its fingerprint at every run: run `"+d.hostStep()+"` again after an upgrade")
@@ -74,7 +74,7 @@ func (d *doctor) checkExecutorAccount(ctx context.Context) string {
 	fix := "As the administrator, run `" + d.hostStep() + "`: it creates the account with its own id ranges and sets linger."
 	uid, err := d.out(ctx, "id", "-u", ExecutorAccount)
 	if err != nil {
-		d.fail("executor.account", "the account "+ExecutorAccount+" (the executor's own user) does not exist: "+err.Error(), fix)
+		d.fail("executor.account", "the account "+ExecutorAccount+" (the user of the test runner, the executor) does not exist: "+err.Error(), fix)
 		return ""
 	}
 	var problems []string
@@ -100,7 +100,7 @@ func (d *doctor) checkExecutorAccount(ctx context.Context) string {
 	}
 	linger, err := d.out(ctx, "loginctl", "show-user", ExecutorAccount, "-p", "Linger")
 	if err != nil || linger != "Linger=yes" {
-		problems = append(problems, ExecutorAccount+" does not keep its services running after logout (linger), so its executor stops at logout and does not start at boot")
+		problems = append(problems, ExecutorAccount+" does not keep its services running after logout (linger), so its test runner stops at logout and does not start at boot")
 	}
 	if len(problems) > 0 {
 		d.fail("executor.account", strings.Join(problems, "; "), fix)
@@ -140,7 +140,7 @@ func (d *doctor) checkExecutorDelegation(ctx context.Context, uid string) {
 		problems = append(problems, "the user manager of "+ExecutorAccount+" has the resource controllers "+strings.Join(have, " ")+" but lacks "+strings.Join(missing, " ")+", so its sandboxes cannot be limited")
 	}
 	if len(problems) > 0 {
-		d.fail("executor.delegation", strings.Join(problems, "; "), "As the administrator, run `"+d.hostStep()+"`: it writes the drop-in file. A user manager that started earlier gets the controllers only after `sudo systemctl restart user@"+uid+".service` (it holds none of the stack's containers) or a reboot.")
+		d.fail("executor.delegation", strings.Join(problems, "; "), "As the administrator, run `"+d.hostStep()+"`: it writes the drop-in file. A user manager that started earlier gets the controllers only after `sudo systemctl restart user@"+uid+".service` (it holds none of the installation's containers) or a reboot.")
 		return
 	}
 	d.pass("executor.delegation", "the user manager of "+ExecutorAccount+" has the resource controllers "+strings.Join(have, " ")+", as "+executorDropIn+" delegates")
@@ -197,7 +197,7 @@ func (d *doctor) checkExecutorUnit(ctx context.Context) {
 	}
 	if m := executorUnitPort.FindStringSubmatch(on); len(m) > 1 && m[1] != strconv.Itoa(d.s.HTTPPort) {
 		if fixed, err := replaceLine(on, lineEdit{old: executorUnitURLLine(mustAtoi(m[1])), new: executorUnitURLLine(d.s.HTTPPort)}); err == nil && fixed == strings.TrimSpace(string(want)) {
-			d.fail("executor.unit", fmt.Sprintf("the executor's unit points at http://127.0.0.1:%s, but the service listens on port %d", m[1], d.s.HTTPPort),
+			d.fail("executor.unit", fmt.Sprintf("the test runner's unit points at http://127.0.0.1:%s, but the service listens on port %d", m[1], d.s.HTTPPort),
 				"As the administrator, run `"+d.hostStep()+fmt.Sprintf(" --http-port %d`.", d.s.HTTPPort))
 			return
 		}
@@ -225,7 +225,7 @@ func (d *doctor) checkExecutorBinary(ctx context.Context) {
 	pin, err := d.out(ctx, "cat", executorPin)
 	fields := strings.Fields(pin)
 	if err != nil || len(fields) < 2 {
-		d.fail("executor.binary", "the executor program has no recorded fingerprint at "+executorPin+": "+fmt.Sprint(err), fix)
+		d.fail("executor.binary", "the test runner program has no recorded fingerprint at "+executorPin+": "+fmt.Sprint(err), fix)
 		return
 	}
 	pinned, name := fields[0], fields[1]
@@ -234,14 +234,14 @@ func (d *doctor) checkExecutorBinary(ctx context.Context) {
 	case err != nil:
 		d.fail("executor.binary", "doctor could not compute this program's fingerprint: "+err.Error(), doctorBugFix)
 	case sum != pinned:
-		d.fail("executor.binary", fmt.Sprintf("the executor program was changed after it was installed (its fingerprint, a SHA-256, is %s; the recorded one is %s)", sum, pinned), fix)
+		d.fail("executor.binary", fmt.Sprintf("the test runner program was changed after it was installed (its fingerprint, a SHA-256, is %s; the recorded one is %s)", sum, pinned), fix)
 	case sum != own:
-		d.fail("executor.binary", fmt.Sprintf("the executor is a different build than this program (fingerprints, SHA-256: executor %s, this program %s)", sum, own), fix)
+		d.fail("executor.binary", fmt.Sprintf("the test runner is a different build than this program (fingerprints, SHA-256: test runner %s, this program %s)", sum, own), fix)
 	case !releaseAssetOf("linux").MatchString(name):
 		d.fail("executor.binary", "the test runner (the executor) has not been checked against an official release: its recorded fingerprint ("+sum+") does not come from a release's SHA256SUMS file (the record names "+name+")",
 			"A separate server requires this check. As the administrator, run `"+d.hostStep()+"` with the program from that release.")
 	default:
-		d.pass("executor.binary", "the executor program (fingerprint "+sum+") is the recorded one and this program, and the release's SHA256SUMS lists it as "+name)
+		d.pass("executor.binary", "the test runner program (fingerprint "+sum+") is the recorded one and this program, and the release's SHA256SUMS lists it as "+name)
 	}
 }
 
@@ -272,7 +272,7 @@ const executorSeenWithin = 2 * time.Minute
 func (d *doctor) isolatedProcess(ctx context.Context) error {
 	_, err := d.out(ctx, "pgrep", "-u", ExecutorAccount, "-f", "--", "^"+regexp.QuoteMeta(executorBinary)+" execute$")
 	if err != nil {
-		return fmt.Errorf("the executor is not running: no process of %s runs %s execute (%v)", ExecutorAccount, executorBinary, err)
+		return fmt.Errorf("the test runner is not running: no process of %s runs %s execute (%v)", ExecutorAccount, executorBinary, err)
 	}
 	return nil
 }
@@ -299,13 +299,13 @@ func (d *doctor) checkExecutorRunning(ctx context.Context, process func(context.
 		Execution *executionStatus `json:"execution"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		d.fail("executor.running", "doctor could not read the executor part of /status: "+err.Error(), "Read the service's log to find out why.")
+		d.fail("executor.running", "doctor could not read the test runner part of /status: "+err.Error(), "Read the service's log to find out why.")
 		return
 	}
 	upgrade := "Run `" + d.deps.command() + " install --upgrade` with this release's program."
 	switch {
 	case doc.Execution == nil:
-		d.fail("executor.running", "this service is older than M2.1, the release that added the test runner, so it cannot use one (its /status has no executor information)", upgrade)
+		d.fail("executor.running", "this service is older than the version that added the test runner, so it cannot use one (its /status has no test runner information)", upgrade)
 		return
 	case !doc.Execution.Enabled:
 		d.fail("executor.running", "the service has no executor token (EXECUTOR_TOKEN is not set), so it cannot use a test runner and every test run is unavailable", fixes.noToken)
@@ -317,8 +317,8 @@ func (d *doctor) checkExecutorRunning(ctx context.Context, process func(context.
 	}
 	age := time.Since(doc.Execution.LastSeenAt).Round(time.Second)
 	if age > executorSeenWithin {
-		d.fail("executor.running", fmt.Sprintf("the executor runs, but the service last saw an executor %s ago: it cannot reach the service at http://127.0.0.1:%d, or it uses a different token than the service", age, d.s.HTTPPort), fixes.notSeen)
+		d.fail("executor.running", fmt.Sprintf("the test runner runs, but the service last saw a test runner %s ago: it cannot reach the service at http://127.0.0.1:%d, or it uses a different token than the service", age, d.s.HTTPPort), fixes.notSeen)
 		return
 	}
-	d.pass("executor.running", fmt.Sprintf("the executor runs and was last seen by the service %s ago (the service starts that clock when it starts, so the running process is the real proof)", age))
+	d.pass("executor.running", fmt.Sprintf("the test runner runs and was last seen by the service %s ago (the service starts that clock when it starts, so the running process is the real proof)", age))
 }

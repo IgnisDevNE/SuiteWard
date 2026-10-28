@@ -67,15 +67,15 @@ func parseInspect(name string, raw []byte) (inspected, error) {
 	if strings.HasPrefix(string(raw), "[") { // `inspect` prints an array of one
 		var list []inspected
 		if err := json.Unmarshal(raw, &list); err != nil {
-			return in, fmt.Errorf("could not read what the container engine reports about %s: %w", name, err)
+			return in, fmt.Errorf("could not read what the container program reports about %s: %w", name, err)
 		}
 		if len(list) != 1 {
-			return in, fmt.Errorf("the container engine reports %d containers named %s, but there should be exactly 1", len(list), name)
+			return in, fmt.Errorf("the container program reports %d containers named %s, but there should be exactly 1", len(list), name)
 		}
 		return list[0], nil
 	}
 	if err := json.Unmarshal(raw, &in); err != nil {
-		return in, fmt.Errorf("could not read what the container engine reports about %s: %w", name, err)
+		return in, fmt.Errorf("could not read what the container program reports about %s: %w", name, err)
 	}
 	return in, nil
 }
@@ -101,7 +101,7 @@ func adoptContainers(raw map[string][]byte, refreshDB bool) (Adopted, error) {
 			continue // a stack that ran migrate with --rm has no such container
 		}
 		if !ok {
-			return Adopted{}, fmt.Errorf("the container engine's report about %s is missing", name)
+			return Adopted{}, fmt.Errorf("the container program's report about %s is missing", name)
 		}
 		in, err := parseInspect(name, data)
 		if err != nil {

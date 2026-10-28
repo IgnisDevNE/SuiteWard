@@ -204,7 +204,7 @@ func TestDoctorStatusNamesWhatIsMissing(t *testing.T) {
 		"no version":              {`{"schemaVersion":20,"tier":"co-located","jobs":{"discarded":0},"outbox":{"failed":0}}`, "no version"},
 		"no jobs.discarded":       {`{"version":"v","schemaVersion":20,"tier":"co-located","jobs":{},"outbox":{"failed":0}}`, "no count of discarded jobs"},
 		"no outbox.failed":        {`{"version":"v","schemaVersion":20,"tier":"co-located","jobs":{"discarded":0},"outbox":{}}`, "no count of failed outbox messages"},
-		"several at once":         {`{}`, "no version is reported, no schema version is reported, no installation type is reported, no count of discarded jobs is reported, no count of failed outbox messages is reported"},
+		"several at once":         {`{}`, "no version is reported, no database version is reported, no installation type is reported, no count of discarded jobs is reported, no count of failed outbox messages is reported"},
 		"a body that is not JSON": {"<html>", "GET /status on port"},
 	}
 	for name, c := range cases {
@@ -274,7 +274,7 @@ func TestDoctorIsolatedProblemsThatNeedTheirOwnRig(t *testing.T) {
 		_, res, _ := runDoctor(t, f, s)
 		wantFail(t, res, "runtime")
 		wantOK(t, res, "pins")
-		if !strings.Contains(res["pins"].Detail, "were not compared because the container engine failed") {
+		if !strings.Contains(res["pins"].Detail, "were not compared because the container program failed") {
 			t.Errorf("the pins detail does not say the containers were not compared: %q", res["pins"].Detail)
 		}
 		wantFail(t, res, "memory", "not checked: runtime")

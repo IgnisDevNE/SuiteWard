@@ -257,7 +257,7 @@ func (h *host) metadata(ctx context.Context) error {
 
 // nftSetup is a rule that refuses addresses for one account: the table it makes, its file and the unit that loads it at every boot.
 type nftSetup struct {
-	label       string   // what the rule is called in an error: "metadata" or "executor"
+	label       string   // what the rule is called in an error: "metadata" or "test runner"
 	table       string   // the nft table, inet
 	ruleFile    string   // where the rule lives
 	unit        string   // the oneshot unit that loads it
@@ -415,7 +415,7 @@ func (h *host) next(ctx context.Context) error {
 	}
 	h.say("\nThe host is ready. Next, run the installer as the service account. The account has no login shell, so this command opens one with the settings it needs:\n\n")
 	h.say("  sudo -u %s -H env XDG_RUNTIME_DIR=/run/user/%s DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus %s\n\n", ServiceAccount, uid, uid, command)
-	h.say("The executor (the test runner) already runs as %s and waits for the service. It uses the HTTP port named in the service account's settings, else %d. If the service will use another HTTP port, run this step again with `--http-port <port>`. Keep one executor for each container engine: when it starts, it removes every %s container of its engine, so a second one would remove the first one's sandboxes.\n\n", ExecutorAccount, DefaultHTTPPort, sandboxNamePrefix)
+	h.say("The test runner (the executor) already runs as %s and waits for the service. It uses the HTTP port named in the service account's settings, else %d. If the service will use another HTTP port, run this step again with `--http-port <port>`. Keep one test runner for each container program: when it starts, it removes every %s container of its container program, so a second one would remove the first one's sandboxes.\n\n", ExecutorAccount, DefaultHTTPPort, sandboxNamePrefix)
 	h.say("The account must be able to run %s", exe)
 	if strings.HasPrefix(exe, "/root/") || strings.HasPrefix(exe, "/home/") {
 		h.say(": that path is inside a home directory, so copy the program to a shared place such as /usr/local/bin first")

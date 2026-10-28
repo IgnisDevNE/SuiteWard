@@ -185,7 +185,7 @@ func (k *keyInit) kept() {
 
 func (k *keyInit) summary() []ui.KV {
 	return []ui.KV{
-		{Key: "Instance", Value: k.instance},
+		{Key: "Instance ID", Value: k.instance},
 		{Key: "Recovery key", Value: archive.Fingerprint(k.recipient)},
 		{Key: "Recovery kit", Value: k.kit},
 		{Key: "Settings", Value: k.inst.settingsPath},

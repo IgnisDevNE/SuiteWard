@@ -383,11 +383,11 @@ func (d *doctor) pipeOwner(ctx context.Context) string {
 	case err == nil:
 		return strings.TrimSpace(engine.Name + " " + engine.Version)
 	case errors.Is(err, ErrNotDocker):
-		return "an engine that is not Docker (normally the Podman machine)"
+		return "a container program that is not Docker (normally the Podman machine)"
 	case errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist):
 		return "unknown: there is no Docker program to ask"
 	default:
-		return "nothing (no engine answers)"
+		return "nothing (no container program answers)"
 	}
 }
 
@@ -634,7 +634,7 @@ func (d *doctor) checkPins(ctx context.Context) {
 func (d *doctor) runningMatchesUnits(ctx context.Context, image string) (string, error) {
 	detail := "the installed units match this release, and so do the images the containers run: "
 	if d.rt == nil {
-		return "the installed units match this release; the running containers were not compared because the container engine failed: ", nil
+		return "the installed units match this release; the running containers were not compared because the container program failed: ", nil
 	}
 	postgres, err := PostgresImage()
 	if err != nil {
@@ -825,7 +825,7 @@ func (d *doctor) checkPorts(ctx context.Context) {
 		problems = append(problems, "no version is reported")
 	}
 	if status.SchemaVersion == nil {
-		problems = append(problems, "no schema version is reported")
+		problems = append(problems, "no database version is reported")
 	}
 	if status.Tier == "" {
 		problems = append(problems, "no installation type is reported")
@@ -846,7 +846,7 @@ func (d *doctor) checkPorts(ctx context.Context) {
 		d.fail("status", "the service's /status page shows a problem: "+strings.Join(problems, ", "), "Read the service's log. `suiteward probe` shows whether the service still completes its jobs.")
 		return
 	}
-	d.pass("status", fmt.Sprintf("version %s, schema version %d, no failed or discarded", status.Version, *status.SchemaVersion))
+	d.pass("status", fmt.Sprintf("version %s, database version %d, no failed or discarded", status.Version, *status.SchemaVersion))
 }
 
 // ---- metadata and the instance ----

@@ -27,7 +27,14 @@ func (e *DiffError) Error() string {
 	b.WriteString("the installation differs from this release, and nothing was changed. The installer never overwrites an installation that was edited by hand. Undo each edit listed below, or move it to a setting the installer supports, then run again:")
 	for _, d := range e.Diffs {
 		want, got := d.printable()
-		fmt.Fprintf(&b, "\n  %s %s: want %q, got %q", d.Source, d.Field, want, got)
+		switch {
+		case want == "":
+			fmt.Fprintf(&b, "\n  %s %s: the installation has %q, which the release does not have", d.Source, d.Field, got)
+		case got == "":
+			fmt.Fprintf(&b, "\n  %s %s: the release has %q, but the installation does not", d.Source, d.Field, want)
+		default:
+			fmt.Fprintf(&b, "\n  %s %s: the release has %q, the installation has %q", d.Source, d.Field, want, got)
+		}
 	}
 	return b.String()
 }

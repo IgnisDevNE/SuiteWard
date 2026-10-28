@@ -96,7 +96,7 @@ func (h *host) executorManager(ctx context.Context) error {
 		}
 	}
 	if !ok {
-		return fmt.Errorf("the user manager of %s has no cpu controller, even after a restart. The executor limits the CPU of each sandbox, which needs cgroup v2 with cpu delegated. Check %s and `cat /sys/fs/cgroup/cgroup.controllers`", ExecutorAccount, executorDropIn)
+		return fmt.Errorf("the user manager of %s has no cpu controller, even after a restart. The test runner limits the CPU of each sandbox, which needs cgroup v2 with cpu delegated. Check %s and `cat /sys/fs/cgroup/cgroup.controllers`", ExecutorAccount, executorDropIn)
 	}
 	return nil
 }
@@ -172,8 +172,8 @@ table inet %[3]s {
 func (h *host) executorRules(ctx context.Context, uid string) error {
 	installed := h.exists(ctx, "/etc/systemd/system/"+executorBlockUnit)
 	return h.installNft(ctx, nftSetup{
-		label: "executor", table: executorTable, ruleFile: executorRuleFile, unit: executorBlockUnit, rule: executorRulesText(uid),
-		addresses: []string{metadataAddress, metadataAddress6}, consequence: "the executor must not run on this server until the rule is loaded",
+		label: "test runner", table: executorTable, ruleFile: executorRuleFile, unit: executorBlockUnit, rule: executorRulesText(uid),
+		addresses: []string{metadataAddress, metadataAddress6}, consequence: "the test runner must not run on this server until the rule is loaded",
 		description: "Reject the instance metadata service for the " + ExecutorAccount + " user",
 		refusedLine: fmt.Sprintf("Blocked %s and %s for the account %s, on every port, with a firewall rule (it loads at every boot).\n", metadataAddress, metadataAddress6, ExecutorAccount),
 	}, installed)
@@ -191,7 +191,7 @@ func (h *host) executorToken(ctx context.Context) (made bool, err error) {
 		if _, err := h.d.Exec(ctx, "sh", []string{"-c", `umask 077; cat > "$1"`, "sh", executorAuthEtc}, strings.NewReader(token)); err != nil {
 			return false, fmt.Errorf("write %s: %w", executorAuthEtc, err)
 		}
-		h.check("Made the executor's token in %s. Only the account %s can read it.\n", executorAuthEtc, ExecutorAccount)
+		h.check("Made the test runner's token in %s. Only the account %s can read it.\n", executorAuthEtc, ExecutorAccount)
 		made = true
 	}
 	if _, err := h.run(ctx, "chown", ExecutorAccount, executorAuthEtc); err != nil {
@@ -225,7 +225,7 @@ func pinFromSums(sums, sum, sumsFile, goos string) (string, error) {
 		}
 	}
 	if len(found) != 1 {
-		return "", fmt.Errorf("this program's fingerprint (SHA-256 %s) is not listed exactly once as a %s program in %s, so it is not an official release and is not installed as the executor. Verify the download as the install guide says, and give the SHA256SUMS file of that release. Nothing was changed", sum, goos, sumsFile)
+		return "", fmt.Errorf("this program's fingerprint (SHA-256 %s) is not listed exactly once as a %s program in %s, so it is not an official release and is not installed as the test runner. Verify the download as the install guide says, and give the SHA256SUMS file of that release. Nothing was changed", sum, goos, sumsFile)
 	}
 	return found[0], nil
 }
@@ -269,10 +269,10 @@ func (h *host) verifyRelease(ctx context.Context) (releaseProgram, error) {
 		return releaseProgram{}, fmt.Errorf("%w: install host needs the SHA256SUMS file of the release this program was downloaded from, but `--sha256sums` is empty (an unset variable?)", ErrUsage)
 	}
 	if !ok {
-		return releaseProgram{}, fmt.Errorf("%w: install host needs `--sha256sums FILE`, the SHA256SUMS file of the release this program was downloaded from (it sits beside the programs on that GitHub Release; verify it as the install guide says). The executor runs code from pull requests, so its program must be an official release, which that file lists", ErrUsage)
+		return releaseProgram{}, fmt.Errorf("%w: install host needs `--sha256sums FILE`, the SHA256SUMS file of the release this program was downloaded from (it sits beside the programs on that GitHub Release; verify it as the install guide says). The test runner runs code from pull requests, so its program must be an official release, which that file lists", ErrUsage)
 	}
 	if h.d.Executable == nil {
-		return releaseProgram{}, errors.New("the installer cannot find its own program file, so it cannot copy it as the executor")
+		return releaseProgram{}, errors.New("the installer cannot find its own program file, so it cannot copy it as the test runner")
 	}
 	exe, err := h.d.Executable()
 	if err != nil {
@@ -304,16 +304,16 @@ func (h *host) executorBinary(ctx context.Context) (replaced bool, err error) {
 	if on := h.installedHash(ctx, executorBinary); on != sum {
 		replaced = on != ""
 		if _, err := h.run(ctx, "install", "-m", "0755", "-o", "root", "-g", "root", exe, executorBinary); err != nil {
-			return false, fmt.Errorf("could not install the executor program: %w", err)
+			return false, fmt.Errorf("could not install the test runner program: %w", err)
 		}
 		if got := h.installedHash(ctx, executorBinary); got != sum {
-			return false, fmt.Errorf("the executor program %s has the fingerprint (SHA-256) %q after the copy, not %s like this program, so it is not run", executorBinary, got, sum)
+			return false, fmt.Errorf("the test runner program %s has the fingerprint (SHA-256) %q after the copy, not %s like this program, so it is not run", executorBinary, got, sum)
 		}
 	}
 	if err := h.writeReadable(ctx, executorPin, pin+"\n"); err != nil {
 		return false, err
 	}
-	h.check("The executor runs %s, a copy of this program that only root can change (fingerprint, SHA-256: %s).\n", executorBinary, sum)
+	h.check("The test runner runs %s, a copy of this program that only root can change (fingerprint, SHA-256: %s).\n", executorBinary, sum)
 	return replaced, nil
 }
 
@@ -393,7 +393,7 @@ func (h *host) executorUnit(ctx context.Context, port int, filesChanged bool) er
 		uid, _ := h.run(ctx, "id", "-u", ExecutorAccount)
 		return fmt.Errorf("%s is %q after the start, but it should be \"active\". To see why, run `journalctl _SYSTEMD_USER_UNIT=%s _UID=%s -n 50 --no-pager`", executorUnitName, state, executorUnitName, uid)
 	}
-	h.check("The executor runs as the unit %s of the account %s, pointed at http://127.0.0.1:%d.\n", executorUnitName, ExecutorAccount, port)
+	h.check("The test runner runs as the unit %s of the account %s, pointed at http://127.0.0.1:%d.\n", executorUnitName, ExecutorAccount, port)
 	return nil
 }
 
@@ -413,6 +413,6 @@ func (h *host) executorHandover(ctx context.Context, dir string) error {
 	if _, err := h.run(ctx, "install", "-o", ServiceAccount, "-g", ServiceAccount, "-m", "0600", executorAuthEtc, dest); err != nil {
 		return fmt.Errorf("copy %s: %w", executorAuthEtc, err)
 	}
-	h.check("Gave %s a copy of the executor's token (%s), which the next step stores as the service's secret.\n", ServiceAccount, dest)
+	h.check("Gave %s a copy of the test runner's token (%s), which the next step stores as the service's secret.\n", ServiceAccount, dest)
 	return nil
 }

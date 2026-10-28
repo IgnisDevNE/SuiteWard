@@ -56,7 +56,7 @@ func Restore(ctx context.Context, args []string, env Env) (err error) {
 	set.String("plaintext-dir", "", "restore from an unencrypted backup folder made by an earlier release (it holds suiteward.sql, suiteward-artifacts.tar and status.json), instead of a backup file")
 	set.Bool("yes", false, "confirm the restore when no one can type an answer; use it with --instance (on a terminal you type the instance id instead)")
 	set.String("instance", "", "the instance id of the backup, for use with --yes when no one can type an answer")
-	set.String("backup-dir", "", "where the safety backup of the current data goes (default: a backups folder beside the saved MCP token file; on a separate server, in ~/.config/suiteward of the service account)")
+	set.String("backup-dir", "", "where the safety backup of the current data goes (default: a backups folder beside the saved access token file; on a separate server, in ~/.config/suiteward of the service account)")
 	file, flags, err := parseWithFile(set, args, env.Term.Out)
 	if err != nil {
 		return err
@@ -576,7 +576,7 @@ func (x *restoreRun) warn() {
 		x.scr.Warn("Stop any other running instance that uses the same GitHub App before you go on. Two instances would publish and promote for the same repositories.\n")
 	}
 	if x.plaintext != "" {
-		x.scr.Warn("This backup is an unencrypted folder, and nothing checks who made it or that it is unchanged. Anyone who can read %s can read the secret behind your authenticator codes (the TOTP secret) in it.\n", x.plaintext)
+		x.scr.Warn("This backup is an unencrypted folder, and nothing checks who made it or that it is unchanged. Anyone who can read %s can read the authenticator secret (the TOTP secret) in it.\n", x.plaintext)
 	}
 	if x.doc.Unavailable {
 		x.scr.Warn("This backup has no recorded status (%s): the instance did not answer when the backup was made. Its release is known only from its image, so after the restore the only thing that can be checked is that the service answers.\n", x.doc.Reason)
@@ -675,7 +675,7 @@ func (x *restoreRun) load(ctx context.Context) error {
 func loadDump(ctx context.Context, rt Runtime, sql io.Reader) error {
 	argv := []string{"psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", ownerRole, "-d", "suiteward", "-f", "-"}
 	if _, err := rt.Exec(ctx, ContainerDB, argv, sql); err != nil {
-		return fmt.Errorf("psql in %s could not load the database dump. Its message is hidden on purpose: it repeats the rows that failed, and those rows hold the TOTP secret (behind the authenticator codes). The log of the database container may quote them too, so treat it as secret", ContainerDB)
+		return fmt.Errorf("psql in %s could not load the database dump. Its message is hidden on purpose: it repeats the rows that failed, and those rows hold the authenticator secret (the TOTP secret). The log of the database container may quote them too, so treat it as secret", ContainerDB)
 	}
 	return nil
 }
@@ -793,7 +793,7 @@ const canonicalBehind = "The restored approved version (the canonical) may be be
 
 func (x *restoreRun) finish() {
 	x.scr.Say("Restored the backup of the instance %s (%s) into this instance.\n", x.doc.Instance, x.info.SuitewardVersion)
-	x.scr.Keep("A backup holds no credentials, so these stay as they were: the database passwords, the MCP token and the executor token (the executor is not part of a backup either, and keeps working). The owner's authenticator (TOTP) enrollment is the backup's.\n")
+	x.scr.Keep("A backup holds no credentials, so these stay as they were: the database passwords, the access token and the test runner's token (the test runner, also called the executor, is not part of a backup either, and keeps working). The owner's authenticator secret (the TOTP secret) is the backup's.\n")
 	if !x.scr.FullScreen() && x.mayHaveRepositories() { // a full screen has it on the summary page, which Close keeps
 		x.scr.Keep("%s\n", canonicalBehind)
 	}
@@ -806,7 +806,7 @@ func (x *restoreRun) finish() {
 func (x *restoreRun) summary() []ui.KV {
 	rows := summaryRows{
 		{Key: "Restored", Value: x.restored()},
-		{Key: "Instance", Value: x.doc.Instance},
+		{Key: "Instance ID", Value: x.doc.Instance},
 		{Key: "Release", Value: x.after.Version},
 	}
 	rows.add("Backup before", x.safety)

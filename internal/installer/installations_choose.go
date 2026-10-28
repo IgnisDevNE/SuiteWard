@@ -40,13 +40,13 @@ func (r *Resolver) chooseInstallation(d Deps) error {
 	case len(found) == 0:
 		return nil
 	case len(found) == 1:
-		r.say("This computer has one SuiteWard installation, so the command uses it. Its settings file is %s.\n", found[0].Settings)
+		r.say("This computer has one SuiteWard installation, so the command uses it. Its settings file is %s.\n", printable(found[0].Settings))
 		r.choose(d, found[0])
 		return nil
 	case !r.term.IsTerminal || unattended(r.flags):
 		files := make([]string, len(found))
 		for i, c := range found {
-			files[i] = c.Settings
+			files[i] = printable(c.Settings)
 		}
 		return errors.New(severalInstallations(files))
 	}
@@ -96,7 +96,7 @@ func (r *Resolver) pickInstallation(d Deps, found []candidate, stale int) (candi
 	} else {
 		r.say("This computer has %d SuiteWard installations:\n", len(found))
 		for _, c := range found {
-			r.say("  %s\n    %s\n", c.Settings, c.describe())
+			r.say("  %s\n    %s\n", printable(c.Settings), c.describe())
 		}
 		if skipped != "" {
 			r.say("(%s)\n", skipped)
@@ -141,15 +141,15 @@ func (c candidate) describe() string {
 	if c.Runtime == "" {
 		return prefix + "Its settings could not be read."
 	}
-	instance, where, engine := "Instance not known yet", "on this computer", "with "+c.Runtime
+	instance, where, engine := "Instance not known yet", "on this computer", "with "+printable(c.Runtime)
 	if c.Instance != "" {
-		instance = "Instance " + c.Instance
+		instance = "Instance " + printable(c.Instance)
 	}
 	if c.Tier == config.TierIsolated {
 		where = "on a separate server"
 	}
 	if c.Connection != "" {
-		engine += " (connection " + c.Connection + ")"
+		engine += " (connection " + printable(c.Connection) + ")"
 	}
 	return prefix + strings.Join([]string{instance, where, engine, fmt.Sprintf("ports %d and %d", c.HTTPPort, c.MCPPort)}, ", ") + "."
 }

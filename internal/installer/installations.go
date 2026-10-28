@@ -62,6 +62,9 @@ func loadInstallations(path string) (installationList, error) {
 	if err != nil {
 		return installationList{}, fmt.Errorf("read the list of installations %s: %w", path, err)
 	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return installationList{}, fmt.Errorf("the list of installations %s is empty: it must start with `version: %d`", path, installationsVersion)
+	}
 	var list installationList
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
@@ -71,7 +74,36 @@ func loadInstallations(path string) (installationList, error) {
 	if list.Version != installationsVersion {
 		return installationList{}, fmt.Errorf("the list of installations %s says version %d, and this program reads version %d: another release of SuiteWard wrote it", path, list.Version, installationsVersion)
 	}
+	for i, e := range list.Installations {
+		if problem := e.problem(); problem != "" {
+			return installationList{}, fmt.Errorf("the list of installations %s cannot be used: entry %d %s", path, i+1, problem)
+		}
+	}
 	return list, nil
+}
+
+// problem says what is wrong with an entry that an install could not have written, or "" when there is nothing: the list is a file that anyone who can
+// write beside the settings can edit, and what it holds is printed and acted on. The text never repeats a path, which may hold a control character.
+func (e installation) problem() string {
+	switch {
+	case !filepath.IsAbs(e.Settings):
+		return "has a settings file that is not an absolute path"
+	case e.TokenFile != "" && !filepath.IsAbs(e.TokenFile):
+		return "has a token file that is not an absolute path"
+	case printable(e.Settings) != e.Settings || printable(e.TokenFile) != e.TokenFile:
+		return "has a path with a control character in it"
+	case e.Tier != config.TierCoLocated && e.Tier != config.TierIsolated:
+		return fmt.Sprintf("has the type %q, which is not %s or %s", e.Tier, config.TierCoLocated, config.TierIsolated)
+	case e.Runtime != RuntimePodman && e.Runtime != RuntimeDocker:
+		return fmt.Sprintf("has the container program %q, which is not %s or %s", e.Runtime, RuntimePodman, RuntimeDocker)
+	case e.Connection != "" && !connectionName.MatchString(e.Connection):
+		return fmt.Sprintf("has the connection %q, which is not a plain name", e.Connection)
+	case e.Instance != "" && !instanceID.MatchString(e.Instance):
+		return fmt.Sprintf("has the instance id %q, which is not 8 hexadecimal characters", e.Instance)
+	case e.HTTPPort < 1 || e.HTTPPort > 65535 || e.MCPPort < 1 || e.MCPPort > 65535:
+		return "has a port outside 1-65535"
+	}
+	return ""
 }
 
 // writeInstallations replaces the list atomically.

@@ -252,6 +252,7 @@ type colocated struct {
 	edit     func(name string, obj map[string]any)
 	migrate  map[string]any // State of a migrate container that exists
 	checkOut string
+	folder   string // a subfolder of the per-user directory, which the executor's files go in (a name with a percent sign, say)
 }
 
 func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
@@ -316,7 +317,7 @@ func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 		f.on("machine list", machineList)
 		f.on("/healthz", c.health).on("/readyz", `{"status":"ready"}`).on("/status", c.status)
 	}
-	healthyColocatedExecutor(t, f)
+	healthyColocatedExecutor(t, f, c.folder)
 	return f, s
 }
 

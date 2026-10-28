@@ -744,6 +744,32 @@ func TestTheInstallRefusesAPercentSignInTheFolderOfTheWindowsExecutor(t *testing
 	}
 }
 
+// The refusal is for setting up a new test runner. One that an earlier build made in such a folder is still the person's to remove: the uninstall
+// stops it and takes it out of Windows as it does any other, and does not say that the folder is the problem.
+func TestTheUninstallRemovesAnExecutorWhoseFolderHasAPercentSign(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	h.dir = filepath.Join(h.dir, "50%off")
+	if err := os.MkdirAll(h.executorDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	podmanStackExists(h)
+	h.writeFiles()
+	h.first("/Query /TN SuiteWard Executor", "") // the task is registered, and this instance made its two files
+	writeFile(t, filepath.Join(h.executorDir(), executorWrapperName), "the wrapper")
+	writeFile(t, filepath.Join(h.executorDir(), "task.xml"), "the task")
+	h.f.on("Win32_Process", listingOf(nil))
+	if err := h.uninstall("--runtime", "podman", "--connection", "pm", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	out := h.out.String()
+	if strings.Contains(out, "was not removed") || strings.Contains(out, "percent sign") {
+		t.Errorf("the uninstall did not remove the test runner, or blamed the folder:\n%s", out)
+	}
+	if len(h.f.find("/Delete /TN SuiteWard Executor")) == 0 || pathExists(h.executorDir()) {
+		t.Errorf("the task was not deleted or the folder is still there: %v\n%s", h.f.lines(), out)
+	}
+}
+
 // cmd reads the wrapper in the code page of the console, which is not UTF-8: a profile with a letter outside ASCII (C:\Users\João), which the installer
 // writes into the script as UTF-8, would be misread in the `set` lines, the program's path and the log redirect, and the loop would retry
 // silently. The first thing the wrapper does is switch the console to UTF-8.

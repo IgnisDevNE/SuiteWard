@@ -52,10 +52,14 @@ func coloExecFilesOf(t *testing.T, f *fakeEngine) coloExecFiles {
 }
 
 // healthyColocatedExecutor points the per-user directories at one of the test, puts down what an install of the executor leaves there, and has
-// the fake operating system say that the executor is registered and runs.
-func healthyColocatedExecutor(t *testing.T, f *fakeEngine) {
+// the fake operating system say that the executor is registered and runs. folder, when it is not empty, is a subfolder of that directory that the
+// executor's files go in.
+func healthyColocatedExecutor(t *testing.T, f *fakeEngine, folder string) {
 	t.Helper()
-	dir := shortDir(t)
+	dir := filepath.Join(shortDir(t), folder)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	for _, key := range []string{"APPDATA", "XDG_CONFIG_HOME", "HOME"} {
 		t.Setenv(key, dir)
 	}
@@ -139,6 +143,17 @@ func TestDoctorColocatedWindowsTaskOfAnEarlierBuildIsADifferenceThatAnUpgradeFix
 		t.Errorf("the fix %q must name the upgrade", res["executor.lifecycle"].Fix)
 	}
 	wantOK(t, res, "executor.running")
+}
+
+// A test runner that an earlier build made in a folder with a percent sign is checked like any other: the refusal is for setting up a new one, and
+// its message (use another folder) is wrong for a test runner that is there.
+func TestDoctorChecksAnExistingWindowsExecutorInAFolderWithAPercentSign(t *testing.T) {
+	f, s := colocated{goos: "windows", folder: "50%off"}.build(t)
+	code, res, _ := runDoctor(t, f, s)
+	if code != 0 {
+		t.Errorf("exit %d, results %+v", code, res)
+	}
+	wantOK(t, res, "executor.token", "executor.binary", "executor.lifecycle", "executor.running")
 }
 
 func removeFile(t *testing.T, path string) {

@@ -225,7 +225,7 @@ A forged result can do little. It cannot grant approval or consent, because the 
 ### 13. Sealing, per tier
 
 - **Isolated:** the executor runs under its own account on the host, which the agent never reaches. Its binary is pinned to the signed release and checked by `doctor`. Sandbox images are pinned by digest.
-- **Co-located:** the executor runs on the agent's machine. The same pins catch drift, not a determined agent. This is reduced assurance, and the check and the page say so, as for approvals ([ADR 0027](0027-agent-human-trust-separation.md)).
+- **Co-located:** the executor runs on the agent's machine. The same pins catch drift, not a determined agent. This is reduced assurance, and the check and the page say so, as for approvals ([ADR 0027](0027-agent-human-trust-separation.md)). The installer states it once, on the page that introduces the tier, in the summary of an install or an upgrade and at the end of a plain one; the rows of `doctor` do not repeat it.
 - Remote attestation is a candidate for M3 or a managed service.
 
 ### 14. Evidence binding

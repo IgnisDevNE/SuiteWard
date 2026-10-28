@@ -89,7 +89,7 @@ func savedAt(t *testing.T, s Settings) string {
 func TestDoctorNamesTheProgramAsTheRunReachesIt(t *testing.T) {
 	t.Run("no settings file", func(t *testing.T) {
 		res := doctorAs(t, newFake("linux"), swCmd, filepath.Join(t.TempDir(), "settings.yaml"))
-		if fix := res["settings"].Fix; !strings.Contains(fix, "run `"+swCmd+" install` first") {
+		if fix := res["settings"].Fix; !strings.Contains(fix, "Run `"+swCmd+" install` first") {
 			t.Errorf("the fix is %q, want one that names `%s install`", fix, swCmd)
 		}
 	})

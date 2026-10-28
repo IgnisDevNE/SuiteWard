@@ -387,9 +387,9 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 		{"a health answer that is not JSON", colocated{health: `<html>`}, "healthz", []string{"/healthz"}},
 		{"failed outbox messages", colocated{status: `{"version":"v","schemaVersion":20,"jobs":{"discarded":0},"outbox":{"failed":2}}`}, "status", []string{"outbox", "2"}},
 		{"discarded jobs", colocated{status: `{"version":"v","schemaVersion":20,"jobs":{"discarded":1},"outbox":{"failed":0}}`}, "status", []string{"discarded", "1"}},
-		{"no schema version", colocated{status: `{"version":"v","jobs":{"discarded":0},"outbox":{"failed":0}}`}, "status", []string{"schemaVersion"}},
-		{"another tier than the settings", colocated{status: strings.Replace(okStatus, `"tier":"co-located"`, `"tier":"isolated"`, 1)}, "status", []string{"tier", "isolated", "co-located"}},
-		{"no tier", colocated{status: strings.Replace(okStatus, `"tier":"co-located",`, ``, 1)}, "status", []string{"tier"}},
+		{"no schema version", colocated{status: `{"version":"v","jobs":{"discarded":0},"outbox":{"failed":0}}`}, "status", []string{"schema version"}},
+		{"another tier than the settings", colocated{status: strings.Replace(okStatus, `"tier":"co-located"`, `"tier":"isolated"`, 1)}, "status", []string{"installation type", "isolated", "co-located"}},
+		{"no tier", colocated{status: strings.Replace(okStatus, `"tier":"co-located",`, ``, 1)}, "status", []string{"installation type"}},
 		{"a status that is not JSON", colocated{status: `<html>`}, "status", []string{"/status"}},
 	}
 	for _, c := range cases {
@@ -436,7 +436,7 @@ func TestDoctorRestartFixNamesWhatWorks(t *testing.T) {
 			}
 		}}.build(t)
 		_, res, _ := runDoctor(t, f, s)
-		wantFail(t, res, "restart", ContainerDB, `restart policy "no"`)
+		wantFail(t, res, "restart", ContainerDB, `restart policy is "no"`)
 		if fix := res["restart"].Fix; !strings.Contains(fix, "suiteward uninstall") || !strings.Contains(fix, "suiteward install") {
 			t.Errorf("the fix does not remove the containers before it installs again: %s", fix)
 		}
@@ -508,7 +508,7 @@ func TestDoctorInstanceCheck(t *testing.T) {
 	t.Run("output that is not JSON is one failure", func(t *testing.T) {
 		f, s := colocated{checkOut: "usage: suiteward serve\n"}.build(t)
 		_, res, _ := runDoctor(t, f, s)
-		wantFail(t, res, "instance.check", "JSON")
+		wantFail(t, res, "instance.check", "readable list")
 	})
 	t.Run("an empty list is one failure", func(t *testing.T) {
 		f, s := colocated{checkOut: "[]"}.build(t)
@@ -656,7 +656,7 @@ func TestDoctorSaysWhoOwnsTheDockerPipeOnWindows(t *testing.T) {
 			if code != 0 {
 				t.Errorf("exit %d, an unanswered pipe failed doctor: %+v", code, res)
 			}
-			if d := res["runtime"].Detail; name == "no Docker CLI" && !strings.Contains(d, "no Docker CLI") {
+			if d := res["runtime"].Detail; name == "no Docker CLI" && !strings.Contains(d, "no Docker program") {
 				t.Errorf("a missing CLI is not told apart from a silent pipe: %q", d)
 			}
 		})
@@ -745,7 +745,7 @@ func TestDoctorHealthyIsolated(t *testing.T) {
 		t.Errorf("exit %d, results %+v", code, res)
 	}
 	wantOK(t, res, "runtime", "units", "linger", "restart", "pins", "ports", "healthz", "status", "metadata", "network", "memory", "github.app", "executor.account", "executor.running")
-	if d := res["pins"].Detail; !strings.Contains(d, "consistent with the units") || strings.Contains(d, "equals this release") {
+	if d := res["pins"].Detail; !strings.Contains(d, "match this release") || strings.Contains(d, "equals this release") {
 		t.Errorf("the pins detail overstates what was compared: %q", d)
 	}
 	if _, has := res["containers"]; has {
@@ -777,7 +777,7 @@ func TestDoctorIsolatedFailures(t *testing.T) {
 		{"the network backend cannot be read", isolatedRig{over: []rule{{match: "NetworkBackend", err: errors.New("podman: not found")}}}, "network", []string{"not found"}, ""},
 		{"another memory limit on the database", isolatedRig{over: []rule{{match: "inspect --type container " + ContainerDB, out: `[{"HostConfig":{"Memory":0}}]`}}}, "memory", []string{"402653184", "0"}, ""},
 		{"the metadata address answers", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", out: "reachable\n"}}}, "metadata", []string{"169.254.169.254"}, "--metadata-rule yes"},
-		{"the control connection fails", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", out: "control-failed\n"}}}, "metadata", []string{"control"}, ""},
+		{"the control connection fails", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", out: "control-failed\n"}}}, "metadata", []string{"database's own port"}, ""},
 		{"an answer nobody expected", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", out: "maybe\n"}}}, "metadata", []string{"maybe"}, ""},
 		{"the metadata probe cannot run", isolatedRig{over: []rule{{match: "exec -i " + ContainerDB + " bash", err: errors.New("container is not running")}}}, "metadata", []string{"not running"}, ""},
 	}

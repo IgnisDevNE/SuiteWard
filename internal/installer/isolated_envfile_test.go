@@ -160,7 +160,7 @@ func TestInstallIsolatedRerunWithoutTheFlowSaysWhetherAnOwnerIsEnrolled(t *testi
 	}{
 		"enrolled": {
 			func(context.Context, string) ([]byte, error) { return []byte(enrolled), nil },
-			[]string{"An owner (bob) is already enrolled", "owner setup was skipped", "authenticator secret is unchanged"},
+			[]string{"An owner (bob) is already enrolled", "owner setup was skipped", "authenticator secret (the TOTP secret) is unchanged"},
 		},
 		"no owner": {
 			func(context.Context, string) ([]byte, error) { return []byte(`{"version":"v0.2.0"}`), nil },

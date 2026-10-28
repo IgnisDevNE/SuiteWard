@@ -330,7 +330,7 @@ func TestInstallDoesNotRunSetupWhenStatusCannotBeRead(t *testing.T) {
 }
 
 func TestEngineCommandRefusesARuntimeItDoesNotDrive(t *testing.T) {
-	if _, err := engineCommand(nil, "linux"); err == nil || !strings.Contains(err.Error(), "is not a container engine") {
+	if _, err := engineCommand(nil, "linux"); err == nil || !strings.Contains(err.Error(), "is not a container program") {
 		t.Errorf("engineCommand(nil) = %v", err)
 	}
 	spaced := &Podman{cli: cli{bin: `C:\Program Files\podman.exe`, base: []string{"--connection", "pm"}}}

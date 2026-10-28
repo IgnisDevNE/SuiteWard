@@ -255,7 +255,7 @@ func refreshCopy(ctx context.Context, env Env) Deps {
 		return d
 	}
 	if err := s.copyTo(exe, dir); err != nil {
-		scr.Warn("Could not update the copy of suiteward.exe in %s (%v). The upgrade itself worked, and the older copy still runs.\n", dir, err)
+		scr.Warn("Could not update the copy of suiteward.exe in %s (%v). SuiteWard itself is not affected, and the older copy still runs.\n", dir, err)
 		return d
 	}
 	scr.Keep("Updated the copy of suiteward.exe: %s\n", target)

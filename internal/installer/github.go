@@ -994,7 +994,7 @@ func askTestCheck(ctx context.Context, env githubEnv, client *rest.Client, r rep
 	asking := env.R.screen.FullScreen() && env.R.asks(key)
 	if asking { // one repository to a page, before the list is read: the list goes under it
 		env.R.screen.Page("Required test check for "+r.name,
-			ui.Para("SuiteWard does not replace your CI's tests. A pull request must pass both "+protection.ContractCheck+" and your CI's test check. Pick the test check from the checks seen on the default branch."))
+			ui.Para("SuiteWard does not replace your CI's tests: a pull request must pass both "+protection.ContractCheck+" and your CI's test check. Pick the test check from the checks seen on the default branch."))
 	}
 	names, err := checkRunNames(ctx, client, r)
 	if err != nil {
@@ -1429,7 +1429,7 @@ func explainSetup(scr *ui.Screen, owner string, window, closes bool) error {
 		where, prompt = "Setup opens in a separate window and this one waits for it. In that window, press Enter after the code is accepted: "+then, "Press Enter to open setup in a new window: "
 	}
 	scr.Page("Enroll the owner",
-		ui.Para(fmt.Sprintf("Next, setup makes %s the owner of this instance: the only account that can approve changes. It shows a secret once, as text: a link that starts with otpauth:// and the same secret as a key. Add it to your authenticator app by typing the key or pasting the link, then confirm with the six-digit code from your authenticator app.", owner)),
+		ui.Para(fmt.Sprintf("Next, setup makes %s the owner of this instance: the only account that can approve changes. It shows an authenticator secret (the TOTP secret) once, as text: a link that starts with otpauth:// and the same secret as a key. Add it to your authenticator app by typing the key or pasting the link, then confirm with the six-digit code from your authenticator app.", owner)),
 		ui.Para("The installer never sees the secret and keeps no copy of it: setup runs in the container and writes it straight to the terminal."),
 		ui.Para("Stop any screen or terminal recording first, and make sure no coding agent can read the terminal where the secret shows."),
 		ui.Para(where))
@@ -1464,7 +1464,7 @@ func setupHere(ctx context.Context, cmd string, rt Runtime, scr *ui.Screen, out 
 	if note != "" {
 		ghSay(out, "\n%s", note)
 	}
-	ghSay(out, "\nSetup makes you the owner and shows an authenticator secret (a link and a key), only on this terminal. Stop any screen recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log what setup prints.\n")
+	ghSay(out, "\nSetup makes you the owner and shows an authenticator secret (the TOTP secret, as a link and a key), only on this terminal. Stop any screen recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log what setup prints.\n")
 	execErr := rt.ExecTTY(ctx, ContainerServe, argv)
 	var waitErr error
 	if scr.FullScreen() { // the screen comes back when this returns, so the secret stays on the terminal until the user has copied it
@@ -1491,7 +1491,7 @@ func afterSetup(scr *ui.Screen, cmd string, err error) error {
 		}
 		return fmt.Errorf("setup failed: %w", err)
 	}
-	scr.Page("Setup finished", ui.Para("The authenticator secret was shown only in setup's terminal: the installer did not see, keep or log it. From now on, approving a change needs the six-digit code from your authenticator app."))
+	scr.Page("Setup finished", ui.Para("The authenticator secret (the TOTP secret) was shown only in setup's terminal: the installer did not see, keep or log it. From now on, approving a change needs the six-digit code from your authenticator app."))
 	return nil
 }
 

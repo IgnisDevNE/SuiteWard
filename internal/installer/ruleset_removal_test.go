@@ -164,3 +164,19 @@ func TestTheSummaryKeepsTheFileOfAProtectionThatPassesWithAWarning(t *testing.T)
 		t.Error("the file went although the protection only passes with a warning")
 	}
 }
+
+// A private repository on GitHub Free never becomes enforced by an import: enforcement-unavailable is not enforced, so its file stays, for
+// the day the account moves to a paid plan or the repository is made public.
+func TestTheRulesetFileStaysWhenEnforcementIsUnavailable(t *testing.T) {
+	g := newFakeGitHub(t)
+	g.changeRepos(func(repos []fakeRepo) { repos[0].private, repos[0].rulesStatus = true, 403 })
+	run := startRulesetRun(t, g)
+	waitForText(t, run.out, "I imported it, check now")
+	run.answer(t, "1")
+	if res := run.result(t); res.Protection["acme/app"].Kind != protection.KindEnforcementUnavailable {
+		t.Fatalf("protection = %+v", res.Protection)
+	}
+	if !rulesetFileExists(t, run.env.SettingsDir, "acme/app") {
+		t.Error("the file went although the protection is not enforced")
+	}
+}

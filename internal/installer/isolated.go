@@ -760,7 +760,7 @@ func ensureSecrets(ctx context.Context, store SecretStore, appKey []byte) error 
 	switch {
 	case havePassword && haveOwnerURL:
 	case haveOwnerURL:
-		return fmt.Errorf("the secret %s exists but %s does not, and the password cannot be safely read back from the address, so nothing was changed. If the database never started, remove %s and run again", SecretDatabaseOwnerURL, SecretDBAuth, SecretDatabaseOwnerURL)
+		return fmt.Errorf("the secret %s exists but %s does not, and the password cannot be safely read back from the address, so no secret was changed. If the database never started, remove %s and run again", SecretDatabaseOwnerURL, SecretDBAuth, SecretDatabaseOwnerURL)
 	case havePassword:
 		stored, err := store.Read(ctx, SecretDBAuth)
 		if err != nil {

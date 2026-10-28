@@ -1484,7 +1484,7 @@ func TestInstallSkipsSetupWhenAnOwnerIsEnrolled(t *testing.T) {
 			t.Fatalf("terminal=%v: setup ran although an owner is enrolled: %v", terminal, h.f.tty)
 		}
 		out := h.out.String()
-		for _, want := range []string{"An owner (bob) is already enrolled", "owner setup was skipped", "authenticator secret is unchanged", "To enroll again", "suiteward enroll --settings " + quoteArg(h.settingsPath())} {
+		for _, want := range []string{"An owner (bob) is already enrolled", "owner setup was skipped", "authenticator secret (the TOTP secret) is unchanged", "To enroll again", "suiteward enroll --settings " + quoteArg(h.settingsPath())} {
 			if !strings.Contains(out, want) {
 				t.Errorf("terminal=%v: the output lacks %q:\n%s", terminal, want, out)
 			}
@@ -1522,7 +1522,7 @@ func TestInstallRerunWithoutTheFlowSaysWhetherAnOwnerIsEnrolled(t *testing.T) {
 			func(context.Context, string) ([]byte, error) {
 				return []byte(`{"version":"v0.2.0","owner":{"login":"bob","accountId":7,"enrolledAt":"2026-10-01T00:00:00Z"}}`), nil
 			},
-			[]string{"An owner (bob) is already enrolled", "owner setup was skipped", "authenticator secret is unchanged"},
+			[]string{"An owner (bob) is already enrolled", "owner setup was skipped", "authenticator secret (the TOTP secret) is unchanged"},
 		},
 		"no owner": {
 			func(context.Context, string) ([]byte, error) { return []byte(`{"version":"v0.2.0"}`), nil },

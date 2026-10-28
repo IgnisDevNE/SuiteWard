@@ -40,7 +40,7 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 	}
 	// Setup prints the TOTP secret on its terminal: with no real terminal here, it would go to a pipe or a file.
 	if !setupTerminal() {
-		return errors.New("enroll needs a real terminal, because it shows the authenticator secret there, and nothing was changed: run it from your own terminal, not through a pipe or a script")
+		return errors.New("enroll needs a real terminal, because it shows the authenticator secret (the TOTP secret) there, and nothing was changed: run it from your own terminal, not through a pipe or a script")
 	}
 	plain, err := wantsPlain(flags, nil)
 	if err != nil {
@@ -92,7 +92,7 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 // colocatedEnrollTarget finds the stack as uninstall and upgrade do: the guards of the install apply.
 func colocatedEnrollTarget(ctx context.Context, r *Resolver, env Env, t installTarget) (enrollTarget, error) {
 	if !t.haveSaved { // enrolling again replaces the authenticator secret: not of an instance that defaults picked
-		return enrollTarget{}, fmt.Errorf("there is no settings file at %s, so nothing says which instance this is, and enrolling again replaces that instance's authenticator secret. Nothing was changed: "+
+		return enrollTarget{}, fmt.Errorf("there is no settings file at %s, so nothing says which instance this is, and enrolling again replaces that instance's authenticator secret (the TOTP secret). Nothing was changed: "+
 			"run `%s install --upgrade`, which saves the settings file, or pass --settings with the file of the instance", t.settingsPath, env.Deps.command())
 	}
 	rt, connection, err := openRuntime(ctx, r, env, t.saved, false)
@@ -181,7 +181,7 @@ func confirmEnrollAgain(r *Resolver, enrolled, owner string) error {
 	if enrolled != unknownLogin && !strings.EqualFold(enrolled, owner) {
 		replaces = fmt.Sprintf("the owner %s with %s and ", enrolled, owner)
 	}
-	what := fmt.Sprintf("An owner (%s) is already enrolled. Enrolling again replaces %sthe authenticator secret: the old entry in your authenticator app stops working, and you add the new secret that setup shows to your app.", enrolled, replaces)
+	what := fmt.Sprintf("An owner (%s) is already enrolled. Enrolling again replaces %sthe authenticator secret (the TOTP secret): the old entry in your authenticator app stops working, and you add the new secret that setup shows to your app.", enrolled, replaces)
 	prompt := what + "\nType \"enroll\" to replace it: "
 	if r.screen.FullScreen() {
 		r.screen.Page("Enroll the owner again", ui.Para(what), ui.Para("Nothing changes until you type enroll."))

@@ -145,6 +145,9 @@ func TestTheSummaryOfTheIsolatedTierRunsDoctor(t *testing.T) {
 		t.Fatalf("a failed check of doctor failed the install: %v", err)
 	}
 	doctorCountsIn(t, c.tail())
+	if !strings.Contains(c.tail(), "Installation type: on a separate server\n") {
+		t.Errorf("the summary does not say the installation type in words:\n%s", c.tail())
+	}
 	if strings.Contains(c.tail(), "Next: suiteward doctor") {
 		t.Errorf("the summary of the install still sends the person to a command that has run:\n%s", c.tail())
 	}

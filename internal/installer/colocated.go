@@ -372,7 +372,7 @@ func defaultTokenFile(d Deps) (string, error) {
 	if d.GOOS == "windows" {
 		local := d.Getenv("LOCALAPPDATA")
 		if local == "" {
-			return "", errors.New("LOCALAPPDATA is not set: the MCP token copy for a client lives there")
+			return "", errors.New("LOCALAPPDATA is not set: the access token copy for your coding agent's client lives there")
 		}
 		return filepath.Join(local, "SuiteWard", "mcp-token"), nil
 	}
@@ -575,7 +575,7 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 		}
 		return migratingError{fmt.Errorf("the database update (migration, suiteward migrate) failed, %s: %w", service, err)}
 	}
-	scr.Check("The database update (migration) finished: the schema is up to date.\n")
+	scr.Check("The database update (migration) finished: the database is at the version this release needs.\n")
 	if err := save(); err != nil {
 		return migratingError{err}
 	}
@@ -964,7 +964,7 @@ func engineCommand(rt Runtime, goos string) (string, error) {
 	case *Docker:
 		c = r.cli
 	default:
-		return "", fmt.Errorf("%T is not a container engine this installer drives", rt)
+		return "", fmt.Errorf("%T is not a container program this installer drives", rt)
 	}
 	bin := c.bin
 	if strings.Contains(bin, " ") {

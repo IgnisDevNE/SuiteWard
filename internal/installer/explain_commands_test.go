@@ -415,7 +415,7 @@ func TestThePlainEnrollAgainPromptIsWhatItWas(t *testing.T) {
 	if code, stderr := h.enroll("enroll\n", "--owner", "alice"); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	want := "An owner (bob) is already enrolled. Enrolling again replaces the owner bob with alice and the authenticator secret: the old entry in your authenticator app stops working, and you add the new secret that setup shows to your app.\nType \"enroll\" to replace it: "
+	want := "An owner (bob) is already enrolled. Enrolling again replaces the owner bob with alice and the authenticator secret (the TOTP secret): the old entry in your authenticator app stops working, and you add the new secret that setup shows to your app.\nType \"enroll\" to replace it: "
 	if !strings.Contains(h.out.String(), want) {
 		t.Errorf("the plain prompt changed:\n%s", h.out.String())
 	}

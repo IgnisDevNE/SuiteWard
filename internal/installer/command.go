@@ -197,7 +197,7 @@ var installFlags = []struct{ name, usage string }{
 	{"runtime", "container program: podman (recommended) or docker"},
 	{"connection", "the Podman connection or Docker context to use (default: the rootless Podman machine, or Docker Desktop's)"},
 	{"image", "the SuiteWard release to install, ghcr.io/ignisdevne/suiteward@sha256:<64 hex> (default: the one already installed, else the release this program carries; a development build needs this flag)"},
-	{"sha256sums", "co-located only, optional: the release's SHA256SUMS file, already verified. It lists this program, and the install uses it to check the test runner against the release. Without it the install works, and doctor shows a warning"},
+	{"sha256sums", "co-located only, optional: the release's SHA256SUMS file, already verified. The file must list this program, and the install uses it to check the test runner against the release. Without the flag the install works, and doctor shows a warning"},
 	{"http-port", "port of SuiteWard's web address, on this computer only (default 27081)"},
 	{"mcp-port", "port your coding agent connects to, on this computer only (default 27091)"},
 	{"job-timeout", "how long a SuiteWard job may run, as a duration such as 5m (sets SUITEWARD_JOB_TIMEOUT)"},
@@ -228,7 +228,7 @@ func newInstallFlagSet() *flag.FlagSet {
 	fs.Bool("accept-docker", false, "accept the risks of Docker and use it although Podman is recommended")
 	fs.Bool("upgrade", false, "upgrade the installed SuiteWard to the release this program carries (or --image), after making a backup")
 	fs.Bool("yes", false, "with --upgrade: do not ask before the backup and the upgrade (a stopped service is not started: that is asked separately)")
-	fs.String("backup-dir", "", "with --upgrade: the folder for the backup file (default: a backups folder next to the access token copy, or in ~/.config/suiteward of the service account on the isolated tier)")
+	fs.String("backup-dir", "", "with --upgrade: the folder for the backup file (default: a backups folder next to the access token copy, or in ~/.config/suiteward of the service account on a separate server)")
 	fs.String("backup-recipient", "", "with --upgrade, when no terminal can be asked: the public key (age1pq1...) the backup is encrypted to; it is saved in the settings (answers-file key backup_recipient)")
 	fs.Bool("plain", false, plainUsage)
 	return fs
@@ -389,7 +389,7 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 	switch config.Tier(tier) {
 	case config.TierIsolated:
 		if _, given := r.given("sha256sums"); given {
-			return fmt.Errorf("%w: --sha256sums does not apply to the isolated install, and nothing was changed: the administrator's host step sets up the test runner and takes it instead (`sudo %s install host --sha256sums <the release's SHA256SUMS file>`)", ErrUsage, env.Deps.command())
+			return fmt.Errorf("%w: --sha256sums does not apply to the isolated install, and nothing was changed: the administrator's host step sets up the test runner and takes this flag instead (`sudo %s install host --sha256sums <the release's SHA256SUMS file>`)", ErrUsage, env.Deps.command())
 		}
 		isolated := saved
 		isolated.Tier, isolated.Runtime = config.TierIsolated, RuntimePodman
@@ -590,8 +590,8 @@ func chooseTier(r *Resolver, def config.Tier) (string, error) {
 		r.screen.Steps(steps...)
 		r.screen.Page("Where SuiteWard runs",
 			ui.Fields(
-				ui.KV{Key: string(config.TierCoLocated), Value: "The simplest way to start. " + reducedAssuranceNotice},
-				ui.KV{Key: string(config.TierIsolated), Value: "On a separate Linux server or user account that your coding agent cannot reach: the strongest protection. It needs an EL9 server, such as AlmaLinux."}),
+				ui.KV{Key: string(config.TierCoLocated), Value: reducedAssuranceNotice + " Your coding agent can reach SuiteWard's key, its database and its secrets."},
+				ui.KV{Key: string(config.TierIsolated), Value: "On a separate Linux server or account that your coding agent cannot reach: the strongest protection. It needs Enterprise Linux 9, such as AlmaLinux 9."}),
 			ui.Para("To start, choose co-located."))
 	}
 	return r.Select("tier", "Installation type", tierChoices, string(def))

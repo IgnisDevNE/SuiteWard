@@ -200,7 +200,7 @@ func (g *githubInstall) removeKeySecret() string {
 	if cmd, err := engineCommand(g.rt, g.env.Deps.GOOS); err == nil {
 		return cmd + " secret rm " + SecretGitHubAppKey
 	}
-	return "remove it from the secret store of the container runtime"
+	return "remove it from the secret store of the container program"
 }
 
 // leftovers adds to the error of a failed flow what the run left behind and what to do about it: the App, its key secret
@@ -321,10 +321,10 @@ func (g *githubInstall) enroll(ctx context.Context, status func(context.Context)
 		return fmt.Errorf("the service is running, but the install was interrupted before the owner was enrolled. To enroll the owner, run `%s`: %w", command, err)
 	case err != nil:
 		g.owner, g.statusDead = "unknown: /status could not be read", true
-		scr.Warn("The owner setup did not run: the service's status could not be read (%v), so it is not known whether an owner is already enrolled, and running it again would replace that owner's authenticator secret. Once the service answers, check its status. If it shows no owner, turn off any screen recording and run this on a real terminal:\n  %s\n", err, command)
+		scr.Warn("The owner setup did not run: the service's status could not be read (%v), so it is not known whether an owner is already enrolled, and running it again would replace that owner's authenticator secret (the TOTP secret). Once the service answers, check its status. If it shows no owner, turn off any screen recording and run this on a real terminal:\n  %s\n", err, command)
 	case login != "":
 		g.owner = login + " (already enrolled)"
-		scr.Warn("An owner (%s) is already enrolled, so the owner setup was skipped and the authenticator secret is unchanged. To enroll again (for example after losing your authenticator), turn off any screen recording and run this on a real terminal: %s\n", login, command)
+		scr.Warn("An owner (%s) is already enrolled, so the owner setup was skipped and the authenticator secret (the TOTP secret) is unchanged. To enroll again (for example after losing your authenticator), turn off any screen recording and run this on a real terminal: %s\n", login, command)
 	case g.setupOwner == "":
 		g.owner = notEnrolled
 		scr.Warn("No owner is enrolled yet, and this run does not know the owner's GitHub username or the test checks. Turn off any screen recording, then enroll the owner on a real terminal:\n  %s\n", command)
@@ -335,7 +335,7 @@ func (g *githubInstall) enroll(ctx context.Context, status func(context.Context)
 		g.owner = g.setupOwner + " (enrolled now)"
 	default:
 		g.owner = notEnrolled
-		scr.Warn("Next step: the owner setup needs a real terminal, because it shows the authenticator secret there. Turn off any screen recording, then enroll the owner:\n  %s\n", command)
+		scr.Warn("Next step: the owner setup needs a real terminal, because it shows the authenticator secret (the TOTP secret) there. Turn off any screen recording, then enroll the owner:\n  %s\n", command)
 	}
 	return nil
 }

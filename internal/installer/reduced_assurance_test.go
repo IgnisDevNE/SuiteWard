@@ -28,6 +28,9 @@ func TestTheSummaryOfAColocatedInstallSaysOnceThatTheTierHasReducedAssurance(t *
 	if got := strings.Count(flat(c.tail()), reducedAssuranceKey); got != 1 {
 		t.Errorf("the summary says it %d times, want once:\n%s", got, c.tail())
 	}
+	if !strings.Contains(c.tail(), "Installation type: on this computer\n") {
+		t.Errorf("the summary does not say the installation type in words:\n%s", c.tail())
+	}
 }
 
 func TestTheSummaryOfAColocatedUpgradeSaysOnceThatTheTierHasReducedAssurance(t *testing.T) {

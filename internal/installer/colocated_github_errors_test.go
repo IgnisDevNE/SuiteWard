@@ -136,7 +136,7 @@ func TestRemoveKeySecretSaysHowForEachRuntime(t *testing.T) {
 		t.Errorf("podman: %s", got)
 	}
 	g = &githubInstall{env: Env{Deps: Deps{GOOS: "linux"}}}
-	if got := g.removeKeySecret(); got != "remove it from the secret store of the container runtime" {
+	if got := g.removeKeySecret(); got != "remove it from the secret store of the container program" {
 		t.Errorf("no engine: %s", got)
 	}
 }

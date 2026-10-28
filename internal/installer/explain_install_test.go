@@ -39,8 +39,8 @@ func TestTheTierQuestionHasAPageThatExplainsBothTiers(t *testing.T) {
 	if !strings.HasPrefix(v.rows[0], "Where SuiteWard runs") {
 		t.Errorf("the page of the tier question is titled %q, want \"Where SuiteWard runs\"", v.rows[0])
 	}
-	mustSay(t, v, "simplest way to start", "next to your coding agent", "catch mistakes, not a determined agent",
-		"separate Linux server or user account that your coding agent cannot reach", "strongest protection", "To start, choose co-located", "Installation type")
+	mustSay(t, v, "next to your coding agent", "catch mistakes, not a determined agent", "Your coding agent can reach SuiteWard's key, its database and its secrets",
+		"separate Linux server or account that your coding agent cannot reach", "strongest protection", "Enterprise Linux 9", "To start, choose co-located", "Installation type")
 	if !strings.Contains(v.hint, "Enter takes the default") {
 		t.Errorf("the hint is %q, want it to say that Enter takes the default", v.hint)
 	}

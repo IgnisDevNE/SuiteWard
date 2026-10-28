@@ -667,14 +667,18 @@ Read these before you rely on a result, and before you choose `required`.
 - **Also seen there:** the executor with no window; its restart about a minute after its process was killed; an upgrade that stopped the running executor's whole tree by itself, started the new one and moved the database to version 22 with its data kept; and the purge.
 - **Seen there with the latest texts** (after that upgrade, on one more pull request that edits a test): the Contract check of a head that awaits approval states the counts of the canonical run and the sentence about an edited test, and shows the approve with a mode; the revision comment links the `Receipt page`; and the fix of a `doctor` row carries the `--settings` and `--token-file` of the instance.
 - **Seen on a throwaway AlmaLinux 9 distro** (WSL, Podman 5.8.2, cgroup v2): the tagged tests of the sandbox, of the verified source stream and of the `run` package (which makes a real receipt of a small module) passed as a user without administrator rights under rootless Podman (`--log-driver=none` included); and the host step with a development binary and a sums file made for it, which refused to run without `--sha256sums` (exit code 2) and then set up an executor that started (with no service, it ran no job). That sums file does not exercise the pin of a signed release.
-- **Not seen:**
+- **Seen on the published `v0.5.0-alpha.1`, isolated, on a throwaway AlmaLinux 9.8 distro** (WSL, 2026-10-28, a throwaway repository):
+  - the release's `SHA256SUMS`, Linux binary and image index verified with cosign; the host step with `--sha256sums`, which pinned the executor to the release's line; the service and its database as rootless Podman quadlets; and `doctor` passing every row of the isolated executor, `executor.binary` with no warning;
+  - the bootstrap (`/suiteward propose`, then the approve that made the first version); a fix whose added test `DETECTS`, approved with `fix`, whose approval held across a branch update that changed nothing protected while the canonical run ran again on the new head; and broken code that failed the Contract check;
+  - the executor stopped: the run read `unavailable` 2 minutes 29 seconds after the executor was last seen (the lease wait at its default of 2 minutes, and the next pass), and `/suiteward unblock` let the head pass;
+  - each sandbox in a cgroup scope of its own under the executor's account (`user@UID.service`), with its memory (no swap), process and CPU limits;
+  - the purge as the service account, and the executor of the administrator stopped afterwards with the command of "Uninstalling" (section 11).
+- **Not seen** (the [roadmap](plan/decisions.md#d-roadmap-the-order-after-m21) puts Podman, Linux and a real logon in the live tests of each phase from M2.1b on, and macOS, a real constrained language mode and a real server in the verification phase after M3):
   - the executor on the co-located tier with Podman, the program this guide recommends (the installer itself was validated live on Podman in earlier phases);
   - the co-located executor on macOS and on Linux;
-  - the lease wait at its default of 2 minutes;
   - a real PowerShell constrained language mode (the refusal of section 5.4 is covered by unit tests only);
   - the Windows task started by a real logon (it was started by hand, and restarted by its own script);
-  - the isolated flow. It runs after the merge on the published alpha: the isolated install takes only the release image, and only the release's own `SHA256SUMS` exercises the signed pin;
-  - on an isolated host, the rows of `doctor` for the executor, and the cgroup scope that each sandbox is assumed to get under `user@UID.service`, outside the executor unit's memory limit (section 10.2).
+  - the isolated tier on a real server, such as the AWS host, with cloud metadata answering.
 
 On Windows, the first scheduled task of the executor showed three things on a real machine, and the task of this release answers each of them. A console window of the task opened in front of the installer, and closing it ended the executor. `RestartOnFailure` did not start it again, because it covers a start that failed and not an action that exited. And `schtasks /End` ended only the script's `cmd.exe` and left the executor running. The task now has no window, its script starts the executor again after a minute, and a stop ends the whole tree. The task that this release installs then ran the pull requests above, with no window.
 

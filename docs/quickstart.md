@@ -6,7 +6,7 @@ This is the short path for one owner. The **co-located** tier runs SuiteWard nex
 
 ## Co-located (your PC)
 
-On Windows and macOS, start the Podman machine first: `podman machine start` (`podman machine init` once before that). Windows with Podman is the path validated live. On macOS, the installer ran on a real Mac with Podman (phase M1.15) and CI runs its tests on a macOS machine, but the test runner (the executor of step 2) has not been seen there yet; Linux is covered by tests only.
+On Windows and macOS, start the Podman machine first: `podman machine start` (`podman machine init` once before that). Windows is the path validated live (the installer with Podman, the test runner with Docker). On macOS, the installer ran on a real Mac with Podman, without GitHub (phase M1.15), and CI runs its tests on a macOS machine, but the test runner (the executor of step 2), the GitHub flow with its setup window and later releases have not been seen there yet; Linux is covered by tests only.
 
 **1. Get the installer, and verify it if you choose** ([section 4](install.md#4-get-and-verify-the-installer)). Verifying is optional but recommended: the binary is the trust root of the install, and the checks below prove that it is the one the release workflow signed.
 

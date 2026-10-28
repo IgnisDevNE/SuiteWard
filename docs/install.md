@@ -673,7 +673,7 @@ Read these before you rely on a result, and before you choose `required`.
   - the executor stopped: the run read `unavailable` 2 minutes 29 seconds after the executor was last seen (the lease wait at its default of 2 minutes, and the next pass), and `/suiteward unblock` let the head pass;
   - each sandbox in a cgroup scope of its own under the executor's account (`user@UID.service`), with its memory (no swap), process and CPU limits;
   - the purge as the service account, and the executor of the administrator stopped afterwards with the command of "Uninstalling" (section 11).
-- **Not seen** ([D-ROADMAP](plan/decisions.md#d-roadmap-the-order-after-m21) puts Podman, Linux and a real logon in the live tests of each phase from M2.1b on, and macOS, the AWS host and a real constrained language mode in the verification phase after M3):
+- **Not seen** (the [roadmap](plan/README.md#roadmap) places Podman, Linux and a real logon in the live tests of each phase from M2.1b on, and macOS, the AWS host and a real constrained language mode in the verification phase after M3):
   - the executor on the co-located tier with Podman, the program this guide recommends (the installer itself was validated live on Podman in earlier phases);
   - the co-located executor on macOS and on Linux;
   - a real PowerShell constrained language mode (the refusal of section 5.4 is covered by unit tests only);

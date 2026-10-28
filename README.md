@@ -169,14 +169,12 @@ Set `SUITEWARD_VERSION` to the same tag: the script is the same file in every re
   - Phase [M1.15](docs/plan/phases/M1.15.md) is merged ([#59](https://github.com/IgnisDevNE/SuiteWard/pull/59)) and released as the pre-release `v0.4.0-alpha.3`. It closes what M1.14 left in the installer and fixes the live findings of `v0.4.0-alpha.2` on macOS and Windows: a purge never deletes another instance's token file and lists what it deletes first, no key typed before a question was drawn answers it, and GitHub's answer ends an open hidden paste. It adds `suiteward scope add`, which adds patterns to `.suiteward.yml` as text.
   - Phase [M2.1](docs/plan/phases/M2.1.md), canonical execution and the receipt with the Go profile, is merged ([#60](https://github.com/IgnisDevNE/SuiteWard/pull/60)) and released as the pre-release `v0.5.0-alpha.1`, verified live on both tiers. It adds a separate executor that runs tests in disposable sandboxes with no network, canonical execution of the approved tests on every open head, the receipt of the tests a pull request adds or changes with its `SuiteWard / Receipt` check and page, the `mode` and `unblock` commands, and an `execution` policy in `.suiteward.yml` that stays off until the owner approves it. The installer also sets up the executor on both tiers, writes its texts in plain language, and repeats the `--settings` and `--token-file` of its run in the commands it suggests. Seen live: the executor on the co-located tier on Windows with Docker and a development build, and the isolated flow on the published alpha, on a throwaway AlmaLinux 9 distro. Not seen yet: the co-located executor with Podman, on macOS and on Linux, a real Constrained Language Mode refusal, a task started by a real logon, and the isolated tier on a real server. The [install guide](docs/install.md#limits-of-canonical-execution) says what was seen and lists the limits.
 - **Security:** see [SECURITY.md](SECURITY.md), the [threat model](docs/security/threat-model.md), and [`scripts/verify-release.ps1`](scripts/verify-release.ps1), which verifies a release's signature and provenance.
-- **After the MVP:**
-  - canonical execution for Python (M2.2) and TypeScript (M2.3), after the Go profile of M2.1;
-  - a managed service;
-  - the rest of the backup work (remote storage, scheduled backups, and a restore with a recovery mode);
-  - the rest of the change report (a link to each file's diff, and a report on the check's Details page);
-  - reading runner settings inside configuration files.
+- **After the MVP**, in this order:
+  - results communication (M2.1b: a results comment and a page for every pull request), then canonical execution for Python (M2.2) and TypeScript (M2.3), and execution maturity (M2.4);
+  - security and trust (M3), then a verification phase that ends with the first beta release;
+  - the managed service, after the beta, with the full change report on the check's Details page.
 
-  The roadmap is in the [delivery plan](docs/plan/README.md).
+  With no phase yet: the rest of the backup work (remote storage that the owner provides, scheduled backups, and a restore with a recovery mode), the rest of the change report (a link to each file's diff), and reading runner settings inside configuration files. The roadmap is in the [delivery plan](docs/plan/README.md#roadmap).
 
 ## Architecture
 

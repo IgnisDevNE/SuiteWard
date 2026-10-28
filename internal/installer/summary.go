@@ -189,6 +189,7 @@ func (c *colocatedInstall) answersHere(ctx context.Context) bool {
 // and the Release row the version of the service, as /status reports them.
 func (c *colocatedInstall) commonSummary(ctx context.Context, rows *summaryRows) {
 	rows.add("Installation type", installationTypeWords(string(c.s.Tier)))
+	rows.add(securityLimitKey, reducedAssuranceNotice)
 	rows.add("Container program", engineLine(c.rt.Engine()))
 	if !c.statusDead {
 		version, id := instanceStatus(ctx, func(ctx context.Context) ([]byte, error) {
@@ -198,8 +199,12 @@ func (c *colocatedInstall) commonSummary(ctx context.Context, rows *summaryRows)
 		rows.add("Version", version)
 	}
 	rows.addGitHub(c.s.GitHub)
-	rows.warn(reducedAssuranceNotice)
 }
+
+// securityLimitKey is the row that carries the reduced-assurance notice. It is a key row of the summary (ui keeps those when the window is too
+// small for all of it), because the notice is a security disclosure that a trimmed summary must not lose: ui spells the same name in keyRows, and
+// the test on the smallest window fails when the two drift apart.
+const securityLimitKey = "Security limit"
 
 func (c *colocatedInstall) installSummary(ctx context.Context, t installTarget) []ui.KV {
 	var rows summaryRows

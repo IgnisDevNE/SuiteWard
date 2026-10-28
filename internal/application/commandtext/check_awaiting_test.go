@@ -126,14 +126,14 @@ func TestCheckSummaryRefusesAModeAndCountsThatDoNotFitAMissingApproval(t *testin
 	with := func(c commandtext.Check, edit func(*commandtext.Check)) commandtext.Check { edit(&c); return c }
 	mode := func(c *commandtext.Check) { c.ApproveMode = true }
 	for name, c := range map[string]commandtext.Check{
-		"a mode on a success":                    with(check(commandtext.CheckSuccess, "ready"), mode),
-		"a mode on a pending canonical run":      with(requiredCheck("canonical-pending"), mode),
-		"a mode on a runner block":               with(check(commandtext.CheckInProgress, "runner-uncovered"), mode),
-		"a mode on a first contract":             with(awaiting(nil, true), func(c *commandtext.Check) { c.Version = 0 }),
-		"counts on a first contract":             with(awaiting(passed(), false), func(c *commandtext.Check) { c.Version = 0 }),
-		"counts that are not the sum of a run":   with(awaiting(nil, false), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 5, Passed: 2} }),
-		"an unblock on a missing approval":       with(awaiting(passed(), false), func(c *commandtext.Check) { c.Unblocked = true }),
-		"counts on a rejected owner command":     with(check(commandtext.CheckFailure, "owner-command-rejected"), func(c *commandtext.Check) { c.Execution = ran() }),
+		"a mode on a success":                  with(check(commandtext.CheckSuccess, "ready"), mode),
+		"a mode on a pending canonical run":    with(requiredCheck("canonical-pending"), mode),
+		"a mode on a runner block":             with(check(commandtext.CheckInProgress, "runner-uncovered"), mode),
+		"a mode on a first contract":           with(awaiting(nil, true), func(c *commandtext.Check) { c.Version = 0 }),
+		"counts on a first contract":           with(awaiting(passed(), false), func(c *commandtext.Check) { c.Version = 0 }),
+		"counts that are not the sum of a run": with(awaiting(nil, false), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 5, Passed: 2} }),
+		"an unblock on a missing approval":     with(awaiting(passed(), false), func(c *commandtext.Check) { c.Unblocked = true }),
+		"counts on a rejected owner command":   with(check(commandtext.CheckFailure, "owner-command-rejected"), func(c *commandtext.Check) { c.Execution = ran() }),
 	} {
 		t.Run(name, func(t *testing.T) { mustPanic(t, func() { commandtext.CheckSummary(c) }) })
 	}

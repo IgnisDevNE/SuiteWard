@@ -110,15 +110,15 @@ func TestCheckMessageOfTheCanonicalGateRefusesWhatCannotBeRendered(t *testing.T)
 		counts    *checkExecution
 		unblocked bool
 	}{
-		"a failing run without counts":      {checks.Failure, "canonical-failing", nil, false},
-		"a failing run that blocks nothing": {checks.Failure, "canonical-failing", requiredPassed, false},
-		"counts on a pending run":           {checks.InProgress, "canonical-pending", requiredPassed, false},
-		"a success with a blocking test":    {checks.Success, "ready", requiredBlocked, false},
-		"counts that do not add up":         {checks.Success, "ready", &checkExecution{Tests: 5, Passed: 1}, false},
-		"an unblock with counts":            {checks.Success, "ready", requiredPassed, true},
-		"an unblock of an approval missing": {checks.InProgress, "approval-missing", nil, true},
+		"a failing run without counts":       {checks.Failure, "canonical-failing", nil, false},
+		"a failing run that blocks nothing":  {checks.Failure, "canonical-failing", requiredPassed, false},
+		"counts on a pending run":            {checks.InProgress, "canonical-pending", requiredPassed, false},
+		"a success with a blocking test":     {checks.Success, "ready", requiredBlocked, false},
+		"counts that do not add up":          {checks.Success, "ready", &checkExecution{Tests: 5, Passed: 1}, false},
+		"an unblock with counts":             {checks.Success, "ready", requiredPassed, true},
+		"an unblock of an approval missing":  {checks.InProgress, "approval-missing", nil, true},
 		"counts on a rejected owner command": {checks.Failure, "owner-command-rejected", requiredPassed, false},
-		"a pending run that failed":         {checks.Failure, "canonical-pending", nil, false},
+		"a pending run that failed":          {checks.Failure, "canonical-pending", nil, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if m, err := chkRequired(t, tc.state, tc.reason, tc.counts, tc.unblocked); err == nil {

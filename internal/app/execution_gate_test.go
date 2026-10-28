@@ -210,9 +210,9 @@ func TestChecksKeepEveryOtherReasonOverTheCanonicalGate(t *testing.T) {
 
 	w.execRun()
 
-	w.want(5, checks.InProgress, "approval-missing", 1)
+	w.want(5, checks.InProgress, "approval-missing", 1) // the failing run does not hold the check: the approval is still what is missing, and no new message is written
 	if _, found := w.lastCheckPayload(5)["execution"]; found {
-		t.Error("a check that the gate does not decide carries counts")
+		t.Error("the message of the first state, written while the run was pending, carries counts")
 	}
 
 	w.consent(contract.ApproveConsent, 201, 2, 1, 5)

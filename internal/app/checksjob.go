@@ -326,7 +326,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 			}
 		}
 	}
-	countsErr := j.restoreCounts(ctx, s, x, &d, &executed)
+	countsErr := errors.Join(j.restoreCounts(ctx, s, x, &d, &executed), j.approvalCounts(ctx, s, x, d.result, &executed))
 	if cancelled := ctx.Err(); cancelled != nil { // restoreCounts left the check as it was; a stopping run publishes nothing
 		return "", cancelled
 	}
@@ -350,6 +350,26 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 // contract has no policy, so its approve names none.
 func (x *executionRun) namesMode(r checks.Result) bool {
 	return x.known && r.Reason == reasonApprovalMissing && x.policy.receipt == domain.ReceiptLevelRequired
+}
+
+// approvalCounts gives the check of a head whose approval is missing, under canonical: required, the counts of the complete canonical run of the head. The run does not decide the
+// check: the approval is what is missing, and the reason keeps its precedence. The owner reads the counts before approving, because a head can fail the approved tests that its
+// own change edits. A run that is pending, unavailable or not wanted adds nothing. The check is written once per state, so these counts go out with the message the ledger
+// writes next. The failure of the read is returned, once the check is published.
+func (j *checksJob) approvalCounts(ctx context.Context, s *pullState, x *executionRun, r checks.Result, executed *executionOutcome) error {
+	if r.Reason != reasonApprovalMissing || !x.known || x.policy.canonical != domain.CanonicalLevelRequired {
+		return nil
+	}
+	job, found, err := j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical, artifact.Digest{})
+	if err != nil {
+		return err
+	}
+	run, err := j.reads().canonical(ctx, job, found)
+	if err != nil || run.status != domain.RunComplete {
+		return err
+	}
+	executed.counts = checkCountsOf(run.counts)
+	return nil
 }
 
 // restoreCounts gives a check that a wait restored the counts of the canonical run it was decided with. The stored result of the head goes out again when the ledger

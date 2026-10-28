@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -105,7 +106,7 @@ func TestChecksStateTheCountsOfACompleteCanonicalRunWhenTheyWriteTheCheckOfAHead
 			if tc.block {
 				wantExecution(t, payload, 2, 1, 0, 1, 0, 0, 0)
 			} else {
-				wantExecution(t, payload, 3, 1, 1, 0, 0, 0, 1)
+				wantExecution(t, payload, 2, 1, 1, 0, 0, 0, 1) // an excluded test is not one that ran
 			}
 			summary := summaryOfPayload(t, payload)
 			for _, want := range []string{"Canonical run on this head:", "This check reports on the protected contract and on the run of its approved tests.", plainApprove} {
@@ -135,16 +136,16 @@ func TestChecksStateNoCountsForAHeadAwaitingApprovalUnlessTheCanonicalRunIsRequi
 	}
 }
 
-// A message that the ledger writes again while the step of execution fails still carries what the check of the head says: the counts of the complete run and the mode.
+// A message that the ledger writes again while the run waits for GitHub still carries what the check of the head says: the counts of the complete run and the mode.
 func TestChecksSendAgainTheCountsAndTheModeOfAMissingApprovalTheyRestore(t *testing.T) {
 	w := newExecWorld(t, execDecl)
-	w.execPull(execHeadFiles(execDecl, "v2"))
+	w.execPullFive(execHeadFiles(execDecl, "v2"))
 	w.want(5, checks.InProgress, "approval-missing", 1)
 	w.finish(w.onlyJob(5, cjHead2, execution.PlanCanonical), canonicalTests("pass", "fail"))
-	restorePaths[1].arm(w) // the step of execution fails
+	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New("github: 502") // the run waits: it cannot read the head, so it keeps the check it has
 	lost := w.loseCheck(5)
 
-	w.runRestored(true)
+	w.runRestored(false) // a wait for GitHub is no failure of the run
 
 	w.want(5, checks.InProgress, "approval-missing", lost.Generation+1)
 	payload := w.lastCheckPayload(5)

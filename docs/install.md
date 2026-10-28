@@ -422,7 +422,7 @@ The command is the first line of the comment that starts with `/suiteward` outsi
 | success, `ready` | The exact revision is approved and assessed, and it is ready for integration. |
 | success, `bootstrap-ready` | The first contract is approved. V1 follows (section 8). |
 | success, `bootstrap-skipped` | Skipped by the owner before the first contract. Nothing was assessed. |
-| in_progress, `approval-missing` | Approve the current revision with the command in the comment. |
+| in_progress, `approval-missing` | Approve the current revision with the command in the check or in the comment. Under `receipt: required` the command names a mode (`fix`, `feature` or `refactor`). Under `canonical: required` the check also states how the approved tests ran on this head, once that run is complete. If one failed, is missing or is flaky, read the change before you approve: an edited test can pass by checking less. |
 | in_progress, `bootstrap-awaiting` | There is no contract yet. Post `propose` or `skip` (section 8). |
 | in_progress, `runner-uncovered` | The pull request adds or changes a test runner file (for example `conftest.py` or `jest.config.js`) that the contract does not cover. Such a file can change how the protected tests run, so the check waits for your decision. SuiteWard's comment offers two ways out, each one click when the pull request's diff shows `.suiteward.yml`: protect the file (add its pattern) or ignore it (add the path to `exclude`). Then approve the new revision. |
 | in_progress, `not-current` | This pull request's revision is no longer the current one. Use the newest revision comment. |
@@ -510,7 +510,7 @@ execution:
 | --- | --- |
 | `canonical: off` | Nothing runs. |
 | `canonical: advisory` | The approved tests run on each head. The results are on the receipt page. The Contract check does not change. |
-| `canonical: required` | The same, and the run gates `SuiteWard / Contract` where it would otherwise be `success`. A run that is pending keeps it `in_progress` (`canonical-pending`), and so does one that cannot be completed (`canonical-unavailable`). An approved test that failed, is missing or is flaky makes it `failure` (`canonical-failing`). A run with no declared test is complete, and the check says that 0 tests ran. |
+| `canonical: required` | The same, and the run gates `SuiteWard / Contract` where it would otherwise be `success`. A run that is pending keeps it `in_progress` (`canonical-pending`), and so does one that cannot be completed (`canonical-unavailable`). An approved test that failed, is missing or is flaky makes it `failure` (`canonical-failing`). A run with no declared test is complete, and the check says that 0 tests ran. A head that awaits your approval stays `approval-missing` whatever the run says, and its check states the counts of a complete run. |
 | `receipt: off` | No receipt. |
 | `receipt: advisory` | The receipt of each revision that has one runs, and its results are on the Receipt check and the page. It never refuses an approval. |
 | `receipt: before-approval` | An approve is refused only while the receipt is pending, whatever it says. A receipt that is unavailable does not refuse: you chose to look at the receipt, and you approve with its answer in front of you. |

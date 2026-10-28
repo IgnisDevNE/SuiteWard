@@ -41,6 +41,8 @@ func TestCheckPublisherPostsTheSummaryOfTheCanonicalGate(t *testing.T) {
 		{"unavailable", checks.InProgress, "canonical-unavailable", nil, false, "Canonical run unavailable", "in_progress", "", []string{"could not run the approved tests", "/suiteward unblock <code>"}},
 		{"failing", checks.Failure, "canonical-failing", requiredBlocked, false, "Canonical tests failing", "completed", "failure",
 			[]string{"14 tests ran: 9 passed, 2 skipped, 1 failed, 1 missing, 1 flaky.", "Excluded tests (not run): 3. Excluded tests are not covered."}},
+		{"awaiting approval", checks.InProgress, "approval-missing", requiredBlocked, false, "Awaiting owner approval", "in_progress", "",
+			[]string{"14 tests ran: 9 passed, 2 skipped, 1 failed, 1 missing, 1 flaky.", "read the change before you approve", "/suiteward approve P1-R2 <code>"}},
 		{"passed", checks.Success, "ready", requiredPassed, false, "Ready for integration", "completed", "success", []string{"12 tests ran: 9 passed, 3 skipped, 0 failed, 0 missing, 0 flaky."}},
 		{"no declared test", checks.Success, "unchanged", &checkExecution{}, false, "No protected change", "completed", "success", []string{"0 tests ran."}},
 		{"unblocked", checks.Success, "ready", nil, true, "Ready for integration", "completed", "success",
@@ -115,7 +117,7 @@ func TestCheckMessageOfTheCanonicalGateRefusesWhatCannotBeRendered(t *testing.T)
 		"counts that do not add up":         {checks.Success, "ready", &checkExecution{Tests: 5, Passed: 1}, false},
 		"an unblock with counts":            {checks.Success, "ready", requiredPassed, true},
 		"an unblock of an approval missing": {checks.InProgress, "approval-missing", nil, true},
-		"counts on an approval missing":     {checks.InProgress, "approval-missing", requiredPassed, false},
+		"counts on a rejected owner command": {checks.Failure, "owner-command-rejected", requiredPassed, false},
 		"a pending run that failed":         {checks.Failure, "canonical-pending", nil, false},
 	} {
 		t.Run(name, func(t *testing.T) {

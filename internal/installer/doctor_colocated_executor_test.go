@@ -106,8 +106,9 @@ func TestDoctorColocatedExecutorIsHealthyOnEveryOperatingSystem(t *testing.T) {
 				t.Errorf("exit %d, results %+v", code, res)
 			}
 			wantOK(t, res, "executor.token", "executor.binary", "executor.lifecycle", "executor.running")
-			if d := res["executor.binary"].Detail; !strings.Contains(d, "reduced assurance") {
-				t.Errorf("the binary check must say that the assurance of this tier is reduced: %q", d)
+			// The reduced assurance of this tier is stated once, by the install's summary and the page that introduces it: not by each row.
+			if d := res["executor.binary"].Detail; !strings.Contains(d, "matches the official release") || strings.Contains(d, "reduced assurance") {
+				t.Errorf("the binary check must say that the program matches the release, and not repeat the caveat: %q", d)
 			}
 			if _, has := res["executor.loopback"]; has != (goos != "linux") {
 				t.Errorf("the loopback of a Podman machine is checked on Windows and macOS only: %v", has)
@@ -168,7 +169,7 @@ func TestDoctorColocatedExecutorFailures(t *testing.T) {
 			writeFile(t, files.binary, "the previous release")
 			sum := sha256.Sum256([]byte("the previous release"))
 			writeFile(t, files.pin, hex.EncodeToString(sum[:])+"  suiteward-executor\n")
-		}, nil, "executor.binary", func(coloExecFiles) []string { return []string{"another build"} }, "install --upgrade"},
+		}, nil, "executor.binary", func(coloExecFiles) []string { return []string{"different version"} }, "install --upgrade"},
 		{"not registered on Linux", "linux", nil, []rule{{match: userUnit, out: "LoadState=not-found\nActiveState=inactive\nSubState=dead\n"}}, "executor.lifecycle", func(coloExecFiles) []string { return []string{"systemd user unit"} }, "install"},
 		{"not registered on Windows", "windows", nil, []rule{{match: "/Query /TN", err: errors.New("error: the system cannot find the file specified")}}, "executor.lifecycle", func(coloExecFiles) []string { return []string{"scheduled task"} }, "install"},
 		{"not running on Linux", "linux", nil, []rule{{match: userUnit, out: "LoadState=loaded\nActiveState=inactive\nSubState=dead\n"}}, "executor.running", func(coloExecFiles) []string { return []string{"not running"} }, "systemctl --user start suiteward-executor.service"},

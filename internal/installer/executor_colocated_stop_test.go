@@ -221,7 +221,7 @@ func TestInstallDoesNotReplaceTheExecutorWhenItCannotBeStoppedOnWindows(t *testi
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", r.err)
 	}
 	out := r.again.out.String()
-	for _, want := range []string{"executor could not be set up", "still running", "102"} {
+	for _, want := range []string{"could not be set up", "still running", "102"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the output lacks %q:\n%s", want, out)
 		}
@@ -244,7 +244,7 @@ func TestInstallDoesNotReplaceTheExecutorWhenTheProcessesCannotBeListedOnWindows
 	if r.err != nil {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", r.err)
 	}
-	if out := r.again.out.String(); !strings.Contains(out, "executor could not be set up") || !strings.Contains(out, "powershell: not found") {
+	if out := r.again.out.String(); !strings.Contains(out, "could not be set up") || !strings.Contains(out, "powershell: not found") {
 		t.Errorf("the output must say that the executor could not be set up, and why:\n%s", out)
 	}
 	if got := mustRead(t, filepath.Join(r.again.executorDir(), "suiteward-executor.exe")); string(got) != string(r.files["suiteward-executor.exe"]) {
@@ -379,7 +379,7 @@ func TestUninstallKeepsTheExecutorWhenItCannotBeEndedOnWindowsAndSaysSo(t *testi
 		t.Fatalf("an uninstall must go on with the stack: %v", err)
 	}
 	out := un.out.String()
-	for _, want := range []string{"executor was not removed", "still running", "102"} {
+	for _, want := range []string{"was not removed", "still running", "102"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the output lacks %q:\n%s", want, out)
 		}

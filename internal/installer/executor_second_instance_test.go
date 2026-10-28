@@ -70,7 +70,7 @@ func assertAsksForATokenFile(t *testing.T, u *upgradeHarness, err error) {
 	if pathErr != nil {
 		t.Fatal(pathErr)
 	}
-	if err == nil || !strings.Contains(err.Error(), "nothing was changed") {
+	if err == nil || !strings.Contains(err.Error(), "Nothing was changed") {
 		t.Errorf("got %v, want a refusal that says that nothing was changed", err)
 		return
 	}

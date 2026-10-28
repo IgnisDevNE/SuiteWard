@@ -355,7 +355,7 @@ func TestInstallOnlyWarnsWhenTheExecutorCannotBeStarted(t *testing.T) {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
 	}
 	out := h.out.String()
-	if !strings.Contains(out, "executor could not be set up") || !strings.Contains(out, "Access is denied") {
+	if !strings.Contains(out, "could not be set up") || !strings.Contains(out, "Access is denied") {
 		t.Errorf("the output must say that the executor could not be set up, and why:\n%s", out)
 	}
 	if _, err := os.Stat(h.settingsPath()); err != nil {
@@ -552,7 +552,7 @@ func TestInstallSaysThatTheUserIDIsMissingWhenIdPrintsNothing(t *testing.T) {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
 	}
 	out := h.out.String()
-	if !strings.Contains(out, "executor could not be set up") || !strings.Contains(out, "id of this user") {
+	if !strings.Contains(out, "could not be set up") || !strings.Contains(out, "id of this user") {
 		t.Errorf("the output must say that the executor could not be set up because the id of the user is not known:\n%s", out)
 	}
 	if strings.Contains(out, "<nil>") || strings.Contains(out, "%!") {
@@ -588,7 +588,7 @@ func TestUninstallWarnsAndGoesOnWhenTheUserManagerCannotBeAskedAboutAnExecutorTh
 		t.Errorf("the stack was not removed: %v", un.f.calls)
 	}
 	out := un.out.String()
-	if !strings.Contains(out, "executor was not removed") || !strings.Contains(out, un.executorDir()) || !strings.Contains(out, "disable --now suiteward-executor.service") {
+	if !strings.Contains(out, "was not removed") || !strings.Contains(out, un.executorDir()) || !strings.Contains(out, "disable --now suiteward-executor.service") {
 		t.Errorf("the output must say that the executor is still there, where, and how to remove it:\n%s", out)
 	}
 }
@@ -622,7 +622,7 @@ func TestInstallDoesNotRepointTheExecutorOfAnotherInstance(t *testing.T) {
 	if len(h.f.find("enable --now suiteward-executor.service")) != 0 || len(h.f.find("--user stop")) != 0 {
 		t.Errorf("the executor of the other instance was stopped or started: %v", h.f.calls)
 	}
-	if out := h.out.String(); !strings.Contains(out, "another instance") || !strings.Contains(out, "one executor") {
+	if out := h.out.String(); !strings.Contains(out, "another instance") || !strings.Contains(out, "one test runner") {
 		t.Errorf("the output must say that the computer has one executor and that it is another instance's:\n%s", out)
 	}
 	if _, err := os.Stat(h.executorDir()); !os.IsNotExist(err) {
@@ -699,7 +699,7 @@ func TestUpgradeAtTheInstalledReleaseDoesNotStartAnExecutorWithoutItsTokenCopy(t
 	if len(u.f.find("--user enable --now suiteward-executor.service")) != 0 {
 		t.Errorf("an executor with no token was started: %v", u.f.calls)
 	}
-	if out := u.out.String(); !strings.Contains(out, "token copy") || !strings.Contains(out, "install") {
+	if out := u.out.String(); !strings.Contains(out, "token file") || !strings.Contains(out, "install") {
 		t.Errorf("the output must say that the token copy is missing and what to run:\n%s", out)
 	}
 }
@@ -748,7 +748,7 @@ func TestTheUninstallWarningNamesTheCommandsOfTheOperatingSystemThatKeepsTheExec
 				t.Fatalf("an uninstall must go on with the stack: %v", err)
 			}
 			out := un.out.String()
-			if !strings.Contains(out, "executor was not removed") || strings.Contains(out, "systemctl") {
+			if !strings.Contains(out, "was not removed") || strings.Contains(out, "systemctl") {
 				t.Errorf("the output must say that the executor is still there, and not give the command of Linux:\n%s", out)
 			}
 			// The wrapper starts the program again after its pause, so ending the program by its name alone would not stop the executor, and it would

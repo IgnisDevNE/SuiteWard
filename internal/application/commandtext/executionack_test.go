@@ -33,6 +33,11 @@ const (
 	notOpenText  = "this pull request is no longer open. Nothing changed."
 	codeWasUsed  = "The code was used"
 	unblockLifts = "The checks will state that the owner unblocked this head and that the tests did not run."
+	// unblockStays is what an unblock leaves alone: a run that is failing or complete. It does not say that a run that is pending stays as it is, since an unblock ends a
+	// pending run that waits for a test runner that does not respond.
+	unblockStays = "The unblock changes no result: a run that is failing or complete stays as it is."
+	// notLifted is what an unblock does not lift, in the refusal for want of anything to lift.
+	notLifted = "An unblock lifts a run that is unavailable, or that waits for a test runner that is not responding. It does not lift a run that is failing or complete, or that waits for GitHub or for a test runner that responds."
 )
 
 func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
@@ -51,7 +56,7 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"receipt unavailable",
 			refused(execution.ReasonReceiptUnavailable, execution.ModeNone),
-			[]string{"Approval of P4-R2 by @octo-owner was refused by the receipt gate: the receipt of this head is unavailable. " + codeUsed, "```\n/suiteward unblock <code>\n```", "Then comment the approve again, with the next code.", "lifts only a run that is unavailable", nextCode},
+			[]string{"Approval of P4-R2 by @octo-owner was refused by the receipt gate: the receipt of this head is unavailable. " + codeUsed, "```\n/suiteward unblock <code>\n```", "Then comment the approve again, with the next code.", "An unblock lifts a run of the current head that is unavailable, or that waits for a test runner that is not responding.", nextCode},
 			[]string{"mode", "eligible"},
 		},
 		{
@@ -99,19 +104,19 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"unblocked, canonical run",
 			commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: commandtext.Plans{Canonical: true}},
-			[]string{"Unblock recorded by @octo-owner for the current head of this pull request. SuiteWard lifted what was unavailable on it: its canonical run.", unblockLifts, "stays as it is", "A new push is a new head and needs a new unblock if its run is unavailable too."},
+			[]string{"Unblock recorded by @octo-owner for the current head of this pull request. SuiteWard lifted the hold on its canonical run.", unblockLifts, unblockStays, "A new push is a new head and needs a new unblock if its run is unavailable too."},
 			[]string{"receipt", "eligible"},
 		},
 		{
 			"unblocked, receipt",
 			commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: commandtext.Plans{Receipt: true}},
-			[]string{"SuiteWard lifted what was unavailable on it: its receipt.", unblockLifts, "A new push is a new head"},
+			[]string{"SuiteWard lifted the hold on its receipt.", unblockLifts, unblockStays, "A new push is a new head"},
 			[]string{"canonical"},
 		},
 		{
 			"unblocked, both",
 			commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: commandtext.Plans{Canonical: true, Receipt: true}},
-			[]string{"SuiteWard lifted what was unavailable on it: its canonical run and its receipt.", unblockLifts},
+			[]string{"SuiteWard lifted the hold on its canonical run and its receipt.", unblockLifts, unblockStays},
 			nil,
 		},
 		{
@@ -129,7 +134,7 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"unblock refused where nothing is unavailable",
 			commandtext.Ack{Outcome: commandtext.UnblockRefused, Source: source, Owner: owner, Refusal: commandtext.NotUnavailable},
-			[]string{"`/suiteward unblock` was not processed: no run of this head is unavailable, so there is nothing to unblock. Nothing changed.", "a pending, failing or complete run is never lifted", codeWasUsed, "next code"},
+			[]string{"`/suiteward unblock` was not processed: no run of this head is unavailable, so there is nothing to unblock. Nothing changed.", notLifted, codeWasUsed, "next code"},
 			nil,
 		},
 	}
@@ -336,6 +341,24 @@ func TestValidateAckRefusesEndedPlansThatDoNotFit(t *testing.T) {
 	} {
 		if err := commandtext.ValidateAck(ack); err == nil {
 			t.Errorf("%s: ValidateAck accepts it", name)
+		}
+	}
+}
+
+// No text of an unblock says what the early unblock made false: that only an unavailable run is lifted, or that a pending run is never lifted or stays as it is.
+func TestTheTextsOfAnUnblockDoNotDenyThatItEndsARunThatWaitsForATestRunner(t *testing.T) {
+	both := commandtext.Plans{Canonical: true, Receipt: true}
+	for name, ack := range map[string]commandtext.Ack{
+		"unblocked, ended":             {Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: both, Ended: both},
+		"unblocked, nothing ended":     {Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: both},
+		"nothing to lift":              {Outcome: commandtext.UnblockRefused, Source: source, Owner: owner, Refusal: commandtext.NotUnavailable},
+		"receipt refused, unavailable": refused(execution.ReasonReceiptUnavailable, execution.ModeNone),
+	} {
+		body := render(t, func() string { return commandtext.Acknowledge(ack) })
+		for _, stale := range []string{"lifted what was unavailable", "lifts only", "never lifted", "pending, failing or complete", "that is pending, failing"} {
+			if strings.Contains(body, stale) {
+				t.Errorf("%s: the body says %q, which is false since an unblock ends a run that waits for a test runner that does not respond:\n%s", name, stale, body)
+			}
 		}
 	}
 }

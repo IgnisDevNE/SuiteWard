@@ -79,7 +79,7 @@ func TestRequiredCheckSummaryOfAnUnavailableRunOffersTheUnblockAndOfAPendingOneD
 	}
 	for _, reason := range []string{"canonical-pending", "canonical-failing"} {
 		if _, summary := checkText(t, requiredCheck(reason)); strings.Contains(summary, "unblock") {
-			t.Errorf("%s: the summary offers an unblock, which lifts only an unavailable run:\n%s", reason, summary)
+			t.Errorf("%s: the summary offers an unblock, which only canonical-unavailable and canonical-not-responding offer:\n%s", reason, summary)
 		}
 	}
 }

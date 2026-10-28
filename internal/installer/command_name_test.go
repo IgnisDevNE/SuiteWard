@@ -274,7 +274,7 @@ func TestAnUpgradeRefusedForAnUnfinishedInstallNamesInstallAsTheRunReachesIt(t *
 		t.Fatal(err)
 	}
 	err := refuseUnfinishedInstall(swCmd, path, func() (GitHub, error) { return GitHub{AppID: 3}, nil })
-	if err == nil || !strings.Contains(err.Error(), "with a plain `"+swCmd+" install`") {
+	if err == nil || !strings.Contains(err.Error(), "by running `"+swCmd+" install`") {
 		t.Errorf("got %v, want a refusal that names `%s install`", err, swCmd)
 	}
 }

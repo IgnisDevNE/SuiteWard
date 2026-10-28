@@ -130,7 +130,7 @@ func TestUpgradeIsolatedStopsAtTheStepThatFails(t *testing.T) {
 		want  []string
 		never []string
 	}{
-		{"an image of another repository", nil, []string{"--image", "docker.io/library/other@" + testDigest}, []string{"the isolated tier runs"},
+		{"an image of another repository", nil, []string{"--image", "docker.io/library/other@" + testDigest}, []string{"an installation on a separate server runs"},
 			[]string{"pg_dump", "systemctl --user stop", "daemon-reload"}},
 		{"an image that is a tag", nil, []string{"--image", "ghcr.io/ignisdevne/suiteward:v1"}, []string{"never pins a tag"},
 			[]string{"pg_dump", "systemctl --user stop", "daemon-reload"}},
@@ -149,7 +149,7 @@ func TestUpgradeIsolatedStopsAtTheStepThatFails(t *testing.T) {
 			[]string{"daemon-reload", "suiteward.service is stopped"},
 			[]string{"restart suiteward-db.service", "restart suiteward-migrate.service", "start suiteward.service"}},
 		{"migrate fails", func(u *isoUpgrade) { u.f.failOn["restart suiteward-migrate.service"] = errInjected }, nil,
-			[]string{"the migration failed, so the service was not started", "suiteward restore "},
+			[]string{"the database update (migration) failed, so the service was not started", "suiteward restore "},
 			[]string{"start suiteward.service", "--property=ActiveState"}},
 		{"the service does not start", func(u *isoUpgrade) { u.f.failOn["start suiteward.service"] = errInjected }, nil,
 			[]string{"start the service", "suiteward restore "},

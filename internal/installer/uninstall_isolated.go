@@ -27,11 +27,11 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, env Env
 		return err
 	}
 	if !st.found && !purge {
-		return errors.New("nothing is installed here: there are no units to remove (--purge removes what an earlier uninstall left)")
+		return errors.New("nothing is installed here, so there are no units to remove. `--purge` removes what an earlier uninstall left")
 	}
-	question := "Stop and remove the units of SuiteWard? The data stays."
+	question := "Stop SuiteWard and remove its units (its service files)? Your data stays."
 	if purge {
-		question = "Stop and remove the units, and delete the secrets, the volumes (this deletes the database and the artifacts), the network, the GitHub env file and the settings file?"
+		question = "Stop SuiteWard, remove its units, and delete the secrets, the volumes (this deletes the database and the saved files), the network, the GitHub env file and the settings file?"
 	}
 	port := s.HTTPPort // the units that are gone (a purge after an earlier uninstall) leave the port the settings name
 	if st.found {
@@ -66,7 +66,7 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, env Env
 		}
 		_, _ = fmt.Fprintf(out, "Removed the volumes, the secrets, the network, the copy of the executor's token, %s and %s. Backups under %s are kept.\n", host.envPath, host.settingsPath, filepath.Join(host.configDir, "backups"))
 	} else {
-		_, _ = fmt.Fprintf(out, "The volumes, the secrets and the settings are kept: install again to start the stack, or use --purge to remove them too.\n")
+		_, _ = fmt.Fprintf(out, "The volumes (your data), the secrets and the settings are kept. Run install again to start SuiteWard, or use `--purge` to remove them too.\n")
 	}
 	if st.oldEnv != "" {
 		_, _ = fmt.Fprintf(out, "The installed units read %s, which an administrator owns and this command never touches. To remove it: sudo rm %s\n", st.oldEnv, st.oldEnv)
@@ -90,13 +90,13 @@ func stopAndRemoveUnits(ctx context.Context, host isolatedHost, d Deps) (stopped
 		unit := unitService(file)
 		state, err := systemctl(ctx, "show", "--property=ActiveState", "--value", unit)
 		if err != nil {
-			return stopped, fmt.Errorf("ask for the state of %s: %w", unit, err)
+			return stopped, fmt.Errorf("could not ask for the state of %s: %w", unit, err)
 		}
 		if state == "inactive" { // also a unit that is not loaded: there is nothing to stop
 			continue
 		}
 		if _, err := systemctl(ctx, "stop", unit); err != nil {
-			return stopped, fmt.Errorf("stop %s: %w", unit, err)
+			return stopped, fmt.Errorf("could not stop %s: %w", unit, err)
 		}
 		stopped = append(stopped, unit+" ("+state+")")
 	}
@@ -107,7 +107,7 @@ func stopAndRemoveUnits(ctx context.Context, host isolatedHost, d Deps) (stopped
 		case err == nil:
 			removed = true
 		case !errors.Is(err, fs.ErrNotExist):
-			return stopped, fmt.Errorf("remove the unit %s: %w", file, err)
+			return stopped, fmt.Errorf("could not remove the unit file %s: %w", file, err)
 		}
 	}
 	if !removed && len(stopped) == 0 {

@@ -13,7 +13,7 @@ import (
 // to start the installed service, as it is; without a terminal, or on a no, it refuses and names the command that starts it.
 // --yes confirms the upgrade plan only: it never starts a service.
 
-const startQuestion = "The service is not running, so the backup cannot record its status. Start the installed service now? [Y/n]"
+const startQuestion = "The service is not running, so the backup cannot record its status. Start the installed service now? If you answer no, the upgrade stops and nothing is changed. [Y/n]"
 
 var errConnectionRefused = errors.New("connection refused")
 

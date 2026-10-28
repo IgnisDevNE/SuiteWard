@@ -30,7 +30,7 @@ func upgradeTarget(r *Resolver) (string, error) {
 	if !ok {
 		embedded, have := ReleaseImage()
 		if !have {
-			return "", errors.New("this is a development build and carries no release image: pass --image " + releaseImageRepo + "@sha256:<signed index digest>")
+			return "", errors.New("this is a development build, so it does not know which release image to install. Pass `--image " + releaseImageRepo + "@sha256:<signed index digest>`")
 		}
 		return embedded, nil
 	}
@@ -77,8 +77,8 @@ func confirmUpgrade(r *Resolver, plan upgradePlan, parent, recipient string, ser
 	if recipient != "" {
 		key = "the recovery key " + archive.Fingerprint(recipient)
 	}
-	r.say("An encrypted backup of the database and the artifacts is made first, as a new file under %s, encrypted to %s.\n", parent, key)
-	ok, err := r.confirm("yes", "Back up and upgrade now?")
+	r.say("First, an encrypted backup of the database and the saved files (artifacts) is made as a new file under %s, locked with %s.\n", parent, key)
+	ok, err := r.confirm("yes", "Back up and upgrade now? If you answer no, nothing is changed.")
 	if err != nil {
 		return err
 	}
@@ -303,7 +303,7 @@ func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, di
 // backup are kept, so that they are still there when the screen has gone.
 func upgraded(scr *ui.Screen, image, backupPath, goBack, doctor string) {
 	scr.Say("Upgraded to %s.\n", digestOf(image))
-	scr.Keep("The backup is in %s. It holds the TOTP secret, encrypted to your recovery key: keep its kit off this machine.\n", backupPath)
+	scr.Keep("The backup is in %s. It holds the TOTP secret (behind your authenticator codes), locked with your recovery key. Keep the recovery kit off this computer.\n", backupPath)
 	scr.Keep("%s\n", goBack)
 	scr.Say("Check the instance with `%s`.\n", doctor)
 }
@@ -346,7 +346,7 @@ const (
 )
 
 // startServicePrompt is what an upgrade asks of a service that does not answer /status, which the backup records.
-const startServicePrompt = "The service is not running, so the backup cannot record its status. Start the installed service now?"
+const startServicePrompt = "The service is not running, so the backup cannot record its status. Start the installed service now? If you answer no, the upgrade stops and nothing is changed."
 
 // ensureServiceUp makes sure /status answers before the backup. A service that does not is started as it is installed, on a terminal
 // and after a yes; otherwise, or when the start does not help, the upgrade refuses. --yes confirms the upgrade plan only: nothing
@@ -355,7 +355,7 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	if _, err := status(ctx); err == nil {
 		return false, nil
 	}
-	refuse := fmt.Errorf("the service is not running, so the backup cannot record its status: start it (%s) and run the upgrade again; --yes confirms the upgrade plan only, it does not start the service", startCommand)
+	refuse := fmt.Errorf("the service is not running, so the backup cannot record its status. Start it with %s, then run the upgrade again. `--yes` only confirms the upgrade plan: it does not start the service. Nothing was changed", startCommand)
 	if !r.term.IsTerminal {
 		return false, refuse
 	}
@@ -364,13 +364,13 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	case errors.Is(err, io.EOF): // the input ended: no answer is not a yes
 		return false, refuse
 	case err != nil:
-		return false, fmt.Errorf("read the answer to the start of the service: %w", err)
+		return false, fmt.Errorf("could not read your answer: %w", err)
 	case !yes:
 		return false, refuse
 	}
-	const manual = "take the backup by hand instead (dump the database and copy the artifacts volume yourself; details: docs/backup.md, Appendix A), then upgrade"
+	const manual = "take the backup by hand instead (dump the database and copy the artifacts volume, the saved files, yourself; details: docs/backup.md, Appendix A), then upgrade"
 	if err := start(ctx); err != nil {
-		return false, fmt.Errorf("start the installed service: %w; %s", err, manual)
+		return false, fmt.Errorf("could not start the installed service: %w; %s", err, manual)
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, startWait)
 	defer cancel()
@@ -386,7 +386,7 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 		}
 	}
 	if lastErr != nil {
-		return true, fmt.Errorf("the service was started, but /status still does not answer (%w): read its logs; or %s", lastErr, manual)
+		return true, fmt.Errorf("the service was started, but it still does not answer on /status (%w). Read its logs; or %s", lastErr, manual)
 	}
 	bar.set(1, "answers")
 	return true, nil
@@ -418,6 +418,6 @@ func refuseUnfinishedInstall(cmd, pendingPath string, settings func() (GitHub, e
 	if !recordWins(&gh, &pending) {
 		return nil
 	}
-	return fmt.Errorf("an earlier install did not finish: it created the App %s and recorded it in %s, and that App's key is the secret %s now. Finish that install first, with a plain `%s install` (it takes the recorded App up), then upgrade",
+	return fmt.Errorf("an earlier install did not finish: it created the GitHub App %s and recorded it in %s, and that App's key is stored as the secret %s. Finish that install first by running `%s install` (it picks up the recorded App), then upgrade. Nothing was changed",
 		pending.Slug, pendingPath, SecretGitHubAppKey, cmd)
 }

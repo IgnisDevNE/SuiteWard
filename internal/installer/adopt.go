@@ -24,7 +24,7 @@ type DiffError struct{ Diffs []Diff }
 
 func (e *DiffError) Error() string {
 	var b strings.Builder
-	b.WriteString("the installed stack differs from the release; nothing was changed. Undo each edit to keep it as it is, or move it to a setting the installer supports, then run again:")
+	b.WriteString("the installed stack differs from this release, and nothing was changed. The installer never overwrites an installation that was edited by hand. Undo each edit listed below, or move it to a setting the installer supports, then run again:")
 	for _, d := range e.Diffs {
 		want, got := d.printable()
 		fmt.Fprintf(&b, "\n  %s %s: want %q, got %q", d.Source, d.Field, want, got)

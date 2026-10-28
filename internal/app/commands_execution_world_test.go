@@ -77,6 +77,7 @@ func newCjExecWorld(t *testing.T, canonical, receipt string, applicable bool) *c
 	}
 	w.job.contents = w.content
 	w.job.executions = x.store
+	w.job.liveness = execution.NewLiveness(w.job.now()) // an executor was just seen: the runner responds, until a test says otherwise
 	return x
 }
 

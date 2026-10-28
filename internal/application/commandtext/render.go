@@ -66,6 +66,8 @@ const (
 	BaseNotTarget
 	// NotUnavailable is the refusal of an unblock when no run of the head is unavailable.
 	NotUnavailable
+	// RunnerResponding is the refusal of an unblock when a run of the head waits for a test runner that responds: it is neither unavailable nor stuck.
+	RunnerResponding
 )
 
 // Rejection is the domain reason of a Rejected outcome.
@@ -126,6 +128,8 @@ type Ack struct {
 	Markers int
 	// Plans are the plans of the jobs an Unblocked lifted, at least one, and none for every other outcome.
 	Plans Plans
+	// Ended are the plans whose open job the unblock ended (the test runner was not responding): a subset of Plans, and none for every other outcome.
+	Ended Plans
 }
 
 // Plans says which plans of a head an unblock lifted: its canonical run, its receipt, or both.

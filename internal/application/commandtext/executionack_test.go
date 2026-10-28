@@ -286,3 +286,56 @@ func TestAcknowledgeAnUnmetModeStatesTheChangedTestFilesThatDoNotParseOnlyWhenTh
 		t.Errorf("body speaks of files that do not parse though there are none:\n%s", body)
 	}
 }
+
+const (
+	stoppedWaiting = "SuiteWard stopped waiting for the test runner, which was not responding."
+	runnerResponds = "The test runner is responding, so the tests of this commit will run. Nothing was unblocked."
+)
+
+// An unblock that ended an open job says that SuiteWard stopped waiting for the test runner, which was not responding; one that only lifted what was unavailable says
+// nothing of it.
+func TestAcknowledgeAnUnblockThatEndedAJobSaysThatSuiteWardStoppedWaiting(t *testing.T) {
+	both := commandtext.Plans{Canonical: true, Receipt: true}
+	for name, tc := range map[string]struct {
+		ack  commandtext.Ack
+		want bool
+	}{
+		"the canonical run ended": {commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: both, Ended: commandtext.Plans{Canonical: true}}, true},
+		"the receipt ended":       {commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: both, Ended: commandtext.Plans{Receipt: true}}, true},
+		"both ended":              {commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: both, Ended: both}, true},
+		"none ended":              {commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: both}, false},
+	} {
+		if err := commandtext.ValidateAck(tc.ack); err != nil {
+			t.Errorf("%s: ValidateAck refuses it: %v", name, err)
+		}
+		body := render(t, func() string { return commandtext.Acknowledge(tc.ack) })
+		if has := strings.Contains(body, stoppedWaiting); has != tc.want {
+			t.Errorf("%s: the body says that SuiteWard stopped waiting = %v, want %v:\n%s", name, has, tc.want, body)
+		}
+	}
+}
+
+func TestAcknowledgeAnUnblockRefusedBecauseTheRunnerRespondsSaysThatTheTestsWillRunAndThatTheCodeWasUsed(t *testing.T) {
+	ack := commandtext.Ack{Outcome: commandtext.UnblockRefused, Source: source, Owner: owner, Refusal: commandtext.RunnerResponding}
+	if err := commandtext.ValidateAck(ack); err != nil {
+		t.Fatalf("ValidateAck refuses it: %v", err)
+	}
+	body := render(t, func() string { return commandtext.Acknowledge(ack) })
+	checkWantedText(t, body, []string{runnerResponds, "The code was used", "next code"}, []string{"eligible", "nothing to unblock"})
+	checkBody(t, body)
+	checkBodyInert(t, body)
+}
+
+func TestValidateAckRefusesEndedPlansThatDoNotFit(t *testing.T) {
+	both := commandtext.Plans{Canonical: true, Receipt: true}
+	for name, ack := range map[string]commandtext.Ack{
+		"an ended plan that was not lifted":  {Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: commandtext.Plans{Canonical: true}, Ended: commandtext.Plans{Receipt: true}},
+		"ended plans on a refusal":           {Outcome: commandtext.UnblockRefused, Source: source, Owner: owner, Refusal: commandtext.RunnerResponding, Ended: both},
+		"ended plans on a mode that was set": {Outcome: commandtext.ModeSet, Source: source, Owner: owner, Mode: execution.ModeFix, Ended: both},
+		"ended plans on a receipt refusal":   {Outcome: commandtext.ReceiptRefused, Source: source, Owner: owner, Proposal: 4, Revision: 2, Gate: execution.ReasonReceiptPending, Ended: both},
+	} {
+		if err := commandtext.ValidateAck(ack); err == nil {
+			t.Errorf("%s: ValidateAck accepts it", name)
+		}
+	}
+}

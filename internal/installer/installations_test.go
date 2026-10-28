@@ -13,6 +13,9 @@ import (
 // The list of the installations (ADR 0029, section 7): installations.yaml beside the default settings file, written by install and install
 // --upgrade where they save the settings, read by the commands that ask which installation, removed by a purge.
 
+// tokenName is a token file of a test, as the list records it: absolute. No such file is made.
+func tokenName(name string) string { return absolute(filepath.Join("/tokens", name)) }
+
 // listFile is the path of the list in the configuration folder of the test.
 func listFile(t *testing.T) string {
 	t.Helper()
@@ -61,20 +64,20 @@ func TestTheListBesideTheDefaultSettingsFileTakesOneEntryAtATime(t *testing.T) {
 	first, second := settingsOf(t, colocatedSettings()), settingsOf(t, colocatedSettings())
 	s := colocatedSettings()
 	s.Connection = "pm"
-	if err := recordInstallation(runtime.GOOS, first, "/tokens/first", s, testInstance); err != nil {
+	if err := recordInstallation(runtime.GOOS, first, tokenName("first"), s, testInstance); err != nil {
 		t.Fatal(err)
 	}
-	if err := recordInstallation(runtime.GOOS, second, "/tokens/second", colocatedSettings(), ""); err != nil {
+	if err := recordInstallation(runtime.GOOS, second, tokenName("second"), colocatedSettings(), ""); err != nil {
 		t.Fatal(err)
 	}
-	want := installation{Settings: first, TokenFile: "/tokens/first", Tier: config.TierCoLocated, Runtime: RuntimePodman, Connection: "pm", Instance: testInstance, HTTPPort: 18081, MCPPort: 18091}
+	want := installation{Settings: first, TokenFile: tokenName("first"), Tier: config.TierCoLocated, Runtime: RuntimePodman, Connection: "pm", Instance: testInstance, HTTPPort: 18081, MCPPort: 18091}
 	if got := listed(t); len(got) != 2 || got[0] != want || got[1].Settings != second {
 		t.Fatalf("the list is %+v, want the first installation as %+v, then the second", got, want)
 	}
 	// An entry is refreshed where it is: the same settings file is one entry, whatever else changed.
 	moved := colocatedSettings()
 	moved.HTTPPort, moved.MCPPort = 28081, 28091
-	if err := recordInstallation(runtime.GOOS, first, "/tokens/first", moved, ""); err != nil {
+	if err := recordInstallation(runtime.GOOS, first, tokenName("first"), moved, ""); err != nil {
 		t.Fatal(err)
 	}
 	got := listed(t)
@@ -88,7 +91,7 @@ func TestTheListBesideTheDefaultSettingsFileTakesOneEntryAtATime(t *testing.T) {
 
 func TestTheListIsAPrivateYamlFileOfVersionOne(t *testing.T) {
 	useDefaultConfigDir(t)
-	if err := recordInstallation(runtime.GOOS, settingsOf(t, colocatedSettings()), "/tokens/one", colocatedSettings(), ""); err != nil {
+	if err := recordInstallation(runtime.GOOS, settingsOf(t, colocatedSettings()), tokenName("one"), colocatedSettings(), ""); err != nil {
 		t.Fatal(err)
 	}
 	path := listFile(t)
@@ -143,7 +146,7 @@ func TestAPurgeTakesItsEntryOutAndLeavesTheOthers(t *testing.T) {
 	useDefaultConfigDir(t)
 	first, second := settingsOf(t, colocatedSettings()), settingsOf(t, colocatedSettings())
 	for _, path := range []string{first, second} {
-		if err := recordInstallation(runtime.GOOS, path, "/tokens/x", colocatedSettings(), ""); err != nil {
+		if err := recordInstallation(runtime.GOOS, path, tokenName("x"), colocatedSettings(), ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -192,7 +195,7 @@ func TestTheCandidatesAreTheInstallationsWhoseSettingsFileExistsAndTheDefaultOne
 	useDefaultConfigDir(t)
 	live, gone := settingsOf(t, colocatedSettings()), settingsOf(t, colocatedSettings())
 	for _, path := range []string{live, gone} {
-		if err := recordInstallation(runtime.GOOS, path, "/tokens/x", colocatedSettings(), ""); err != nil {
+		if err := recordInstallation(runtime.GOOS, path, tokenName("x"), colocatedSettings(), ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -220,11 +223,11 @@ func TestTheCandidatesAreTheInstallationsWhoseSettingsFileExistsAndTheDefaultOne
 	})
 	t.Run("an entry of the default settings file is one candidate", func(t *testing.T) {
 		def := defaultSettingsOf(t, colocatedSettings())
-		if err := recordInstallation(runtime.GOOS, def, "/tokens/default", colocatedSettings(), testInstance); err != nil {
+		if err := recordInstallation(runtime.GOOS, def, tokenName("default"), colocatedSettings(), testInstance); err != nil {
 			t.Fatal(err)
 		}
 		found, _, err := installationCandidates(runtime.GOOS)
-		if err != nil || len(found) != 2 || !found[0].isDefault || found[0].Instance != testInstance || found[0].TokenFile != "/tokens/default" {
+		if err != nil || len(found) != 2 || !found[0].isDefault || found[0].Instance != testInstance || found[0].TokenFile != tokenName("default") {
 			t.Fatalf("candidates = %+v, %v: want the default once, with what its entry knows", found, err)
 		}
 	})

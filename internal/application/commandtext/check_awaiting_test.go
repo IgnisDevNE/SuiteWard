@@ -8,7 +8,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 )
 
-// The summary of a head that awaits the owner's approval (docs/contracts/runtime.md, "Check reason approval-missing" and "The canonical gate"): the approve command
+// The summary of a head that awaits the owner's approval (docs/contracts/runtime.md, "The canonical gate", the paragraphs "Approval missing" and "The approve command of an approval-missing check"): the approve command
 // names a mode when the revision comment does, and under canonical: required the summary states the counts of a complete canonical run.
 
 const (

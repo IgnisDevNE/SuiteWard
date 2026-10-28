@@ -1194,7 +1194,7 @@ The [runtime contract](runtime.md#scope-discovery-m19) gives the behavior. This 
 
 ## Execution (M2.1; normative)
 
-[ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md) decides the rules, and the [runtime contract](runtime.md#execution-m21-normative) gives the wire and the behavior. Migration `00021_execution.sql` adds everything below, forward only, and `SupportedVersion` becomes 21. A † marks a choice of task A0 (a name, a size or a number) that the integrator may change. The new tables follow the conventions of the earlier ones: `text` enumerations with `CHECK` constraints, no `UPDATE` of an insert-only table, and `DELETE` and `TRUNCATE` rejected by `reject_immutable_history()`. `GrantApp` needs no change: its default privileges cover the new tables, and the triggers stop what a grant would allow.
+[ADR 0028](../decisions/0028-canonical-execution-and-the-receipt.md) decides the rules, and the [runtime contract](runtime.md#execution-m21-normative) gives the wire and the behavior. Migration `00021_execution.sql` adds everything below, forward only, and `SupportedVersion` becomes 21. Migration `00022_counted_job.sql` then adds `pr_checks.counted_job` (see [Changes to `pr_checks`](#changes-to-pr_checks)) and `SupportedVersion` becomes 22. A † marks a choice of task A0 (a name, a size or a number) that the integrator may change. The new tables follow the conventions of the earlier ones: `text` enumerations with `CHECK` constraints, no `UPDATE` of an insert-only table, and `DELETE` and `TRUNCATE` rejected by `reject_immutable_history()`. `GrantApp` needs no change: its default privileges cover the new tables, and the triggers stop what a grant would allow.
 
 **Evidence, not authority.** Nothing here is read by `Tx`, consent or promotion. The use cases that decide a state (the executor API and the checks job) call `internal/domain/execution` and hand the store rows that already carry their states. The store checks the shape (codes, sizes, the plan against the rows) and never re-runs a decision.
 
@@ -1302,6 +1302,8 @@ The triggers are `pr_receipt_checks_no_delete` and `pr_receipt_checks_no_truncat
 
 `pr_checks` gains `unblocked boolean NOT NULL DEFAULT false`: true when the owner unblocked the head's canonical job and that lift decided the outcome (the canonical gate would have withheld the check). `checks.Result` and `checks.Record` gain `Unblocked`, and `Publish` advances the generation when it differs from the current record, as it does for the head, the state, the reason and the reference. The `github_check` message gains `unblocked` and `execution` (see the [runtime contract](runtime.md#the-canonical-gate-on-the-suiteward--contract-check)). Rows from before `00021` read `false`.
 
+Migration `00022_counted_job.sql` (forward only) adds `counted_job bigint NOT NULL DEFAULT 0` with `CHECK (counted_job >= 0)`: the id of the canonical job whose counts the check states, `0` for none, with no foreign key, as `job_id` of `pr_receipt_checks` has none. Only an `approval-missing` check under `canonical: required` sets it, from a `complete` canonical job that the manifest of the canonical governs. `checks.Result` and `checks.Record` gain `CountedJob` (an `int64`, refused when negative with `ErrInvalid`), and `Publish` advances the generation when it differs from the current record, as it does for `unblocked`. The reason of that check does not change when its canonical run completes (the approval is still what is missing), and its first message goes out while the run is pending, so the job that completes is what gives the check a new generation and a new message with the counts; the same job again is quiet. A pass that cannot read the counts, or the policy, publishes the stored value of the same head instead of `0`, so a read that fails for a moment does not flip the check. Rows from before `00022` read `0`.
+
 ### Table `execution_unblocks`
 
 Insert-only. The owner's unblock: one row for each job that an `unblocked` command lifted, written in the same transaction as its `pr_commands` entry. The command lifts the jobs of the head that were `unavailable` when it was processed, so a command can write one row or two.
@@ -1382,6 +1384,7 @@ The fake and PostgreSQL suites cover:
   - an invalid code, a count over its bound or a duplicate `(package, name)` writes nothing.
 - `pr_receipt_checks`: the rules of the `Publish` conformance of `pr_checks`, with `neutral` as a fourth state and `unblocked` in the identity.
 - `pr_checks`: a change of `unblocked` alone advances the generation, and a row from before `00021` reads `false`.
+- `pr_checks`: a change of `counted_job` alone advances the generation, a negative one is `ErrInvalid`, and a row from before `00022` reads `0`.
 - `pr_commands`:
   - the five dispositions are accepted and none of them carries an operation id;
   - `mode-set` without a mode is refused;
@@ -1437,7 +1440,7 @@ func ReconstituteConsent(proposal Proposal, results []CommandResult, aliases map
 
 Property every reconstitution test must check: state produced by domain operations, written as facts and reconstituted, behaves identically (`HasApproval`, `Results`, and the outcome of the next `Apply`).
 
-## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b, `00018` the cycle start in M1.7c, `00019` the suggest dispositions in M1.9, `00020` the other-pull disposition, `00021` execution in M2.1)
+## Tables (`00001_governance.sql` from R1; `00002`–`00009` vendor River, `00010` adds the outbox in M1.2, `00011` the GitHub observations in M1.4, `00012` the owner and protection results in M1.5, `00013` the PR command ledger in M1.6a, `00014` the PR check ledger in M1.6b, `00015` merges and canonical integrity in M1.7, `00016` the origin kind and outcomes without a canonical in M1.7b, `00017` the propose and skip dispositions in M1.7b, `00018` the cycle start in M1.7c, `00019` the suggest dispositions in M1.9, `00020` the other-pull disposition, `00021` execution in M2.1, `00022` the counted job of the check in M2.1)
 
 | Table | Key | Mutability | Main columns |
 | --- | --- | --- | --- |
@@ -1458,7 +1461,7 @@ Property every reconstitution test must check: state produced by domain operatio
 | `totp_consumed_steps` (M1.5) | (account_id, step) | insert-only, no delete | consumed_at, source_command_id (M1.6a: the command that used the step; `setup:<generation>` for setup) |
 | `pr_commands` (M1.6a) | (repository_id, comment_id) | insert-only | pull_number, author_id, created_at, body_digest, disposition (codes), operation_id (exactly when `processed`), decided_at; M2.1: mode (`fix`, `feature`, `refactor`, when the command carried one) |
 | `suiteward_instance` (M1.6a) | singleton | immutable | instance_id (32 lowercase hex, random) |
-| `pr_checks` (M1.6b) | (repository_id, pull_number) | current state, updated in place; no delete, no truncate | head_sha, head_since, state (`success`, `in_progress`, `failure`), reason, reference, change, revision, command_id, generation, message_key, decided_at; M2.1: unblocked |
+| `pr_checks` (M1.6b) | (repository_id, pull_number) | current state, updated in place; no delete, no truncate | head_sha, head_since, state (`success`, `in_progress`, `failure`), reason, reference, change, revision, command_id, generation, message_key, decided_at; M2.1: unblocked, counted_job |
 | `pr_merges` (M1.7) | (project_id, suite_id, carrier) | immutable | kind, reason, source, version_id (nullable since M1.7b: empty exactly for `blocked` and `before-canonical` decided without a canonical), corrects_version_id, proposal_id, revision_id, recorded_at |
 | `canonical_integrity` (M1.7) | (project_id, suite_id) | latest verdict, replaced (`unavailable` never replaces `failed` for one version) | version_id, verdict (`passed`, `failed`, `unavailable`), checked_at |
 | `github_protection_results` (M1.5) | repository_id | latest result, replaced | result, findings text[], caveats text[], checked_at |

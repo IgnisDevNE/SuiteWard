@@ -54,7 +54,7 @@ type checkPayload struct {
 	Execution *checkExecution `json:"execution,omitempty"`
 	// Unblocked marks a check that the owner's unblock of an unavailable canonical run lifted.
 	Unblocked bool `json:"unblocked,omitempty"`
-	// ApproveMode marks an approval-missing check whose approve names a mode, which a required receipt needs (docs/contracts/runtime.md, "Check reason approval-missing").
+	// ApproveMode marks an approval-missing check whose approve names a mode, which a required receipt needs (docs/contracts/runtime.md, "The canonical gate", "The approve command of an approval-missing check").
 	ApproveMode bool `json:"approveMode,omitempty"`
 }
 

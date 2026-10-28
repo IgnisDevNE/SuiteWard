@@ -59,9 +59,15 @@ func newPGExecutorEnv(t *testing.T, options ...func(*executorDeps)) *pgExecutorE
 	}
 	t.Cleanup(pool.Close)
 	enrollExecutionRepository(t, store)
+	return serveExecutorAPI(t, databaseURL, cfg.Executor, store, artifacts, options...)
+}
+
+// serveExecutorAPI serves the executor API over a database and an artifact directory that the test prepared: the enrolled repository and the jobs are its own.
+func serveExecutorAPI(t *testing.T, databaseURL string, times config.ExecutorTimes, store *postgres.Store, artifacts *filesystem.Store, options ...func(*executorDeps)) *pgExecutorEnv {
+	t.Helper()
 	e := &pgExecutorEnv{t: t, databaseURL: databaseURL, store: store, artifacts: artifacts, wakes: &wakeLog{}, trees: &fakeTrees{entries: map[string][]treeEntry{}, errs: map[string]error{}}}
 	var stopping atomic.Bool
-	deps := executorDeps{token: []byte(execTestToken), store: store.Execution(), liveness: execution.NewLiveness(time.Now()), times: cfg.Executor, treeTimeout: 5 * time.Second, content: artifacts,
+	deps := executorDeps{token: []byte(execTestToken), store: store.Execution(), liveness: execution.NewLiveness(time.Now()), times: times, treeTimeout: 5 * time.Second, content: artifacts,
 		owners: store, trees: e.trees.read, archives: (&fakeArchives{}).read, wake: e.wakes.wake, stopping: stopping.Load, logger: quietLogger(), now: time.Now}
 	for _, option := range options {
 		option(&deps)
@@ -75,7 +81,15 @@ func newPGExecutorEnv(t *testing.T, options ...func(*executorDeps)) *pgExecutorE
 	return e
 }
 
+// send is sendRaw with the answer as trimmed text.
 func (e *pgExecutorEnv) send(method, path string, payload []byte, lease string) (int, string) {
+	e.t.Helper()
+	code, got := e.sendRaw(method, path, payload, lease)
+	return code, strings.TrimSpace(string(got))
+}
+
+// sendRaw sends a request to the executor API and returns the status and the bytes of the answer.
+func (e *pgExecutorEnv) sendRaw(method, path string, payload []byte, lease string) (int, []byte) {
 	e.t.Helper()
 	req, err := http.NewRequestWithContext(e.t.Context(), method, e.server.URL+"/executor/v1"+path, bytes.NewReader(payload))
 	if err != nil {
@@ -92,7 +106,7 @@ func (e *pgExecutorEnv) send(method, path string, payload []byte, lease string) 
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return resp.StatusCode, strings.TrimSpace(string(got))
+	return resp.StatusCode, got
 }
 
 // summary is the state, reason and attempts of a job as the database has them.
@@ -106,8 +120,9 @@ func (e *pgExecutorEnv) enqueue(n int) execution.Job {
 	return enqueueExecutionJob(e.t, e.store, e.artifacts, n)
 }
 
-// enqueueExecutionJob creates a pending canonical job of the enrolled repository for the head numbered n, with the manifest and the files that it names in
-// the content store, as the checks job leaves them.
+// enqueueExecutionJob creates a pending canonical job of the enrolled repository for the head numbered n, with the manifest and the files that it names in the content
+// store. It is a seed: the job is enqueued directly, so neither the checks job nor the proposal of V1 ran, and these tests exercise the executor API alone. The path
+// through the planner, with nothing seeded, is in execution_lease_integration_test.go.
 func enqueueExecutionJob(t *testing.T, store *postgres.Store, artifacts *filesystem.Store, n int) execution.Job {
 	t.Helper()
 	files := map[string]string{"contract.go": fmt.Sprintf("package contract // %d\n", n), declarationPath: "execution:\n  canonical: required\n  profile: go\n"}
@@ -122,7 +137,7 @@ func enqueueExecutionJob(t *testing.T, store *postgres.Store, artifacts *filesys
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := storeManifest(t.Context(), artifacts, m); err != nil {
+	if err := storeManifest(t.Context(), artifacts, m); err != nil { // the seed
 		t.Fatal(err)
 	}
 	job, created, err := store.Execution().Enqueue(t.Context(), execution.NewJob{At: time.Now(), Spec: execution.Spec{RepositoryID: execRepoID, PullNumber: 3, Plan: execution.PlanCanonical, Profile: "go",

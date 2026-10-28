@@ -156,9 +156,9 @@ func (j *checksJob) pullRequests(ctx context.Context, enrollment owner.State, p 
 	}
 	slices.SortFunc(pulls, func(a, b githubsync.PullState) int { return a.Number - b.Number })
 	var failures []error
-	x, err := j.executionRunOf(ctx, suite) // a policy that cannot be read fails the run, and decides nothing about execution
+	x, err := j.executionRunOf(ctx, suite) // a policy that cannot be read, or a manifest that cannot be kept, fails the run, and decides nothing about execution
 	if err != nil {
-		failures = append(failures, fmt.Errorf("read the execution policy: %w", err))
+		failures = append(failures, fmt.Errorf("prepare the execution of the project: %w", err))
 	}
 	for _, pull := range pulls {
 		if !pull.NotOpenSince.IsZero() {

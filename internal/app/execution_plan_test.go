@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"testing"
 	"time"
@@ -567,5 +568,79 @@ func TestChecksPlanFromThePolicyOfTheCanonicalOfTheSuiteTheyRead(t *testing.T) {
 
 	if err != nil || !x.known || x.policy.canonical != domain.CanonicalLevelRequired || x.policy.declaration != artifact.Hash([]byte(gateDecl)) {
 		t.Fatalf("executionRunOf = %+v, %v; want the policy of V1, which the view holds: canonical required, the declaration of V1", x.policy, err)
+	}
+}
+
+// The lease reads the manifest of a job from the content store, where a V1 that the bootstrap promoted has none: a run that plans execution keeps the manifest of the
+// canonical there, and a run of a project that plans none has no reason to.
+func TestChecksKeepTheManifestOfTheCanonicalWhenTheyPlanExecution(t *testing.T) {
+	for _, tt := range []struct {
+		name, declaration string
+		kept              bool
+	}{
+		{"a policy that wants execution", execDecl, true},
+		{"a policy with both levels off", execDeclaration("off", "off"), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			w := newExecWorld(t, tt.declaration)
+
+			w.execPull(execHeadFiles(tt.declaration, "v2"))
+
+			digest := w.canonicalManifest()
+			raw, kept := w.content.bytes[digest.String()]
+			if kept != tt.kept {
+				t.Fatalf("the manifest of V1 is kept = %v, want %v", kept, tt.kept)
+			}
+			if manifest, err := artifact.ParseManifest(raw); tt.kept && (err != nil || manifest.Digest() != digest) {
+				t.Errorf("the bytes kept under %s are the manifest %s (%v), want the manifest of V1", digest, manifest.Digest(), err)
+			}
+		})
+	}
+}
+
+// A manifest that the store refuses leaves no job that could not be leased: the run plans nothing, and the next one plans the job.
+func TestChecksPlanNoJobWhenTheManifestOfTheCanonicalCannotBeKept(t *testing.T) {
+	w := newExecWorld(t, execDecl)
+	w.sync(map[int]string{4: bootHead})
+	errDisk := errors.New("the disk is full")
+	w.content.putErr = errDisk
+	w.check.liveness.Saw(w.clock.Add(time.Minute))
+
+	if err := w.runChecks(); !errors.Is(err, errDisk) {
+		t.Fatalf("checks run = %v, want the failure to keep the manifest", err)
+	}
+	w.noJobs(4, bootHead, execution.PlanCanonical)
+
+	w.content.putErr = nil
+	w.execRun()
+	requireSpec(t, w.onlyJob(4, bootHead, execution.PlanCanonical), execSpec(w, execution.PlanCanonical, bootHead, 4))
+}
+
+// A canonical job governed by a revision whose manifest the store lacks (a revision recorded before M1.13, or an object that was lost) can never be leased, and
+// the lease takes the oldest candidate: such a job would stop every lease of the instance. The step fails instead, as for any step error, and no such job is
+// planned; the next run, with the object present, plans it.
+func TestChecksPlanNoCanonicalJobForARevisionWhoseManifestIsNotStored(t *testing.T) {
+	w := newExecWorld(t, execDecl)
+	w.execPull(execHeadFiles(execDecl, "v2"))
+	digest := w.revisionManifest(2, 1)
+	stored := w.content.bytes[digest.String()]
+	delete(w.content.bytes, digest.String())
+	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
+	w.check.liveness.Saw(w.clock.Add(time.Minute))
+
+	if err := w.runChecks(); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("checks run = %v, want the step of pull 5 to fail on the manifest of the revision, which the store lacks", err)
+	}
+
+	governed := func(job execution.Job) bool { return job.GoverningDigest == digest }
+	if jobs := w.headJobs(5, cjHead2, execution.PlanCanonical); slices.ContainsFunc(jobs, governed) {
+		t.Fatalf("the head has the canonical jobs %+v, want none governed by a manifest that the store lacks", jobs)
+	}
+
+	w.content.bytes[digest.String()] = stored
+	w.execRun()
+
+	if jobs := w.headJobs(5, cjHead2, execution.PlanCanonical); !slices.ContainsFunc(jobs, governed) {
+		t.Fatalf("the head has the canonical jobs %+v, want one governed by the revision once its manifest is stored", jobs)
 	}
 }

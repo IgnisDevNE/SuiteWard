@@ -151,7 +151,7 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 	c.executorRow = executorMechanism(plan.goos) + "; " + plan.binary
 	scr.Check("The executor runs a copy of this program, %s, as %s.\n", plan.binary, executorMechanism(plan.goos))
 	if plan.goos == "windows" {
-		scr.Warn("A console window shows when the executor starts: a task of the logged-on user cannot hide it. Closing the window stops the executor, and the task starts it again within a minute.\n")
+		scr.Say("The executor runs in the background, with no window. If it stops, it starts again after a minute.\n")
 	}
 	if c.s.Runtime == RuntimeDocker {
 		scr.Say("The executor runs its sandboxes through Docker's own engine: Docker's own CLI pointed at Podman's socket fails closed, because it does not know the flags the sandbox needs, while Podman's docker shim (the podman-docker package) works against Podman. Use --runtime podman for Podman.\n")

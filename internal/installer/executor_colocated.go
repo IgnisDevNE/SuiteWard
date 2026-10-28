@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"cmp"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -41,6 +42,7 @@ type executorPlan struct {
 	env        []envEntry
 	wrapper    string // Windows: the script that sets the environment and starts the program
 	taskXML    string // Windows: the definition of the task
+	system     string // Windows: the system directory, where conhost.exe, cmd.exe and ping.exe are
 	definition string // macOS: the launch agent; Linux: the user unit
 }
 
@@ -94,6 +96,9 @@ func planExecutor(d Deps, tokenFile string, s Settings, engineDir string) (execu
 	switch d.GOOS {
 	case "windows":
 		p.wrapper, p.taskXML = filepath.Join(p.dir, executorWrapperName), filepath.Join(p.dir, "task.xml")
+		// Built with a backslash, not filepath.Join: the path of a Windows computer is read on any system. An empty SystemRoot reads C:\Windows, as
+		// an empty ProgramFiles reads C:\Program Files.
+		p.system = strings.TrimRight(cmp.Or(d.Getenv("SystemRoot"), `C:\Windows`), `\`) + `\System32`
 		if engineDir != "" {
 			p.env = append(p.env, envEntry{"PATH", engineDir + ";%PATH%"}) // the one value that is meant to be expanded
 		}
@@ -121,7 +126,7 @@ func planExecutor(d Deps, tokenFile string, s Settings, engineDir string) (execu
 	default:
 		return executorPlan{}, fmt.Errorf("there is no way to keep the executor running on %s", d.GOOS)
 	}
-	for _, v := range append([]string{p.dir, p.binary, p.tokenFile, p.definition}, envValues(p.env)...) {
+	for _, v := range append([]string{p.dir, p.binary, p.tokenFile, p.definition, p.system}, envValues(p.env)...) {
 		if v != "" && !plainValue.MatchString(v) {
 			return executorPlan{}, fmt.Errorf("%q cannot be written into the definition of the executor: it holds a quote or a control character", v)
 		}
@@ -140,11 +145,12 @@ func envValues(env []envEntry) []string {
 // cmdValue is a value inside `set "K=V"`, or a path inside the quotes of a command, of a batch file: a percent sign is doubled so that cmd does not read a variable.
 func cmdValue(v string) string { return strings.ReplaceAll(v, "%", "%%") }
 
-// windowsWrapper is the script that the task runs: the environment of the executor, then the program. The window of the script shows, as a
-// console program started by a task of the logged-on user does; its output goes to the log.
+// windowsWrapper is the script that the task runs: the environment of the executor, then the program, started again after a pause whenever it ends
+// (Task Scheduler does not restart an action that exited: RestartOnFailure covers a start that failed). Its output goes to the log. The pause is
+// ping: timeout reads the console, which the task does not have.
 func (p executorPlan) windowsWrapper() string {
 	var b strings.Builder
-	b.WriteString("@echo off\r\nrem Written by `suiteward install`: the environment of the SuiteWard executor, then the executor. Do not put a credential here.\r\n")
+	b.WriteString("@echo off\r\nrem Written by `suiteward install`: the environment of the SuiteWard executor, then the executor, again after a pause when it ends. Do not put a credential here.\r\n")
 	for _, e := range p.env {
 		value := cmdValue(e.value)
 		if e.key == "PATH" {
@@ -152,15 +158,21 @@ func (p executorPlan) windowsWrapper() string {
 		}
 		fmt.Fprintf(&b, "set \"%s=%s\"\r\n", e.key, value)
 	}
-	fmt.Fprintf(&b, "\"%s\" execute >> \"%s\" 2>&1\r\n", cmdValue(p.binary), cmdValue(p.log))
+	log := cmdValue(p.log)
+	fmt.Fprintf(&b, ":again\r\n\"%s\" execute >> \"%s\" 2>&1\r\n", cmdValue(p.binary), log)
+	fmt.Fprintf(&b, ">> \"%s\" echo %%date%% %%time%% The executor stopped. It starts again in a minute.\r\n", log)
+	b.WriteString("\"%SystemRoot%\\System32\\ping.exe\" -n 61 127.0.0.1 >nul\r\ngoto again\r\n")
 	return b.String()
 }
 
 var xmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
 
 // windowsTask is the definition of the scheduled task, as Task Scheduler reads it: UTF-16 little-endian with a byte order mark. It starts at the
-// logon of the user, as the user, with no password and no elevation; it does not stop for the battery or after a time; and it starts the script
-// again after a failure, once a minute.
+// logon of the user, as the user, with no password and no elevation; and it does not stop for the battery or after a time. It has no window: the
+// script runs through conhost.exe --headless, because a console program started by a task of the logged-on user gets a window (in Windows Terminal,
+// where it is the first thing the user sees). Each program is named by its full path under the system directory. The script is named by its name in
+// the folder the task starts in, and its own path follows as an argument that it ignores: no character of a path goes through the quoting rules of
+// cmd /c (a folder with an ampersand breaks them), and the process list tells this instance's tree from another's by that path.
 func (p executorPlan) windowsTask(sid string) []byte {
 	user := xmlEscaper.Replace(sid)
 	xml := `<?xml version="1.0" encoding="UTF-16"?>
@@ -174,10 +186,9 @@ func (p executorPlan) windowsTask(sid string) []byte {
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <StartWhenAvailable>true</StartWhenAvailable>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>
     <Enabled>true</Enabled>
   </Settings>
-  <Actions Context="Author"><Exec><Command>` + xmlEscaper.Replace(p.wrapper) + `</Command><WorkingDirectory>` + xmlEscaper.Replace(p.dir) + `</WorkingDirectory></Exec></Actions>
+  <Actions Context="Author"><Exec><Command>` + xmlEscaper.Replace(p.system+`\conhost.exe`) + `</Command><Arguments>` + xmlEscaper.Replace(`--headless "`+p.system+`\cmd.exe" /d /c .\`+executorWrapperName+` "`+p.wrapper+`"`) + `</Arguments><WorkingDirectory>` + xmlEscaper.Replace(p.dir) + `</WorkingDirectory></Exec></Actions>
 </Task>
 `
 	units := utf16.Encode([]rune(strings.ReplaceAll(xml, "\n", "\r\n")))

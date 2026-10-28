@@ -12,7 +12,7 @@ import (
 // Built at run time so the literal is not a credential for a secret scanner to flag.
 var executorToken = strings.Repeat("x", 32) + "-TOPSECRETEXECUTORTOKEN"
 
-var defaultExecutorTimes = ExecutorTimes{JobTimeout: 30 * time.Minute, LeaseWait: 5 * time.Minute, GitHubWait: 30 * time.Minute}
+var defaultExecutorTimes = ExecutorTimes{JobTimeout: 30 * time.Minute, LeaseWait: 2 * time.Minute, GitHubWait: 30 * time.Minute}
 
 func executorVars(t *testing.T) map[string]string {
 	t.Helper()

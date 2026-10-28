@@ -16,13 +16,19 @@ import (
 // The rows do not repeat that reduced assurance: the install's summary and the page that introduces this tier say it once (owner decision 19).
 // Their texts are for a person with little technical background (work/m21-briefs/plain-language.md): what happened, whether it is a problem, what to do.
 
-// installFix is the fix of a result that an install of this release makes right. A test runner in a folder that an install refuses has none that
-// the install can make: it is removed (the uninstall does that), and another is set up in a folder that the install accepts.
+// installFix is the fix of a result that an install of this release makes right.
 func (d *doctor) installFix() string {
+	return "Run `" + d.deps.suggest("install", "--upgrade") + "` if the service is from an earlier release. Otherwise run `" + d.deps.suggest("install") + "` again. Either one sets up the test runner again."
+}
+
+// executorFix is the fix of a result about the test runner itself (its program, its registration). In a folder that an install refuses, an install
+// makes none of these right: the test runner is removed (the uninstall does that), and another is set up in a folder that the install accepts.
+// The token copy and the Go image are made by an install whatever becomes of the test runner, so their rows keep installFix.
+func (d *doctor) executorFix() string {
 	if d.refusedFolder != nil {
 		return "An install cannot set up the test runner in this folder, because of the percent sign (%) in its path. Run `" + d.deps.suggest("uninstall") + "` to remove it (your data stays), then run `" + d.deps.suggest("install") + "` with `--token-file` set to a file in a folder that has no percent sign."
 	}
-	return "Run `" + d.deps.suggest("install", "--upgrade") + "` if the service is from an earlier release. Otherwise run `" + d.deps.suggest("install") + "` again. Either one sets up the test runner again."
+	return d.installFix()
 }
 
 // anotherInstanceFix is the fix of an executor that is registered for another instance: an install of this one skips it, so it is that instance's removal that frees the place.
@@ -75,7 +81,7 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	if stateErr == nil && !registered && d.failRefusedFolder() {
 		return // nothing is there, and an install would refuse the folder: no other row is checked, because its fix would be that install
 	}
-	fix, notRunning := d.installFix(), plan.startHint()
+	fix, notRunning := d.executorFix(), plan.startHint()
 	if other { // no install makes this instance an executor of its own while that one is registered
 		fix = d.anotherInstanceFix()
 		notRunning = fix
@@ -88,15 +94,15 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	}
 	switch {
 	case stateErr != nil:
-		d.fail("executor.lifecycle", "Doctor could not ask the operating system about the test runner: "+stateErr.Error(), d.installFix())
+		d.fail("executor.lifecycle", "Doctor could not ask the operating system about the test runner: "+stateErr.Error(), d.executorFix())
 	case other:
 		d.fail("executor.lifecycle", "The test runner on this computer belongs to another instance, not to the one that uses the token file `"+tokenFile+"`. A computer has one test runner.", fix)
 	case !registered:
-		d.fail("executor.lifecycle", "The test runner is not set up on this computer. It should be "+executorMechanism(plan.goos)+".", d.installFix())
+		d.fail("executor.lifecycle", "The test runner is not set up on this computer. It should be "+executorMechanism(plan.goos)+".", d.executorFix())
 	case definitionErr != nil:
-		d.fail("executor.lifecycle", "Doctor could not read the test runner's task definition: "+definitionErr.Error(), d.installFix())
+		d.fail("executor.lifecycle", "Doctor could not read the test runner's task definition: "+definitionErr.Error(), d.executorFix())
 	case !current:
-		d.fail("executor.lifecycle", "The scheduled task of the test runner is not the one this version of SuiteWard makes (it may come from an older version, or it was changed). This needs your action.", d.installFix())
+		d.fail("executor.lifecycle", "The scheduled task of the test runner is not the one this version of SuiteWard makes (it may come from an older version, or it was changed). This needs your action.", d.executorFix())
 	default:
 		d.pass("executor.lifecycle", "The test runner is set up as "+executorMechanism(plan.goos)+".")
 	}

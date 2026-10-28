@@ -181,11 +181,16 @@ func TestDoctorSendsATestRunnerInAFolderWithAPercentSignThroughAnUninstall(t *te
 	writeFile(t, files.binary, "the previous release")
 	sum := sha256.Sum256([]byte("the previous release"))
 	writeFile(t, files.pin, hex.EncodeToString(sum[:])+"  suiteward-executor.exe\n")
+	removeFile(t, files.token) // an install makes the token copy again whatever becomes of the test runner, so that row keeps the install as its fix
 	_, res, _ := runDoctor(t, f, s)
 	wantFail(t, res, "executor.binary", "different version")
 	fix := res["executor.binary"].Fix
 	if !strings.Contains(fix, "suiteward uninstall") || !strings.Contains(fix, "percent sign") || strings.Contains(fix, "--upgrade") {
 		t.Errorf("the fix is %q, want the uninstall and a folder without a percent sign, and no upgrade that the install would refuse", fix)
+	}
+	wantFail(t, res, "executor.token", files.token)
+	if fix := res["executor.token"].Fix; !strings.Contains(fix, "install --upgrade") || strings.Contains(fix, "uninstall") {
+		t.Errorf("the fix of the token row is %q, want the install", fix)
 	}
 }
 

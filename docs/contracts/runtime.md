@@ -795,8 +795,8 @@ Under `canonical: required`, and only where the check would otherwise be `succes
 
 | Run | State | Reason † |
 | --- | --- | --- |
-| no job yet, `pending` or `leased` (a job queued again after a failed attempt included), and the head does not read not responding | `in_progress` | `canonical-pending` |
-| `pending` or `leased` (a job queued again included), and the head reads not responding ([Not responding](#not-responding); amended M2.1b) | `in_progress` | `canonical-not-responding` † |
+| no job yet, `pending` or `leased` (a job queued again after a failed attempt included), and its job does not wait for a silent runner | `in_progress` | `canonical-pending` |
+| `pending` or `leased` (a job queued again included), and the job waits for the runner while the runner is silent ([Not responding](#not-responding); amended M2.1b) | `in_progress` | `canonical-not-responding` † |
 | `unavailable` (a job created for `executor-not-configured` included) | `in_progress` | `canonical-unavailable` |
 | `complete` with any `FAIL`, `MISSING` or `FLAKY` | `failure` | `canonical-failing` |
 | `complete` with none of them | `success` | the reason it would have had |
@@ -819,8 +819,8 @@ The `github_checks` job writes it for each open, non-fork pull request of a repo
 
 | Run | State | Reason † | Title † |
 | --- | --- | --- | --- |
-| no job yet, `pending` or `leased`, and the head does not read not responding | `in_progress` | `receipt-running` | "Receipt pending" |
-| `pending` or `leased`, and the head reads not responding ([Not responding](#not-responding); amended M2.1b) | `in_progress` | `receipt-not-responding` † | "Receipt waiting: test runner not responding" † |
+| no job yet, `pending` or `leased`, and its job does not wait for a silent runner | `in_progress` | `receipt-running` | "Receipt pending" |
+| `pending` or `leased`, and the job waits for the runner while the runner is silent ([Not responding](#not-responding); amended M2.1b) | `in_progress` | `receipt-not-responding` † | "Receipt waiting: test runner not responding" † |
 | `complete`, any evaluated test `FAILS` or `MISSING`, or any `unparsed` file | `failure` | `receipt-failing` | "Receipt: failing or missing tests" |
 | `complete`, otherwise | `success` | `receipt-complete` | "Receipt ready" |
 | `unavailable` (a job created for `executor-not-configured` or `no-merge-base` included) | `neutral` | `receipt-not-run` | "Receipt unavailable" |
@@ -942,7 +942,7 @@ M1 ran no tests, and its texts said so. Since M2.1 SuiteWard runs them where the
 
 A crash gives a gap of 15 to 25 s plus the clean-up, so a routine restart does not trip the state. A restart whose clean-up takes more than about 10 to 15 s does trip it, and that is true: the executor was away for 30 s. The comment of that wait is then posted, and it is not taken back. A crash does not end the job's lease early: the lease lasts 60 s from the last heartbeat, so a job that was leased stays `leased` for up to 30 s after the state starts to read not responding (none, when the first pass came late), and the unblock can end it (below).
 
-**Checks.** Under `canonical: required`, and only where the Contract check would be `success` (reason `unchanged` or `ready`), a `pending` or `leased` canonical job (a job queued again after a failed attempt included) of a head that reads not responding gives `in_progress` with the reason `canonical-not-responding` †, in place of `canonical-pending`. It is a reason of the gate: it has the precedence of the other gate reasons, `approval-missing` keeps its precedence over it, and a stored check with this reason is "ungated" like the others. Under `advisory` and `off` the Contract check does not change. A head whose reason is `approval-missing` adds nothing to its summary. The Receipt check gives `in_progress` with the reason `receipt-not-responding` † for a `pending` or `leased` receipt job of a head that reads not responding, in place of `receipt-running`; it is never required, so it says so under every level, and offers the unblock only where the receipt gate would refuse (below). A reason is a name for the state: neither is a column or a constraint of a table.
+**Checks.** Under `canonical: required`, and only where the Contract check would be `success` (reason `unchanged` or `ready`), a `pending` or `leased` canonical job (a job queued again after a failed attempt included) that waits for the runner, while the runner is silent, gives `in_progress` with the reason `canonical-not-responding` †, in place of `canonical-pending`. Each check reads its own job: a canonical job that waits on GitHub is `canonical-pending` even when the receipt job is the one that waits for the runner, and the reverse holds for the Receipt check. The head-level state (the comment, the unblock and the page) needs any one of the wanted jobs. It is a reason of the gate: it has the precedence of the other gate reasons, `approval-missing` keeps its precedence over it, and a stored check with this reason is "ungated" like the others. Under `advisory` and `off` the Contract check does not change. A head whose reason is `approval-missing` adds nothing to its summary. The Receipt check gives `in_progress` with the reason `receipt-not-responding` † for a `pending` or `leased` receipt job that waits for the runner, while the runner is silent, in place of `receipt-running`; it is never required, so it says so under every level, and offers the unblock only where the receipt gate would refuse (below). A reason is a name for the state: neither is a column or a constraint of a table.
 
 | Reason | State | Title † | Text † |
 | --- | --- | --- | --- |
@@ -977,7 +977,7 @@ Otherwise it lifts, as one set:
 
 A wanted job that is neither (complete, a `pending` job that waits on GitHub, or a `pending` job while the runner responds) is left alone, and runs as before. A silent runner with a `leased` job is the case of a crash: the lease may still hold for up to 30 s, and the unblock ends it at once.
 
-**One transaction.** `RecordUnblock(ctx, entry, ack, headSHA, jobIDs, at)` takes the jobs to lift, each `unavailable` or open, and `at`, the processing time. In one transaction it locks the rows, ends each open job as above, and writes the entry, the acknowledgment and one `execution_unblocks` row for each job. A job that is `complete` or `cancelled` by then makes it fail with `execution.ErrJobFinal` † and write nothing: the commands job retries the command by the D-COMMANDS rule, and the next attempt reads the new states. The [persistence contract](persistence.md#table-execution_unblocks) states it.
+**One transaction.** `RecordUnblock(ctx, entry, ack, headSHA, jobIDs, at)` takes the jobs to lift, each `unavailable` or open, and `at`, the processing time. In one transaction it locks the rows, ends each open job as above, and writes the entry, the acknowledgment and one `execution_unblocks` row for each job. A job that is `complete` or `cancelled` by then makes it fail with `execution.ErrJobFinal` † and write nothing: the commands job retries the command by the D-COMMANDS rule: the retry verifies the code again, and `ConsumeStep` finds the step already consumed by the same source (`github-comment:<id>`), which is success and not a replay; the next attempt reads the new states. The [persistence contract](persistence.md#table-execution_unblocks) states it.
 
 **The old lease.** A result that an executor sends later for an ended job finds a finished job with no stored body digest: it is 409 `conflict`, and a heartbeat is 409 `lease-lost`. The executor discards its work, as it does for any 409. A job that ended this way never has a results row.
 

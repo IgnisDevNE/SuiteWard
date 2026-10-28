@@ -871,9 +871,9 @@ The acknowledgment of `unblocked` is `ack:<repository id>:<comment id>` with `di
 
 The `revision:` payload gains `receipt` (optional string): the effective `receipt` level when it is not `off` and the revision's receipt is applicable, which the checks job sets from the canonical declaration and the two manifests when it writes the message. The text gains one fixed line, after the change report and before the approve command, only when `receipt` is set:
 
-> Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. It is evidence, not a verdict. Results: `<link>`. The `SuiteWard / Receipt` check carries the counts.
+> Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. It is evidence, not a verdict. Results: [Receipt page](`<link>`). The `SuiteWard / Receipt` check carries the counts.
 
-- The link is `<REPORT_BASE_URL>/receipts/<owner>/<repo>/<pull>`, with the owner and the name path-escaped, written as a Markdown link with the URL as its text, so that a `localhost` base is a link too. It is set only when `REPORT_BASE_URL` is, and the renderer refuses any other link. Without it the line says "Results: see the `SuiteWard / Receipt` check."
+- The link is `<REPORT_BASE_URL>/receipts/<owner>/<repo>/<pull>`, with the owner and the name path-escaped, written as a Markdown link with the text "Receipt page", like the change report's "Full change report" link (it is a link even when the base is `localhost`, which GitHub does not link by itself, and the reader sees words rather than an address). It is set only when `REPORT_BASE_URL` is, and the renderer refuses any other link. Without it the line says "Results: see the `SuiteWard / Receipt` check."
 - `before-approval` adds "Approving waits until the receipt is complete."
 - `required` adds "Approving needs a mode and a receipt that meets it:" and the copyable command `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>` in place of the usual one. A receipt that turns out empty needs no mode; the acknowledgment says what holds.
 - The comment is posted once and never edited, so the line states the level as it was when the comment was written. The acknowledgment of a refusal states what holds now.

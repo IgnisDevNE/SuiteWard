@@ -3,6 +3,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -129,17 +131,46 @@ func (p *bootstrappedProject) manifestObject(job execution.Job) string {
 	return filepath.Join(p.artifactDir, "sha256-"+strings.TrimPrefix(job.GoverningDigest.String(), "sha256:"))
 }
 
-// wantLeased leases through the executor API, which must answer with job and its governing manifest, and downloads every file that the manifest lists.
+// governingManifest is the manifest of the canonical version that the job names, as the database holds it: the Suite's V1 for a canonical job of V1 and for a receipt job
+// whose revision expects it.
+func (p *bootstrappedProject) governingManifest(job execution.Job) artifact.Manifest {
+	p.t.Helper()
+	var manifest artifact.Manifest
+	err := p.store.Do(p.t.Context(), owner.ProjectID(bootRepoID), defaultSuite, func(ctx context.Context, tx governance.Tx) error {
+		historical, found, err := tx.Version(ctx, contract.SuiteVersionID(job.GoverningSource))
+		if err == nil && !found {
+			err = fmt.Errorf("the version %s is not stored", job.GoverningSource)
+		}
+		if err == nil {
+			manifest = historical.Version().Manifest()
+		}
+		return err
+	})
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	return manifest
+}
+
+// wantLeased leases through the executor API, which must answer with job and the files of its governing manifest, and downloads every one of them.
 func (p *bootstrappedProject) wantLeased(job execution.Job) {
 	p.t.Helper()
+	governing := p.governingManifest(job)
 	e := serveExecutorAPI(p.t, p.databaseURL, p.times, p.store, p.artifacts)
 	code, text := e.send(http.MethodPost, "/lease", nil, "")
 	var leased leaseAnswer
 	if err := json.Unmarshal([]byte(text), &leased); code != http.StatusOK || err != nil || leased.JobID != job.ID {
 		p.t.Fatalf("lease = %d %s (%v); want 200 with the job %d", code, text, err, job.ID)
 	}
-	if leased.Manifest.Source != string(job.GoverningSource) || leased.Manifest.Digest != job.GoverningDigest.String() || len(leased.Manifest.Files) == 0 {
-		p.t.Errorf("manifest of the lease = %+v; want %s, %s and files", leased.Manifest, job.GoverningSource, job.GoverningDigest)
+	var want []manifestFile
+	for _, entry := range governing.Entries() {
+		want = append(want, manifestFile{Path: entry.Path, Digest: entry.Content.String()})
+	}
+	if governing.Digest() != job.GoverningDigest || len(want) == 0 {
+		p.t.Fatalf("the manifest of %s is %s with %d entries; want the governing digest %s of the job and entries", job.GoverningSource, governing.Digest(), len(want), job.GoverningDigest)
+	}
+	if leased.Manifest.Source != string(job.GoverningSource) || leased.Manifest.Digest != job.GoverningDigest.String() || !slices.Equal(leased.Manifest.Files, want) {
+		p.t.Errorf("manifest of the lease = %+v; want %s, %s and the files %+v", leased.Manifest, job.GoverningSource, job.GoverningDigest, want)
 	}
 	for _, file := range leased.Manifest.Files {
 		code, body := e.sendRaw(http.MethodGet, fmt.Sprintf("/jobs/%d/files/%s", job.ID, file.Digest), nil, leased.LeaseID)

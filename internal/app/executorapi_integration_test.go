@@ -120,9 +120,9 @@ func (e *pgExecutorEnv) enqueue(n int) execution.Job {
 	return enqueueExecutionJob(e.t, e.store, e.artifacts, n)
 }
 
-// enqueueExecutionJob creates a pending canonical job of the enrolled repository for the head numbered n, governed by a V1 whose manifest is the Suite's: the
-// files go to the content store as the proposal of V1 puts them there, and the manifest as the checks job does, through its own writer. The job is enqueued
-// directly, so these tests do not run the planner; execution_lease_integration_test.go does, with nothing seeded.
+// enqueueExecutionJob creates a pending canonical job of the enrolled repository for the head numbered n, with the manifest and the files that it names in the content
+// store. It is a seed: the job is enqueued directly, so neither the checks job nor the proposal of V1 ran, and these tests exercise the executor API alone. The path
+// through the planner, with nothing seeded, is in execution_lease_integration_test.go.
 func enqueueExecutionJob(t *testing.T, store *postgres.Store, artifacts *filesystem.Store, n int) execution.Job {
 	t.Helper()
 	files := map[string]string{"contract.go": fmt.Sprintf("package contract // %d\n", n), declarationPath: "execution:\n  canonical: required\n  profile: go\n"}
@@ -137,7 +137,7 @@ func enqueueExecutionJob(t *testing.T, store *postgres.Store, artifacts *filesys
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := (&checksJob{content: artifacts}).keepCanonicalManifest(t.Context(), suiteView{base: m}); err != nil { // the writer the checks job runs, not a seed
+	if err := storeManifest(t.Context(), artifacts, m); err != nil { // the seed
 		t.Fatal(err)
 	}
 	job, created, err := store.Execution().Enqueue(t.Context(), execution.NewJob{At: time.Now(), Spec: execution.Spec{RepositoryID: execRepoID, PullNumber: 3, Plan: execution.PlanCanonical, Profile: "go",

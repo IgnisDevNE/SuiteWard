@@ -37,7 +37,7 @@ func (d *doctor) executorTokenFile() (string, bool) {
 	}
 	file, err := defaultTokenFile(d.deps)
 	if err != nil {
-		d.fail("executor.token", err.Error(), "Doctor looks for the test runner's files there. Set the variable the message names, or pass `--token-file`.")
+		d.fail("executor.token", err.Error(), "Doctor looks for the files of the test runner (the executor) there. Set the variable the message names, or pass `--token-file`.")
 		return "", false
 	}
 	isDefault, err := isDefaultSettings(d.deps.GOOS, d.settingsPath, !d.settingsNamed)
@@ -46,7 +46,7 @@ func (d *doctor) executorTokenFile() (string, bool) {
 		return "", false
 	}
 	if !isDefault {
-		d.fail("executor.token", "`--settings` names `"+d.settingsPath+"`, which is not the default settings file, so this is a second instance. Without `--token-file`, doctor cannot tell which test runner is yours: the default token file `"+file+"` belongs to the main instance. The test runner was not checked.",
+		d.fail("executor.token", "`--settings` names `"+d.settingsPath+"`, which is not the default settings file, so this is a second instance. Without `--token-file`, doctor cannot tell which test runner (the executor) is yours: the default token file `"+file+"` belongs to the main instance. The test runner was not checked.",
 			"Pass `--token-file` with this instance's token file (the one its install used). If this is the only instance on this computer and `"+file+"` is its token file, pass `--token-file "+quoteArg(file)+"`.")
 		return "", false
 	}
@@ -143,7 +143,7 @@ func (p executorPlan) startHint() string {
 func (d *doctor) checkExecutorToken(plan executorPlan) {
 	var problems []string
 	if info, err := os.Stat(plan.tokenFile); err != nil || !info.Mode().IsRegular() {
-		problems = append(problems, "The test runner's token file `"+plan.tokenFile+"` is missing.")
+		problems = append(problems, "The token file of the test runner (the executor) is missing: `"+plan.tokenFile+"`.")
 	}
 	raw, ok := d.raw[ContainerServe]
 	if !ok {

@@ -133,7 +133,7 @@ func removeStack(ctx context.Context, r *Resolver, d Deps, rt Runtime, purge boo
 			r.say("Stopped the test runner (the executor) and removed its program and its settings.\n")
 		}
 	} else if dir := executorDirOf(token.path); pathExists(dir) {
-		r.say("Kept the test runner in %s: it is next to a token file that may belong to another instance.\n", dir)
+		r.say("Kept the test runner (the executor) in %s: it is next to a token file that may belong to another instance.\n", dir)
 	}
 	for _, name := range []string{ContainerServe, ContainerMigrate, ContainerDB} {
 		if err := working(r.screen, "Stopping "+name, func() error { return rt.Remove(ctx, name) }); err != nil {

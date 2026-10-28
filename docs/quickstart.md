@@ -39,9 +39,9 @@ It starts the stack, and it walks you through the rest, on this PC:
 
 - one click in your browser creates the GitHub App (personal or organization), and one more installs it on the repositories to protect;
 - you pick the repositories from a list and choose the test check of each;
-- it writes a ruleset file for each repository and pauses while you import it (GitHub, Settings, Rules, New ruleset, Import a ruleset), then reads the protection back;
+- it writes a ruleset file for each repository and pauses while you import it (GitHub, Settings, Rules, New ruleset, Import a ruleset), then reads the protection back and deletes the file of each repository that reads as enforced;
 - it runs setup: turn off terminal recording first. On Windows and macOS setup opens in a window of its own, and the installer waits. Setup prints your TOTP secret once. Scan it with your authenticator and type the current code. Never paste the output, the secret or a code anywhere. To enroll again later (a lost authenticator), run `suiteward enroll`: it asks you to type `enroll` before it replaces the secret;
-- it makes the executor, which runs tests in sandboxes when you turn execution on ([section 5.4](install.md#5-install-co-located)): a scheduled task on Windows, a launch agent on macOS, a user unit on Linux, as a program of your user. It pulls the Go image of the sandboxes with the other images;
+- it makes the executor, which runs tests in sandboxes when you turn execution on ([section 5.4](install.md#5-install-co-located)): a scheduled task with no window on Windows, a launch agent on macOS, a user unit on Linux, as a program of your user. It pulls the Go image of the sandboxes with the other images;
 - it ends with a summary that includes the result of `suiteward doctor`.
 
 **3. Check** ([section 5.7](install.md#5-install-co-located)):
@@ -50,7 +50,7 @@ It starts the stack, and it walks you through the rest, on this PC:
 suiteward doctor
 ```
 
-On a full screen the install has run these checks already: read its summary. Run it later with `suiteward doctor`, and expect `ok` on every line. A `FAIL` line names the fix. For Docker instead of Podman, read the warning in [section 5](install.md#5-install-co-located) first, then add `--runtime docker --accept-docker` to the install.
+On a full screen the install has run these checks already: read its summary, which also states once the reduced assurance of this tier. Run it later with `suiteward doctor`, and expect `ok` on every line. A `FAIL` line names the fix. For Docker instead of Podman, read the warning in [section 5](install.md#5-install-co-located) first, then add `--runtime docker --accept-docker` to the install.
 
 ## Isolated (AlmaLinux 9 host)
 

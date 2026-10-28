@@ -173,6 +173,22 @@ func TestDoctorSaysThatNoWindowsExecutorCanBeSetUpInAFolderWithAPercentSign(t *t
 	}
 }
 
+// An install would refuse the folder of such a test runner too, so the fix of a row that an install fixes elsewhere ("install --upgrade") cannot be
+// the install: the way out is to remove the test runner, which the uninstall does, and set up another in a folder without a percent sign.
+func TestDoctorSendsATestRunnerInAFolderWithAPercentSignThroughAnUninstall(t *testing.T) {
+	f, s := colocated{goos: "windows", folder: "50%off"}.build(t)
+	files := coloExecFilesOf(t, f)
+	writeFile(t, files.binary, "the previous release")
+	sum := sha256.Sum256([]byte("the previous release"))
+	writeFile(t, files.pin, hex.EncodeToString(sum[:])+"  suiteward-executor.exe\n")
+	_, res, _ := runDoctor(t, f, s)
+	wantFail(t, res, "executor.binary", "different version")
+	fix := res["executor.binary"].Fix
+	if !strings.Contains(fix, "suiteward uninstall") || !strings.Contains(fix, "percent sign") || strings.Contains(fix, "--upgrade") {
+		t.Errorf("the fix is %q, want the uninstall and a folder without a percent sign, and no upgrade that the install would refuse", fix)
+	}
+}
+
 func removeFile(t *testing.T, path string) {
 	t.Helper()
 	if err := os.Remove(path); err != nil {

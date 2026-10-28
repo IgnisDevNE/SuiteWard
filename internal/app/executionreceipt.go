@@ -64,6 +64,8 @@ type receiptDecision struct {
 	check       execution.ReceiptCheck
 	counts      receiptCheckCounts
 	unavailable execution.Reason
+	// offersUnblock says that a receipt-not-responding check offers /suiteward unblock: the receipt gate would refuse an approve now.
+	offersUnblock bool
 }
 
 // withdrawnReceipt is the one last run of a head whose receipt does not apply (it changes no file that the canonical include matches, or the level is off) but that

@@ -453,3 +453,30 @@ func TestNewReceiptCheckMessageRefusesWhatTheRendererRefuses(t *testing.T) {
 		})
 	}
 }
+
+// A receipt that waits for a runner that does not respond: the decision says whether the receipt gate would refuse an approve, and the summary offers the unblock then
+// and only then.
+func TestReceiptCheckPublisherPostsTheSummaryOfARunnerThatDoesNotRespond(t *testing.T) {
+	for _, offers := range []bool{true, false} {
+		t.Run(fmt.Sprintf("offers the unblock %v", offers), func(t *testing.T) {
+			d := rcpDecision(execution.CheckInProgress, "receipt-not-responding")
+			d.offersUnblock = offers
+			w := newRcpWorld()
+			if err := w.deliver(rcpMessage(t, d)); err != nil {
+				t.Fatal(err)
+			}
+			posts := w.runner.posts()
+			if len(posts) != 1 || posts[0].Name != "SuiteWard / Receipt" || posts[0].Status != "in_progress" || posts[0].Title != "Receipt waiting: test runner not responding" {
+				t.Fatalf("posted %+v", posts)
+			}
+			for _, phrase := range []string{"has not answered for about half a minute", "Evidence, not a verdict.", "`isolated`"} {
+				if !strings.Contains(posts[0].Summary, phrase) {
+					t.Errorf("the summary lacks %q:\n%s", phrase, posts[0].Summary)
+				}
+			}
+			if offered := strings.Contains(posts[0].Summary, "/suiteward unblock <code>"); offered != offers {
+				t.Errorf("the summary offers the unblock = %v, want %v:\n%s", offered, offers, posts[0].Summary)
+			}
+		})
+	}
+}

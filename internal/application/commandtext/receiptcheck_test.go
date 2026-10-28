@@ -30,6 +30,7 @@ var receiptReasons = []struct {
 	name   string
 }{
 	{commandtext.CheckInProgress, "receipt-running", "Receipt pending", "it is waiting for an executor, or it is running", "in_progress"},
+	{commandtext.CheckInProgress, "receipt-not-responding", "Receipt waiting: test runner not responding", "has not answered for about half a minute", "in_progress"},
 	{commandtext.CheckFailure, "receipt-failing", "Receipt: failing or missing tests", "FAILS or is MISSING", "failure"},
 	{commandtext.CheckSuccess, "receipt-complete", "Receipt ready", "ran the tests that this revision adds or changes", "success"},
 	{commandtext.CheckNeutral, "receipt-not-run", "Receipt unavailable", "could not run the receipt of this head", "neutral"},
@@ -310,5 +311,38 @@ func TestCheckSummaryRefusesTheNeutralState(t *testing.T) {
 		c := check(tc.state, tc.reason)
 		c.State = commandtext.CheckNeutral
 		mustPanic(t, func() { commandtext.CheckSummary(c) })
+	}
+}
+
+const (
+	receiptNotRespondingText = "The test runner has not answered for about half a minute, so the receipt of this commit has not run. SuiteWard keeps trying. This check has no result yet."
+	receiptUnblockOffer      = "To approve without the receipt, the owner can comment `/suiteward unblock <code>`."
+)
+
+// A receipt that waits for a runner that does not respond says so, keeps the evidence sentence and the tier, and offers the unblock only where the receipt gate would
+// refuse an approve (the caller says so): the offer ends the text of the reason.
+func TestReceiptCheckSummaryOfARunnerThatDoesNotRespondOffersTheUnblockOnlyWhereTheGateRefuses(t *testing.T) {
+	_, plain := receiptText(t, receiptOf("receipt-not-responding"))
+	if !strings.Contains(plain, receiptNotRespondingText+"\n\n") || strings.Contains(plain, "unblock") || !strings.Contains(plain, evidenceText) {
+		t.Errorf("the summary without the offer:\n%s", plain)
+	}
+	c := receiptOf("receipt-not-responding")
+	c.OffersUnblock = true
+	_, offered := receiptText(t, c)
+	if !strings.Contains(offered, receiptNotRespondingText+" "+receiptUnblockOffer+"\n\n") || !strings.Contains(offered, evidenceText) || !strings.Contains(offered, "- Installation tier: `isolated`") {
+		t.Errorf("the summary with the offer:\n%s", offered)
+	}
+	for _, phrase := range notRunPhrases {
+		if strings.Contains(offered, phrase) || strings.Contains(plain, phrase) {
+			t.Errorf("the summary says %q", phrase)
+		}
+	}
+}
+
+func TestReceiptCheckSummaryRefusesAnUnblockOfferWhereThereIsNoRunnerWaiting(t *testing.T) {
+	for _, reason := range []string{"receipt-running", "receipt-failing", "receipt-complete", "receipt-not-run", "receipt-not-applicable"} {
+		c := receiptOf(reason)
+		c.OffersUnblock = true
+		mustPanic(t, func() { commandtext.ReceiptCheckSummary(c) })
 	}
 }

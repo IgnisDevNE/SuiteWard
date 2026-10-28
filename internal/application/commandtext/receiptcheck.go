@@ -22,6 +22,8 @@ type ReceiptCheck struct {
 	Markers            int
 	Unavailable        string
 	Unblocked          bool
+	// OffersUnblock is the offer of /suiteward unblock that a receipt-not-responding check makes, where the receipt gate would refuse an approve.
+	OffersUnblock bool
 }
 
 // receiptReason is the output of one reason of the Receipt check: its state, a title and what happened. The titles of the states are the contract's; the texts are a task's.

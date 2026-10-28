@@ -35,6 +35,9 @@ type Check struct {
 	// owner's unblock of an unavailable one. The reasons canonical-pending, canonical-unavailable and canonical-failing mark it too.
 	Execution *CheckExecution
 	Unblocked bool
+	// ApproveMode marks an approval-missing check whose approve names a mode: the repository requires a receipt (docs/contracts/runtime.md, "The revision comment"), as the
+	// comment of the revision shows. It is false for the first contract, which has no canonical and so no receipt policy.
+	ApproveMode bool
 }
 
 // CheckExecution are the counts of a complete canonical run: the tests that ran, how many passed, were skipped, failed, were missing or flaky, and how many are
@@ -185,12 +188,18 @@ func CheckSummary(c Check) (title, summary string) {
 	if c.Tier == CoLocated {
 		parts = append(parts, CoLocatedNotice)
 	}
-	parts = append(parts, reason.next)
-	switch c.Reason {
-	case "approval-missing":
-		parts = append(parts, codeCommand("approve", ref))
-	case "canonical-unavailable":
-		parts = append(parts, copyable("/suiteward unblock <code>"))
+	next, command := reason.next, ""
+	switch {
+	case c.Reason == "approval-missing" && c.ApproveMode: // the receipt gate refuses an approve with no mode under a required receipt, and consumes its code
+		next, command = "To approve this exact revision, name the mode of this change and comment:", modeApproveCommand(ref)
+	case c.Reason == "approval-missing":
+		command = codeCommand("approve", ref)
+	case c.Reason == "canonical-unavailable":
+		command = copyable("/suiteward unblock <code>")
+	}
+	parts = append(parts, next)
+	if command != "" {
+		parts = append(parts, command)
 	}
 	parts = append(parts, closingText(c))
 	return reason.title, paragraphs(parts...)
@@ -254,6 +263,9 @@ func checkCheckReference(c Check) error {
 	}
 	if c.Reason == "approval-missing" && c.Proposal == 0 {
 		return errors.New("commandtext: approval is missing for no revision")
+	}
+	if c.ApproveMode && (c.Reason != "approval-missing" || c.Version == 0) {
+		return fmt.Errorf("commandtext: reason %q with version V%d has no approve with a mode: only an approval that is missing against a canonical has one", c.Reason, c.Version)
 	}
 	if c.Changes != nil {
 		if c.Proposal == 0 {

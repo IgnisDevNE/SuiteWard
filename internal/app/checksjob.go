@@ -333,7 +333,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
 		return "", err
 	}
-	if err := j.publishCheck(ctx, s, d.result, d.runners, executed.counts); err != nil {
+	if err := j.publishCheck(ctx, s, d.result, d.runners, executed.counts, x.namesMode(d.result)); err != nil {
 		return "", err
 	}
 	if err := j.publishReceipt(ctx, s, executed.receipt); err != nil {
@@ -343,6 +343,13 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 		return "", err
 	}
 	return d.problem, errors.Join(stepErr, countsErr)
+}
+
+// namesMode says whether the approve that the check of r shows names a mode: an approval that is missing does under a required receipt, as the comment of the revision does,
+// because the receipt gate refuses an approve with no mode and consumes its code. A receipt that turns out empty or not applicable accepts a mode all the same. The first
+// contract has no policy, so its approve names none.
+func (x *executionRun) namesMode(r checks.Result) bool {
+	return x.known && r.Reason == reasonApprovalMissing && x.policy.receipt == domain.ReceiptLevelRequired
 }
 
 // restoreCounts gives a check that a wait restored the counts of the canonical run it was decided with. The stored result of the head goes out again when the ledger
@@ -498,7 +505,7 @@ func (j *checksJob) commentBeforeCheck(ctx context.Context, s *pullState, d pull
 }
 
 // publishCheck publishes every run, also an unchanged result, which lets the ledger resend a message that ended failed.
-func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result checks.Result, runners *runnerSet, counts *checkExecution) error {
+func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result checks.Result, runners *runnerSet, counts *checkExecution, approveMode bool) error {
 	_, _, err := j.ledger.Publish(ctx, result, j.now(), func(generation int64) (governance.OutboxMessage, error) {
 		if result.Reason == reasonRunnerUncovered { // applyRunnerBlock decided it from a runner set, so a republish has the files too
 			if runners == nil {
@@ -506,7 +513,7 @@ func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result check
 			}
 			return newCheckMessageWithPaths(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, runners.paths, len(runners.paths))
 		}
-		return newCheckMessageOf(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, nil, 0, counts)
+		return newCheckMessageOf(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, nil, 0, counts, approveMode)
 	})
 	if err != nil {
 		return fmt.Errorf("publish the check: %w", err)

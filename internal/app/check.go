@@ -54,6 +54,8 @@ type checkPayload struct {
 	Execution *checkExecution `json:"execution,omitempty"`
 	// Unblocked marks a check that the owner's unblock of an unavailable canonical run lifted.
 	Unblocked bool `json:"unblocked,omitempty"`
+	// ApproveMode marks an approval-missing check whose approve names a mode, which a required receipt needs (docs/contracts/runtime.md, "Check reason approval-missing").
+	ApproveMode bool `json:"approveMode,omitempty"`
 }
 
 // checkExecution are the counts of a complete canonical run: the tests that ran (every declared test but the excluded ones) and how many of them passed, were
@@ -101,7 +103,7 @@ func (p checkPayload) check(key string) (commandtext.Check, error) {
 	case slices.ContainsFunc(p.Paths, func(path string) bool { return len(path) > maxSummaryText }):
 		return commandtext.Check{}, keyError(githubCheckKind, key, "a path is too long")
 	}
-	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal, Unblocked: p.Unblocked}
+	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal, Unblocked: p.Unblocked, ApproveMode: p.ApproveMode}
 	if p.Execution != nil {
 		counts := commandtext.CheckExecution(*p.Execution)
 		c.Execution = &counts
@@ -144,13 +146,14 @@ func newCheckMessage(repo string, r checks.Result, tier, version string, generat
 // newCheckMessageWithPaths is newCheckMessage for a runner-uncovered result: paths are its runner files and total how many there are. The
 // payload keeps at most 20, each cut to maxSummaryText bytes.
 func newCheckMessageWithPaths(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int) (governance.OutboxMessage, error) {
-	return newCheckMessageOf(repo, r, tier, version, generation, paths, total, nil)
+	return newCheckMessageOf(repo, r, tier, version, generation, paths, total, nil, false)
 }
 
-// newCheckMessageOf is newCheckMessageWithPaths for a result that the canonical gate decided: counts are those of a complete canonical run, nil for none.
-func newCheckMessageOf(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int, counts *checkExecution) (governance.OutboxMessage, error) {
+// newCheckMessageOf is newCheckMessageWithPaths for a result that execution adds to: counts are those of a complete canonical run, nil for none, and approveMode says that the
+// approve of an approval that is missing names a mode.
+func newCheckMessageOf(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int, counts *checkExecution, approveMode bool) (governance.OutboxMessage, error) {
 	p := checkPayload{commentTarget: commentTarget{RepositoryID: r.RepositoryID, Repo: repo, Pull: r.PullNumber}, HeadSHA: r.HeadSHA, Generation: generation,
-		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version, PathsTotal: total, Execution: counts, Unblocked: r.Unblocked}
+		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version, PathsTotal: total, Execution: counts, Unblocked: r.Unblocked, ApproveMode: approveMode}
 	if len(paths) > 0 {
 		p.Paths = boundedText(paths)
 	}

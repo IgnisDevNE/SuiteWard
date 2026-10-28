@@ -46,8 +46,8 @@ func instanceFlags(fs *flag.FlagSet) {
 }
 
 // locateInstance finds the stack the flags name, on the tier of the saved settings or --tier.
-func locateInstance(ctx context.Context, r *Resolver, env Env, flags map[string]string) (instance, error) {
-	settingsPath, defaultPath, err := settingsPathFrom(flags)
+func locateInstance(ctx context.Context, r *Resolver, env Env) (instance, error) {
+	settingsPath, defaultPath, err := settingsPathFrom(r)
 	if err != nil {
 		return instance{}, err
 	}

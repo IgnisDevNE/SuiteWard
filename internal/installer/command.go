@@ -308,8 +308,8 @@ func emptySettings(flags map[string]string) error {
 }
 
 // settingsPathFrom is the settings file of a command and whether it is the shared per-user default.
-func settingsPathFrom(flags map[string]string) (path string, isDefault bool, err error) {
-	if path = flags["settings"]; path != "" {
+func settingsPathFrom(r *Resolver) (path string, isDefault bool, err error) {
+	if path = r.flags["settings"]; path != "" {
 		return path, false, nil
 	}
 	path, err = DefaultSettingsPath()
@@ -366,7 +366,7 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	env.Deps.instance = r.instance()
-	settingsPath, defaultPath, err := settingsPathFrom(flags)
+	settingsPath, defaultPath, err := settingsPathFrom(r)
 	if err != nil {
 		return err
 	}

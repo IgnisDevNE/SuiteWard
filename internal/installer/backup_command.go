@@ -52,7 +52,7 @@ func Backup(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	env.Deps.instance = r.instance()
-	inst, err := locateInstance(ctx, r, env, flags)
+	inst, err := locateInstance(ctx, r, env)
 	if err != nil {
 		return err
 	}

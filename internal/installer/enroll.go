@@ -57,7 +57,7 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	env.Deps.instance = r.instance()
-	settingsPath, defaultPath, err := settingsPathFrom(flags)
+	settingsPath, defaultPath, err := settingsPathFrom(r)
 	if err != nil {
 		return err
 	}

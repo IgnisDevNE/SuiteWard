@@ -2,7 +2,9 @@ package installer
 
 import (
 	"bytes"
+	"encoding/xml"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -162,24 +164,120 @@ func TestInstallStartsTheExecutorAsAScheduledTaskAtLogonOnWindows(t *testing.T) 
 			t.Errorf("the wrapper lacks %s:\n%s", want, wrapper)
 		}
 	}
-	raw, err := os.ReadFile(filepath.Join(h.executorDir(), "task.xml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	task := utf16le(t, raw)
+	task := utf16le(t, mustRead(t, filepath.Join(h.executorDir(), "task.xml")))
 	for _, want := range []string{
 		"<LogonTrigger>", "<UserId>" + testSID + "</UserId>", "<LogonType>InteractiveToken</LogonType>", "<RunLevel>LeastPrivilege</RunLevel>",
 		"<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>", "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
-		"<RestartOnFailure>", "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
-		"<Command>" + filepath.Join(h.executorDir(), "run.cmd") + "</Command>",
+		"<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
 	} {
 		if !strings.Contains(task, want) {
 			t.Errorf("the task lacks %s:\n%s", want, task)
 		}
 	}
 	h.assertOrder("/Create /TN SuiteWard Executor /XML "+filepath.Join(h.executorDir(), "task.xml")+" /F", "/Run /TN SuiteWard Executor")
-	if !strings.Contains(h.out.String(), "console window") {
-		t.Errorf("the output must say that a console window shows (a task of the logged-on user cannot hide it):\n%s", h.out.String())
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// execAction is the action of the task as Task Scheduler reads it: the program, its arguments and the folder it starts in.
+type execAction struct{ Command, Arguments, WorkingDirectory string }
+
+func taskAction(t *testing.T, task string) (action execAction, hasRestart bool) {
+	t.Helper()
+	var doc struct {
+		Actions struct{ Exec execAction }
+	}
+	dec := xml.NewDecoder(strings.NewReader(task))
+	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil } // the file declares UTF-16: utf16le has decoded it
+	if err := dec.Decode(&doc); err != nil {
+		t.Fatalf("the task is not XML: %v\n%s", err, task)
+	}
+	return doc.Actions.Exec, strings.Contains(task, "RestartOnFailure")
+}
+
+// The executor is never a window on the user's computer (owner decision 18). A scheduled task of the logged-on user opens a console for a console
+// program, so the script runs through conhost.exe --headless, which has no window. Every program is named by its full path under the system
+// directory, and the script by its name in the folder the task starts in, with its own path as an argument that cmd ignores: no character of a
+// path goes through the quoting rules of cmd /c, and the process list names the instance by that path.
+func TestTheScheduledTaskOfTheExecutorRunsItsScriptThroughAHeadlessConsole(t *testing.T) {
+	for name, c := range map[string]struct{ systemRoot, system string }{
+		"the system directory of the computer": {`D:\Windows`, `D:\Windows\System32`},
+		"the default system directory":         {"", `C:\Windows\System32`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := machineHarnessOn(t, "windows")
+			h.dir = filepath.Join(h.dir, "Ana & Pedro (work)") // a folder name that cmd reads as an operator and a group
+			if err := os.MkdirAll(h.dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			h.f.env["SystemRoot"] = c.systemRoot
+			if err := h.podman(); err != nil {
+				t.Fatal(err)
+			}
+			action, hasRestart := taskAction(t, utf16le(t, mustRead(t, filepath.Join(h.executorDir(), "task.xml"))))
+			if want := c.system + `\conhost.exe`; action.Command != want {
+				t.Errorf("the task runs %q, want %q: no console of Windows Terminal may open", action.Command, want)
+			}
+			wrapper := filepath.Join(h.executorDir(), "run.cmd")
+			if want := `--headless "` + c.system + `\cmd.exe" /d /c .\run.cmd "` + wrapper + `"`; action.Arguments != want {
+				t.Errorf("the task passes %q, want %q", action.Arguments, want)
+			}
+			if action.WorkingDirectory != h.executorDir() {
+				t.Errorf("the task starts in %q, want %q", action.WorkingDirectory, h.executorDir())
+			}
+			if hasRestart {
+				t.Error("the task keeps RestartOnFailure: Task Scheduler does not restart an action that exited, so the wrapper is what brings the executor back")
+			}
+		})
+	}
+}
+
+// The wrapper is what brings the executor back (owner decision 18): Task Scheduler's RestartOnFailure does not restart an action that exited, so a
+// closed console, a crash or an exit starts the program again after about a minute. The pause is ping, which reads no console (timeout does).
+func TestTheWrapperOfTheWindowsTaskStartsTheExecutorAgainAfterAPause(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(h.readHome("executor/run.cmd")), "\r\n")
+	start := `"` + h.executorBinary() + `" execute >> "` + filepath.Join(h.executorDir(), "executor.log") + `" 2>&1`
+	at := func(from int, want string) int {
+		t.Helper()
+		for i := from; i < len(lines); i++ {
+			if strings.Contains(lines[i], want) {
+				return i
+			}
+		}
+		t.Fatalf("the wrapper has no line with %q after line %d:\n%s", want, from, strings.Join(lines, "\n"))
+		return -1
+	}
+	label := at(0, ":again")
+	run := at(label, start)
+	pause := at(run, `"%SystemRoot%\System32\ping.exe" -n 61 127.0.0.1 >nul`)
+	at(pause, "goto again")
+	if strings.Contains(strings.Join(lines, "\n"), "timeout") {
+		t.Error("the wrapper pauses with timeout, which reads the console")
+	}
+}
+
+func TestTheInstallSaysThatTheExecutorOfWindowsHasNoWindow(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	out := h.out.String()
+	if !strings.Contains(out, "no window") {
+		t.Errorf("the output must say that the executor has no window:\n%s", out)
+	}
+	if strings.Contains(out, "console window") || strings.Contains(out, "Closing the window") {
+		t.Errorf("the output still says that a window shows and that closing it stops the executor:\n%s", out)
 	}
 }
 

@@ -25,8 +25,8 @@ func executionAck(a Ack) string {
 		)
 	case Unblocked:
 		return paragraphs(
-			"Unblock recorded by "+who+" for the current head of this pull request. SuiteWard lifted what was unavailable on it: "+liftedPlans(a.Plans)+"."+stoppedWaiting(a.Ended),
-			"The checks will state that the owner unblocked this head and that the tests did not run. The unblock changes no result: a run that is pending, failing or complete stays as it is.",
+			"Unblock recorded by "+who+" for the current head of this pull request. SuiteWard lifted the hold on "+liftedPlans(a.Plans)+"."+stoppedWaiting(a.Ended),
+			"The checks will state that the owner unblocked this head and that the tests did not run. The unblock changes no result: a run that is failing or complete stays as it is.",
 			"A new push is a new head and needs a new unblock if its run is unavailable too.",
 		)
 	}
@@ -70,7 +70,7 @@ func gateText(a Ack) (reason string, next []string) {
 		return "the receipt of this head is unavailable",
 			[]string{
 				"Push a new head to run the tests again, or, to approve this head without a receipt, comment:", copyable("/suiteward unblock <code>"),
-				"Then comment the approve again, with the next code. An unblock lifts only a run that is unavailable on the current head.",
+				"Then comment the approve again, with the next code. An unblock lifts a run of the current head that is unavailable, or that waits for a test runner that is not responding.",
 			}
 	case execution.ReasonModeRequired:
 		return "this repository requires a mode with the approve, and the comment named none",

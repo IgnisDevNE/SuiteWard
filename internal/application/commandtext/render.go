@@ -973,7 +973,8 @@ var refusals = map[Outcome]refusalSet{
 		Fork:    {forkReason, "Open the pull request from a branch of this repository. " + codeUsedAgain, ""},
 		NotOpen: {notOpenReason, "Comment `/suiteward unblock <code>` on an open pull request. " + codeUsedAgain, ""},
 		NotUnavailable: {"no run of this head is unavailable, so there is nothing to unblock",
-			"An unblock lifts only a run that is unavailable on the current head: a pending, failing or complete run is never lifted. " + codeUsedAgain, ""},
+			"An unblock lifts a run that is unavailable, or that waits for a test runner that is not responding. " +
+				"It does not lift a run that is failing or complete, or that waits for GitHub or for a test runner that responds. " + codeUsedAgain, ""},
 		// RunnerResponding is told in the contract's own words, not in the template of refused (see refusal): reason is the whole first paragraph.
 		RunnerResponding: {"The test runner is responding, so the tests of this commit will run. Nothing was unblocked.", codeUsedAgain, ""},
 	}},

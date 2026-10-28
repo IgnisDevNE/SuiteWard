@@ -24,7 +24,8 @@ import (
 
 // isOSCall says whether a command is one that keeps the executor running, which the operating system answers and no container engine does.
 func isOSCall(c call) bool {
-	return slices.Contains([]string{"systemctl", "schtasks", "tasklist", "launchctl", "id"}, c.name)
+	// The Windows ones are named by their full path under the system directory.
+	return slices.Contains([]string{"systemctl", "schtasks", "tasklist", "taskkill", "powershell", "launchctl", "id"}, baseName(c.name))
 }
 
 func (h *harness) executorDir() string { return filepath.Join(h.dir, "executor") }
@@ -733,7 +734,7 @@ func TestTheUninstallWarningNamesTheCommandsOfTheOperatingSystemThatKeepsTheExec
 			writeFile(un.t, filepath.Join(un.executorDir(), executorWrapperName), "the wrapper")
 			writeFile(un.t, filepath.Join(un.executorDir(), "task.xml"), "the task")
 			un.f.fail("IMAGENAME eq suiteward-executor.exe", errors.New("tasklist: access denied"))
-		}, []string{`schtasks /End /TN "SuiteWard Executor"`, "`taskkill /IM suiteward-executor.exe /F`", `schtasks /Delete /TN "SuiteWard Executor" /F`}},
+		}, []string{`schtasks /End /TN "SuiteWard Executor"`, `schtasks /Delete /TN "SuiteWard Executor" /F`, "sign out of Windows"}},
 		{"darwin", func(un *harness) { un.f.fail("=-u", errors.New("id: not found")) }, []string{"launchctl bootout gui/$(id -u)/" + executorLabel}},
 	}
 	for _, c := range cases {
@@ -749,6 +750,11 @@ func TestTheUninstallWarningNamesTheCommandsOfTheOperatingSystemThatKeepsTheExec
 			out := un.out.String()
 			if !strings.Contains(out, "executor was not removed") || strings.Contains(out, "systemctl") {
 				t.Errorf("the output must say that the executor is still there, and not give the command of Linux:\n%s", out)
+			}
+			// The wrapper starts the program again after its pause, so ending the program by its name alone would not stop the executor, and it would
+			// end another instance's too: a person signs out, which ends everything of the user, after the task is deleted.
+			if strings.Contains(out, "taskkill") {
+				t.Errorf("the output teaches a kill by name:\n%s", out)
 			}
 			for _, want := range c.want {
 				if !strings.Contains(out, want) {

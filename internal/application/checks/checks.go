@@ -47,6 +47,7 @@ type Result struct {
 	Revision     int64  // the Suite revision of the verdict, 0 without a Suite
 	CommandID    int64  // the latest owner command on the pull that was considered, 0 for none
 	Unblocked    bool   // the owner unblocked the head's canonical job and that lift decided the outcome (M2.1)
+	CountedJob   int64  // the canonical job whose counts an approval that is missing states under canonical: required, 0 for none (M2.1)
 }
 
 // Record is a stored Result with its publication bookkeeping.

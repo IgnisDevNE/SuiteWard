@@ -184,7 +184,7 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 	c.executorRow = executorMechanism(plan.goos) + "; " + plan.binary
 	scr.Check("The test runner (the executor) is set up as %s. It runs a copy of this program: %s.\n", executorMechanism(plan.goos), plan.binary)
 	if plan.goos == "windows" {
-		scr.Say("The test runner has no window. It runs in the background, and if it stops it starts again after a minute.\n")
+		scr.Say("The test runner has no window. It runs in the background, and if it stops it starts again after about %d seconds.\n", executorRestartSeconds)
 	}
 	if c.s.Runtime == RuntimeDocker {
 		scr.Say("The test runner starts its sandboxes through Docker. Docker's own command line cannot drive Podman: it stops, because it does not know the options the sandboxes need. Podman's docker command (the podman-docker package) does work with Podman. To use Podman, install with `--runtime podman`.\n")

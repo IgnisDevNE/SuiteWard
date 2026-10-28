@@ -212,7 +212,7 @@ func TestInstallEndsTheWholeTreeOfTheExecutorBeforeItReplacesTheProgramOnWindows
 	}
 }
 
-// The wrapper waits a minute between two runs: a stop in that pause finds no program, and a wrapper that is left starts the old program with the old
+// The wrapper pauses between two runs: a stop in that pause finds no program, and a wrapper that is left starts the old program with the old
 // environment again, next to the new one.
 func TestInstallEndsTheWrapperThatWaitsBetweenTwoRunsOfTheExecutor(t *testing.T) {
 	r := reinstallOnWindows(t, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary)[:2] }, nil)

@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -81,14 +82,15 @@ func (s executionStore) RecordApproval(ctx context.Context, e commands.Entry, ac
 	})
 }
 
-// RecordUnblock implements execution.Store in one transaction: the ledger entry, its acknowledgment and one unblock row for each lifted
-// job. Each job is checked first, and an unavailable job never changes, so the check cannot go stale. A command that already lifted
-// jobs must lift the same ones.
-func (s executionStore) RecordUnblock(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, headSHA string, jobIDs []int64) error {
+// RecordUnblock implements execution.Store in one transaction: it locks the jobs in id order, compares each with what the caller observed, ends the open ones
+// for no-executor, and writes the ledger entry, its acknowledgment and one unblock row for each lifted job. A command that already lifted jobs is found by its
+// rows, after the locks (a concurrent attempt of the same command waits for the first and finds them), and must lift the same jobs at the same time: it
+// is success, and the jobs are not looked at again, since they ended with it.
+func (s executionStore) RecordUnblock(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, headSHA string, jobs []execution.UnblockJob, at time.Time) error {
 	if err := e.Validate(); err != nil {
 		return err
 	}
-	if err := execution.ValidateUnblock(e, headSHA, jobIDs); err != nil {
+	if err := execution.ValidateUnblock(e, headSHA, jobs, at); err != nil {
 		return err
 	}
 	if ack != nil {
@@ -96,50 +98,96 @@ func (s executionStore) RecordUnblock(ctx context.Context, e commands.Entry, ack
 			return err
 		}
 	}
-	e = e.AtStoredPrecision()
+	e, at = e.AtStoredPrecision(), execution.Stored(at)
 	pull, err := int32Of(e.PullNumber)
 	if err != nil {
 		return err
 	}
-	lifted := slices.Sorted(slices.Values(jobIDs))
+	jobs = slices.SortedFunc(slices.Values(jobs), func(a, b execution.UnblockJob) int { return cmp.Compare(a.ID, b.ID) })
 	return inTx(ctx, s.pool, "unblock", func(transaction pgx.Tx) error {
 		q := dbgen.New(transaction)
-		for _, id := range lifted {
-			if err := checkUnblockable(ctx, q, id, e, pull, headSHA); err != nil {
-				return err
-			}
-		}
-		if _, err := recordEntry(ctx, q, e, pull, ack); err != nil {
+		locked, err := lockUnblockJobs(ctx, q, jobs)
+		if err != nil {
 			return err
 		}
 		existing, err := q.ListExecutionUnblocks(ctx, dbgen.ListExecutionUnblocksParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID})
 		if err != nil {
 			return fmt.Errorf("read the unblock rows: %w", err)
 		}
-		if len(existing) > 0 && !slices.Equal(existing, lifted) {
-			return fmt.Errorf("%w: comment %d of repository %d unblocked other jobs", commands.ErrConflict, e.CommentID, e.RepositoryID)
-		}
-		for _, id := range lifted {
-			if _, err := q.InsertExecutionUnblock(ctx, dbgen.InsertExecutionUnblockParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID, JobID: id, PullNumber: pull,
-				HeadSha: headSHA, DecidedAt: timestamp(e.DecidedAt)}); err != nil {
-				return executionWriteError("write the unblock row", err)
+		if len(existing) > 0 {
+			if !sameUnblock(existing, jobs, at) {
+				return fmt.Errorf("%w: comment %d of repository %d unblocked other jobs", commands.ErrConflict, e.CommentID, e.RepositoryID)
 			}
+			_, err := recordEntry(ctx, q, e, pull, ack)
+			return err
 		}
-		return nil
+		if err := checkUnblockable(jobs, locked, e, headSHA); err != nil {
+			return err
+		}
+		if _, err := recordEntry(ctx, q, e, pull, ack); err != nil {
+			return err
+		}
+		return liftJobs(ctx, q, e, pull, headSHA, locked, at)
 	})
 }
 
-// checkUnblockable is execution.ErrInvalidRequest unless the job exists, is unavailable, and is of the repository, the pull request and the head.
-func checkUnblockable(ctx context.Context, q *dbgen.Queries, id int64, e commands.Entry, pull int32, headSHA string) error {
-	job, err := q.GetExecutionJob(ctx, id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("%w: job %d does not exist", execution.ErrInvalidRequest, id)
+// lockUnblockJobs locks the jobs, which are in id order, and reads them: execution.ErrInvalidRequest for one that does not exist.
+func lockUnblockJobs(ctx context.Context, q *dbgen.Queries, jobs []execution.UnblockJob) ([]execution.Job, error) {
+	locked := make([]execution.Job, len(jobs))
+	for i, o := range jobs {
+		job, err := lockJob(ctx, q, o.ID)
+		if errors.Is(err, execution.ErrNotFound) {
+			return nil, fmt.Errorf("%w: job %d does not exist", execution.ErrInvalidRequest, o.ID)
+		}
+		if err != nil {
+			return nil, err
+		}
+		locked[i] = job
 	}
-	if err != nil {
-		return fmt.Errorf("read job %d: %w", id, err)
+	return locked, nil
+}
+
+// liftJobs ends each open job of the unblock for no-executor, as of at, and writes the unblock row of each job with the same time.
+func liftJobs(ctx context.Context, q *dbgen.Queries, e commands.Entry, pull int32, headSHA string, locked []execution.Job, at time.Time) error {
+	for _, job := range locked {
+		if next := job.UnblockEnded(at); next.State != job.State {
+			if err := storeJob(ctx, q, next); err != nil {
+				return err
+			}
+		}
+		if _, err := q.InsertExecutionUnblock(ctx, dbgen.InsertExecutionUnblockParams{RepositoryID: e.RepositoryID, CommentID: e.CommentID, JobID: job.ID, PullNumber: pull,
+			HeadSha: headSHA, DecidedAt: timestamp(at)}); err != nil {
+			return executionWriteError("write the unblock row", err)
+		}
 	}
-	if job.State != string(execution.StateUnavailable) || job.RepositoryID != e.RepositoryID || job.PullNumber != pull || job.HeadSha != headSHA {
-		return fmt.Errorf("%w: job %d is not an unavailable job of this head and pull request", execution.ErrInvalidRequest, id)
+	return nil
+}
+
+// sameUnblock reports whether the rows of a command, in job order, are those of the jobs it names, all decided at the time.
+func sameUnblock(rows []dbgen.ListExecutionUnblocksRow, jobs []execution.UnblockJob, at time.Time) bool {
+	if len(rows) != len(jobs) {
+		return false
+	}
+	for i, row := range rows {
+		if row.JobID != jobs[i].ID || !observedTime(row.DecidedAt).Equal(at) {
+			return false
+		}
+	}
+	return true
+}
+
+// checkUnblockable is execution.ErrInvalidRequest unless every locked job is of the repository, the pull request and the head, and execution.ErrJobChanged
+// unless every one is still as the caller observed it.
+func checkUnblockable(jobs []execution.UnblockJob, locked []execution.Job, e commands.Entry, headSHA string) error {
+	for _, job := range locked {
+		if job.RepositoryID != e.RepositoryID || job.PullNumber != e.PullNumber || job.HeadSHA != headSHA {
+			return fmt.Errorf("%w: job %d is not a job of this head and pull request", execution.ErrInvalidRequest, job.ID)
+		}
+	}
+	for i, job := range locked {
+		if !job.Observed(jobs[i]) {
+			return fmt.Errorf("%w: job %d", execution.ErrJobChanged, job.ID)
+		}
 	}
 	return nil
 }

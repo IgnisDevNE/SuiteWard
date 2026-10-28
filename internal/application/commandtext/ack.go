@@ -157,8 +157,8 @@ func checkConsent(a Ack) error {
 	return nil
 }
 
-// checkExecution checks the fields that only the outcomes of the execution commands carry: Mode, Plans, and the Gate, Counts and Markers
-// of a receipt refusal.
+// checkExecution checks the fields that only the outcomes of the execution commands carry: Mode, Plans, the Ended plans (some of the lifted
+// ones), and the Gate, Counts and Markers of a receipt refusal.
 func checkExecution(a Ack) error {
 	switch {
 	case a.Mode != execution.ModeNone && a.Mode.String() == "":
@@ -167,6 +167,8 @@ func checkExecution(a Ack) error {
 		return fmt.Errorf("commandtext: mode %d does not fit outcome %d", a.Mode, a.Outcome)
 	case (a.Plans != Plans{}) != (a.Outcome == Unblocked):
 		return fmt.Errorf("commandtext: plans %+v do not fit outcome %d", a.Plans, a.Outcome)
+	case a.Ended != Plans{} && a.Outcome != Unblocked, a.Ended.Canonical && !a.Plans.Canonical, a.Ended.Receipt && !a.Plans.Receipt:
+		return fmt.Errorf("commandtext: the ended plans %+v are not among the lifted plans %+v of outcome %d", a.Ended, a.Plans, a.Outcome)
 	}
 	return checkGate(a)
 }

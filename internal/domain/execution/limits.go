@@ -14,3 +14,8 @@ const TestTimeoutSeconds = 600
 //   - 60 s for everything around the test binary: from the lease to its start (the archive download, the prefetch, the tar, the container start
 //     and a cold compile; about 32 s per container was measured) and the parse and post of the result after it.
 const MinJobTimeout = TestTimeoutSeconds*time.Second + time.Minute + 30*time.Second + 60*time.Second
+
+// NotRespondingAfter is how long the service may go without seeing an executor before a head with a job that waits for it reads "not responding"
+// (docs/contracts/runtime.md, "Not responding"). It stays above the longest silence of a healthy executor, whose pacing is in
+// internal/executor/run, and below the least EXECUTOR_LEASE_WAIT, so that a head reads not responding before its jobs end as no-executor.
+const NotRespondingAfter = 30 * time.Second

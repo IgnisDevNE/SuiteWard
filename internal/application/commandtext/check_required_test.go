@@ -27,6 +27,7 @@ var requiredReasons = []struct {
 }{
 	{commandtext.CheckInProgress, "canonical-pending", "Canonical run pending", "has not finished", "in_progress"},
 	{commandtext.CheckInProgress, "canonical-unavailable", "Canonical run unavailable", "could not run the approved tests", "in_progress"},
+	{commandtext.CheckInProgress, "canonical-not-responding", "Test runner not responding", "has not answered for about half a minute", "in_progress"},
 	{commandtext.CheckFailure, "canonical-failing", "Canonical tests failing", "fails, is missing or is flaky", "failure"},
 }
 
@@ -71,13 +72,14 @@ func TestRequiredCheckSummaryStatesTheCanonicalRunItIsWaitingForOrCouldNotMake(t
 }
 
 func TestRequiredCheckSummaryOfAnUnavailableRunOffersTheUnblockAndOfAPendingOneDoesNot(t *testing.T) {
-	_, unavailable := checkText(t, requiredCheck("canonical-unavailable"))
-	if !strings.Contains(unavailable, "```\n/suiteward unblock <code>\n```") {
-		t.Errorf("the unavailable summary does not offer the unblock:\n%s", unavailable)
+	for _, reason := range []string{"canonical-unavailable", "canonical-not-responding"} {
+		if _, summary := checkText(t, requiredCheck(reason)); !strings.Contains(summary, "```\n/suiteward unblock <code>\n```") {
+			t.Errorf("%s: the summary does not offer the unblock:\n%s", reason, summary)
+		}
 	}
 	for _, reason := range []string{"canonical-pending", "canonical-failing"} {
 		if _, summary := checkText(t, requiredCheck(reason)); strings.Contains(summary, "unblock") {
-			t.Errorf("%s: the summary offers an unblock, which lifts only an unavailable run:\n%s", reason, summary)
+			t.Errorf("%s: the summary offers an unblock, which only canonical-unavailable and canonical-not-responding offer:\n%s", reason, summary)
 		}
 	}
 }
@@ -148,7 +150,7 @@ func TestRequiredCheckSummaryOfAnUnblockedHeadSaysThatTheApprovedTestsDidNotRun(
 
 func TestRequiredCheckSummaryStatesTheTierAndHoldsNoRepositoryText(t *testing.T) {
 	claim := regexp.MustCompile(`(?i)\bcoverage\b|all tests pass|build passed|ci passed`)
-	variants := []commandtext.Check{requiredCheck("canonical-pending"), requiredCheck("canonical-unavailable"), requiredCheck("canonical-failing")}
+	variants := []commandtext.Check{requiredCheck("canonical-pending"), requiredCheck("canonical-unavailable"), requiredCheck("canonical-not-responding"), requiredCheck("canonical-failing")}
 	ready := check(commandtext.CheckSuccess, "ready")
 	ready.Execution = passed()
 	unblocked := check(commandtext.CheckSuccess, "unchanged")
@@ -184,23 +186,44 @@ func TestCheckSummaryRefusesRequiredFieldsThatDoNotFit(t *testing.T) {
 	counts := func(c *commandtext.Check) { c.Execution = ran() }
 	unblock := func(c *commandtext.Check) { c.Unblocked = true }
 	for name, c := range map[string]commandtext.Check{
-		"counts on a pending run":                    with(requiredCheck("canonical-pending"), counts),
-		"counts on an unavailable run":               with(requiredCheck("canonical-unavailable"), counts),
-		"a failing run without counts":               with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.Execution = nil }),
-		"a failing run that blocks nothing":          with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 2, Passed: 2} }),
-		"counts on an invalid source":                with(check(commandtext.CheckFailure, "invalid-source"), counts),
-		"an unblock on an approval that is missing":  with(check(commandtext.CheckInProgress, "approval-missing"), unblock),
-		"an unblock on a pending run":                with(requiredCheck("canonical-pending"), unblock),
-		"an unblock on a failing run":                with(requiredCheck("canonical-failing"), unblock),
-		"an unblock with counts":                     with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = passed(); unblock(c) }),
-		"a success with a failing test":              with(check(commandtext.CheckSuccess, "ready"), counts),
-		"an unblock on a runner block":               with(check(commandtext.CheckInProgress, "runner-uncovered"), unblock),
-		"a pending run that is a failure":            with(requiredCheck("canonical-pending"), func(c *commandtext.Check) { c.State = commandtext.CheckFailure }),
-		"a failing run that is in progress":          with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.State = commandtext.CheckInProgress }),
-		"a negative count":                           with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 1, Passed: 2, Failed: -1} }),
-		"tests that are not the sum of their states": with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 5, Passed: 2} }),
-		"a negative number of excluded tests":        with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Excluded: -1} }),
+		"counts on a pending run":                      with(requiredCheck("canonical-pending"), counts),
+		"counts on an unavailable run":                 with(requiredCheck("canonical-unavailable"), counts),
+		"counts on a runner that does not respond":     with(requiredCheck("canonical-not-responding"), counts),
+		"an unblock on a runner that does not respond": with(requiredCheck("canonical-not-responding"), unblock),
+		"a runner that does not respond that failed":   with(requiredCheck("canonical-not-responding"), func(c *commandtext.Check) { c.State = commandtext.CheckFailure }),
+		"a failing run without counts":                 with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.Execution = nil }),
+		"a failing run that blocks nothing":            with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 2, Passed: 2} }),
+		"counts on an invalid source":                  with(check(commandtext.CheckFailure, "invalid-source"), counts),
+		"an unblock on an approval that is missing":    with(check(commandtext.CheckInProgress, "approval-missing"), unblock),
+		"an unblock on a pending run":                  with(requiredCheck("canonical-pending"), unblock),
+		"an unblock on a failing run":                  with(requiredCheck("canonical-failing"), unblock),
+		"an unblock with counts":                       with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = passed(); unblock(c) }),
+		"a success with a failing test":                with(check(commandtext.CheckSuccess, "ready"), counts),
+		"an unblock on a runner block":                 with(check(commandtext.CheckInProgress, "runner-uncovered"), unblock),
+		"a pending run that is a failure":              with(requiredCheck("canonical-pending"), func(c *commandtext.Check) { c.State = commandtext.CheckFailure }),
+		"a failing run that is in progress":            with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.State = commandtext.CheckInProgress }),
+		"a negative count":                             with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 1, Passed: 2, Failed: -1} }),
+		"tests that are not the sum of their states":   with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 5, Passed: 2} }),
+		"a negative number of excluded tests":          with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Excluded: -1} }),
 	} {
 		t.Run(name, func(t *testing.T) { mustPanic(t, func() { commandtext.CheckSummary(c) }) })
+	}
+}
+
+// A runner that does not respond: the text says that it is a problem only if it lasts and that SuiteWard keeps trying, the next step is to check the runner, and the
+// owner can let the commit pass without the approved tests. It holds no count, no test name and no path.
+func TestRequiredCheckSummaryOfARunnerThatDoesNotRespondAsksToCheckTheRunnerAndOffersTheUnblock(t *testing.T) {
+	_, summary := checkText(t, requiredCheck("canonical-not-responding"))
+	for _, w := range []string{
+		"The test runner has not answered for about half a minute, so the approved tests have not run on this commit. This is a problem only if it lasts. " +
+			"SuiteWard keeps trying, and the tests start when the test runner answers. This check does not pass until they have run.",
+		"Next: check that the test runner is running on the machine that runs SuiteWard. To let this commit pass without the approved tests, the owner comments:",
+	} {
+		if !strings.Contains(summary, w) {
+			t.Errorf("the summary lacks %q:\n%s", w, summary)
+		}
+	}
+	if strings.Contains(summary, "tests ran") || strings.Contains(summary, "Excluded tests") {
+		t.Errorf("the summary of a run that has not started states counts:\n%s", summary)
 	}
 }

@@ -80,6 +80,12 @@ func everyBody(t *testing.T) map[string]string {
 				return s
 			})
 		}
+		add("receipt not responding, with the unblock offer "+tier, func() string {
+			c := receiptOf("receipt-not-responding")
+			c.Tier, c.OffersUnblock = value, true
+			_, s := commandtext.ReceiptCheckSummary(c)
+			return s
+		})
 		add("receipt not run, unblocked "+tier, func() string {
 			c := receiptOf("receipt-not-run")
 			c.Tier, c.Unblocked = value, true
@@ -185,7 +191,7 @@ func addAcks(t *testing.T, add func(name string, f func() string)) {
 	}
 	// Every refusal that an outcome takes, whatever the set is: ValidateAck says which fit.
 	for _, o := range []commandtext.Outcome{commandtext.ProposeRefused, commandtext.SkipRefused, commandtext.SuggestRefused, commandtext.ModeRefused, commandtext.UnblockRefused} {
-		for refusal := commandtext.CanonicalPresent; refusal <= commandtext.NotUnavailable; refusal++ {
+		for refusal := commandtext.CanonicalPresent; refusal <= commandtext.RunnerResponding; refusal++ {
 			if commandtext.ValidateAck(commandtext.Ack{Outcome: o, Refusal: refusal, Source: source, Owner: owner}) == nil {
 				ack(fmt.Sprintf("refused %d %d", o, refusal), commandtext.Ack{Outcome: o, Refusal: refusal})
 			}
@@ -201,6 +207,7 @@ func addAcks(t *testing.T, add func(name string, f func() string)) {
 	}
 	for _, plans := range []commandtext.Plans{{Canonical: true}, {Receipt: true}, {Canonical: true, Receipt: true}} {
 		ack("unblocked "+boolName(plans.Canonical)+boolName(plans.Receipt), commandtext.Ack{Outcome: commandtext.Unblocked, Plans: plans})
+		ack("unblocked and ended "+boolName(plans.Canonical)+boolName(plans.Receipt), commandtext.Ack{Outcome: commandtext.Unblocked, Plans: plans, Ended: plans})
 	}
 }
 

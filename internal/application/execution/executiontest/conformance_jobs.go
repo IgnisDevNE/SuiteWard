@@ -207,7 +207,7 @@ func jbKeyFreedByNoExecutor(e *env) {
 	e.requireJob(ended(old, execution.StateUnavailable, execution.ReasonNoExecutor, leaseWait))
 	e.requireNoResult(old.ID)
 	// The owner unblocked the old job: the unblock stays with it and does not carry over to the fresh job.
-	e.must(e.s.RecordUnblock(e.ctx, ledgerEntry(1, commands.Unblocked, 20*time.Minute), nil, spec.HeadSHA, []int64{old.ID}))
+	e.must(e.s.RecordUnblock(e.ctx, ledgerEntry(1, commands.Unblocked, 20*time.Minute), nil, spec.HeadSHA, unblockJobs(e.get(old.ID)), at(20*time.Minute+time.Second)))
 	fresh := e.enqueue(spec, 21*time.Minute)
 	e.requireCurrent(spec, fresh.ID)
 	e.requireJob(ended(old, execution.StateUnavailable, execution.ReasonNoExecutor, leaseWait))

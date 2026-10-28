@@ -35,10 +35,11 @@ type Memory struct {
 // comment is the key of a ledger entry.
 type comment struct{ repository, comment int64 }
 
-// unblock holds the rows of one unblock command: the jobs it lifted and when its ledger entry was created.
+// unblock holds the rows of one unblock command: the jobs it lifted, when its ledger entry was created and the time its rows were decided.
 type unblock struct {
 	jobs      []int64
 	createdAt time.Time
+	decidedAt time.Time
 }
 
 var _ execution.Store = (*Memory)(nil)
@@ -453,32 +454,47 @@ func (m *Memory) RecordApproval(ctx context.Context, e commands.Entry, ack *gove
 }
 
 // RecordUnblock implements execution.Store.
-func (m *Memory) RecordUnblock(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, headSHA string, jobIDs []int64) error {
+func (m *Memory) RecordUnblock(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, headSHA string, jobs []execution.UnblockJob, at time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := e.Validate(); err != nil {
 		return err
 	}
-	if err := execution.ValidateUnblock(e, headSHA, jobIDs); err != nil {
+	if err := execution.ValidateUnblock(e, headSHA, jobs, at); err != nil {
 		return err
+	}
+	jobs = slices.SortedFunc(slices.Values(jobs), func(a, b execution.UnblockJob) int { return cmp.Compare(a.ID, b.ID) })
+	lifted := make([]int64, len(jobs))
+	for i, job := range jobs {
+		lifted[i] = job.ID
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, id := range jobIDs {
-		if job, ok := m.jobs[id]; !ok || job.State != execution.StateUnavailable || job.RepositoryID != e.RepositoryID || job.PullNumber != e.PullNumber || job.HeadSHA != headSHA {
-			return fmt.Errorf("%w: job %d is not an unavailable job of this head and pull request", execution.ErrInvalidRequest, id)
+	key := comment{e.RepositoryID, e.CommentID}
+	if stored, ok := m.unblocks[key]; ok { // a command that is recorded: the same entry, jobs and time is success, whatever its jobs are now
+		if !slices.Equal(stored.jobs, lifted) || !stored.decidedAt.Equal(execution.Stored(at)) {
+			return fmt.Errorf("%w: comment %d of repository %d unblocked other jobs", commands.ErrConflict, e.CommentID, e.RepositoryID)
+		}
+		return m.ledger.Record(ctx, e, ack)
+	}
+	for _, o := range jobs {
+		if job, ok := m.jobs[o.ID]; !ok || job.RepositoryID != e.RepositoryID || job.PullNumber != e.PullNumber || job.HeadSHA != headSHA {
+			return fmt.Errorf("%w: job %d is not a job of this head and pull request", execution.ErrInvalidRequest, o.ID)
+		}
+	}
+	for _, o := range jobs {
+		if !m.jobs[o.ID].Observed(o) {
+			return fmt.Errorf("%w: job %d", execution.ErrJobChanged, o.ID)
 		}
 	}
 	if err := m.ledger.Record(ctx, e, ack); err != nil {
 		return err
 	}
-	key := comment{e.RepositoryID, e.CommentID}
-	lifted := slices.Sorted(slices.Values(jobIDs))
-	if stored, ok := m.unblocks[key]; ok && !slices.Equal(stored.jobs, lifted) {
-		return fmt.Errorf("%w: comment %d of repository %d unblocked other jobs", commands.ErrConflict, e.CommentID, e.RepositoryID)
+	for _, o := range jobs {
+		m.jobs[o.ID] = m.jobs[o.ID].UnblockEnded(at)
 	}
-	m.unblocks[key] = unblock{jobs: lifted, createdAt: execution.Stored(e.CreatedAt)}
+	m.unblocks[key] = unblock{jobs: lifted, createdAt: execution.Stored(e.CreatedAt), decidedAt: execution.Stored(at)}
 	return nil
 }
 
@@ -501,6 +517,20 @@ func (m *Memory) Unblocks(ctx context.Context, repositoryID, commentID int64) ([
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return slices.Clone(m.unblocks[comment{repositoryID, commentID}].jobs), nil
+}
+
+// UnblockDecided returns the time at which the unblock row of a comment and a job was decided.
+func (m *Memory) UnblockDecided(ctx context.Context, repositoryID, commentID, jobID int64) (time.Time, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.unblocks[comment{repositoryID, commentID}]
+	if !ok || !slices.Contains(u.jobs, jobID) {
+		return time.Time{}, false, nil
+	}
+	return u.decidedAt, true, nil
 }
 
 // ReceiptMemory is an in-memory execution.ReceiptLedger. One mutex serializes every call, and Publish checks everything before its first

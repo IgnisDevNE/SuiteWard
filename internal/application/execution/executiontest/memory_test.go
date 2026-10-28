@@ -15,7 +15,7 @@ func TestMemoryConformance(t *testing.T) {
 	executiontest.RunConformance(t, func(*testing.T) executiontest.Env {
 		ledger := commandstest.NewMemory(ownertest.NewMemory(), githubsynctest.NewMemory())
 		store, receipts := executiontest.NewMemory(ledger), executiontest.NewReceiptMemory()
-		return executiontest.Env{Store: store, Receipts: receipts, Ledger: ledger, FailMessage: receipts.FailMessageAt, Gate: store.Gate, Unblocks: store.Unblocks,
+		return executiontest.Env{Store: store, Receipts: receipts, Ledger: ledger, FailMessage: receipts.FailMessageAt, Gate: store.Gate, Unblocks: store.Unblocks, UnblockDecided: store.UnblockDecided,
 			OutboxKeys: func(ctx context.Context) ([]string, error) { // the acknowledgments of the ledger and the messages of the Receipt check
 				acknowledgments, err := ledger.OutboxKeys(ctx)
 				if err != nil {

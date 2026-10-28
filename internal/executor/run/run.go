@@ -26,9 +26,10 @@ type Pacing struct {
 	Margin     time.Duration // how long before the deadline of an attempt the executor drops it
 }
 
-// DefaultPacing is the contract's: 5 s after a 204, a backoff of 5 s up to 60 s after an error, a heartbeat about every 20 s, and 30 s for a job
-// in flight after the signal, and an attempt dropped 30 s before its deadline.
-var DefaultPacing = Pacing{Idle: 5 * time.Second, Backoff: 5 * time.Second, MaxBackoff: 60 * time.Second, Heartbeat: 20 * time.Second, Grace: 30 * time.Second, Margin: 30 * time.Second}
+// DefaultPacing is the contract's: 5 s after a 204, a backoff of 5 s up to 20 s after an error, a heartbeat about every 10 s, and 30 s for a job
+// in flight after the signal, and an attempt dropped 30 s before its deadline. The backoff and the heartbeat keep a healthy executor from
+// leaving the service silent for NotRespondingAfter of internal/domain/execution (30 s), the silence after which a head reads "not responding".
+var DefaultPacing = Pacing{Idle: 5 * time.Second, Backoff: 5 * time.Second, MaxBackoff: 20 * time.Second, Heartbeat: 10 * time.Second, Grace: 30 * time.Second, Margin: 30 * time.Second}
 
 // Proxy is the module proxy that the dependency prefetch reads, and the client that reads it.
 type Proxy struct {

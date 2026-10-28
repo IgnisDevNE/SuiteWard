@@ -665,7 +665,7 @@ func (q *Queries) ListExecutionTests(ctx context.Context, jobID int64) ([]Execut
 }
 
 const listExecutionUnblocks = `-- name: ListExecutionUnblocks :many
-SELECT job_id FROM execution_unblocks WHERE repository_id = $1 AND comment_id = $2 ORDER BY job_id
+SELECT job_id, decided_at FROM execution_unblocks WHERE repository_id = $1 AND comment_id = $2 ORDER BY job_id
 `
 
 type ListExecutionUnblocksParams struct {
@@ -673,19 +673,25 @@ type ListExecutionUnblocksParams struct {
 	CommentID    int64
 }
 
-func (q *Queries) ListExecutionUnblocks(ctx context.Context, arg ListExecutionUnblocksParams) ([]int64, error) {
+type ListExecutionUnblocksRow struct {
+	JobID     int64
+	DecidedAt pgtype.Timestamptz
+}
+
+// The rows of one command, with the time they were decided, in job order.
+func (q *Queries) ListExecutionUnblocks(ctx context.Context, arg ListExecutionUnblocksParams) ([]ListExecutionUnblocksRow, error) {
 	rows, err := q.db.Query(ctx, listExecutionUnblocks, arg.RepositoryID, arg.CommentID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []int64{}
+	items := []ListExecutionUnblocksRow{}
 	for rows.Next() {
-		var job_id int64
-		if err := rows.Scan(&job_id); err != nil {
+		var i ListExecutionUnblocksRow
+		if err := rows.Scan(&i.JobID, &i.DecidedAt); err != nil {
 			return nil, err
 		}
-		items = append(items, job_id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -40,13 +40,13 @@ func TestAnEmptyLeaseIsFollowedByAWaitOfFiveSeconds(t *testing.T) {
 
 // 502 is the answer when GitHub could not be read for the job; a refused token, a service that is not ready, a failure and an answer that
 // breaks the contract are errors too. None of them is a reason to ask faster.
-func TestAfterAnErrorTheLeaseWaitDoublesUpToSixtySecondsAndStartsAgain(t *testing.T) {
+func TestAfterAnErrorTheLeaseWaitDoublesUpToTwentySecondsAndStartsAgain(t *testing.T) {
 	broken := &served{job: client.Job{JobID: 99}} // a job that fails the contract's checks: it has no lease
 	svc := newService(t, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusUnauthorized, http.StatusInternalServerError,
 		http.StatusBadGateway, broken, http.StatusBadGateway, nil, http.StatusBadGateway, nil)
 	d := start(t, svc, newRuntime(nil), func(_ *Config, d *driver) { d.sleeps.immediate, d.sleeps.reached = 10, make(chan struct{}) })
 	wait(d, d.sleeps.reached)
-	want := []time.Duration{5, 10, 20, 40, 60, 60, 60, 5, 5, 5} // seconds: the 204s wait 5 and an answer starts the backoff again
+	want := []time.Duration{5, 10, 20, 20, 20, 20, 20, 5, 5, 5} // seconds: the 204s wait 5 and an answer starts the backoff again
 	for i := range want {
 		want[i] *= time.Second
 	}
@@ -55,15 +55,15 @@ func TestAfterAnErrorTheLeaseWaitDoublesUpToSixtySecondsAndStartsAgain(t *testin
 	}
 }
 
-func TestAHeartbeatGoesAboutEveryTwentySecondsWhileTheJobRuns(t *testing.T) {
+func TestAHeartbeatGoesAboutEveryTenSecondsWhileTheJobRuns(t *testing.T) {
 	sv, rt := aJob(1)
 	beats := make(chan int, 8)
 	sv.beat = func(n int) int { beats <- n; return http.StatusOK }
 	rt.gate, rt.entered = make(chan struct{}), make(chan struct{}, 4)
 	d := start(t, newService(t, sv), rt)
 	wait(d, rt.entered)
-	if every := wait(d, d.tickFor); every != 20*time.Second {
-		t.Errorf("the heartbeat ticks every %v; want 20 s", every)
+	if every := wait(d, d.tickFor); every != 10*time.Second {
+		t.Errorf("the heartbeat ticks every %v; want 10 s", every)
 	}
 	d.tick()
 	d.tick()
@@ -289,7 +289,7 @@ func TestTheDefaultsReadNoProxySettingAndFollowTheContract(t *testing.T) {
 	if !ok || transport.Proxy != nil {
 		t.Errorf("the prefetch client is %T and has a proxy function: the egress goes direct, and no environment variable moves it", e.cfg.Proxy.Client.Transport)
 	}
-	if DefaultPacing != (Pacing{Idle: 5 * time.Second, Backoff: 5 * time.Second, MaxBackoff: time.Minute, Heartbeat: 20 * time.Second, Grace: 30 * time.Second, Margin: 30 * time.Second}) {
+	if DefaultPacing != (Pacing{Idle: 5 * time.Second, Backoff: 5 * time.Second, MaxBackoff: 20 * time.Second, Heartbeat: 10 * time.Second, Grace: 30 * time.Second, Margin: 30 * time.Second}) {
 		t.Errorf("DefaultPacing = %+v", DefaultPacing)
 	}
 }

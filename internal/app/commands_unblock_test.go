@@ -118,7 +118,7 @@ func TestUnblockLiftsNothingThatIsNotWantedNow(t *testing.T) {
 
 		x.mustRun()
 
-		x.requireEntry(500, commands.UnblockRefused, map[string]any{"reason": "not-unavailable"})
+		x.requireEntry(500, commands.UnblockRefused, map[string]any{"reason": "runner-responding"}) // the fresh job waits for a runner that responds
 		x.requireUnblocks(500)
 		for _, j := range []execution.Job{old, newer} {
 			if unblocked, err := x.store.Unblocked(t.Context(), j.ID, cjOrigin); err != nil || unblocked {
@@ -179,7 +179,7 @@ func TestUnblockIsRefusedAndKeepsTheCodeConsumed(t *testing.T) {
 			x.closePull(cjID2, cjSync.Add(time.Minute))
 		}},
 		{"no job at all", "not-unavailable", func(x *cjExecWorld, unblock cjComment) { x.sync(unblock) }},
-		{"jobs that are pending and complete", "not-unavailable", func(x *cjExecWorld, unblock cjComment) {
+		{"jobs that are pending and complete, with a runner that responds", "runner-responding", func(x *cjExecWorld, unblock cjComment) {
 			x.receiptJob(nil, 0, nil) // first: a lease takes the oldest pending job
 			x.pending(execution.PlanCanonical, cjHead)
 			x.sync(unblock)

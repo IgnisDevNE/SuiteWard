@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
@@ -30,8 +31,20 @@ func (j *checksJob) executionStep(ctx context.Context, s *pullState, x *executio
 	if err != nil {
 		return executionOutcome{}, err
 	}
-	outcome.receipt, err = j.receiptCheck(ctx, s, jobs)
+	outcome.receipt, err = j.receiptCheck(ctx, s, x, jobs)
 	return outcome, err
+}
+
+// runnerNotResponding says that the job a gate reads waits for a runner that no request reached for NotRespondingAfter (docs/contracts/runtime.md, "Not responding"):
+// the job is leased, or pending for a reason other than GitHub, and the runner is silent. A plan with no job yet waits for nothing. Each check reads its own job.
+func (j *checksJob) runnerNotResponding(job execution.Job, found bool) bool {
+	return found && job.WaitsForRunner() && j.liveness.Silent(j.now())
+}
+
+// headNotResponding says that a head reads "not responding": the runner is silent and at least one wanted job of the head waits for it. The wanted jobs are the canonical
+// job when the canonical level is not off and the receipt job when the receipt applies, as the gates read them. The comment of the head reads this.
+func (j *checksJob) headNotResponding(jobs headJobs) bool {
+	return (jobs.canonicalPlanned && j.runnerNotResponding(jobs.canonical, jobs.hasCanonical)) || (jobs.receiptApplies && j.runnerNotResponding(jobs.receipt, jobs.hasReceipt))
 }
 
 // ungated is the check as it was decided before the canonical gate held it back: a stored check with a gate reason is the success it replaced, unchanged for
@@ -39,7 +52,7 @@ func (j *checksJob) executionStep(ctx context.Context, s *pullState, x *executio
 func ungated(r checks.Result) checks.Result {
 	r.Unblocked = false
 	switch r.Reason {
-	case reasonCanonicalPending, reasonCanonicalUnavailable, reasonCanonicalFailing:
+	case reasonCanonicalPending, reasonCanonicalNotResponding, reasonCanonicalUnavailable, reasonCanonicalFailing:
 		r.State, r.Reason = checks.Success, reasonReady
 		if r.Change == changeCodes[inventory.Unchanged] {
 			r.Reason = reasonUnchanged
@@ -70,6 +83,9 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 	if err != nil {
 		return executionOutcome{}, fmt.Errorf("decide the canonical gate: %w", err)
 	}
+	if reason == domain.ReasonCanonicalPending && j.runnerNotResponding(jobs.canonical, jobs.hasCanonical) {
+		reason = domain.ReasonCanonicalNotResponding
+	}
 	d.result = base
 	switch reason {
 	case domain.ReasonNone:
@@ -83,4 +99,29 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 		return executionOutcome{}, nil
 	}
 	return executionOutcome{counts: checkCountsOf(counts)}, nil
+}
+
+// runnerBack says that the runner is back for the current head: it has a job with an unblock row (since the enrollment), the reason no-executor and an end earlier than the
+// last real executor request (docs/contracts/runtime.md, "The early unblock and its hold"). It reads both plans, whether the owner's command ended the job or lifted it after
+// the lease wait. The comment that warns the owner reads it.
+func (j *checksJob) runnerBack(ctx context.Context, s *pullState) (bool, error) {
+	for _, plan := range []execution.Plan{execution.PlanCanonical, execution.PlanReceipt} {
+		jobs, err := j.executions.HeadJobs(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, plan)
+		if err != nil {
+			return false, fmt.Errorf("read the %s jobs of the head: %w", plan, err)
+		}
+		for _, job := range jobs {
+			if job.State != execution.StateUnavailable || job.Reason != execution.ReasonNoExecutor || !j.liveness.HeardSince(job.FinishedAt) {
+				continue
+			}
+			unblocked, err := j.executions.Unblocked(ctx, job.ID, s.enrollment.EnrolledAt)
+			if err != nil {
+				return false, fmt.Errorf("read the unblock of job %d: %w", job.ID, err)
+			}
+			if unblocked {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }

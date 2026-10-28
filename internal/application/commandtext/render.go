@@ -66,6 +66,8 @@ const (
 	BaseNotTarget
 	// NotUnavailable is the refusal of an unblock when no run of the head is unavailable.
 	NotUnavailable
+	// RunnerResponding is the refusal of an unblock when a run of the head waits for a test runner that responds: it is neither unavailable nor stuck.
+	RunnerResponding
 )
 
 // Rejection is the domain reason of a Rejected outcome.
@@ -126,6 +128,8 @@ type Ack struct {
 	Markers int
 	// Plans are the plans of the jobs an Unblocked lifted, at least one, and none for every other outcome.
 	Plans Plans
+	// Ended are the plans whose open job the unblock ended (the test runner was not responding): a subset of Plans, and none for every other outcome.
+	Ended Plans
 }
 
 // Plans says which plans of a head an unblock lifted: its canonical run, its receipt, or both.
@@ -969,7 +973,10 @@ var refusals = map[Outcome]refusalSet{
 		Fork:    {forkReason, "Open the pull request from a branch of this repository. " + codeUsedAgain, ""},
 		NotOpen: {notOpenReason, "Comment `/suiteward unblock <code>` on an open pull request. " + codeUsedAgain, ""},
 		NotUnavailable: {"no run of this head is unavailable, so there is nothing to unblock",
-			"An unblock lifts only a run that is unavailable on the current head: a pending, failing or complete run is never lifted. " + codeUsedAgain, ""},
+			"An unblock lifts a run that is unavailable, or that waits for a test runner that is not responding. " +
+				"It does not lift a run that is failing or complete, or that waits for GitHub or for a test runner that responds. " + codeUsedAgain, ""},
+		// RunnerResponding is told in the contract's own words, not in the template of refused (see refusal): reason is the whole first paragraph.
+		RunnerResponding: {"The test runner is responding, so the tests of this commit will run. Nothing was unblocked.", codeUsedAgain, ""},
 	}},
 }
 
@@ -979,6 +986,9 @@ func refusal(a Ack) string {
 	text, known := set.reasons[a.Refusal]
 	if !known {
 		panic(fmt.Sprintf("commandtext: unknown refusal %d of outcome %d", a.Refusal, a.Outcome))
+	}
+	if a.Outcome == UnblockRefused && a.Refusal == RunnerResponding {
+		return paragraphs(text.reason, text.next)
 	}
 	if a.Outcome == SuggestRefused && a.Refusal == InvalidSource && a.Base != 0 {
 		_, file := baseNames(a.Base)

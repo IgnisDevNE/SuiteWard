@@ -39,6 +39,8 @@ func TestCheckPublisherPostsTheSummaryOfTheCanonicalGate(t *testing.T) {
 	}{
 		{"pending", checks.InProgress, "canonical-pending", nil, false, "Canonical run pending", "in_progress", "", []string{"has not finished"}},
 		{"unavailable", checks.InProgress, "canonical-unavailable", nil, false, "Canonical run unavailable", "in_progress", "", []string{"could not run the approved tests", "/suiteward unblock <code>"}},
+		{"not responding", checks.InProgress, "canonical-not-responding", nil, false, "Test runner not responding", "in_progress", "",
+			[]string{"has not answered for about half a minute", "check that the test runner is running", "/suiteward unblock <code>"}},
 		{"failing", checks.Failure, "canonical-failing", requiredBlocked, false, "Canonical tests failing", "completed", "failure",
 			[]string{"14 tests ran: 9 passed, 2 skipped, 1 failed, 1 missing, 1 flaky.", "Excluded tests (not run): 3. Excluded tests are not covered."}},
 		{"awaiting approval", checks.InProgress, "approval-missing", requiredBlocked, false, "Awaiting owner approval", "in_progress", "",

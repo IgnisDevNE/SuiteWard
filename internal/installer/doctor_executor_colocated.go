@@ -61,7 +61,7 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	}
 	plan, err := planExecutor(d.deps, tokenFile, d.s, engineBinDir(d.rt))
 	if err != nil {
-		d.fail("executor.lifecycle", err.Error(), "Set the variable the message names, then run `"+d.deps.command()+" doctor` again.")
+		d.fail("executor.lifecycle", err.Error(), "Do what the message says, then run `"+d.deps.command()+" doctor` again.")
 		return
 	}
 	registered, running, stateErr := plan.state(ctx, d.deps)
@@ -90,7 +90,7 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	case definitionErr != nil:
 		d.fail("executor.lifecycle", "Doctor could not read the test runner's task definition: "+definitionErr.Error(), d.installFix())
 	case !current:
-		d.fail("executor.lifecycle", "The scheduled task of the test runner is from an older version of SuiteWard. It opens a window, and nothing starts the test runner again if it stops. This needs your action.", d.installFix())
+		d.fail("executor.lifecycle", "The scheduled task of the test runner is not the one this version of SuiteWard makes (it may come from an older version, or it was changed). This needs your action.", d.installFix())
 	default:
 		d.pass("executor.lifecycle", "The test runner is set up as "+executorMechanism(plan.goos)+".")
 	}

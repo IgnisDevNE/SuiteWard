@@ -103,6 +103,11 @@ func planExecutor(d Deps, tokenFile string, s Settings, engineDir string) (execu
 		// Built with a backslash, not filepath.Join: the path of a Windows computer is read on any system. An empty SystemRoot reads C:\Windows, as
 		// an empty ProgramFiles reads C:\Program Files.
 		p.system = strings.TrimRight(cmp.Or(d.Getenv("SystemRoot"), `C:\Windows`), `\`) + `\System32`
+		// Windows reads %name% in the arguments and the working directory of a scheduled task, and cmd reads it in the command line: a folder with a
+		// percent sign would not reach the script as written, so the install says so instead of writing a definition that does not work.
+		if strings.Contains(p.dir, "%") {
+			return executorPlan{}, fmt.Errorf("the folder of the test runner, `%s`, has a percent sign (%%) in its path, which Windows reads as the name of a variable in the scheduled task. Use a folder without one: pass `--token-file` with another path", p.dir)
+		}
 		if engineDir != "" {
 			p.env = append(p.env, envEntry{"PATH", engineDir + ";%PATH%"}) // the one value that is meant to be expanded
 		}
@@ -149,12 +154,13 @@ func envValues(env []envEntry) []string {
 // cmdValue is a value inside `set "K=V"`, or a path inside the quotes of a command, of a batch file: a percent sign is doubled so that cmd does not read a variable.
 func cmdValue(v string) string { return strings.ReplaceAll(v, "%", "%%") }
 
-// windowsWrapper is the script that the task runs: the environment of the executor, then the program, started again after a pause whenever it ends
+// windowsWrapper is the script that the task runs: the console switches to UTF-8 (cmd reads the file in the code page of the console, which a profile with a
+// letter outside ASCII would break: the set lines, the program's path and the log redirect), then the environment of the executor, then the program, started again after a pause whenever it ends
 // (Task Scheduler does not restart an action that exited: RestartOnFailure covers a start that failed). Its output goes to the log. The pause is
 // ping: timeout reads the console, which the task does not have.
 func (p executorPlan) windowsWrapper() string {
 	var b strings.Builder
-	b.WriteString("@echo off\r\nrem Written by `suiteward install`: the environment of the SuiteWard executor, then the executor, again after a pause when it ends. Do not put a credential here.\r\n")
+	b.WriteString("@echo off\r\n\"%SystemRoot%\\System32\\chcp.com\" 65001 >nul\r\nrem Written by `suiteward install`: the environment of the SuiteWard executor, then the executor, again after a pause when it ends. Do not put a credential here.\r\n")
 	for _, e := range p.env {
 		value := cmdValue(e.value)
 		if e.key == "PATH" {

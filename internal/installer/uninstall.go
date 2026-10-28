@@ -30,7 +30,7 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 			fs.String(f.name, "", f.usage)
 		}
 	}
-	fs.Bool("purge", false, "also delete the volumes (this deletes the database!), the secrets, the network and the settings file, and the MCP token copy only when it is this instance's own (the file --token-file names, or the default token file when you use the default settings file). It asks you to type the instance id, or needs --instance together with --yes")
+	fs.Bool("purge", false, "also delete the volumes (this deletes the database!), the secrets, the network and the settings file, and the access token copy only when it is this instance's own (the file --token-file names, or the default token file when you use the default settings file). It asks you to type the instance id, or needs --instance together with --yes")
 	fs.Bool("yes", false, "do not ask for confirmation. With --purge, also give --instance")
 	fs.String("instance", "", "with --purge --yes: the instance id that /status shows (its first 8 characters). Use unknown when nothing names it")
 	fs.Bool("plain", false, plainUsage)
@@ -155,7 +155,7 @@ func removeStack(ctx context.Context, r *Resolver, d Deps, rt Runtime, purge boo
 	}
 	r.say("Deleted the volumes, the secrets, %s. Backups under %s (or the --backup-dir an upgrade was given) are kept.\n", removed, backupParent(r, filepath.Dir(token.path)))
 	if token.kept {
-		r.say("Kept the MCP token file %s: it may belong to another instance. Delete it yourself if it is this instance's.\n", token.path)
+		r.say("Kept the access token file %s: it may belong to another instance. Delete it yourself if it is this instance's.\n", token.path)
 	}
 	return nil
 }
@@ -165,9 +165,9 @@ func purgePlan(r *Resolver, d Deps, settingsPath string, isDefault bool) (token 
 	if token, err = tokenFileOf(r, d, isDefault); err != nil {
 		return tokenCopy{}, "", nil, err
 	}
-	question = "Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network, the MCP token copy and the settings file?"
+	question = "Remove the containers, the volumes (this deletes the database and the saved files, called artifacts), the secrets, the network, the access token copy and the settings file?"
 	if !token.mine {
-		question = "Remove the containers, the volumes (this deletes the database and the artifacts), the secrets, the network and the settings file?"
+		question = "Remove the containers, the volumes (this deletes the database and the saved files, called artifacts), the secrets, the network and the settings file?"
 	}
 	return token, question, purgeLines(settingsPath, token), nil
 }
@@ -224,11 +224,11 @@ func isDefaultSettings(goos, path string, defaultPath bool) (bool, error) {
 func purgeLines(settingsPath string, token tokenCopy) []string {
 	var lines []string
 	if token.kept {
-		lines = append(lines, "The MCP token file "+token.path+" is kept: it may belong to another instance. To delete a token file with this purge, give it as `--token-file <path>`.")
+		lines = append(lines, "The access token file "+token.path+" is kept: it may belong to another instance. To delete a token file with this purge, give it as `--token-file <path>`.")
 	}
 	lines = append(lines, "This purge deletes:")
 	if token.mine {
-		lines = append(lines, "  the MCP token file "+token.path, "  the test runner's token file "+executorTokenFile(token.path))
+		lines = append(lines, "  the access token file "+token.path, "  the test runner's token file "+executorTokenFile(token.path))
 	}
 	lines = append(lines,
 		"  the volumes "+VolumeData+" and "+VolumeDBData,
@@ -307,7 +307,7 @@ func showRemoval(r *Resolver, purge bool, id, engine, settings string, listing [
 		if purge {
 			title = "Remove everything of this instance"
 		}
-		blocks := []ui.Block{ui.Fields(ui.KV{Key: "Instance", Value: id}, ui.KV{Key: "Engine", Value: engine}, ui.KV{Key: "Settings", Value: settings})}
+		blocks := []ui.Block{ui.Fields(ui.KV{Key: "Instance", Value: id}, ui.KV{Key: "Container program", Value: engine}, ui.KV{Key: "Settings", Value: settings})}
 		if yes, _ := r.yes(); r.term.IsTerminal && !yes { // a --yes that cannot be read is refused by the confirmation itself
 			blocks = append([]ui.Block{ui.Para("Nothing is removed until you confirm.")}, blocks...)
 		}

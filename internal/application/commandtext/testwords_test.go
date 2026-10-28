@@ -134,7 +134,7 @@ func TestStateMeaningsCoverTheStatesOfTheDomain(t *testing.T) {
 		t.Errorf("%d rows for %d canonical and %d receipt states", len(rows), len(canonical), len(receipt))
 	}
 	for _, row := range rows {
-		if row.Canonical != canonical[row.State] || row.Receipt != receipt[row.State] || !(row.Canonical || row.Receipt) {
+		if row.Canonical != canonical[row.State] || row.Receipt != receipt[row.State] || (!row.Canonical && !row.Receipt) {
 			t.Errorf("%s: canonical %v and receipt %v, but the domain has canonical %v and receipt %v", row.State, row.Canonical, row.Receipt, canonical[row.State], receipt[row.State])
 		}
 	}

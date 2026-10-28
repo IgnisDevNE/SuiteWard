@@ -30,7 +30,6 @@ func TestInstallKnowsItsOwnScheduledTaskWhenTheProfilePathIsNotASCIIAndTheAnswer
 	wrapper := strings.ReplaceAll(filepath.Join(h.executorDir(), "run.cmd"), "ã", string([]byte{0xc6})) // CP850
 	again.first("/Query /TN SuiteWard Executor", "")
 	again.first("/Query /TN SuiteWard Executor /XML", "<Actions><Exec><Command>"+wrapper+"</Command></Exec></Actions>")
-	again.f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`)
 	again.f.on("Win32_Process", listingOf(nil))
 	if err := again.podman(); err != nil {
 		t.Fatal(err)

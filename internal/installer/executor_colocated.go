@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -287,7 +288,8 @@ func userID(ctx context.Context, d Deps) (string, error) {
 }
 
 // state says whether the operating system knows the executor and whether it runs. A command that fails is the executor not being there, except
-// when the command itself cannot be asked.
+// when the command itself cannot be asked. On Windows the executor runs when a program runs from this instance's own binary path: another
+// instance's executor has the same name, and the list of the programs that run is the one the stop reads.
 func (p executorPlan) state(ctx context.Context, d Deps) (registered, running bool, err error) {
 	switch p.goos {
 	case "windows":
@@ -295,11 +297,14 @@ func (p executorPlan) state(ctx context.Context, d Deps) (registered, running bo
 		if taskThere := queryErr == nil; !taskThere { // a task that is not there is how the query fails
 			return false, false, nil
 		}
-		out, err := d.Exec(ctx, "tasklist", []string{"/FI", "IMAGENAME eq " + executorBinaryName("windows"), "/FO", "CSV", "/NH"}, nil)
-		if err != nil {
-			return true, false, fmt.Errorf("could not list the programs that run on this computer: %w", err)
+		if other, err := p.foreign(true); err != nil || other { // another instance's task: its executor is not this one's, and listing the programs says nothing of it
+			return true, false, err
 		}
-		return true, strings.Contains(strings.ToLower(string(out)), strings.ToLower(executorBinaryName("windows"))), nil
+		procs, err := p.listProcesses(ctx, d)
+		if err != nil {
+			return true, false, err
+		}
+		return true, slices.ContainsFunc(procs, p.isProgram), nil
 	case "darwin":
 		uid, err := userID(ctx, d)
 		if err != nil {
@@ -413,11 +418,16 @@ func (p executorPlan) ownProcesses(procs []osProcess) []osProcess {
 		switch {
 		case (strings.EqualFold(proc.name, "conhost.exe") || strings.EqualFold(proc.name, "cmd.exe")) && strings.Contains(strings.ToLower(proc.at), strings.ToLower(p.wrapper)):
 			wrappers = append(wrappers, proc)
-		case strings.EqualFold(proc.name, executorBinaryName("windows")) && strings.EqualFold(proc.exe, p.binary):
+		case p.isProgram(proc):
 			programs = append(programs, proc)
 		}
 	}
 	return append(wrappers, programs...)
+}
+
+// isProgram says that the process is this instance's executor: it runs from this instance's binary.
+func (p executorPlan) isProgram(proc osProcess) bool {
+	return strings.EqualFold(proc.name, executorBinaryName("windows")) && strings.EqualFold(proc.exe, p.binary)
 }
 
 // stopAttempts is how many times stopTree ends what is left before it says that something still runs.

@@ -338,7 +338,6 @@ func TestInstallStopsAScheduledTaskBeforeItReplacesTheProgramItHolds(t *testing.
 	again.exe = newer
 	again.have(kindSecret, SecretMCPAuth, SecretExecutorAuth)
 	again.first("/Query /TN SuiteWard Executor", "") // the task of the first install is registered
-	again.f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`)
 	again.f.on("Win32_Process", listingOf(nil)) // no process listed: the task's tree is already gone
 	if err := again.podman(); err != nil {
 		t.Fatal(err)
@@ -734,7 +733,7 @@ func TestTheUninstallWarningNamesTheCommandsOfTheOperatingSystemThatKeepsTheExec
 			un.first("/Query /TN SuiteWard Executor", "") // the task is registered, and this instance made its two files
 			writeFile(un.t, filepath.Join(un.executorDir(), executorWrapperName), "the wrapper")
 			writeFile(un.t, filepath.Join(un.executorDir(), "task.xml"), "the task")
-			un.f.fail("IMAGENAME eq suiteward-executor.exe", errors.New("tasklist: access denied"))
+			un.f.fail("Win32_Process", errors.New("powershell: access denied"))
 		}, []string{`schtasks /End /TN "SuiteWard Executor"`, `schtasks /Delete /TN "SuiteWard Executor" /F`, "sign out of Windows"}},
 		{"darwin", func(un *harness) { un.f.fail("=-u", errors.New("id: not found")) }, []string{"launchctl bootout gui/$(id -u)/" + executorLabel}},
 	}

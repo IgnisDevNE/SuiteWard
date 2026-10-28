@@ -154,7 +154,7 @@ type reinstalled struct {
 	err          error
 }
 
-func reinstallOnWindows(t *testing.T, running bool, procs func(wrapper, binary string) []osProc, tune func(*processTable)) reinstalled {
+func reinstallOnWindows(t *testing.T, procs func(wrapper, binary string) []osProc, tune func(*processTable)) reinstalled {
 	t.Helper()
 	first := machineHarnessOn(t, "windows")
 	if err := first.podman(); err != nil {
@@ -168,9 +168,6 @@ func reinstallOnWindows(t *testing.T, running bool, procs func(wrapper, binary s
 	again.dir, again.exe = first.dir, newer
 	again.have(kindSecret, SecretMCPAuth, SecretExecutorAuth)
 	again.first("/Query /TN SuiteWard Executor", "") // the task of the first install is registered
-	if running {
-		again.f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`)
-	}
 	wrapper := filepath.Join(again.executorDir(), "run.cmd")
 	table := &processTable{procs: slices.Concat(procs(wrapper, again.executorBinary()), anotherInstancesProcesses(again.dir)), stubborn: map[int]bool{}}
 	if tune != nil {
@@ -199,7 +196,7 @@ func (r reinstalled) wantOnlyThisInstancesTreeEnded(t *testing.T) {
 }
 
 func TestInstallEndsTheWholeTreeOfTheExecutorBeforeItReplacesTheProgramOnWindows(t *testing.T) {
-	r := reinstallOnWindows(t, true, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary) }, nil)
+	r := reinstallOnWindows(t, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary) }, nil)
 	if r.err != nil {
 		t.Fatal(r.err)
 	}
@@ -218,7 +215,7 @@ func TestInstallEndsTheWholeTreeOfTheExecutorBeforeItReplacesTheProgramOnWindows
 // The wrapper waits a minute between two runs: a stop in that pause finds no program, and a wrapper that is left starts the old program with the old
 // environment again, next to the new one.
 func TestInstallEndsTheWrapperThatWaitsBetweenTwoRunsOfTheExecutor(t *testing.T) {
-	r := reinstallOnWindows(t, false, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary)[:2] }, nil)
+	r := reinstallOnWindows(t, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary)[:2] }, nil)
 	if r.err != nil {
 		t.Fatal(r.err)
 	}
@@ -227,7 +224,7 @@ func TestInstallEndsTheWrapperThatWaitsBetweenTwoRunsOfTheExecutor(t *testing.T)
 }
 
 func TestInstallDoesNotReplaceTheExecutorWhenItCannotBeStoppedOnWindows(t *testing.T) {
-	r := reinstallOnWindows(t, true, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary) }, func(pt *processTable) { pt.stubborn[102] = true })
+	r := reinstallOnWindows(t, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary) }, func(pt *processTable) { pt.stubborn[102] = true })
 	if r.err != nil {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", r.err)
 	}
@@ -251,7 +248,7 @@ func TestInstallDoesNotReplaceTheExecutorWhenItCannotBeStoppedOnWindows(t *testi
 }
 
 func TestInstallDoesNotReplaceTheExecutorWhenTheProcessesCannotBeListedOnWindows(t *testing.T) {
-	r := reinstallOnWindows(t, true, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary) }, func(pt *processTable) { pt.listErr = errors.New("powershell: not found") })
+	r := reinstallOnWindows(t, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary) }, func(pt *processTable) { pt.listErr = errors.New("powershell: not found") })
 	if r.err != nil {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", r.err)
 	}
@@ -309,7 +306,6 @@ func TestAnInstallFromBeforeTheHeadlessConsoleIsReplacedAndItsOldTreeEnded(t *te
 			again.dir, again.exe = first.dir, first.program() // the same program: only the definition is old
 			again.have(kindSecret, SecretMCPAuth, SecretExecutorAuth)
 			again.first("/Query /TN SuiteWard Executor", "")
-			again.f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`)
 			env := again.newEnv()
 			plan, err := planExecutor(env.Deps, again.tokenPath(), Settings{HTTPPort: 27081, Runtime: RuntimePodman, Connection: "pm"}, "")
 			if err != nil {
@@ -358,7 +354,6 @@ func windowsUninstall(t *testing.T, tune func(*processTable)) (un *harness, tabl
 	un.first("/Query /TN SuiteWard Executor", "") // the task is registered, and this instance made its two files
 	writeFile(t, filepath.Join(un.executorDir(), executorWrapperName), "the wrapper")
 	writeFile(t, filepath.Join(un.executorDir(), "task.xml"), "the task")
-	un.f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`)
 	wrapper := filepath.Join(un.executorDir(), executorWrapperName)
 	table = &processTable{procs: slices.Concat(treeOf(100, wrapper, un.executorBinary()), anotherInstancesProcesses(un.dir)), stubborn: map[int]bool{}}
 	if tune != nil {
@@ -447,7 +442,7 @@ func TestTheListingScriptStopsAtItsFirstErrorAndEndsWithASentinel(t *testing.T) 
 }
 
 func TestInstallDoesNotReplaceTheExecutorWhenTheListingIsEmptyOnWindows(t *testing.T) {
-	r := reinstallOnWindows(t, true, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary) }, func(pt *processTable) { pt.silent = true })
+	r := reinstallOnWindows(t, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary) }, func(pt *processTable) { pt.silent = true })
 	if r.err != nil {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", r.err)
 	}
@@ -485,7 +480,7 @@ func TestAMalformedLineOfTheListingIsNeverEchoed(t *testing.T) {
 		"not base64 paths": "7 cmd.exe worker-secret-command-line! worker-secret-command-line!\r\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := reinstallOnWindows(t, true, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary) }, func(pt *processTable) { pt.junk = junk })
+			r := reinstallOnWindows(t, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary) }, func(pt *processTable) { pt.junk = junk })
 			if r.err != nil {
 				t.Fatal(r.err)
 			}
@@ -511,7 +506,6 @@ func TestAnInstallAgainStartsTheTaskWhenOnlyAnotherInstancesExecutorRunsOnWindow
 	again.dir, again.exe = first.dir, first.program()
 	again.have(kindSecret, SecretMCPAuth, SecretExecutorAuth)
 	again.first("/Query /TN SuiteWard Executor", "")
-	again.f.on("IMAGENAME eq suiteward-executor.exe", `"suiteward-executor.exe","4242","Console","1","20,000 K"`) // by name, another instance's program counts
 	table := &processTable{procs: anotherInstancesProcesses(again.dir), stubborn: map[int]bool{}}
 	env := again.newEnv()
 	table.install(&env.Deps)

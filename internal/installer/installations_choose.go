@@ -79,12 +79,21 @@ func (r *Resolver) pickInstallation(d Deps, found []candidate, stale int) (candi
 	if skipped != "" {
 		blocks = append(blocks, ui.Para(skipped))
 	}
-	r.explain([]string{"installation"}, "Which installation?", blocks...)
 	choices := make([]ui.Choice, len(found))
 	for i, c := range found {
 		choices[i] = ui.Choice{Name: c.Settings, Desc: c.describe()}
 	}
-	if !r.screen.FullScreen() {
+	// The question has no key: a flag or an answers-file key of its name must not answer it, so it never goes through Value or Select of the
+	// resolver. The first row is the default installation when there is one.
+	var name string
+	if r.screen.FullScreen() {
+		r.screen.Page("Which installation?", blocks...)
+		picked, err := r.screen.Select("Installation", choices, 0)
+		if err != nil {
+			return candidate{}, err
+		}
+		name = choices[picked].Name
+	} else {
 		r.say("This computer has %d SuiteWard installations:\n", len(found))
 		for _, c := range choices {
 			r.say("  %s\n    %s\n", c.Name, c.Desc)
@@ -92,11 +101,10 @@ func (r *Resolver) pickInstallation(d Deps, found []candidate, stale int) (candi
 		if skipped != "" {
 			r.say("(%s)\n", skipped)
 		}
-	}
-	// The first one is the default installation when there is one.
-	name, err := r.selectAs("installation", "Installation", "Installation (type the settings file of one of them)", choices, found[0].Settings)
-	if err != nil {
-		return candidate{}, err
+		var err error
+		if name, err = r.screen.Ask("Installation (type the settings file of one of them)", found[0].Settings); err != nil {
+			return candidate{}, err
+		}
 	}
 	i := slices.IndexFunc(found, func(c candidate) bool { return samePath(d.GOOS, c.Settings, name) })
 	if i < 0 {

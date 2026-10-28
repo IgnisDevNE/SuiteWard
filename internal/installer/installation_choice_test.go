@@ -150,9 +150,9 @@ func TestARowSaysWhatTheInstallationIs(t *testing.T) {
 func TestNoFlagAndNoAnswersKeyAnswersTheQuestionWhichInstallation(t *testing.T) {
 	i := twoInstallations(t)
 	for name, c := range map[string]struct{ flags, answers map[string]string }{
-		"a flag":      {map[string]string{"installation": i.second}, nil},
-		"an answer":   {nil, map[string]string{"installation": i.second}},
-		"both":        {map[string]string{"installation": i.second}, map[string]string{"installation": i.second}},
+		"a flag":    {map[string]string{"installation": i.second}, nil},
+		"an answer": {nil, map[string]string{"installation": i.second}},
+		"both":      {map[string]string{"installation": i.second}, map[string]string{"installation": i.second}},
 	} {
 		r, out := plainResolver(t, c.flags, c.answers, "\n") // Enter takes the default installation
 		if err := r.chooseInstallation(choiceDeps(t)); err != nil || len(r.chosen) != 0 {
@@ -284,9 +284,11 @@ func TestAnInstallationFlagIsNeverAskedAbout(t *testing.T) {
 	twoInstallations(t)
 	for _, key := range []string{"settings", "token-file", "tier", "runtime", "connection"} {
 		for name, give := range map[string]func(string) (flags, answers map[string]string){
-			"a flag":      func(v string) (map[string]string, map[string]string) { return map[string]string{key: v}, nil },
-			"an answer":   func(v string) (map[string]string, map[string]string) { return nil, map[string]string{key: v} },
-			"flag+answer": func(v string) (map[string]string, map[string]string) { return map[string]string{key: v}, map[string]string{key: v} },
+			"a flag":    func(v string) (map[string]string, map[string]string) { return map[string]string{key: v}, nil },
+			"an answer": func(v string) (map[string]string, map[string]string) { return nil, map[string]string{key: v} },
+			"flag+answer": func(v string) (map[string]string, map[string]string) {
+				return map[string]string{key: v}, map[string]string{key: v}
+			},
 		} {
 			if name == "an answer" && key == "settings" {
 				continue

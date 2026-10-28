@@ -44,3 +44,11 @@ func (l *Liveness) LastRequest() (time.Time, bool) {
 	defer l.mu.Unlock()
 	return l.lastRequest, l.requested
 }
+
+// Silent reports whether no executor was seen for NotRespondingAfter at now: the runner does not respond. Startup counts as seen, so a service
+// that has just started is not silent in its first 30 s.
+func (l *Liveness) Silent(now time.Time) bool { return false }
+
+// HeardSince reports whether a real executor request arrived after t, compared at the precision that is stored: a lease request, a heartbeat or a
+// result post. A restart of the service alone is none.
+func (l *Liveness) HeardSince(t time.Time) bool { return false }

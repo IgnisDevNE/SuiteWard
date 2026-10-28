@@ -67,3 +67,49 @@ func TestLivenessIsSafeForConcurrentUse(t *testing.T) {
 		t.Errorf("LastRequest = %v, %v; want %v, true", got, ok, last)
 	}
 }
+
+func TestLivenessIsSilentFromThirtySecondsAfterTheLastSight(t *testing.T) {
+	l := execution.NewLiveness(livenessStart)
+	for name, c := range map[string]struct {
+		now  time.Duration
+		want bool
+	}{
+		"just seen":                   {0, false},
+		"a moment before 30 s":        {29*time.Second + 999*time.Millisecond, false},
+		"exactly 30 s":                {30 * time.Second, true},
+		"a minute after":              {time.Minute, true},
+		"before the time it was seen": {-time.Hour, false},
+	} {
+		if got := l.Silent(livenessStart.Add(c.now)); got != c.want {
+			t.Errorf("%s: Silent = %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+func TestLivenessIsNotSilentAfterAnExecutorWasSeen(t *testing.T) {
+	l := execution.NewLiveness(livenessStart)
+	seen := livenessStart.Add(10 * time.Minute)
+	l.Saw(seen)
+	if l.Silent(seen.Add(29 * time.Second)) {
+		t.Error("silent 29 s after the last request")
+	}
+	if !l.Silent(seen.Add(30 * time.Second)) {
+		t.Error("not silent 30 s after the last request")
+	}
+}
+
+func TestLivenessHeardSinceNeedsARealRequestAfterTheTime(t *testing.T) {
+	l := execution.NewLiveness(livenessStart)
+	ended := livenessStart.Add(time.Minute)
+	if l.HeardSince(ended) || l.HeardSince(livenessStart.Add(-time.Hour)) {
+		t.Error("a restart alone counts as an executor request")
+	}
+	l.Saw(ended)
+	if l.HeardSince(ended) {
+		t.Error("a request at the very time counts as later")
+	}
+	l.Saw(ended.Add(time.Second))
+	if !l.HeardSince(ended) || l.HeardSince(ended.Add(time.Second)) {
+		t.Error("HeardSince does not compare the last request with the time")
+	}
+}

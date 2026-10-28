@@ -281,16 +281,16 @@ func (s Set) approveBlocked() (bool, error) {
 // EarlierCanonical is the canonical job that came before an approval. gate is the canonical job that the gate reads now; when it is governed by another manifest
 // than the canonical version's, the head is approved, and the earlier job is the newest of jobs (the canonical jobs of the head, oldest first, none cancelled) that
 // has an outcome and is governed by canonicalManifest. ok is false for a head that is not approved and for one with no such job.
-func EarlierCanonical(jobs []Job, gate Job, canonicalManifest artifact.Digest) (job Job, ok bool) {
+func EarlierCanonical(jobs []Job, gate Job, canonicalManifest artifact.Digest) (job Job, ok bool, err error) {
 	if canonicalManifest.IsZero() || gate.Governing.IsZero() || gate.Governing == canonicalManifest {
-		return Job{}, false
+		return Job{}, false, nil
 	}
 	for _, j := range slices.Backward(jobs) {
 		if j.HasOutcome() && j.Governing == canonicalManifest {
-			return j, true
+			return j, true, nil
 		}
 	}
-	return Job{}, false
+	return Job{}, false, nil
 }
 
 // ResultsSets are the sets whose results comment is written this pass, in order: the earlier set of an approved head when it is final, and the later set when it is

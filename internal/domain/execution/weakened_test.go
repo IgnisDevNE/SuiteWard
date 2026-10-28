@@ -1,6 +1,7 @@
 package execution_test
 
 import (
+	"errors"
 	"slices"
 	"testing"
 
@@ -62,13 +63,37 @@ func TestWeakened(t *testing.T) {
 		{"a receipt that does not apply is unknown", runOf(execution.RunNotApplicable, approved), complete, receiptTests, canonicalTests, nil, false},
 		{"a pending canonical run is unknown", complete, runOf(execution.RunPending, approved), receiptTests, canonicalTests, nil, false},
 		{"an unavailable canonical run is unknown", complete, runOf(execution.RunUnavailable, approved), receiptTests, canonicalTests, nil, false},
-		{"runs with no governing digest are unknown", runOf(execution.RunComplete, artifact.Digest{}), runOf(execution.RunComplete, artifact.Digest{}), receiptTests, canonicalTests, nil, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, known := execution.Weakened(tc.receipt, tc.canonical, tc.changed, tc.states)
-			if known != tc.known || !slices.Equal(got, tc.want) {
-				t.Errorf("Weakened = %v, %v; want %v, %v", got, known, tc.want, tc.known)
+			got, known, err := execution.Weakened(tc.receipt, tc.canonical, tc.changed, tc.states)
+			if err != nil || known != tc.known || !slices.Equal(got, tc.want) {
+				t.Errorf("Weakened = %v, %v, %v; want %v, %v", got, known, err, tc.want, tc.known)
+			}
+		})
+	}
+}
+
+// Every job has a governing manifest, so a complete run with none is a caller that did not fill it: an error, never an unknown set, and two runs with none must
+// not compare equal. A run that is not complete is not compared, so it needs no digest.
+func TestWeakenedRefusesACompleteRunWithNoGoverningManifest(t *testing.T) {
+	complete, noDigest := runOf(execution.RunComplete, approved), runOf(execution.RunComplete, artifact.Digest{})
+	tests := []struct {
+		name               string
+		receipt, canonical execution.WeakenedRun
+		wantErr            bool
+	}{
+		{"the receipt has none", noDigest, complete, true},
+		{"the canonical run has none", complete, noDigest, true},
+		{"both have none: they do not compare equal", noDigest, noDigest, true},
+		{"a pending run with none is not compared", runOf(execution.RunPending, artifact.Digest{}), complete, false},
+		{"a complete run beside an unavailable one with none is not compared", complete, runOf(execution.RunUnavailable, artifact.Digest{}), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			set, known, err := execution.Weakened(tc.receipt, tc.canonical, []execution.ReceiptTest{{Package: "p", Name: "TestA", Changed: true}}, []execution.CanonicalTest{{Package: "p", Name: "TestA", State: execution.CanonicalFail}})
+			if errors.Is(err, execution.ErrNoGoverningDigest) != tc.wantErr || (err != nil && !tc.wantErr) || set != nil || known {
+				t.Errorf("Weakened = %v, %v, %v; want an error %v and no set", set, known, err, tc.wantErr)
 			}
 		})
 	}

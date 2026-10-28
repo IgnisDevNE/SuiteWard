@@ -2,10 +2,14 @@ package execution
 
 import (
 	"cmp"
+	"errors"
 	"slices"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 )
+
+// ErrNoGoverningDigest reports a job that has no governing manifest: every job has one, so the caller did not fill it.
+var ErrNoGoverningDigest = errors.New("a job has no governing manifest")
 
 // TestID names a test of a run: its package and its name.
 type TestID struct{ Package, Name string }
@@ -34,9 +38,9 @@ type CanonicalTest struct {
 //
 // It is known only when both runs are complete and the canonical run is governed by the manifest that governs the receipt run: a canonical run under the manifest
 // of the revision (the head is approved) has no counterpart. Otherwise known is false and the set is empty, which reads as 0 and is never an absence.
-func Weakened(receipt, canonical WeakenedRun, receiptTests []ReceiptTest, canonicalTests []CanonicalTest) (tests []TestID, known bool) {
+func Weakened(receipt, canonical WeakenedRun, receiptTests []ReceiptTest, canonicalTests []CanonicalTest) (tests []TestID, known bool, err error) {
 	if receipt.Status != RunComplete || canonical.Status != RunComplete || receipt.Governing.IsZero() || receipt.Governing != canonical.Governing {
-		return nil, false
+		return nil, false, nil
 	}
 	failing := map[TestID]bool{}
 	for _, t := range canonicalTests {
@@ -48,5 +52,5 @@ func Weakened(receipt, canonical WeakenedRun, receiptTests []ReceiptTest, canoni
 		}
 	}
 	slices.SortFunc(tests, func(a, b TestID) int { return cmp.Or(cmp.Compare(a.Package, b.Package), cmp.Compare(a.Name, b.Name)) })
-	return tests, true
+	return tests, true, nil
 }

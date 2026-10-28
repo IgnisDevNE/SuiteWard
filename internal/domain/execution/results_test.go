@@ -372,15 +372,36 @@ func TestEarlierCanonical(t *testing.T) {
 		{"a head that is not approved: the gate reads the canonical version's job", []execution.Job{jobOf(8, execution.JobComplete, approved), jobOf(10, execution.JobComplete, approved)}, jobOf(10, execution.JobComplete, approved), approved, 0},
 		{"the first job was cancelled while pending: no earlier set", []execution.Job{later}, later, approved, 0},
 		{"no job at all", nil, later, approved, 0},
+		{"the gate has no canonical job yet: the head is not approved", []execution.Job{jobOf(10, execution.JobComplete, approved)}, execution.Job{}, approved, 0},
 		{"jobs of another manifest only", []execution.Job{jobOf(10, execution.JobComplete, digestOf("another")), later}, later, approved, 0},
-		{"no manifest of the canonical version", []execution.Job{jobOf(10, execution.JobComplete, approved), later}, later, artifact.Digest{}, 0},
-		{"a gate job with no manifest", []execution.Job{jobOf(10, execution.JobComplete, approved)}, jobOf(12, execution.JobComplete, artifact.Digest{}), approved, 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := execution.EarlierCanonical(tc.jobs, tc.gate, tc.manifest)
-			if ok != (tc.want != 0) || got.ID != tc.want {
-				t.Errorf("EarlierCanonical = %+v, %v; want job %d", got, ok, tc.want)
+			got, ok, err := execution.EarlierCanonical(tc.jobs, tc.gate, tc.manifest)
+			if err != nil || ok != (tc.want != 0) || got.ID != tc.want {
+				t.Errorf("EarlierCanonical = %+v, %v, %v; want job %d", got, ok, err, tc.want)
+			}
+		})
+	}
+}
+
+// A canonical version has a manifest and a job always has a governing one, so a missing digest is a caller that did not fill it: an error, never "no earlier set",
+// and two digests that are both missing must not compare equal.
+func TestEarlierCanonicalRefusesAMissingManifest(t *testing.T) {
+	older := jobOf(10, execution.JobComplete, approved)
+	tests := []struct {
+		name     string
+		gate     execution.Job
+		manifest artifact.Digest
+	}{
+		{"no manifest of the canonical version", jobOf(12, execution.JobComplete, revision), artifact.Digest{}},
+		{"a gate job with no manifest", jobOf(12, execution.JobComplete, artifact.Digest{}), approved},
+		{"both are missing: they do not compare equal", jobOf(12, execution.JobComplete, artifact.Digest{}), artifact.Digest{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, ok, err := execution.EarlierCanonical([]execution.Job{older}, tc.gate, tc.manifest); !errors.Is(err, execution.ErrNoGoverningDigest) || ok || got != (execution.Job{}) {
+				t.Errorf("EarlierCanonical = %+v, %v, %v; want ErrNoGoverningDigest", got, ok, err)
 			}
 		})
 	}

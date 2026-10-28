@@ -663,7 +663,7 @@ func (d *doctor) runningMatchesUnits(ctx context.Context, image string) (string,
 func adoptedImage(a Adopted, err error) (string, error) {
 	var diff *DiffError
 	if errors.As(err, &diff) {
-		return "", fmt.Errorf("the installed stack differs from this release: %s", formatDiffs(diff.Diffs))
+		return "", fmt.Errorf("the installation differs from this release: %s", formatDiffs(diff.Diffs))
 	}
 	return a.Image, err
 }

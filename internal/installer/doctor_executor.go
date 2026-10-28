@@ -305,7 +305,7 @@ func (d *doctor) checkExecutorRunning(ctx context.Context, process func(context.
 	upgrade := "Run `" + d.deps.command() + " install --upgrade` with this release's program."
 	switch {
 	case doc.Execution == nil:
-		d.fail("executor.running", "/status has no execution object: this service is older than the test-running feature (M2.1), so it cannot use a test runner", upgrade)
+		d.fail("executor.running", "this service is older than M2.1, the release that added the test runner, so it cannot use one (its /status has no executor information)", upgrade)
 		return
 	case !doc.Execution.Enabled:
 		d.fail("executor.running", "the service has no executor token (EXECUTOR_TOKEN is not set), so it cannot use a test runner and every test run is unavailable", fixes.noToken)

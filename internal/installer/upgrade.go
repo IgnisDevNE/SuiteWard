@@ -292,7 +292,7 @@ func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, di
 	b := inst.backup(env.Deps, dir, recipient)
 	b.beside = beside
 	var path string
-	err = working(r.screen, "Backing up the database and the artifacts", func() (err error) {
+	err = working(r.screen, "Backing up the database and the saved files", func() (err error) {
 		path, err = takeBackup(ctx, b)
 		return err
 	})

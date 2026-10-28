@@ -83,7 +83,7 @@ func (s *summaryRows) addDoctor(ctx context.Context, env Env, settingsPath, toke
 // file (owner decision 20). A repository that is not protected yet keeps it, and importRulesetFix names it.
 func (s *summaryRows) dropImported(r doctorResult, dir string) {
 	repo, isProtection := strings.CutPrefix(r.Name, "protection.")
-	if !isProtection || !r.OK {
+	if !isProtection || !r.OK || r.Warning {
 		return
 	}
 	file := rulesetPath(dir, repo)

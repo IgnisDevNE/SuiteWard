@@ -256,6 +256,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	cmd := c.env.Deps.command()
 	upgraded(scr, image, dir, goBackColocated(cmd, engine, previous.Image, dir, scopeFlags(r, false)), c.doctorAgain(t))
 	c.installSelf(ctx)
+	c.endPlainUpgrade(scr)
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }
 
@@ -303,9 +304,21 @@ func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, di
 // backup are kept, so that they are still there when the screen has gone.
 func upgraded(scr *ui.Screen, image, backupPath, goBack, doctor string) {
 	scr.Say("Upgraded to %s.\n", digestOf(image))
-	scr.Keep("The backup is in %s. It holds the TOTP secret (behind your authenticator codes), locked with your recovery key. Keep the recovery kit off this computer.\n", backupPath)
+	scr.Keep("The backup is in %s. It holds the authenticator secret (the TOTP secret), locked with your recovery key. Keep the recovery kit off this computer.\n", backupPath)
 	scr.Keep("%s\n", goBack)
 	scr.Say("Check the instance with `%s`.\n", doctor)
+}
+
+// upgradeReducedAssurance is what the co-located tier gives up against the isolated one, a security disclosure that a plain upgrade, which draws
+// no summary, ends with, as a plain install does.
+// shortcut: this copies the text of reducedAssuranceNotice (colocated.go, task F8a) until the two branches meet; use that constant then.
+const upgradeReducedAssurance = "On this computer the test runner (the executor) and SuiteWard run as your user, next to your coding agent, so these checks catch mistakes, not a determined agent."
+
+// endPlainUpgrade ends a plain run with the disclosure: a full screen says it in the summary, and a plain run has none.
+func (c *colocatedInstall) endPlainUpgrade(scr *ui.Screen) {
+	if !scr.FullScreen() {
+		c.say("%s\n", upgradeReducedAssurance)
+	}
 }
 
 // goingBack is where the steps of the way back after an upgrade are written down.

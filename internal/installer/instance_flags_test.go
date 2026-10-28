@@ -198,14 +198,14 @@ var bareCommand = regexp.MustCompile(`\bsuiteward (install|uninstall|doctor|back
 
 // A hint writes a command of this program only with Deps.suggest, which puts the flags that name the instance after the subcommand. So no string
 // of the installer spells one by itself, and nothing but suggest reads the program's name (Deps.Command, selfName): a new hint that did would
-// drop the flags again. The files that may spell one are listed with the reason: they are not hints of this instance.
+// drop the flags again. The literals that may spell one are listed one by one, each in its own file: they are not hints of this instance, and a
+// new bare literal in the same file fails. A literal with `install host` is the administrator's step on a server and names no instance.
 func TestNoHintWritesACommandOfThisProgramWithoutTheFlagsOfTheInstance(t *testing.T) {
-	spelled := map[string]string{
-		"command.go":            "the usage text",
-		"selfinstall.go":        "the prose of the page that offers the copy of the program",
-		"executor_colocated.go": "a line of the script the test runner is started by",
-		"isolated.go":           "the line that the host step prints for the service account, with the user bus filled in",
-		"summary.go":            "setupInstructionMark, which the summary matches in a sentence of the service's own check",
+	spelled := map[string]*regexp.Regexp{
+		"command.go":            regexp.MustCompile(`^usage: suiteward install \[flags\]\n`),                               // the usage text
+		"selfinstall.go":        regexp.MustCompile(`^SuiteWard prints commands such as suiteward doctor, but a terminal`), // the prose of the page that offers the copy
+		"executor_colocated.go": regexp.MustCompile("rem Written by `suiteward install`: the environment of the SuiteWard executor"),
+		"summary.go":            regexp.MustCompile(`^suiteward enroll$`), // setupInstructionMark, which the summary matches in a sentence of the service's own check
 	}
 	reads := map[string]bool{"command.go": true, "selfinstall.go": true} // OSEnv and commandName set the name, and suggest reads it
 	entries, err := os.ReadDir(".")
@@ -224,8 +224,8 @@ func TestNoHintWritesACommandOfThisProgramWithoutTheFlagsOfTheInstance(t *testin
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.BasicLit:
-				// An `install host` command is the administrator's step on a server: it names no instance.
-				if s, err := strconv.Unquote(n.Value); n.Kind == token.STRING && err == nil && bareCommand.MatchString(s) && !strings.Contains(s, "install host") && spelled[name] == "" {
+				s, err := strconv.Unquote(n.Value)
+				if n.Kind == token.STRING && err == nil && bareCommand.MatchString(s) && !strings.Contains(s, "install host") && (spelled[name] == nil || !spelled[name].MatchString(s)) {
 					t.Errorf("%s spells a command of this program by itself: %s (write it with Deps.suggest)", name, n.Value)
 				}
 			case *ast.SelectorExpr:

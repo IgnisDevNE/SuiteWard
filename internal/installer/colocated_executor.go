@@ -95,7 +95,7 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	if other, err := plan.foreign(registered); err != nil {
 		return plan, err
 	} else if other {
-		return plan, fmt.Errorf("a computer has one test runner, and yours belongs to another instance. This instance left it as it is. To use this instance's own, remove the other instance with `%s`, then run `%s` again", d.otherInstance().suggest("uninstall"), d.suggest("install"))
+		return plan, fmt.Errorf("a computer has one test runner, and yours belongs to another instance. This instance left it as it is. To use this instance's own, remove the other instance with %s, then run `%s` again", d.removeOtherInstance(), d.suggest("install"))
 	}
 	// state lists the programs when a task is there; a first install has not yet. An executor that the installer can never list again can never be
 	// updated or removed by it (PowerShell in constrained language mode), so it is not set up.

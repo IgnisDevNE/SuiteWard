@@ -75,6 +75,13 @@ func (d Deps) otherInstance() Deps {
 	return d
 }
 
+// removeOtherInstance is how a text names the removal of the instance that owns the computer's test runner, which is not known here: the
+// command has none of this run's flags, and the note says that the other instance's go with it, because a bare uninstall removes the default
+// instance, which may be the one this run works on. The install's refusal and doctor's fix both say it with this, so that they cannot drift.
+func (d Deps) removeOtherInstance() string {
+	return "`" + d.otherInstance().suggest("uninstall") + "` (pass that instance's `--settings` and `--token-file`; the default instance needs neither)"
+}
+
 // commandName is the Deps.Command of the running program: executable is os.Executable and lookPath is exec.LookPath. A hint that says
 // `suiteward doctor` is a command only where the shell finds this program by that name, as it does after the release is installed on the
 // PATH. A release downloaded to a folder is not there, and it is run by its path: the path is quoted for a shell (quoteArg), and PowerShell,

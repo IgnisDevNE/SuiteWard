@@ -23,7 +23,7 @@ func (d *doctor) installFix() string {
 
 // anotherInstanceFix is the fix of an executor that is registered for another instance: an install of this one skips it, so it is that instance's removal that frees the place.
 func (d *doctor) anotherInstanceFix() string {
-	return "A computer has one test runner, and it belongs to another instance. Remove that instance with `" + d.deps.otherInstance().suggest("uninstall") + "` (pass that instance's `--settings` and `--token-file`; the default instance needs neither). Then run `" + d.deps.suggest("install") + "` again for this one. Until then the install leaves the other test runner alone."
+	return "A computer has one test runner, and it belongs to another instance. Remove that instance with " + d.deps.removeOtherInstance() + ". Then run `" + d.deps.suggest("install") + "` again for this one. Until then the install leaves the other test runner alone."
 }
 
 // executorTokenFile is the token file that the files of the executor are beside: the one --token-file names, else the default place of this user's

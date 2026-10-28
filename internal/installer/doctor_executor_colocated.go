@@ -16,9 +16,14 @@ import (
 // The rows do not repeat that reduced assurance: the install's summary and the page that introduces this tier say it once (owner decision 19).
 // Their texts are for a person with little technical background (work/m21-briefs/plain-language.md): what happened, whether it is a problem, what to do.
 
-// installFix is the fix of a result that an install of this release makes right.
+// installFix is the fix of a result that an install of this release makes right. In a folder that an install refuses (refuseNew) it does not set
+// up the test runner, so it does not promise that.
 func (d *doctor) installFix() string {
-	return "Run `" + d.deps.suggest("install", "--upgrade") + "` if the service is from an earlier release. Otherwise run `" + d.deps.suggest("install") + "` again. Either one sets up the test runner again."
+	fix := "Run `" + d.deps.suggest("install", "--upgrade") + "` if the service is from an earlier release. Otherwise run `" + d.deps.suggest("install") + "` again."
+	if d.refusedFolder != nil {
+		return fix
+	}
+	return fix + " Either one sets up the test runner again."
 }
 
 // executorFix is the fix of a result about the test runner itself (its program, its registration). In a folder that an install refuses, an install
@@ -121,10 +126,20 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	}, runningFixes{
 		noToken:    d.installFix(),
 		notRunning: notRunning,
-		notSeen:    "Read the test runner's log (" + plan.logWhere() + ") to see why. Then run `" + d.deps.suggest("install") + "` again: it makes the service and the test runner use the same token and port.",
+		notSeen:    d.notSeenFix(plan),
 	})
 	d.checkExecutorImage(ctx)
 	d.checkExecutorLoopback(ctx)
+}
+
+// notSeenFix is the fix of a test runner that runs and that the service has not seen lately: its log says why, and an install makes the service
+// and the test runner use the same token and port. In a folder that an install refuses there is no such install: it is the way out of the folder.
+func (d *doctor) notSeenFix(plan executorPlan) string {
+	read := "Read the test runner's log (" + plan.logWhere() + ") to see why. "
+	if d.refusedFolder != nil {
+		return read + d.executorFix()
+	}
+	return read + "Then run `" + d.deps.suggest("install") + "` again: it makes the service and the test runner use the same token and port."
 }
 
 // failRefusedFolder is the result of a computer that has no test runner of this instance in a folder that an install refuses (refuseNew): running

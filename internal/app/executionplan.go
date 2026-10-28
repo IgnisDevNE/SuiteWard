@@ -112,9 +112,10 @@ func (j *checksJob) executionRunOf(ctx context.Context, suite suiteView) (*execu
 // keepCanonicalManifest puts the manifest of the canonical in the content store, where the lease and the download of a job read it
 // (docs/contracts/runtime.md, "What the checks job does for execution"). A canonical job that the head's revision does not govern runs against it, and so does a
 // receipt job, whose revision expects the current canonical (a revision that expects another one is not planned). A bootstrap or an upgrade promoted that version
-// without recording a revision, so the store holds nothing of it but what this puts there; it does on every run, so that a job that exists already, one of an
-// earlier version or one whose object was lost, is healed by the next one. It is the manifest of the Suite view, never one read back from the store. The
-// manifest of a revision that governs a canonical job is not in the database, only its digest: the revision's own writer stores it (assess).
+// without recording a revision, so the store holds nothing of it but what this puts there; it does on every run, so that a job governed by the canonical that
+// exists already, one of an earlier version or one whose object was lost, is healed by the next one. It is the manifest of the Suite view, never one read back
+// from the store. Only such jobs heal: the manifest of a revision is not in the database, only its digest, so the revision's own writer stores it (assess) and
+// wantCanonical plans no job for a revision whose manifest the store lacks.
 func (j *checksJob) keepCanonicalManifest(ctx context.Context, suite suiteView) error {
 	return storeManifest(ctx, j.content, suite.base)
 }
@@ -291,11 +292,15 @@ func (j *checksJob) execute(ctx context.Context, s *pullState, x *executionRun, 
 }
 
 // wantCanonical creates the canonical job of the head when none holds its binding: the governing manifest is the revision's once the head is ready, and the
-// canonical's otherwise.
+// canonical's otherwise. A revision's manifest is read first: the lease takes the oldest candidate and a job whose manifest the store lacks (a revision recorded
+// before M1.13, or a lost object) can never be leased, so it would stop every lease of the instance. The step fails instead, and no such job is planned.
 func (j *checksJob) wantCanonical(ctx context.Context, s *pullState, x *executionRun, reference string, ready bool, bound revisionBinding) (wantedJob, error) {
 	spec := x.baseSpec(s, execution.PlanCanonical)
 	spec.GoverningDigest, spec.GoverningSource = s.suite.manifest, domain.ManifestSource(s.suite.canonical)
 	if ready {
+		if _, err := j.reads().revisionManifest(ctx, bound.manifest); err != nil {
+			return wantedJob{}, err
+		}
 		spec.GoverningDigest, spec.GoverningSource = bound.manifest, domain.ManifestSource(reference)
 	}
 	if err := j.canonicalJob(ctx, spec); err != nil {

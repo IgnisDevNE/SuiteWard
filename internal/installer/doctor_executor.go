@@ -238,8 +238,8 @@ func (d *doctor) checkExecutorBinary(ctx context.Context) {
 	case sum != own:
 		d.fail("executor.binary", fmt.Sprintf("the executor is a different build than this program (fingerprints, SHA-256: executor %s, this program %s)", sum, own), fix)
 	case !releaseAssetOf("linux").MatchString(name):
-		d.fail("executor.binary", "the test runner (the executor) has not been checked against an official release: its recorded fingerprint ("+sum+") does not come from a release's SHA256SUMS file (the record names "+name+"). On a separate server that check is required",
-			"As the administrator, run `"+d.hostStep()+"` with the program from that release.")
+		d.fail("executor.binary", "the test runner (the executor) has not been checked against an official release: its recorded fingerprint ("+sum+") does not come from a release's SHA256SUMS file (the record names "+name+")",
+			"A separate server requires this check. As the administrator, run `"+d.hostStep()+"` with the program from that release.")
 	default:
 		d.pass("executor.binary", "the executor program (fingerprint "+sum+") is the recorded one and this program, and the release's SHA256SUMS lists it as "+name)
 	}

@@ -78,7 +78,7 @@ func confirmUpgrade(r *Resolver, plan upgradePlan, parent, recipient string, ser
 		key = "the recovery key " + archive.Fingerprint(recipient)
 	}
 	r.say("First, an encrypted backup of the database and the saved files (artifacts) is made as a new file under %s, locked with %s.\n", parent, key)
-	ok, err := r.confirm("yes", "Back up and upgrade now? If you answer no, nothing is changed.")
+	ok, err := r.confirm("yes", "Back up and upgrade now? If you answer no, the upgrade stops here.")
 	if err != nil {
 		return err
 	}

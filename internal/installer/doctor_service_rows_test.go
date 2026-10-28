@@ -116,6 +116,8 @@ func TestWriteCommandsWritesOnlyWholeCommands(t *testing.T) {
 		"alone, before a space":            {"run suiteward install now", []string{"install"}, "run " + install + " now"},
 		"alone, before punctuation":        {"(run suiteward enroll), then wait", []string{"enroll"}, "(run " + enroll + "), then wait"},
 		"alone, at the end":                {"run suiteward install", []string{"install"}, "run " + install},
+		"alone, before a line break":       {"run suiteward install\nthen wait", []string{"install"}, "run " + install + "\nthen wait"},
+		"alone, before a CRLF":             {"run suiteward enroll\r\nthen wait", []string{"enroll"}, "run " + enroll + "\r\nthen wait"},
 		"two commands, one pass":           {"run `suiteward enroll` where you ran `suiteward install`", []string{"enroll", "install"}, "run " + enroll + " where you ran " + install},
 		"a command that is not named":      {"run `suiteward enroll` or `suiteward install`", []string{"enroll"}, "run " + enroll + " or `suiteward install`"},
 		"a longer command, quoted":         {"run `suiteward install --upgrade` now", []string{"install"}, "run `suiteward install --upgrade` now"},

@@ -63,11 +63,11 @@ func executorMechanism(goos string) string {
 func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, error) {
 	d := c.env.Deps
 	if d.Executable == nil {
-		return executorPlan{}, errors.New("the installer cannot find its own program to copy it as the executor")
+		return executorPlan{}, errors.New("the installer cannot find its own program, so it cannot copy it for the test runner")
 	}
 	exe, err := d.Executable()
 	if err != nil {
-		return executorPlan{}, fmt.Errorf("find this program: %w", err)
+		return executorPlan{}, fmt.Errorf("could not find the installer's own program: %w", err)
 	}
 	plan, err := planExecutor(d, c.tokenFile, c.s, engineBinDir(c.rt))
 	if err != nil {
@@ -76,13 +76,13 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	sid := ""
 	if d.GOOS == "windows" {
 		if d.UserSID == nil {
-			return plan, errors.New("the installer has no way to find the SID of this user, which the scheduled task of the executor names")
+			return plan, errors.New("the installer cannot find your Windows user ID (SID), which the scheduled task needs")
 		}
 		if sid, err = d.UserSID(); err != nil {
-			return plan, fmt.Errorf("find the SID of this user: %w", err)
+			return plan, fmt.Errorf("could not find the Windows user ID (SID) of this user: %w", err)
 		}
 		if !strings.HasPrefix(sid, "S-1-") {
-			return plan, fmt.Errorf("find the SID of this user: %q is not a SID", sid)
+			return plan, fmt.Errorf("could not find the Windows user ID (SID) of this user: %q is not one", sid)
 		}
 	}
 	sum, err := hashFile(exe)
@@ -90,7 +90,7 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 		return plan, err
 	}
 	if !pathExists(plan.tokenFile) {
-		return plan, fmt.Errorf("the executor's token copy %s is not there, so an executor would not start: `%s install` makes it and gives the service the token", plan.tokenFile, d.command())
+		return plan, fmt.Errorf("the test runner's token file `%s` is missing, so the test runner could not start. Run `%s install`: it creates the token file and gives the service the same token", plan.tokenFile, d.command())
 	}
 	registered, running, err := plan.state(ctx, d)
 	if err != nil {
@@ -99,7 +99,7 @@ func (c *colocatedInstall) installExecutor(ctx context.Context) (executorPlan, e
 	if other, err := plan.foreign(registered); err != nil {
 		return plan, err
 	} else if other {
-		return plan, errors.New("a computer has one executor, and the one of this user is registered for another instance's token file: this instance did not change it; remove that instance (`uninstall`), then install again")
+		return plan, fmt.Errorf("a computer has one test runner, and yours belongs to another instance. This instance left it as it is. To use this instance's own, remove the other instance with `%[1]s uninstall`, then run `%[1]s install` again", d.command())
 	}
 	if err := os.MkdirAll(plan.dir, 0o700); err != nil {
 		return plan, fmt.Errorf("create %s: %w", plan.dir, err)
@@ -149,21 +149,21 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 	cmd := c.env.Deps.command()
 	if err != nil {
 		c.executorRow = "not set up: " + oneLine(err.Error())
-		scr.Warn("Note: the executor could not be set up (%v). The stack runs, and canonical execution has nothing to run on until the executor does: fix the cause and run `%s install` again; `%s doctor` says what is missing.\n", err, cmd, cmd)
+		scr.Warn("Note: the test runner (the executor) could not be set up: %v. SuiteWard itself runs, but it cannot run tests until the test runner works. Fix the cause, then run `%s install` again. `%s doctor` lists what is missing.\n", err, cmd, cmd)
 		return
 	}
 	c.executorRow = executorMechanism(plan.goos) + "; " + plan.binary
-	scr.Check("The executor runs a copy of this program, %s, as %s.\n", plan.binary, executorMechanism(plan.goos))
+	scr.Check("The test runner (the executor) is set up as %s. It runs a copy of this program: %s.\n", executorMechanism(plan.goos), plan.binary)
 	if plan.goos == "windows" {
-		scr.Say("The executor runs in the background, with no window. If it stops, it starts again after a minute.\n")
+		scr.Say("The test runner has no window. It runs in the background, and if it stops it starts again after a minute.\n")
 	}
 	if c.s.Runtime == RuntimeDocker {
-		scr.Say("The executor runs its sandboxes through Docker's own engine: Docker's own CLI pointed at Podman's socket fails closed, because it does not know the flags the sandbox needs, while Podman's docker shim (the podman-docker package) works against Podman. Use --runtime podman for Podman.\n")
+		scr.Say("The test runner starts its sandboxes through Docker. Docker's own command line cannot drive Podman: it stops, because it does not know the options the sandboxes need. Podman's docker command (the podman-docker package) does work with Podman. To use Podman, install with `--runtime podman`.\n")
 	}
-	scr.Say("The executor holds one credential, its own token (%s), and it reaches the service at http://127.0.0.1:%d. It runs as your user, next to your coding agent, so its assurance is lower than on a separate host: what doctor pins catches drift and accident, not a determined agent.\n", plan.tokenFile, c.s.HTTPPort)
-	scr.Say("Keep one executor for each container engine: at start it removes every %s container of its engine, so a second one (the executor started by hand, say) would remove the sandboxes of the first.\n", sandboxNamePrefix)
+	scr.Say("The test runner has one credential, its own token (%s), and it reaches SuiteWard at http://127.0.0.1:%d. It runs as your user, next to your coding agent, so it is less protected than a test runner on a separate server.\n", plan.tokenFile, c.s.HTTPPort)
+	scr.Say("Keep only one executor for each container engine. When it starts, it removes every container on its engine whose name starts with %s, so a second executor (one started by hand, say) would remove the sandboxes of the first.\n", sandboxNamePrefix)
 	if c.executorPin == "" {
-		scr.Say("The executor's binary was not checked against a release's SHA256SUMS: it is a copy of this program as it is. Verify the download as the install guide says, then run `%s install --upgrade --sha256sums <the SHA256SUMS of the release>` to pin it to the release's line.\n", c.env.Deps.command())
+		scr.Say("The test runner has not been checked against an official release. This is normal for a development build. To check it, run `%s install --upgrade --sha256sums <the release's SHA256SUMS file>` with the program from that release.\n", c.env.Deps.command())
 	}
 }
 
@@ -197,11 +197,11 @@ func removeByHand(goos string) string {
 	case "windows":
 		// Not a kill by name: the wrapper starts the program again after its pause, and a name would also end another instance's executor. With the
 		// task deleted, nothing starts it at the next sign-in; signing out ends everything of the user that still runs.
-		return fmt.Sprintf("end the scheduled task with `schtasks /End /TN \"%[1]s\"`, delete it with `schtasks /Delete /TN \"%[1]s\" /F`, sign out of Windows and sign in again to end what still runs, and delete that directory", executorTaskName)
+		return fmt.Sprintf("run `schtasks /End /TN \"%[1]s\"`, then `schtasks /Delete /TN \"%[1]s\" /F`, sign out of Windows and sign in again to end what still runs, then delete that folder", executorTaskName)
 	case "darwin":
-		return fmt.Sprintf("`launchctl bootout gui/$(id -u)/%[1]s` stops it and unloads it, and deleting that directory and ~/Library/LaunchAgents/%[1]s.plist removes it", executorLabel)
+		return fmt.Sprintf("run `launchctl bootout gui/$(id -u)/%[1]s` to stop it, then delete that folder and `~/Library/LaunchAgents/%[1]s.plist`", executorLabel)
 	default:
-		return fmt.Sprintf("where the user manager of this user runs, `systemctl --user disable --now %s` stops it, and deleting that directory and its unit file removes it", executorUnitName)
+		return fmt.Sprintf("run `systemctl --user disable --now %s` where your user session runs to stop it, then delete that folder and its unit file", executorUnitName)
 	}
 }
 
@@ -227,7 +227,7 @@ func instanceTokenFile(r *Resolver, env Env, t installTarget) (string, error) {
 		return "", err
 	}
 	if !isDefault {
-		return "", fmt.Errorf("--settings names %[1]s, which is not the default settings file, so this is a second instance, and without --token-file this command would use the default token file %[2]s, which is the main instance's (its executor and its token copy are beside it): pass --token-file with a file of this instance's own; if this is the only instance on this computer and %[2]s is its token file, pass --token-file %[3]s; nothing was changed", t.settingsPath, file, quoteArg(file))
+		return "", fmt.Errorf("`--settings` names `%[1]s`, which is not the default settings file, so this is a second instance. Without `--token-file`, this command would use the default token file `%[2]s`, which belongs to the main instance (its test runner is next to it). Nothing was changed. Pass `--token-file` with a file of this instance's own. If this is the only instance on this computer and `%[2]s` is its token file, pass `--token-file %[3]s`", t.settingsPath, file, quoteArg(file))
 	}
 	return file, nil
 }
@@ -247,14 +247,14 @@ func releasePin(r *Resolver, d Deps) (string, error) {
 		return "", nil
 	}
 	if strings.TrimSpace(sumsFile) == "" {
-		return "", fmt.Errorf("%w: --sha256sums is empty (an unset variable?): give the SHA256SUMS file of the release, or leave the flag out", ErrUsage)
+		return "", fmt.Errorf("%w: `--sha256sums` is empty (an unset variable?). Give the release's SHA256SUMS file, or leave the flag out", ErrUsage)
 	}
 	if d.Executable == nil {
-		return "", errors.New("the installer cannot find its own program to check it against the SHA256SUMS")
+		return "", errors.New("the installer cannot find its own program, so it cannot check it against the SHA256SUMS file")
 	}
 	exe, err := d.Executable()
 	if err != nil {
-		return "", fmt.Errorf("find this program: %w", err)
+		return "", fmt.Errorf("could not find the installer's own program: %w", err)
 	}
 	sum, err := hashFile(exe)
 	if err != nil {

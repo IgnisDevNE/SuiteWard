@@ -115,7 +115,7 @@ func planExecutor(d Deps, tokenFile string, s Settings, engineDir string) (execu
 		}
 		home := d.Getenv("HOME")
 		if home == "" {
-			return executorPlan{}, errors.New("HOME is not set, so there is no place for the launch agent or the user unit of the executor")
+			return executorPlan{}, errors.New("HOME is not set, so there is nowhere to put the test runner's launch agent or user unit")
 		}
 		if d.GOOS == "darwin" {
 			p.definition = filepath.Join(home, "Library", "LaunchAgents", executorLabel+".plist")
@@ -127,11 +127,11 @@ func planExecutor(d Deps, tokenFile string, s Settings, engineDir string) (execu
 			p.definition = filepath.Join(config, "systemd", "user", executorUnitName)
 		}
 	default:
-		return executorPlan{}, fmt.Errorf("there is no way to keep the executor running on %s", d.GOOS)
+		return executorPlan{}, fmt.Errorf("the test runner cannot be kept running on %s: this system is not supported", d.GOOS)
 	}
 	for _, v := range append([]string{p.dir, p.binary, p.tokenFile, p.definition, p.system}, envValues(p.env)...) {
 		if v != "" && !plainValue.MatchString(v) {
-			return executorPlan{}, fmt.Errorf("%q cannot be written into the definition of the executor: it holds a quote or a control character", v)
+			return executorPlan{}, fmt.Errorf("%q cannot go into the test runner's definition: it contains a quote or a control character", v)
 		}
 	}
 	return p, nil
@@ -278,10 +278,10 @@ func userID(ctx context.Context, d Deps) (string, error) {
 	out, err := d.Exec(ctx, "id", []string{"-u"}, nil)
 	uid := strings.TrimSpace(string(out))
 	if err != nil {
-		return "", fmt.Errorf("find the id of this user: %w", err)
+		return "", fmt.Errorf("could not find the id of this user: %w", err)
 	}
 	if uid == "" {
-		return "", errors.New("find the id of this user: `id -u` printed nothing")
+		return "", errors.New("could not find the id of this user: `id -u` printed nothing")
 	}
 	return uid, nil
 }
@@ -297,7 +297,7 @@ func (p executorPlan) state(ctx context.Context, d Deps) (registered, running bo
 		}
 		out, err := d.Exec(ctx, "tasklist", []string{"/FI", "IMAGENAME eq " + executorBinaryName("windows"), "/FO", "CSV", "/NH"}, nil)
 		if err != nil {
-			return true, false, fmt.Errorf("list the processes: %w", err)
+			return true, false, fmt.Errorf("could not list the programs that run on this computer: %w", err)
 		}
 		return true, strings.Contains(strings.ToLower(string(out)), strings.ToLower(executorBinaryName("windows"))), nil
 	case "darwin":
@@ -313,7 +313,7 @@ func (p executorPlan) state(ctx context.Context, d Deps) (registered, running bo
 	default:
 		out, err := d.Exec(ctx, "systemctl", []string{"--user", "show", "-p", "LoadState", "-p", "ActiveState", "-p", "SubState", executorUnitName}, nil)
 		if err != nil {
-			return false, false, fmt.Errorf("ask the user manager about %s: %w", executorUnitName, err)
+			return false, false, fmt.Errorf("could not ask your user manager about %s: %w", executorUnitName, err)
 		}
 		props := map[string]string{}
 		for _, line := range strings.Split(string(out), "\n") {
@@ -355,7 +355,7 @@ var listProcessesScript = `Get-CimInstance Win32_Process | Where-Object { 'conho
 func (p executorPlan) listProcesses(ctx context.Context, d Deps) ([]osProcess, error) {
 	out, err := d.Exec(ctx, p.system+`\WindowsPowerShell\v1.0\powershell.exe`, []string{"-NoProfile", "-NonInteractive", "-Command", listProcessesScript}, nil)
 	if err != nil {
-		return nil, fmt.Errorf("list the processes of this computer: %w", err)
+		return nil, fmt.Errorf("could not list the programs that run on this computer: %w", err)
 	}
 	var procs []osProcess
 	for _, line := range strings.Split(string(out), "\n") {
@@ -365,13 +365,13 @@ func (p executorPlan) listProcesses(ctx context.Context, d Deps) ([]osProcess, e
 		fields := strings.Split(line, " ") // an empty path or command line leaves an empty field
 		pid, pidErr := strconv.Atoi(fields[0])
 		if len(fields) != 4 || pidErr != nil {
-			return nil, fmt.Errorf("list the processes of this computer: unexpected line %q", line)
+			return nil, fmt.Errorf("could not list the programs that run on this computer: unexpected line %q", line)
 		}
 		proc := osProcess{pid: pid, name: fields[1]}
 		for i, text := range []*string{&proc.exe, &proc.at} {
 			raw, err := base64.StdEncoding.DecodeString(fields[2+i])
 			if err != nil {
-				return nil, fmt.Errorf("list the processes of this computer: unexpected line %q: %w", line, err)
+				return nil, fmt.Errorf("could not list the programs that run on this computer: unexpected line %q: %w", line, err)
 			}
 			*text = string(raw)
 		}
@@ -419,7 +419,7 @@ func (p executorPlan) stopTree(ctx context.Context, d Deps) error {
 			for i, proc := range own {
 				left[i] = fmt.Sprintf("process %d, %s", proc.pid, proc.name)
 			}
-			err := fmt.Errorf("the executor is still running (%s) after it was told to stop", strings.Join(left, "; "))
+			err := fmt.Errorf("the test runner is still running (%s) after the installer ended it, so its files were not changed", strings.Join(left, "; "))
 			if killErr != nil {
 				err = fmt.Errorf("%w: %w", err, killErr)
 			}
@@ -438,10 +438,10 @@ func (p executorPlan) start(ctx context.Context, d Deps) error {
 	switch p.goos {
 	case "windows":
 		if _, err := d.Exec(ctx, "schtasks", []string{"/Create", "/TN", executorTaskName, "/XML", p.taskXML, "/F"}, nil); err != nil {
-			return fmt.Errorf("create the scheduled task: %w", err)
+			return fmt.Errorf("could not create the scheduled task: %w", err)
 		}
 		if _, err := d.Exec(ctx, "schtasks", []string{"/Run", "/TN", executorTaskName}, nil); err != nil {
-			return fmt.Errorf("start the scheduled task: %w", err)
+			return fmt.Errorf("could not start the scheduled task: %w", err)
 		}
 	case "darwin":
 		uid, err := userID(ctx, d)
@@ -451,10 +451,10 @@ func (p executorPlan) start(ctx context.Context, d Deps) error {
 		// A label that is loaded cannot be bootstrapped again, running or not (waiting, throttled): it is booted out first, when it is there.
 		_, _ = d.Exec(ctx, "launchctl", []string{"bootout", "gui/" + uid + "/" + executorLabel}, nil)
 		if _, err := d.Exec(ctx, "launchctl", []string{"bootstrap", "gui/" + uid, p.definition}, nil); err != nil {
-			return fmt.Errorf("load the launch agent: %w", err)
+			return fmt.Errorf("could not load the launch agent: %w", err)
 		}
 		if _, err := d.Exec(ctx, "launchctl", []string{"kickstart", "-k", "gui/" + uid + "/" + executorLabel}, nil); err != nil {
-			return fmt.Errorf("start the launch agent: %w", err)
+			return fmt.Errorf("could not start the launch agent: %w", err)
 		}
 	default:
 		for _, args := range [][]string{{"--user", "daemon-reload"}, {"--user", "enable", "--now", executorUnitName}} {
@@ -479,7 +479,7 @@ func (p executorPlan) remove(ctx context.Context, d Deps, registered bool) error
 		switch p.goos {
 		case "windows":
 			if _, err := d.Exec(ctx, "schtasks", []string{"/Delete", "/TN", executorTaskName, "/F"}, nil); err != nil {
-				return fmt.Errorf("delete the scheduled task: %w", err)
+				return fmt.Errorf("could not delete the scheduled task: %w", err)
 			}
 		case "linux":
 			if _, err := d.Exec(ctx, "systemctl", []string{"--user", "disable", "--now", executorUnitName}, nil); err != nil {
@@ -526,11 +526,11 @@ func (p executorPlan) definitionIsCurrent(d Deps) (bool, error) {
 		return true, nil
 	}
 	if d.UserSID == nil {
-		return false, errors.New("the installer has no way to find the SID of this user, which the scheduled task of the executor names")
+		return false, errors.New("the installer cannot find your Windows user ID (SID), which the scheduled task needs")
 	}
 	sid, err := d.UserSID()
 	if err != nil {
-		return false, fmt.Errorf("find the SID of this user: %w", err)
+		return false, fmt.Errorf("could not find the Windows user ID (SID) of this user: %w", err)
 	}
 	on, err := os.ReadFile(filepath.Clean(p.taskXML))
 	if err != nil {

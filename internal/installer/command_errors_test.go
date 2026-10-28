@@ -77,11 +77,13 @@ func TestMainExitCodes(t *testing.T) {
 		{"an unknown command", []string{"frobnicate"}, 2, `unknown command "frobnicate"`, ""},
 		{"install --help", []string{"install", "--help"}, 0, "", "-runtime"},
 		{"install host --help", []string{"install", "host", "--help"}, 0, "", "-metadata-rule"},
+		{"install host --help says the release's sums are required", []string{"install", "host", "--help"}, 0, "", "(required) the release's SHA256SUMS file"},
 		{"doctor --help", []string{"doctor", "--help"}, 0, "", "-settings"},
+		{"doctor --help says that another settings file needs the token file", []string{"doctor", "--help"}, 0, "", "for the default settings file only: another --settings file needs --token-file"},
 		{"a flag that does not exist", []string{"install", "--nope"}, 2, "flag provided but not defined", ""},
 		{"a doctor flag that does not exist", []string{"doctor", "--nope"}, 2, "flag provided but not defined", ""},
 		{"a stray argument", []string{"install", "now"}, 2, `unexpected argument "now"`, ""},
-		{"install host off Linux", []string{"install", "host"}, 1, "install host prepares an AlmaLinux host", ""},
+		{"install host off Linux", []string{"install", "host"}, 1, "install host prepares an AlmaLinux server", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -151,7 +153,7 @@ func TestInstallRefusesWhatItCannotReadBeforeChangingAnything(t *testing.T) {
 	t.Run("a tier that does not exist", func(t *testing.T) {
 		h := newHarness(t, "linux")
 		err := h.podman("--tier", "nonsense")
-		if err == nil || !strings.Contains(err.Error(), `tier "nonsense" is not`) {
+		if err == nil || !strings.Contains(err.Error(), `installation type "nonsense" is not`) {
 			t.Fatalf("install = %v", err)
 		}
 		h.mustNotMutate()
@@ -160,7 +162,7 @@ func TestInstallRefusesWhatItCannotReadBeforeChangingAnything(t *testing.T) {
 		useDefaultConfigDir(t)
 		h := newHarness(t, "linux")
 		err := h.installAt("--upgrade", "--yes")
-		if err == nil || !strings.Contains(err.Error(), "no settings file, so the tier cannot be told") {
+		if err == nil || !strings.Contains(err.Error(), "no SuiteWard settings file, so the installation type cannot be told") {
 			t.Fatalf("install = %v", err)
 		}
 		h.mustNotMutate()
@@ -205,11 +207,11 @@ func TestConfirmDockerNeedsAnExplicitYes(t *testing.T) {
 		tty   bool
 		want  string
 	}{
-		{"a no", map[string]string{"accept-docker": "no"}, "", false, "was not confirmed"},
-		{"an answer that is not yes or no", map[string]string{"accept-docker": "maybe"}, "", false, "was not confirmed"},
-		{"nothing given and nothing to ask", nil, "", false, "was not confirmed"},
+		{"a no", map[string]string{"accept-docker": "no"}, "", false, "did not confirm Docker"},
+		{"an answer that is not yes or no", map[string]string{"accept-docker": "maybe"}, "", false, "did not confirm Docker"},
+		{"nothing given and nothing to ask", nil, "", false, "did not confirm Docker"},
 		{"a terminal that is closed", nil, "", true, "read the answer for"},
-		{"a typed no", nil, "no\n", true, "was not confirmed"},
+		{"a typed no", nil, "no\n", true, "did not confirm Docker"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -219,7 +221,7 @@ func TestConfirmDockerNeedsAnExplicitYes(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("confirmDocker = %v, want an error containing %q", err, tc.want)
 			}
-			if !strings.Contains(out.String(), "Docker is allowed on this computer") {
+			if !strings.Contains(out.String(), "Docker works on this computer") {
 				t.Errorf("the warning was not printed:\n%s", out.String())
 			}
 		})

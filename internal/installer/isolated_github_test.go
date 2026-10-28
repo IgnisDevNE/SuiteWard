@@ -74,7 +74,7 @@ func (g *isoGitHub) run() error {
 	term.Out = &g.out
 	r := newTestResolver(g.t, nil, answers, term)
 	// What Install does: the saved settings of an earlier run, as the isolated tier.
-	s, _, err := loadSaved("suiteward", settingsFile(g.home), false)
+	s, _, err := loadSaved(Deps{}, settingsFile(g.home), false)
 	if err != nil {
 		g.t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestInstallIsolatedSkipsSetupWhenAnOwnerIsEnrolled(t *testing.T) {
 			t.Fatalf("setup ran although an owner is enrolled: %v", g.f.tty)
 		}
 		out := g.out.String()
-		for _, want := range []string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged", "To re-enroll", "suiteward enroll --tier isolated"} {
+		for _, want := range []string{"An owner (bob) is already enrolled", "owner setup was skipped", "authenticator secret (the TOTP secret) is unchanged", "To enroll again", "suiteward enroll --tier isolated"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("tty=%v: the output lacks %q:\n%s", tty, want, out)
 			}

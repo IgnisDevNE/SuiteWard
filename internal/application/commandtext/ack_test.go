@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // ValidateAck is the one place that knows which fields an acknowledgment may carry: Acknowledge panics when it refuses, and a
@@ -109,6 +110,11 @@ func TestValidateAckAcceptsEveryOutcomeThatAcknowledgeRenders(t *testing.T) {
 		commandtext.SkipRefused:            {Refusal: commandtext.Carrier, Source: source, Owner: owner},
 		commandtext.SuggestRefused:         {Refusal: commandtext.Fork, Source: source, Owner: owner},
 		commandtext.BootstrapPromoted:      {Version: 1, Proposal: 4, Revision: 2, Owner: owner},
+		commandtext.ReceiptRefused:         {Gate: execution.ReasonReceiptPending, Proposal: 4, Revision: 2, Source: source, Owner: owner},
+		commandtext.ModeSet:                {Mode: execution.ModeFix, Source: source, Owner: owner},
+		commandtext.ModeRefused:            {Refusal: commandtext.Fork, Source: source, Owner: owner},
+		commandtext.Unblocked:              {Plans: commandtext.Plans{Canonical: true}, Source: source, Owner: owner},
+		commandtext.UnblockRefused:         {Refusal: commandtext.NotUnavailable, Source: source, Owner: owner},
 	} {
 		ack.Outcome = outcome
 		if err := commandtext.ValidateAck(ack); err != nil {

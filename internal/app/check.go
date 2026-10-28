@@ -17,6 +17,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // The github_check publisher (docs/contracts/runtime.md, "Outbox kind github_check"). The check job decides the
@@ -49,6 +50,30 @@ type checkPayload struct {
 	// A runner-uncovered check lists its runner files: at most 20, each cut to maxSummaryText bytes, and how many there are. No other reason has them.
 	Paths      []string `json:"paths,omitempty"`
 	PathsTotal int      `json:"pathsTotal,omitempty"`
+	// Execution counts the tests of a complete canonical run under canonical: required, and no other check has it (docs/contracts/runtime.md, "The canonical gate").
+	Execution *checkExecution `json:"execution,omitempty"`
+	// Unblocked marks a check that the owner's unblock of an unavailable canonical run lifted.
+	Unblocked bool `json:"unblocked,omitempty"`
+	// ApproveMode marks an approval-missing check whose approve names a mode, which a required receipt needs (docs/contracts/runtime.md, "The canonical gate", "The approve command of an approval-missing check").
+	ApproveMode bool `json:"approveMode,omitempty"`
+}
+
+// checkExecution are the counts of a complete canonical run: the tests that ran (every declared test but the excluded ones) and how many of them passed, were
+// skipped, failed, were missing or flaky, and how many are excluded and were not run.
+type checkExecution struct {
+	Tests    int `json:"tests"`
+	Passed   int `json:"passed"`
+	Skipped  int `json:"skipped"`
+	Failed   int `json:"failed"`
+	Missing  int `json:"missing"`
+	Flaky    int `json:"flaky"`
+	Excluded int `json:"excluded"`
+}
+
+// checkCountsOf is the counts of a complete canonical run as a check states them: the tests that ran are every declared test but the excluded ones. The receipt page states
+// the same counts, as the commandtext type of the same fields.
+func checkCountsOf(c domain.CanonicalCounts) *checkExecution {
+	return &checkExecution{Tests: c.Pass + c.Fail + c.Skipped + c.Missing + c.Flaky, Passed: c.Pass, Skipped: c.Skipped, Failed: c.Fail, Missing: c.Missing, Flaky: c.Flaky, Excluded: c.Excluded}
 }
 
 // output validates the payload and renders the title and the summary of its check run; key only names the
@@ -78,7 +103,11 @@ func (p checkPayload) check(key string) (commandtext.Check, error) {
 	case slices.ContainsFunc(p.Paths, func(path string) bool { return len(path) > maxSummaryText }):
 		return commandtext.Check{}, keyError(githubCheckKind, key, "a path is too long")
 	}
-	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal}
+	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal, Unblocked: p.Unblocked, ApproveMode: p.ApproveMode}
+	if p.Execution != nil {
+		counts := commandtext.CheckExecution(*p.Execution)
+		c.Execution = &counts
+	}
 	if p.Reference != "" {
 		var ok bool
 		if c.Proposal, c.Revision, ok = commandtext.ParseReference(p.Reference); !ok {
@@ -117,8 +146,14 @@ func newCheckMessage(repo string, r checks.Result, tier, version string, generat
 // newCheckMessageWithPaths is newCheckMessage for a runner-uncovered result: paths are its runner files and total how many there are. The
 // payload keeps at most 20, each cut to maxSummaryText bytes.
 func newCheckMessageWithPaths(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int) (governance.OutboxMessage, error) {
+	return newCheckMessageOf(repo, r, tier, version, generation, paths, total, nil, false)
+}
+
+// newCheckMessageOf is newCheckMessageWithPaths for a result that execution adds to: counts are those of a complete canonical run, nil for none, and approveMode says that the
+// approve of an approval that is missing names a mode.
+func newCheckMessageOf(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int, counts *checkExecution, approveMode bool) (governance.OutboxMessage, error) {
 	p := checkPayload{commentTarget: commentTarget{RepositoryID: r.RepositoryID, Repo: repo, Pull: r.PullNumber}, HeadSHA: r.HeadSHA, Generation: generation,
-		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version, PathsTotal: total}
+		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version, PathsTotal: total, Execution: counts, Unblocked: r.Unblocked, ApproveMode: approveMode}
 	if len(paths) > 0 {
 		p.Paths = boundedText(paths)
 	}
@@ -133,10 +168,15 @@ func newCheckMessageWithPaths(repo string, r checks.Result, tier, version string
 	return governance.OutboxMessage{Key: key, Kind: githubCheckKind, Payload: payload}, nil
 }
 
-// splitCheckKey parses check:<repository id>:<pull>:<generation>; the numbers are positive and canonical.
+// splitCheckKey parses check:<repository id>:<pull>:<generation>.
 func splitCheckKey(key string) (repositoryID int64, pull int, generation int64, ok bool) {
+	return splitGenerationKey(checkKey, key)
+}
+
+// splitGenerationKey parses <kind>:<repository id>:<pull>:<generation>, the key of a check message; the numbers are positive and canonical.
+func splitGenerationKey(kind, key string) (repositoryID int64, pull int, generation int64, ok bool) {
 	parts := strings.Split(key, ":")
-	if len(parts) != 4 || parts[0] != checkKey {
+	if len(parts) != 4 || parts[0] != kind {
 		return 0, 0, 0, false
 	}
 	var numbers [3]int64
@@ -216,46 +256,55 @@ func (p *checkPublisher) publish(ctx context.Context, key string, payload json.R
 	if err != nil {
 		return err
 	}
-	instance, err := p.instance.get(ctx)
-	if err != nil {
-		return fmt.Errorf("%s %s: read the instance id: %w", githubCheckKind, key, err)
-	}
-	externalID := "suiteward:" + instance + ":" + key
-	existing, err := p.runs.Runs(ctx, c.Repo, c.HeadSHA, checkName, p.appID)
-	gone := p.vanished(err, key, c)
-	switch {
-	case gone:
-		return nil
-	case err != nil:
-		return githubFailure(githubCheckKind, key, "list the check runs", err)
-	}
-	for _, run := range existing {
-		if run.ExternalID == externalID {
-			return nil
-		}
-	}
-	run := github.CheckRun{Name: checkName, HeadSHA: c.HeadSHA, Status: "completed", Conclusion: c.State, ExternalID: externalID, Title: title, Summary: summary}
+	run := github.CheckRun{Name: checkName, HeadSHA: c.HeadSHA, Status: "completed", Conclusion: c.State, Title: title, Summary: summary}
 	if c.State == string(checks.InProgress) {
 		run.Status, run.Conclusion = "in_progress", ""
 	}
-	_, err = p.runs.Post(ctx, c.Repo, run)
-	gone = p.vanished(err, key, c)
+	return postCheckRun(ctx, checkClient{runs: p.runs, instance: p.instance, appID: p.appID, logger: p.logger}, githubCheckKind, key, c.Repo, run)
+}
+
+// checkClient is what both check publishers post with: the check runs of GitHub, the instance id that makes an external id, the App that posts and a logger.
+type checkClient struct {
+	runs     checkRunner
+	instance *lazy[string]
+	appID    int64
+	logger   *slog.Logger
+}
+
+// postCheckRun posts run for the message key of kind unless the App already posted a run with its external id (suiteward:<instance id>:<key>) for the head: the external id
+// is the idempotency key, so at-least-once delivery posts once. A head that no longer exists on GitHub (a 422 to the readback or to the post, after a force-push) has
+// nothing to be posted for, so the message counts as delivered; it is logged by key and head, never with GitHub's text.
+func postCheckRun(ctx context.Context, c checkClient, kind, key, repo string, run github.CheckRun) error {
+	instance, err := c.instance.get(ctx)
+	if err != nil {
+		return fmt.Errorf("%s %s: read the instance id: %w", kind, key, err)
+	}
+	run.ExternalID = "suiteward:" + instance + ":" + key
+	existing, err := c.runs.Runs(ctx, repo, run.HeadSHA, run.Name, c.appID)
 	switch {
-	case gone:
+	case c.vanished(err, kind, key, repo, run.HeadSHA):
 		return nil
 	case err != nil:
-		return githubFailure(githubCheckKind, key, "post the check run", err)
+		return githubFailure(kind, key, "list the check runs", err)
+	}
+	if slices.ContainsFunc(existing, func(r github.CheckRunSummary) bool { return r.ExternalID == run.ExternalID }) {
+		return nil
+	}
+	_, err = c.runs.Post(ctx, repo, run)
+	switch {
+	case c.vanished(err, kind, key, repo, run.HeadSHA):
+		return nil
+	case err != nil:
+		return githubFailure(kind, key, "post the check run", err)
 	}
 	return nil
 }
 
-// vanished reports whether err says the head no longer exists on GitHub (a 422 to the readback or to the post,
-// after a force-push): nothing can be posted for it, so the message counts as delivered. It logs the key and the
-// head, never GitHub's text.
-func (p *checkPublisher) vanished(err error, key string, c checkPayload) bool {
+// vanished reports whether err says the head no longer exists on GitHub (a 422). It logs the key and the head, never GitHub's text.
+func (c checkClient) vanished(err error, kind, key, repo, head string) bool {
 	if !errors.Is(err, rest.ErrUnprocessable) {
 		return false
 	}
-	p.logger.Warn("github_check: the head no longer exists on GitHub; the message counts as delivered", "key", key, "repo", c.Repo, "head", c.HeadSHA)
+	c.logger.Warn(kind+": the head no longer exists on GitHub; the message counts as delivered", "key", key, "repo", repo, "head", head)
 	return true
 }

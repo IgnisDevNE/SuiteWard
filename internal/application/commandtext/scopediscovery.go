@@ -136,7 +136,7 @@ func ScopeNoticeComment(n ScopeNotice) string {
 	parts = append(parts,
 		pasteStep(n.Repo, n.Branch, pasteAction(len(n.Declaration) > 0, len(n.Declaration) == 0)),
 		"Committing it creates a protected change, which the owner approves like any other change to the protected files. Nothing is protected until that change is approved and promoted.",
-		"This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.",
+		"This comment is a suggestion, not an approval. It does not change the check.",
 	)
 	return replyTo(paragraphs(parts...), n.Source)
 }
@@ -210,7 +210,7 @@ func scopeSuggestReply(n ScopeNotice) string {
 		parts = append(parts, "To change `.suiteward.yml` on the default branch, "+editorLinkText(n.Repo, n.DefaultBranch)+" and "+action+". "+
 			"GitHub offers a new branch and a pull request when the default branch is protected.")
 	}
-	parts = append(parts, "This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.")
+	parts = append(parts, "This comment is a suggestion, not an approval. It does not change the check.")
 	switch n.Base {
 	case BaseContract:
 		parts = append(parts, "Committing it creates a protected change: approve the new revision SuiteWard posts, like any other change to the protected files. Nothing is protected until that change is approved and promoted.")

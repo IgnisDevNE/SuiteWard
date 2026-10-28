@@ -58,7 +58,7 @@ func failingRun(h *harness) []string {
 }
 
 // the line that was always printed to stderr for it, and its error as the screen shows it
-var failingLine = "confirm the purge with --yes and --instance " + testInstance + ": nothing can ask you to type the instance id here, because the input is not a terminal"
+var failingLine = "to confirm the purge, give `--yes` and `--instance " + testInstance + "`: nothing can ask you to type the instance id here, because the input is not a terminal"
 
 func TestAFailedCommandOnAFullScreenShowsItsErrorAndWaitsForEnter(t *testing.T) {
 	h := purgeHarness(t)

@@ -22,7 +22,7 @@ func TestTheQuestionsThatDefaultToYesAreAChoiceOnAFullScreen(t *testing.T) {
 			t.Fatalf("got %v, want the refusal that names `suiteward backup init`", err)
 		}
 		v := run.question(t, 0)
-		mustSay(t, v, "No recovery key is set", "Make one now")
+		mustSay(t, v, "has no recovery key", "Make one now")
 		if !strings.Contains(v.row("1) Yes"), "(default)") || v.row("2) No") == "" || strings.Contains(v.text(), "[Y/n]") {
 			t.Errorf("the question is not a choice between Yes, the default, and No:\n%s", v.dump())
 		}
@@ -63,9 +63,9 @@ func TestTheQuestionsThatDefaultToYesAreAChoiceOnAFullScreen(t *testing.T) {
 // release: the instructions are those of docs/backup.md, as the closing line of the upgrade gives them.
 func TestAFailedMigrationOnTheIsolatedTierSaysToPutTheUnitsBack(t *testing.T) {
 	const path, units = "/b/suiteward-backup.tar.age", "/h/.config/containers/systemd"
-	err := withBackup("suiteward", migratingError{errors.New("migrate failed")}, path, units, " --tier isolated")
+	err := withBackup(Deps{}.onIsolated(), migratingError{errors.New("migrate failed")}, path, units)
 	text := err.Error()
-	if !strings.Contains(text, goBackIsolated("suiteward", path, units, " --tier isolated")) {
+	if !strings.Contains(text, goBackIsolated(Deps{}.onIsolated(), path, units)) {
 		t.Errorf("the message lacks the way back of the isolated tier:\n%s", text)
 	}
 	if strings.Contains(text, "install the previous release") {

@@ -72,7 +72,7 @@ func RunnerUncoveredComment(n RunnerUncovered) string {
 		pasteStep(n.Repo, n.Branch, pasteAction(len(n.Protect) > 0 || len(n.Ignore) > 0, len(n.Protect) == 0)),
 		"When this pull request's diff shows the lists of `.suiteward.yml`, SuiteWard also posts each choice as a review comment, and GitHub's **Commit suggestion** button applies it in one click.",
 		"Nothing is protected or ignored until the owner approves the new revision and it is promoted.",
-		"This comment is a suggestion, not an approval, and SuiteWard does not run tests.",
+		"This comment is a suggestion, not an approval.",
 	)
 	return paragraphs(parts...)
 }

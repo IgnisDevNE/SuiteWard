@@ -67,7 +67,7 @@ func TestCommandHistoryRejectsMutation(t *testing.T) {
 		{"ledger update", "UPDATE pr_commands SET disposition = 'processed'"},
 		{"ledger key update", "UPDATE pr_commands SET comment_id = comment_id + 1"},
 		{"ledger delete", "DELETE FROM pr_commands"},
-		{"ledger truncate", "TRUNCATE pr_commands"},
+		{"ledger truncate", "TRUNCATE pr_commands CASCADE"}, // the unblocks and approval receipts of M2.1 reference it
 		{"instance update", "UPDATE suiteward_instance SET instance_id = repeat('0', 32)"},
 		{"instance delete", "DELETE FROM suiteward_instance"},
 		{"instance truncate", "TRUNCATE suiteward_instance"},

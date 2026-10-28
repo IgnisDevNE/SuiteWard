@@ -15,14 +15,20 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // The user of a database URL, read without parsing the URL: a parse error would repeat the URL, password included.
 var urlUser = regexp.MustCompile(`^postgres://([^:/@]+):`)
 
-// ErrForeignContainer means a container of the stack's name exists that this installer did not make.
-var ErrForeignContainer = errors.New("a container of the stack's name exists that this installer did not make")
+// ErrForeignContainer means a container named like one of SuiteWard's exists that this installer did not make.
+var ErrForeignContainer = errors.New("a container named like one of SuiteWard's exists that this installer did not make")
+
+// reducedAssuranceNotice is what the co-located tier gives up against the isolated one. It is a security disclosure, and it is said here, once: on
+// the page that introduces the tier and in the summary of an install (a plain run prints it at the end), and nowhere else, so the doctor
+// rows of the test runner do not repeat it.
+const reducedAssuranceNotice = "On this computer the test runner (the executor) and SuiteWard run as your user, next to your coding agent, so SuiteWard's checks catch mistakes, not a determined agent."
 
 // installTarget is where the install keeps its settings and what is already there.
 type installTarget struct {
@@ -47,8 +53,8 @@ func guardDefaultSettings(t installTarget, runtimeName, connection string) error
 	default:
 		return nil
 	}
-	return fmt.Errorf("the default settings file %s belongs to %s of this computer, and this command would take it over: "+
-		"pass --settings and --token-file with files of their own for a second instance, or remove the other instance first",
+	return fmt.Errorf("the default settings file %s belongs to %s of this computer, and this command would take it over, so nothing was changed: "+
+		"for a second instance, pass --settings and --token-file with files of their own; or remove the other instance first",
 		t.settingsPath, other)
 }
 
@@ -63,6 +69,10 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err := guardDefaultSettings(t, rt.Name(), connection); err != nil {
 		return err
 	}
+	tokenFile, err := instanceTokenFile(r, env, t) // before any change: a second instance names its own
+	if err != nil {
+		return err
+	}
 	base, previous, err := existingStack(ctx, rt, t.saved, t.haveSaved)
 	if err != nil {
 		return err
@@ -74,7 +84,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 			return err
 		}
 		if !sameImage(want, previous.Image) {
-			return fmt.Errorf("--image names %s but %s is installed: changing the release is an upgrade, which backs up first; use `%s install --upgrade`", want, previous.Image, env.Deps.command())
+			return fmt.Errorf("--image names %s, but %s is installed. Changing the release is an upgrade, which makes a backup first, so nothing was changed; run `%s`", want, previous.Image, env.Deps.suggest("install", "--upgrade"))
 		}
 	}
 	s, err := chooseSettings(r, base, rt.Name(), connection)
@@ -86,12 +96,11 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return err
 	}
 	s.Image = image
-	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: enrollCommand(env.Deps.command(), r, false)}, image: image, tokenFile: r.preset("token-file", ""), previous: previous}
-	if c.tokenFile == "" {
-		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
-			return err
-		}
+	pin, err := releasePin(r, env.Deps) // before anything is changed
+	if err != nil {
+		return err
 	}
+	c := colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s, pendingPath: pendingAppPath(t.settingsPath), enrollHint: env.Deps.suggest("enroll")}, image: image, tokenFile: tokenFile, previous: previous, executorPin: pin}
 	scr.Step(2)
 	if err := c.preflight(ctx); err != nil {
 		return err
@@ -117,6 +126,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err := c.bringUp(ctx, save); err != nil {
 		return err
 	}
+	c.setUpExecutor(ctx)
 	c.restartAfterReboot(ctx)
 	scr.Step(5)
 	return c.finish(ctx, scr, t)
@@ -133,7 +143,7 @@ func openRuntime(ctx context.Context, r *Resolver, env Env, saved Settings, conf
 		}
 	}
 	if name != RuntimePodman && name != RuntimeDocker {
-		return nil, "", fmt.Errorf("runtime %q is not %s or %s", name, RuntimePodman, RuntimeDocker)
+		return nil, "", fmt.Errorf("the container program (--runtime) %q is not %s or %s", name, RuntimePodman, RuntimeDocker)
 	}
 	savedConnection := ""
 	if saved.Runtime == name {
@@ -163,23 +173,23 @@ func openRuntime(ctx context.Context, r *Resolver, env Env, saved Settings, conf
 
 // runtimeChoices are the answers of the runtime question.
 var runtimeChoices = []ui.Choice{
-	{Name: RuntimePodman, Desc: "recommended: rootless"},
-	{Name: RuntimeDocker, Desc: "discouraged: root daemon, secrets in volumes"},
+	{Name: RuntimePodman, Desc: "recommended: runs without administrator rights"},
+	{Name: RuntimeDocker, Desc: "not recommended: runs as root, keeps secrets in volumes"},
 }
 
 // chooseRuntime asks which runtime to use: a page and a choice on a full screen, the typed question it always was on a plain one.
 func chooseRuntime(r *Resolver, def string) (string, error) {
-	r.explain([]string{"runtime"}, "Container runtime",
-		ui.Para("SuiteWard runs its database and its service in containers. Podman is recommended: it runs them rootless, with the secrets in its own store. "+
-			"Docker works too, but its daemon runs as root and keeps the secrets in volumes that anyone who controls the daemon can read, so choosing it asks for a typed yes."))
-	return r.selectAs("runtime", "Container runtime", "Container runtime (podman recommended, docker discouraged)", runtimeChoices, def)
+	r.explain([]string{"runtime"}, "Container program",
+		ui.Para("SuiteWard runs its database and its service in containers, with a container program. Podman is recommended: it runs without administrator rights and keeps the secrets in its own store. "+
+			"Docker also works, but it runs as root and keeps the secrets where anyone who controls it can read them, so choosing it asks you to type yes."))
+	return r.selectAs("runtime", "Container program", "Container program (podman recommended, docker not recommended)", runtimeChoices, def)
 }
 
-// engineLine describes the engine a command works with: "Podman 5.8.2 (rootless)".
+// engineLine describes the engine a command works with: "Podman 5.8.2 (runs without administrator rights)".
 func engineLine(e Engine) string {
-	daemon := "a rootful daemon"
+	daemon := "runs as root"
 	if e.Rootless {
-		daemon = "rootless"
+		daemon = "runs without administrator rights"
 	}
 	return fmt.Sprintf("%s (%s)", strings.TrimSpace(e.Name+" "+e.Version), daemon)
 }
@@ -190,11 +200,11 @@ func chooseSettings(r *Resolver, base Settings, runtimeName, connection string) 
 	s := base
 	s.Tier, s.Runtime, s.Connection = config.TierCoLocated, runtimeName, connection
 	r.explain([]string{"http-port", "mcp-port"}, "Ports",
-		ui.Para("SuiteWard listens on two ports, both only on 127.0.0.1: nothing outside this computer can reach them."),
+		ui.Para("SuiteWard listens on two ports, only on this computer (127.0.0.1): nothing outside it can reach them."),
 		ui.Fields(
-			ui.KV{Key: "HTTP", Value: fmt.Sprintf("Offered: %d. Serves /status and the local change report page.", base.HTTPPort)},
-			ui.KV{Key: "MCP", Value: fmt.Sprintf("Offered: %d. Your coding agent's client connects to it with the token.", base.MCPPort)}),
-		ui.Para("Change a port only if something else on this computer uses it: the installer refuses a port that is busy."))
+			ui.KV{Key: "HTTP", Value: fmt.Sprintf("Offered: %d. Shows SuiteWard's status and the local change report page.", base.HTTPPort)},
+			ui.KV{Key: "MCP", Value: fmt.Sprintf("Offered: %d. Your coding agent connects here, with the access token.", base.MCPPort)}),
+		ui.Para("Change a port only if another program on this computer uses it. The installer refuses a port that is busy."))
 	var err error
 	if s.HTTPPort, err = r.Int("http-port", "HTTP port on 127.0.0.1", base.HTTPPort); err != nil {
 		return Settings{}, err
@@ -212,15 +222,15 @@ func askImage(r *Resolver, previous stackInstalled) (string, error) {
 	defaultImage, keep := previous.Image, "Enter keeps the image that is installed."
 	if defaultImage == "" {
 		if embedded, ok := ReleaseImage(); ok {
-			defaultImage, keep = embedded, "Enter keeps the release this binary carries."
+			defaultImage, keep = embedded, "Enter keeps the release this program carries."
 		} else {
-			keep = "This build carries no release image, so give one: " + releaseImageRepo + "@sha256:<64 hex>."
+			keep = "This development build carries no release image, so give one: " + releaseImageRepo + "@sha256:<64 hex>."
 		}
 	}
 	// A full screen that asks gives the default, a long reference, in a row of the page and asks short: in the prompt it wrapped until the
 	// cursor stood alone on a row.
 	shown := defaultImage != "" && r.screen.FullScreen() && r.asks("image")
-	blocks := []ui.Block{ui.Para("SuiteWard runs from one container image, pinned by its digest so that exactly the release you chose runs. " + keep)}
+	blocks := []ui.Block{ui.Para("SuiteWard runs from one container image (a packaged release), named by its fingerprint (digest) so that exactly the release you chose runs. " + keep)}
 	if shown {
 		blocks = append(blocks, ui.Fields(ui.KV{Key: "Default", Value: defaultImage}))
 	}
@@ -230,7 +240,7 @@ func askImage(r *Resolver, previous stackInstalled) (string, error) {
 	if shown {
 		asked, err = r.screen.AskDefault("Release image", defaultImage) // the Default row and the hint line say what Enter does
 	} else {
-		asked, err = r.Value("image", "Release image (pinned by digest)", defaultImage)
+		asked, err = r.Value("image", "Release image (with its digest)", defaultImage)
 	}
 	if err != nil {
 		return "", err
@@ -261,7 +271,7 @@ func (c *colocatedInstall) pullImages(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return pullMissing(ctx, screenOn(c.out), c.rt, c.image, postgres)
+	return pullMissing(ctx, screenOn(c.out), c.rt, c.image, postgres, goprofile.Image) // the sandboxes of the executor run from the last
 }
 
 // pullMissing pulls the images the engine does not have yet, each under a spinner on a full screen.
@@ -362,7 +372,7 @@ func defaultTokenFile(d Deps) (string, error) {
 	if d.GOOS == "windows" {
 		local := d.Getenv("LOCALAPPDATA")
 		if local == "" {
-			return "", errors.New("LOCALAPPDATA is not set: the MCP token copy for a client lives there")
+			return "", errors.New("LOCALAPPDATA is not set: the access token copy for your coding agent's client lives there")
 		}
 		return filepath.Join(local, "SuiteWard", "mcp-token"), nil
 	}
@@ -388,12 +398,15 @@ type colocatedInstall struct {
 	machineUser string // the rootless user of the Podman machine, once it has been looked up
 
 	copyRows summaryRows // what the offer of the copy of the program says in the summary (installSelf)
+
+	executorRow string // what the summary says of the executor: how it is kept running, or why it is not
+	executorPin string // the release's line of --sha256sums that lists this program, which is the executor's pin; empty without the flag
 }
 
 // secretState is what the stack already has of its database secrets, read before anything is changed.
 type secretState struct {
-	haveDB, haveOwner, haveToken bool
-	needAppURL                   bool // the application URL secret is missing, still the owner URL of a v0.1.x stack, or differs between volumes
+	haveDB, haveOwner, haveToken, haveExecutor bool
+	needAppURL                                 bool // the application URL secret is missing, still the owner URL of a v0.1.x stack, or differs between volumes
 }
 
 // inMachine says whether the stack runs in a Podman machine (Windows, macOS): its ports are published there, not on this
@@ -418,11 +431,11 @@ func (c *colocatedInstall) lookUpMachineUser(ctx context.Context) (string, error
 // publishes is not a conflict.
 func (c *colocatedInstall) checkPorts(ctx context.Context) error {
 	free := c.env.PortFree
-	where := "on 127.0.0.1"
+	where := "on this computer"
 	if c.inMachine() {
 		listening, err := c.machineListening(ctx)
 		if err != nil {
-			screenOn(c.out).Warn("Note: the ports could not be checked inside the Podman machine (%v); a port that is in use shows up when the service starts.\n", err)
+			screenOn(c.out).Warn("Could not check the ports inside the Podman machine (%v). If a port is busy, the service will not start and the install will say so.\n", err)
 			return nil
 		}
 		free = func(port int) error {
@@ -441,7 +454,7 @@ func (c *colocatedInstall) checkPorts(ctx context.Context) error {
 			continue
 		}
 		if err := free(p.port); err != nil {
-			return fmt.Errorf("port %d %s is in use (%v): choose another with %s", p.port, where, err, p.flag)
+			return fmt.Errorf("port %d %s is already in use (%v), so nothing was changed: choose another port with %s", p.port, where, err, p.flag)
 		}
 	}
 	return nil
@@ -476,13 +489,20 @@ func (c colocatedInstall) readSecretState(ctx context.Context) (secretState, err
 		return secretState{}, err
 	}
 	if !haveDB && (haveOwner || haveURL) {
-		return secretState{}, fmt.Errorf("database secrets exist without %s; remove the stack and its secrets to start over", SecretDBAuth)
+		return secretState{}, fmt.Errorf("the install cannot repair the database secrets: %s is missing while the others exist, so nothing was changed. Remove the installation and its secrets to start over", SecretDBAuth)
 	}
 	haveToken, err := secrets.Exists(ctx, SecretMCPAuth)
 	if err != nil {
 		return secretState{}, err
 	}
-	state := secretState{haveDB: haveDB, haveOwner: haveOwner, haveToken: haveToken, needAppURL: !haveURL}
+	haveExecutor, err := secrets.Exists(ctx, SecretExecutorAuth)
+	if err != nil {
+		return secretState{}, err
+	}
+	state := secretState{haveDB: haveDB, haveOwner: haveOwner, haveToken: haveToken, haveExecutor: haveExecutor, needAppURL: !haveURL}
+	if err := c.checkExecutorTokenFile(haveExecutor); err != nil { // before anything is changed, by an install and an upgrade alike
+		return secretState{}, err
+	}
 	if !haveURL {
 		return state, nil
 	}
@@ -492,11 +512,11 @@ func (c colocatedInstall) readSecretState(ctx context.Context) (secretState, err
 	}
 	m := urlUser.FindSubmatch(current)
 	if m == nil {
-		return secretState{}, fmt.Errorf("%s is not a PostgreSQL URL; remove the stack and its secrets to start over", SecretDatabaseURL)
+		return secretState{}, fmt.Errorf("the secret %s does not hold a PostgreSQL database address, so nothing was changed. Remove the installation and its secrets to start over", SecretDatabaseURL)
 	}
 	// A v0.1.x stack has the owner URL where the application URL is now: its user is the owner.
 	if string(m[1]) == ownerRole {
-		screenOn(c.out).Warn("Upgrading an existing stack: %s held the owner URL. Creating the role %s and replacing the secret with its URL; the owner URL is now in %s and only the migrate container gets it.\n",
+		screenOn(c.out).Warn("This installation comes from an older release: the secret %s holds the database owner's address. The install creates the limited role %s and puts its address there. The owner's address moves to %s, which only the migration step reads. This is expected; nothing to do.\n",
 			SecretDatabaseURL, appRole, SecretDatabaseOwnerURL)
 		state.needAppURL = true
 	}
@@ -509,7 +529,7 @@ func (c colocatedInstall) readSecretState(ctx context.Context) (secretState, err
 			return secretState{}, err
 		}
 		if !same {
-			screenOn(c.out).Warn("The copies of %s differ (an earlier install was interrupted): the role gets a new password and every copy is rewritten.\n", SecretDatabaseURL)
+			screenOn(c.out).Warn("The copies of the secret %s differ, because an earlier install was interrupted. The install repairs this: the role gets a new password and every copy is rewritten. Nothing to do.\n", SecretDatabaseURL)
 			state.needAppURL = true
 		}
 	}
@@ -541,21 +561,21 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 			return err
 		}
 	}
-	c.say("Waiting for %s to become healthy (up to 90 s)...\n", ContainerDB)
+	c.say("Waiting for the database (%s) to be ready, up to 90 s...\n", ContainerDB)
 	if err := c.waitHealthy(ctx); err != nil {
 		return err
 	}
 	if err := c.ensureRole(ctx, c.secrets.needAppURL); err != nil {
 		return err
 	}
-	if err := working(scr, "Running the migration", func() error { return c.rt.Run(ctx, c.stack.Migrate) }); err != nil {
+	if err := working(scr, "Updating the database (migration)", func() error { return c.rt.Run(ctx, c.stack.Migrate) }); err != nil {
 		service := "so the service was not started"
 		if c.keepServe {
 			service = "the running service was left as it was"
 		}
-		return migratingError{fmt.Errorf("suiteward migrate failed, %s: %w", service, err)}
+		return migratingError{fmt.Errorf("the database update (migration, suiteward migrate) failed, %s: %w", service, err)}
 	}
-	scr.Check("suiteward migrate finished: the schema is up to date.\n")
+	scr.Check("The database update (migration) finished: the database is at the version this release needs.\n")
 	if err := save(); err != nil {
 		return migratingError{err}
 	}
@@ -584,6 +604,9 @@ func (c colocatedInstall) ensureObjects(ctx context.Context) error {
 	if err := c.ensureMCPToken(ctx); err != nil {
 		return err
 	}
+	if err := c.ensureExecutorToken(ctx); err != nil {
+		return err
+	}
 	if c.githubKey == nil {
 		return nil
 	}
@@ -599,7 +622,7 @@ func (c colocatedInstall) reportStarted() {
 		kept bool
 	}{{ContainerDB, c.keepDB}, {ContainerServe, c.keepServe}} {
 		if part.kept {
-			scr.Check("%s already runs as installed: it was not recreated.\n", part.name)
+			scr.Check("%s already runs as installed, so it was left alone.\n", part.name)
 		} else {
 			started = append(started, part.name)
 		}
@@ -607,11 +630,11 @@ func (c colocatedInstall) reportStarted() {
 	if len(started) == 0 {
 		return
 	}
-	github := "not configured"
+	github := "not set up"
 	if c.s.GitHub.AppID != 0 {
-		github = "configured"
+		github = "set up"
 	}
-	scr.Check("Started %s (%s), GitHub %s.\n", strings.Join(started, " and "), c.image, github)
+	scr.Check("Started %s (%s). GitHub is %s.\n", strings.Join(started, " and "), c.image, github)
 }
 
 // planKeep decides which containers a re-run leaves alone: the ones that run as the install that made them defined them.
@@ -642,7 +665,7 @@ func (c *colocatedInstall) planKeep(ctx context.Context) error {
 		return err
 	}
 	// The service reads its secrets when it starts, so one that this run makes or rewrites needs a new service.
-	if !reflect.DeepEqual(was.Serve, c.stack.Serve) || !s.haveToken || s.needAppURL || c.githubKey != nil {
+	if !reflect.DeepEqual(was.Serve, c.stack.Serve) || !s.haveToken || !s.haveExecutor || s.needAppURL || c.githubKey != nil {
 		return nil
 	}
 	// ensureRole rewrites the application URL when the role is missing.
@@ -698,9 +721,9 @@ func (c colocatedInstall) checkTokenFile() error {
 		return nil
 	}
 	if _, err := os.Stat(c.tokenFile); err == nil {
-		return fmt.Errorf("%s exists, but this instance has no %s secret, so the file belongs to another instance: "+
-			"pass --token-file and --settings with files of their own for a second instance, remove the other instance first, "+
-			"or delete the file if an interrupted install left it", c.tokenFile, SecretMCPAuth)
+		return fmt.Errorf("%s exists, but this instance has no %s secret, so the file belongs to another instance, and nothing was changed: "+
+			"for a second instance, pass --token-file and --settings with files of their own; "+
+			"otherwise remove the other instance first, or delete the file if an interrupted install left it", c.tokenFile, SecretMCPAuth)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("look for %s: %w", c.tokenFile, err)
 	}
@@ -712,7 +735,7 @@ func (c colocatedInstall) checkTokenFile() error {
 func (c colocatedInstall) ensureMCPToken(ctx context.Context) error {
 	if c.secrets.haveToken {
 		if _, err := os.Stat(c.tokenFile); err != nil {
-			screenOn(c.out).Warn("Warning: the secret %s exists but %s does not. Remove the stack and its secrets to generate a new token.\n", SecretMCPAuth, c.tokenFile)
+			screenOn(c.out).Warn("The secret %s exists, but the token file %s does not, so your coding agent's client has no token. To get a new one, remove the installation and its secrets, then install again.\n", SecretMCPAuth, c.tokenFile)
 		}
 		return nil
 	}
@@ -762,15 +785,15 @@ func (c colocatedInstall) waitHealthy(ctx context.Context) error {
 		}
 		switch {
 		case state.Status == "running" && state.Health == "healthy":
-			bar.set(1, "healthy")
+			bar.set(1, "ready")
 			return nil
 		case slices.Contains([]string{"exited", "stopped", "dead"}, state.Status):
-			return fmt.Errorf("%s exited before it became healthy (%s)", ContainerDB, logs)
+			return fmt.Errorf("the database %s stopped before it was ready: to see why, run `%s`", ContainerDB, logs)
 		}
 		bar.set(float64(i)/90, fmt.Sprintf("starting, %d s", i))
 		c.env.Sleep(time.Second)
 	}
-	return fmt.Errorf("%s did not become healthy within 90 s (%s)", ContainerDB, logs)
+	return fmt.Errorf("the database %s was not ready after 90 s: to see why, run `%s`", ContainerDB, logs)
 }
 
 // ensureRole creates the application role, or gives it a new password when its secret is missing, still the owner's or
@@ -792,7 +815,7 @@ func (c colocatedInstall) ensureRole(ctx context.Context, needAppURL bool) error
 
 const (
 	restartUnit      = "podman-restart.service"
-	restartEnableFix = "enable " + restartUnit + " as the rootless user: systemctl --user enable " + restartUnit
+	restartEnableFix = "turn on " + restartUnit + " as the user that runs Podman: `systemctl --user enable " + restartUnit + "`"
 	// restartReloadCommand makes the user's systemd see the link, then prints whether the unit is enabled.
 	restartReloadCommand = "systemctl --user daemon-reload && systemctl --user is-enabled " + restartUnit
 )
@@ -814,7 +837,7 @@ func restartFix(machine, user string) string {
 	if !plainUser.MatchString(user) {
 		return restartEnableFix
 	}
-	return fmt.Sprintf("in the machine, link %s as the machine's default ssh user (root on a Windows WSL machine): podman machine ssh %s %s; then reload and check as the user (it prints enabled): podman machine ssh --username %s %s %s",
+	return fmt.Sprintf("inside the Podman machine, link %s as the machine's default ssh user (root on a Windows WSL machine) with `podman machine ssh %s %s`; then reload and check as the user with `podman machine ssh --username %s %s %s` (it prints enabled)",
 		restartUnit, machine, quoteArg(restartLinkCommand(user)), user, machine, quoteArg(restartReloadCommand))
 }
 
@@ -837,10 +860,10 @@ func (c *colocatedInstall) restartAfterReboot(ctx context.Context) {
 		}
 	}
 	if err != nil {
-		screenOn(c.out).Warn("Note: %s could not be enabled (%v). Without it, containers do not restart after the machine restarts: %s.\n", restartUnit, err, fix)
+		screenOn(c.out).Warn("Could not turn on %s (%v). Without it, SuiteWard does not start again by itself after the machine restarts. This does not stop the install; to fix it, %s.\n", restartUnit, err, fix)
 	}
 	if d.GOOS != "linux" {
-		screenOn(c.out).Warn("Note: the Podman machine is not started at logon. After this computer restarts, run `podman machine start`; the stack comes back with it.\n")
+		screenOn(c.out).Warn("The Podman machine does not start by itself when you log in. After this computer restarts, run `podman machine start`: SuiteWard comes back with it.\n")
 	}
 }
 
@@ -896,16 +919,19 @@ func connectionUser(ctx context.Context, p *Podman, connection string) (string, 
 
 // finish runs setup, or says how, prints the next steps and, on a full screen, ends with the summary.
 func (c *colocatedInstall) finish(ctx context.Context, scr *ui.Screen, t installTarget) error {
-	c.say("The MCP token for a client is in %s (it is not printed).\n", c.tokenFile)
+	c.say("The access token for your coding agent's client is in %s. It is not shown here.\n", c.tokenFile)
 	if c.s.GitHub.AppID == 0 {
-		c.say("Read the status of the service: %s\n", c.statusHint(ctx)) // nothing has waited for the service: it may not answer from this PC yet
-		c.say("GitHub is not configured. Run the install again with --github yes (or the GitHub values) to set it up, then enroll the owner.\n")
+		c.say("Service status: %s\n", c.statusHint(ctx)) // nothing has waited for the service: it may not answer from this PC yet
+		c.say("GitHub is not set up yet, so nothing is protected. To set it up, run the install again with --github yes (or the GitHub values), then enroll the owner.\n")
 	} else {
 		if err := c.enroll(ctx, c.readStatus); err != nil {
 			return err
 		}
-		c.say("Read the status of the service: %s\n", c.statusHint(ctx)) // after the enrollment, which waited for the service to answer
-		c.say("Then check the instance with `%s`.\n", doctorHint(c.env.Deps.command(), t.settingsPath, t.defaultPath))
+		c.say("Service status: %s\n", c.statusHint(ctx)) // after the enrollment, which waited for the service to answer
+		c.say("Then check that everything works with `%s`.\n", c.env.Deps.suggest("doctor"))
+	}
+	if !scr.FullScreen() { // a full screen says it in the summary: a plain run has none
+		c.say("%s\n", reducedAssuranceNotice)
 	}
 	scr.Step(6)
 	c.installSelf(ctx)
@@ -938,7 +964,7 @@ func engineCommand(rt Runtime, goos string) (string, error) {
 	case *Docker:
 		c = r.cli
 	default:
-		return "", fmt.Errorf("%T is not a container engine this installer drives", rt)
+		return "", fmt.Errorf("%T is not a container program this installer drives", rt)
 	}
 	bin := c.bin
 	if strings.Contains(bin, " ") {
@@ -948,4 +974,49 @@ func engineCommand(rt Runtime, goos string) (string, error) {
 		}
 	}
 	return strings.Join(append([]string{bin}, c.base...), " "), nil
+}
+
+// checkExecutorTokenFile refuses to overwrite an executor token copy that this instance did not make, as checkTokenFile does for the MCP token:
+// the file exists, but this instance has no executor token secret.
+func (c colocatedInstall) checkExecutorTokenFile(haveSecret bool) error {
+	if haveSecret {
+		return nil
+	}
+	path := executorTokenFile(c.tokenFile)
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("%s exists, but this instance has no %s secret, so the file belongs to another instance, and nothing was changed: "+
+			"for a second instance, pass --token-file and --settings with files of their own; "+
+			"otherwise remove the other instance first, or delete the file if an interrupted install left it", path, SecretExecutorAuth)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("look for %s: %w", path, err)
+	}
+	return nil
+}
+
+// ensureExecutorToken makes the executor token once, like the MCP token: the copy for the executor is written first and restricted to this
+// user, then the secret is made, so a failure in between leaves a file that the next run refuses to overwrite (checkExecutorTokenFile says what
+// to do). When the secret is there and the copy is gone, the secret is the token and the copy is written from it.
+func (c colocatedInstall) ensureExecutorToken(ctx context.Context) error {
+	path := executorTokenFile(c.tokenFile)
+	secrets := c.rt.Secrets()
+	if c.secrets.haveExecutor {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("look for %s: %w", path, err)
+		}
+		token, err := secrets.Read(ctx, SecretExecutorAuth)
+		if err != nil {
+			return err
+		}
+		return writeTokenFile(ctx, c.env.Deps, path, string(token))
+	}
+	token, err := NewExecutorToken()
+	if err != nil {
+		return err
+	}
+	if err := writeTokenFile(ctx, c.env.Deps, path, token); err != nil {
+		return err
+	}
+	return secrets.Write(ctx, SecretExecutorAuth, []byte(token), false)
 }

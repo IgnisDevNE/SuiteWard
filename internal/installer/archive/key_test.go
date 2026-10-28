@@ -51,7 +51,7 @@ func TestRecoveryKitParsesBackToTheIdentityAndExplainsItself(t *testing.T) {
 	if id.String() != identity {
 		t.Error("the kit parses to another identity")
 	}
-	for _, want := range []string{recipient, Fingerprint(recipient), `"acme\nAGE-SECRET-KEY-PQ-1INJECTED"`, "off this machine", "no backup can be restored"} {
+	for _, want := range []string{recipient, Fingerprint(recipient), `"acme\nAGE-SECRET-KEY-PQ-1INJECTED"`, "off the computer", "no backup can be restored"} {
 		if !strings.Contains(kit, want) {
 			t.Errorf("the kit does not say %q:\n%s", want, kit)
 		}

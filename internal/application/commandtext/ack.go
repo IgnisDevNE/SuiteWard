@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // The shape of an acknowledgment lives here: which fields each outcome may carry, the grammar of a reference and of a login. A
@@ -85,7 +87,7 @@ func must(err error) {
 // the outcome (see Ack), a login that is not a GitHub login, a reference or a version outside 1..999999999 and an editor link that
 // does not fit. A caller that stores the acknowledgment says only that it does not fit.
 func ValidateAck(a Ack) error {
-	for _, check := range []func(Ack) error{checkKnown, checkOwnerAndSource, checkReference, checkConsent, checkBase, checkRefusalAndEditor} {
+	for _, check := range []func(Ack) error{checkKnown, checkOwnerAndSource, checkReference, checkConsent, checkExecution, checkBase, checkRefusalAndEditor} {
 		if err := check(a); err != nil {
 			return err
 		}
@@ -124,7 +126,7 @@ func checkReference(a Ack) error {
 // not fit: a skip has none, so only the code outcomes and NoSuite may come without one.
 func referenceOf(a Ack) (string, error) {
 	switch a.Outcome {
-	case MalformedCommand, EditedFirst, ProposeRefused, ProposeFailed, Skipped, SkipRefused, SuggestRefused, NothingUncovered:
+	case MalformedCommand, EditedFirst, ProposeRefused, ProposeFailed, Skipped, SkipRefused, SuggestRefused, NothingUncovered, ModeSet, ModeRefused, Unblocked, UnblockRefused:
 		if a.Proposal != 0 || a.Revision != 0 {
 			return "", fmt.Errorf("commandtext: outcome %d carries a reference", a.Outcome)
 		}
@@ -151,6 +153,50 @@ func checkConsent(a Ack) error {
 		return fmt.Errorf("commandtext: version %d does not fit outcome %d", a.Version, a.Outcome)
 	case a.Outcome == BootstrapPromoted:
 		return checkID("version", a.Version)
+	}
+	return nil
+}
+
+// checkExecution checks the fields that only the outcomes of the execution commands carry: Mode, Plans, and the Gate, Counts and Markers
+// of a receipt refusal.
+func checkExecution(a Ack) error {
+	switch {
+	case a.Mode != execution.ModeNone && a.Mode.String() == "":
+		return fmt.Errorf("commandtext: unknown mode %d", a.Mode)
+	case a.Mode != execution.ModeNone && a.Outcome != ReceiptRefused && a.Outcome != ModeSet, a.Mode == execution.ModeNone && a.Outcome == ModeSet:
+		return fmt.Errorf("commandtext: mode %d does not fit outcome %d", a.Mode, a.Outcome)
+	case (a.Plans != Plans{}) != (a.Outcome == Unblocked):
+		return fmt.Errorf("commandtext: plans %+v do not fit outcome %d", a.Plans, a.Outcome)
+	}
+	return checkGate(a)
+}
+
+// checkGate checks the reason a receipt refusal gives, and the mode and the counts that go with it. Only an unmet mode has counts and
+// states the mode, a required mode has none, and the other reasons do not depend on one.
+func checkGate(a Ack) error {
+	counts := a.Counts != execution.ReceiptCounts{} || a.Markers != 0
+	if a.Outcome != ReceiptRefused {
+		if a.Gate != execution.ReasonNone || counts {
+			return fmt.Errorf("commandtext: a gate reason or counts do not fit outcome %d", a.Outcome)
+		}
+		return nil
+	}
+	switch a.Gate {
+	case execution.ReasonReceiptPending, execution.ReasonReceiptUnavailable:
+		if counts {
+			return fmt.Errorf("commandtext: counts do not fit the gate reason %q", a.Gate)
+		}
+	case execution.ReasonModeRequired:
+		if counts || a.Mode != execution.ModeNone {
+			return fmt.Errorf("commandtext: a mode or counts do not fit the gate reason %q", a.Gate)
+		}
+	case execution.ReasonModeNotMet:
+		c := a.Counts
+		if a.Mode == execution.ModeNone || min(c.Detects, c.Inert, c.NewAPI, c.Fails, c.Missing, c.Flaky, c.Skipped, c.Excluded, c.Unparsed, a.Markers) < 0 {
+			return fmt.Errorf("commandtext: the gate reason %q needs a mode and counts that are not negative", a.Gate)
+		}
+	default:
+		return fmt.Errorf("commandtext: gate reason %q is not one that refuses an approve", a.Gate)
 	}
 	return nil
 }

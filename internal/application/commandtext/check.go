@@ -3,16 +3,18 @@ package commandtext
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
-// CheckState is the conclusion of the SuiteWard / Contract check (D-CHECKS).
+// CheckState is the conclusion of the SuiteWard / Contract check (D-CHECKS) and of the SuiteWard / Receipt check.
 type CheckState uint8
 
 const (
 	CheckSuccess CheckState = iota + 1
 	CheckInProgress
 	CheckFailure
+	CheckNeutral // the Receipt check alone: a receipt that was not run, or that no longer applies
 )
 
 // Check is what the output of a check run states. Reason is the stable code the check job stored, and State must
@@ -29,6 +31,19 @@ type Check struct {
 	Paths      []string
 	PathsTotal int
 	Changes    *Changes
+	// Execution and Unblocked mark the summary of canonical: required (docs/contracts/runtime.md, "The canonical gate"): the counts of a complete canonical run, and the
+	// owner's unblock of an unavailable one. The reasons canonical-pending, canonical-unavailable and canonical-failing mark it too. An approval that is missing against a canonical states the counts too.
+	Execution *CheckExecution
+	Unblocked bool
+	// ApproveMode marks an approval-missing check whose approve names a mode: the repository requires a receipt (docs/contracts/runtime.md, "The revision comment"), as the
+	// comment of the revision shows. It is false for the first contract, which has no canonical and so no receipt policy.
+	ApproveMode bool
+}
+
+// CheckExecution are the counts of a complete canonical run: the tests that ran, how many passed, were skipped, failed, were missing or flaky, and how many are
+// excluded and were not run.
+type CheckExecution struct {
+	Tests, Passed, Skipped, Failed, Missing, Flaky, Excluded int
 }
 
 // checkReason is the output of one reason code: its state, a title, what happened and the next action. The text
@@ -91,12 +106,55 @@ var checkReasons = map[string]checkReason{
 	"owner-command-rejected": {CheckFailure, "Owner command rejected",
 		"The owner's latest command on this pull request was rejected; SuiteWard's reply to it says why.",
 		"Next: comment a corrected command with a new code, or push a new head."},
+	// The reasons of the canonical gate under canonical: required (docs/contracts/runtime.md, "The canonical gate"). Their summaries state counts and no repository text.
+	"canonical-pending": {CheckInProgress, "Canonical run pending",
+		"The run of the approved tests on this head has not finished: it is waiting for an executor, or it is running. The check does not pass until the run ends.",
+		"Next: nothing is required; this check changes when the run ends."},
+	"canonical-unavailable": {CheckInProgress, "Canonical run unavailable",
+		"SuiteWard could not run the approved tests on this head, so the run is unavailable and the check does not pass.",
+		"Next: push a new head to run the approved tests again. To let this head pass without that run, the owner comments:"},
+	"canonical-failing": {CheckFailure, "Canonical tests failing",
+		"At least one approved test fails, is missing or is flaky on this head.",
+		"Next: fix the code under test, or push a head on which the approved tests pass."},
+}
+
+// canonicalReasons are the reasons of the canonical gate. They, the counts of a run and the owner's unblock mark the summary of canonical: required.
+var canonicalReasons = []string{"canonical-pending", "canonical-unavailable", "canonical-failing"}
+
+// unblockedText is what the summary says of a head whose unavailable canonical run the owner unblocked.
+const unblockedText = "The owner unblocked this head: its canonical run was unavailable, so the approved tests did not run on it."
+
+// executionText states the counts of a complete canonical run, and only the counts: no test name, no path. A run with no declared test ran no test.
+func executionText(e CheckExecution) string {
+	ran := counted(e.Tests, "test ran", "tests ran")
+	line := "Canonical run on this head: " + ran + "."
+	if e.Tests > 0 {
+		line = fmt.Sprintf("Canonical run on this head: %s: %d passed, %d skipped, %d failed, %d missing, %d flaky.", ran, e.Passed, e.Skipped, e.Failed, e.Missing, e.Flaky)
+	}
+	line += fmt.Sprintf("\nExcluded tests (not run): %d.", e.Excluded)
+	if e.Excluded > 0 {
+		line += " Excluded tests are not covered."
+	}
+	return line
+}
+
+// blockingEditText is what an approval that is missing says of a test that fails, is missing or is flaky on the head: the canonical gate does not hold this check, but the owner
+// should read the change before approving, because a change that edits a test can make it pass by checking less.
+const blockingEditText = "At least one approved test fails, is missing or is flaky on this head. If this change edits that test, read the change before you approve: an edited test can pass by checking less."
+
+// closingText ends a summary: the usual one reports on the protected contract only, and the one of canonical: required reports on the run of the approved tests too.
+func closingText(c Check) string {
+	if c.Execution != nil || c.Unblocked || slices.Contains(canonicalReasons, c.Reason) {
+		return "This check reports on the protected contract and on the run of its approved tests."
+	}
+	return "This check reports on the protected contract only."
 }
 
 // CheckSummary renders the output title and summary of a check run: the state and what it means, the revision
 // and the canonical version when there are any, the installation tier and the next action. It never says that
-// tests ran. The reason, the state and the tier come from storage, so a value that does not fit is an impossible
-// state and panics.
+// tests ran, except for the summary of canonical: required, which a canonical-* reason, the counts of a run or the owner's unblock mark: it states the counts,
+// or that the owner unblocked the head and the approved tests did not run on it (docs/contracts/runtime.md, "What a text says about running tests"). The
+// reason, the state and the tier come from storage, so a value that does not fit is an impossible state and panics.
 func CheckSummary(c Check) (title, summary string) {
 	reason, err := validateCheck(c)
 	must(err)
@@ -125,15 +183,61 @@ func CheckSummary(c Check) (title, summary string) {
 	if c.Changes != nil {
 		parts = append(parts, "Marker lines are lines to look at, not a verdict.")
 	}
+	if c.Execution != nil {
+		parts = append(parts, executionText(*c.Execution))
+		if c.Reason == "approval-missing" && c.Execution.Failed+c.Execution.Missing+c.Execution.Flaky > 0 {
+			parts = append(parts, blockingEditText)
+		}
+	}
+	if c.Unblocked {
+		parts = append(parts, unblockedText)
+	}
 	if c.Tier == CoLocated {
-		parts = append(parts, coLocatedNotice)
+		parts = append(parts, CoLocatedNotice)
 	}
-	parts = append(parts, reason.next)
-	if c.Reason == "approval-missing" {
-		parts = append(parts, codeCommand("approve", ref))
+	next, command := reason.next, ""
+	switch {
+	case c.Reason == "approval-missing" && c.ApproveMode: // the receipt gate refuses an approve with no mode under a required receipt, and consumes its code
+		next, command = "To approve this exact revision, say what kind of change it is (its mode) and comment:", modeApproveCommand(ref)
+	case c.Reason == "approval-missing":
+		command = codeCommand("approve", ref)
+	case c.Reason == "canonical-unavailable":
+		command = copyable("/suiteward unblock <code>")
 	}
-	parts = append(parts, "This check reports on the protected contract only. It does not run tests.")
+	parts = append(parts, next)
+	if command != "" {
+		parts = append(parts, command)
+	}
+	parts = append(parts, closingText(c))
 	return reason.title, paragraphs(parts...)
+}
+
+// checkRequired reports why the counts, the unblock and the canonical reasons of c do not fit together: the counts of a complete run go with a success (which no
+// test blocks), with canonical-failing (which one does) or with an approval that is missing against a canonical (which a test may block: the approval is what is missing), the
+// unblock with a success and nothing else, and a pending or unavailable run has no counts.
+func checkRequired(c Check) error {
+	success := c.Reason == "ready" || c.Reason == "unchanged"
+	var blocking int
+	if c.Execution != nil {
+		e := *c.Execution
+		if min(e.Tests, e.Passed, e.Skipped, e.Failed, e.Missing, e.Flaky, e.Excluded) < 0 || e.Tests != e.Passed+e.Skipped+e.Failed+e.Missing+e.Flaky {
+			return errors.New("commandtext: the counts of a canonical run are negative or do not add up")
+		}
+		blocking = e.Failed + e.Missing + e.Flaky
+	}
+	switch {
+	case c.Execution != nil && !success && c.Reason != "canonical-failing" && c.Reason != "approval-missing":
+		return fmt.Errorf("commandtext: reason %q has no counts of a canonical run", c.Reason)
+	case c.Execution != nil && c.Reason == "approval-missing" && c.Version == 0:
+		return errors.New("commandtext: a head with no canonical version has no canonical run to count")
+	case c.Unblocked && (!success || c.Execution != nil):
+		return fmt.Errorf("commandtext: reason %q does not fit an unblocked run, which is lifted only to a success and has no counts", c.Reason)
+	case success && blocking > 0:
+		return errors.New("commandtext: a success with a failing, missing or flaky test")
+	case c.Reason == "canonical-failing" && blocking == 0:
+		return errors.New("commandtext: canonical-failing needs counts that show a failing, missing or flaky test")
+	}
+	return nil
 }
 
 // validateCheck reports why CheckSummary would panic on c, and returns the output of its reason.
@@ -142,7 +246,7 @@ func validateCheck(c Check) (checkReason, error) {
 	if !known || reason.state != c.State {
 		return reason, fmt.Errorf("commandtext: check reason %q does not fit state %d", c.Reason, c.State)
 	}
-	if err := checkCheckReference(c); err != nil {
+	if err := errors.Join(checkCheckReference(c), checkRequired(c)); err != nil {
 		return reason, err
 	}
 	switch {
@@ -170,6 +274,9 @@ func checkCheckReference(c Check) error {
 	if c.Reason == "approval-missing" && c.Proposal == 0 {
 		return errors.New("commandtext: approval is missing for no revision")
 	}
+	if c.ApproveMode && (c.Reason != "approval-missing" || c.Version == 0) {
+		return fmt.Errorf("commandtext: reason %q with version V%d has no approve with a mode: only an approval that is missing against a canonical has one", c.Reason, c.Version)
+	}
 	if c.Changes != nil {
 		if c.Proposal == 0 {
 			return errors.New("commandtext: the changes of no revision")
@@ -189,4 +296,7 @@ func checkCheckReference(c Check) error {
 	return nil
 }
 
-var checkStateName = map[CheckState]string{CheckSuccess: "success", CheckInProgress: "in_progress", CheckFailure: "failure"}
+var checkStateName = map[CheckState]string{CheckSuccess: "success", CheckInProgress: "in_progress", CheckFailure: "failure", CheckNeutral: "neutral"}
+
+// ExecutionText states the counts of a complete canonical run in the words of the Contract check summary, for the receipt page, which says the same.
+func ExecutionText(e CheckExecution) string { return executionText(e) }

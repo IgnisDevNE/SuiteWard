@@ -101,7 +101,7 @@ func (b backup) start(ctx context.Context) (*backupRun, error) {
 	}
 	spool, err := os.MkdirTemp(b.dir, ".suiteward-spool-")
 	if err != nil {
-		return nil, fmt.Errorf("create a private directory in %s: %w", b.dir, err)
+		return nil, fmt.Errorf("could not create a private folder in %s: %w", b.dir, err)
 	}
 	r := &backupRun{backup: b, spool: spool}
 	if err := restrictPath(ctx, b.d, spool, true); err != nil {
@@ -114,7 +114,7 @@ func (r *backupRun) stages() []backupStage {
 	return []backupStage{
 		{"Reading the status of the service", r.readStatus},
 		{"Dumping the database", r.dumpDatabase},
-		{"Exporting the artifacts", r.exportVolume},
+		{"Exporting the saved files (artifacts)", r.exportVolume},
 		{"Encrypting the backup", r.seal},
 	}
 }
@@ -137,7 +137,7 @@ func (r *backupRun) readStatus(ctx context.Context) error {
 		return nil
 	}
 	if !r.tolerateStatus {
-		return fmt.Errorf("read GET /status of the service (its version and instance id belong in the backup): %w", cause)
+		return fmt.Errorf("could not read /status of the service (the backup records its version and instance id): %w", cause)
 	}
 	record, err := json.Marshal(map[string]any{"unavailable": true, "reason": cause.Error()})
 	if err != nil {
@@ -156,7 +156,7 @@ func instanceFromDatabase(ctx context.Context, rt Runtime) (string, error) {
 	case err != nil:
 		return unknownValue, err
 	case !instanceID.MatchString(out):
-		return unknownValue, errors.New("the table of the instance holds no id in the form /status shows")
+		return unknownValue, errors.New("the database holds no instance id in the form /status shows")
 	}
 	return out, nil
 }
@@ -170,7 +170,7 @@ func (r *backupRun) dumpDatabase(ctx context.Context) error {
 	}
 	// A plain-SQL dump starts with comment lines; anything else is an error message or nothing, never a backup.
 	if !bytes.HasPrefix(dump, []byte("--")) {
-		return fmt.Errorf("pg_dump in %s printed no SQL dump", ContainerDB)
+		return fmt.Errorf("pg_dump in %s produced no database dump", ContainerDB)
 	}
 	r.dump = dump
 	return nil
@@ -340,10 +340,10 @@ func removeLeftovers(dir string, say func(format string, args ...any)) error {
 		}
 		path := filepath.Join(dir, e.Name())
 		if err := os.RemoveAll(path); err != nil {
-			return fmt.Errorf("remove %s, which an earlier backup or restore left: %w", path, err)
+			return fmt.Errorf("could not remove %s, which a backup or restore that was stopped earlier left behind: %w", path, err)
 		}
 		if say != nil { // the caller may have nowhere to say it
-			say("Removed %s, which an earlier backup or restore left when it was killed: it held a plaintext copy of the data.\n", path)
+			say("Removed %s: a backup or restore that was stopped earlier left it behind, and it held an unencrypted copy of your data.\n", path)
 		}
 	}
 	return nil

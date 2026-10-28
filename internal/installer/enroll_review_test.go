@@ -5,12 +5,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 )
 
 // SuiteWard publishes `SuiteWard / Contract` itself: it is never the project's test check, whichever way setup is reached.
 func TestSetupRefusesTheContractCheckAsATestCheck(t *testing.T) {
-	contract := protection.ContractCheck
+	setupRefusesItsOwnCheck(t, protection.ContractCheck)
+}
+
+// `SuiteWard / Receipt` is SuiteWard's own as well, and typed by hand it is refused like the contract check.
+func TestSetupRefusesTheReceiptCheckAsATestCheck(t *testing.T) {
+	setupRefusesItsOwnCheck(t, github.ReceiptCheckName)
+}
+
+func setupRefusesItsOwnCheck(t *testing.T, contract string) {
+	t.Helper()
 	t.Run("enroll, from the flag", func(t *testing.T) {
 		h := enrollHarness(t, statusNoOwner)
 		code, stderr := h.enroll("", "--owner", "alice", "--test-check", "Acme/api="+contract)
@@ -76,7 +86,11 @@ func TestEnrollCommandNamesTheSettingsFlagOnlyAndQuotesIt(t *testing.T) {
 		"the answers file":   {nil, map[string]string{"settings": "/elsewhere/s.yaml"}, false, "suiteward enroll"}, // the command line of the run is the flags'
 	} {
 		r := newTestResolver(t, c.flags, c.answers, term)
-		if got := enrollCommand("suiteward", r, c.isolated); got != c.want {
+		d := Deps{instance: r.instance()}
+		if c.isolated {
+			d = d.onIsolated()
+		}
+		if got := d.suggest("enroll"); got != c.want {
 			t.Errorf("%s: got %q, want %q", name, got, c.want)
 		}
 	}
@@ -94,7 +108,7 @@ func TestEnrollNamesTheOwnerItReplaces(t *testing.T) {
 	if code, stderr := h.enroll("enroll\n", "--owner", "BOB"); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	if strings.Contains(h.out.String(), "replaces the owner") || !strings.Contains(h.out.String(), "replaces the TOTP secret") {
+	if strings.Contains(h.out.String(), "replaces the owner") || !strings.Contains(h.out.String(), "replaces the authenticator secret") {
 		t.Errorf("the same owner, in another letter case, was warned about a replacement of the owner:\n%s", h.out.String())
 	}
 }

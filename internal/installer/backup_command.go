@@ -17,10 +17,10 @@ import (
 
 // noKeyError is the refusal of a command that has no key to encrypt a backup to, where nobody can be asked or the answer was no. It names
 // what applies to the command that prints it: `suiteward backup` has no --backup-recipient and no answers file, an upgrade has both.
-func noKeyError(cmd string, upgrade bool) error {
-	refusal := "no recovery key is set, so a backup cannot be encrypted (and one is never written in plaintext): run `" + cmd + " backup init` first"
+func noKeyError(d Deps, upgrade bool) error {
+	refusal := "this instance has no recovery key, so a backup cannot be encrypted (and a backup is never written unencrypted). Run `" + d.suggest("backup init") + "` first"
 	if upgrade {
-		return errors.New(refusal + ", or give the public key (age1pq1...) with --backup-recipient or the answers-file key backup_recipient")
+		return errors.New(refusal + ", or give the public key (it starts with `age1pq1`) with `--backup-recipient` or the answers-file key `backup_recipient`")
 	}
 	return errors.New(refusal)
 }
@@ -32,7 +32,7 @@ func Backup(ctx context.Context, args []string, env Env) (err error) {
 	}
 	set := newFlagSet("backup")
 	instanceFlags(set)
-	set.String("to", "", "the directory the backup file is written to (default: a backups directory beside the MCP token copy, or in ~/.config/suiteward of the service account on the isolated tier)")
+	set.String("to", "", "the folder the backup file is written to (default: a backups folder beside the saved access token file; on a separate server, in ~/.config/suiteward of the service account)")
 	flags, err := parse(set, args, env.Term.Out)
 	if err != nil {
 		return err
@@ -51,11 +51,12 @@ func Backup(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	env.Deps.instance = r.instance()
 	inst, err := locateInstance(ctx, r, env, flags)
 	if err != nil {
 		return err
 	}
-	if err := inst.needSettings(env.Deps.command()); err != nil {
+	if err := inst.needSettings(env.Deps); err != nil {
 		return err
 	}
 	// A service that does not answer is refused before a key is offered or anything is written: its status belongs in the backup.
@@ -84,8 +85,8 @@ func Backup(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return backupFailed(run.abort(err), false)
 	}
-	scr.Keep("The backup is in %s. It holds the TOTP secret, encrypted to the recovery key %s: keep the kit off this machine.\n", path, archive.Fingerprint(inst.s.BackupRecipient))
-	scr.Keep("To restore it, run `%s restore %s` with that kit.\n", env.Deps.command(), quoteArg(path))
+	scr.Keep("The backup is in %s. It holds the authenticator secret (the TOTP secret), locked with the recovery key %s. Keep the recovery kit off this computer.\n", path, archive.Fingerprint(inst.s.BackupRecipient))
+	scr.Keep("To restore it, run `%s` with that kit.\n", env.Deps.suggest("restore", quoteArg(path)))
 	return showSummary(scr, func() []ui.KV { return backupSummary(path, run.doc, inst.s.BackupRecipient) })
 }
 
@@ -97,7 +98,7 @@ func backupSummary(path string, doc statusDoc, recipient string) []ui.KV {
 	return []ui.KV{
 		{Key: "Backup", Value: path},
 		{Key: "Size", Value: size},
-		{Key: "Instance", Value: doc.Instance},
+		{Key: "Instance ID", Value: doc.Instance},
 		{Key: "Version", Value: doc.Version},
 		{Key: "Recovery key", Value: archive.Fingerprint(recipient)},
 	}
@@ -117,7 +118,7 @@ func (i instance) backup(d Deps, dir string, recipient *age.HybridRecipient) bac
 func recipientOf(ctx context.Context, r *Resolver, env Env, inst *instance, agreed bool) (*age.HybridRecipient, error) {
 	if inst.s.BackupRecipient == "" {
 		if !agreed {
-			if err := askForKey(env.Deps.command(), r, false); err != nil {
+			if err := askForKey(env.Deps, r, false); err != nil {
 				return nil, err
 			}
 		}
@@ -129,18 +130,18 @@ func recipientOf(ctx context.Context, r *Resolver, env Env, inst *instance, agre
 }
 
 // askForKey asks a terminal whether to make the key. A no, an input that ends and the lack of a terminal are the refusal of noKeyError(upgrade).
-func askForKey(cmd string, r *Resolver, upgrade bool) error {
+func askForKey(d Deps, r *Resolver, upgrade bool) error {
 	if !r.term.IsTerminal {
-		return noKeyError(cmd, upgrade)
+		return noKeyError(d, upgrade)
 	}
-	yes, err := r.askYes("No recovery key is set, so a backup cannot be encrypted. Make one now, as `" + cmd + " backup init` does?")
+	yes, err := r.askYes("This instance has no recovery key, so a backup cannot be encrypted. Make one now (the same as `" + d.suggest("backup init") + "`)?")
 	switch {
 	case errors.Is(err, io.EOF): // the input ended: no answer is not a yes
-		return noKeyError(cmd, upgrade)
+		return noKeyError(d, upgrade)
 	case err != nil:
 		return fmt.Errorf("read the answer: %w", err)
 	case !yes:
-		return noKeyError(cmd, upgrade)
+		return noKeyError(d, upgrade)
 	}
 	return nil
 }
@@ -148,7 +149,7 @@ func askForKey(cmd string, r *Resolver, upgrade bool) error {
 // askedRecipient applies --backup-recipient, or the answers-file key backup_recipient, to the settings of an upgrade: where nobody can
 // be asked, the key may be given, and it is stored with the rest of the settings when the upgrade is done. A key other than the one
 // in use is refused: replacing it is `suiteward backup init --replace`, because the backups made with the old one still need its kit.
-func askedRecipient(cmd string, r *Resolver, s *Settings) error {
+func askedRecipient(d Deps, r *Resolver, s *Settings) error {
 	given := strings.TrimSpace(r.preset("backup-recipient", ""))
 	if given == "" {
 		return nil
@@ -158,8 +159,8 @@ func askedRecipient(cmd string, r *Resolver, s *Settings) error {
 		return fmt.Errorf("--backup-recipient (or backup_recipient): %w", err)
 	}
 	if s.BackupRecipient != "" && s.BackupRecipient != recipient.String() {
-		return fmt.Errorf("the settings hold the recovery key %s, and --backup-recipient (or backup_recipient) names %s: to replace the key, run `%s backup init --replace` (the backups made with the old key still need its kit)",
-			archive.Fingerprint(s.BackupRecipient), archive.Fingerprint(recipient.String()), cmd)
+		return fmt.Errorf("the settings already hold the recovery key %s, and `--backup-recipient` (or `backup_recipient`) names a different one, %s. To replace the key, run `%s`. Backups made with the old key still need the old kit",
+			archive.Fingerprint(s.BackupRecipient), archive.Fingerprint(recipient.String()), d.suggest("backup init", "--replace"))
 	}
 	s.BackupRecipient = recipient.String()
 	return nil

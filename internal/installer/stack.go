@@ -45,7 +45,7 @@ func ColocatedStack(s Settings, image string) (Stack, error) {
 		return Stack{}, err
 	}
 	if s.Tier != config.TierCoLocated {
-		return Stack{}, fmt.Errorf("a container stack is made for the co-located tier, not %s", s.Tier)
+		return Stack{}, fmt.Errorf("an installation made of containers is for the co-located type (on this computer), not %s", s.Tier)
 	}
 	if image == "" {
 		return Stack{}, fmt.Errorf("the release image is required")
@@ -57,10 +57,10 @@ func ColocatedStack(s Settings, image string) (Stack, error) {
 	serve := RunSpec{
 		Name: ContainerServe, Image: image, Network: NetworkName, Detach: true, Restart: "always", Memory: "256m", StopTimeout: 45,
 		Env: []string{
-			"SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url", "SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token",
+			"SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url", "SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token", executorAuthFileEnv + "=/run/secrets/executor-token",
 			"SUITEWARD_INSTALLATION_TIER=" + string(s.Tier), reportBaseURLEnv + "=" + reportBaseURL(s.HTTPPort),
 		},
-		Secrets: []string{SecretDatabaseURL, SecretMCPAuth},
+		Secrets: []string{SecretDatabaseURL, SecretMCPAuth, SecretExecutorAuth},
 		Volumes: []string{VolumeData + ":/data"},
 		Publish: []string{
 			"127.0.0.1:" + strconv.Itoa(s.HTTPPort) + ":8080",

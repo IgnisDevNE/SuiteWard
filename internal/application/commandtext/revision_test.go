@@ -28,7 +28,6 @@ func TestRevisionCommentStatesTheChangeTheBaseAndHowToApprove(t *testing.T) {
 		"P7-R3", "canonical", "V4", "Installation tier: `isolated`",
 		"tests/new_test.go", "tests/a.go\ntests/b.go", "tests/old.go",
 		"```\n/suiteward approve P7-R3 <code>\n```", "`<code>`", "This supersedes `P7-R2`.",
-		"does not run tests",
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)

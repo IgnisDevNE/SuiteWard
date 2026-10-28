@@ -16,10 +16,10 @@ func TestThePurgeUsageSaysWhichTokenFileItRemoves(t *testing.T) {
 		t.Fatalf("Uninstall --help = %v, want the end of the help", err)
 	}
 	help := strings.Join(strings.Fields(h.out.String()), " ")
-	if strings.Contains(help, "the MCP token copy and the settings file") {
+	if strings.Contains(help, "the access token copy and the settings file") {
 		t.Errorf("the usage of --purge says that it removes the MCP token copy whatever it is:\n%s", h.out.String())
 	}
-	for _, want := range []string{"the MCP token copy only when it is this instance's", "--token-file", "the default settings file"} {
+	for _, want := range []string{"the access token copy only when it is this instance's", "--token-file", "the default settings file"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("the usage of --purge lacks %q:\n%s", want, h.out.String())
 		}

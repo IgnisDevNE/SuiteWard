@@ -33,7 +33,7 @@ type Changes struct {
 	Markers                  Markers
 	Truncated                bool
 	// Reduced says that the revision reduces the protected scope, so that a removed file left the protected files and may still exist.
-	// RevisionComment sets it from Revision.Reduced; ChangesOf does not know it.
+	// RevisionComment sets it from Revision.Reduced, and not for a reduction that only lowers the execution policy; ChangesOf does not know it.
 	Reduced bool
 }
 
@@ -204,7 +204,7 @@ func changesSection(r Revision) []string {
 		return parts
 	}
 	c := *r.Changes
-	c.Reduced = r.Reduced
+	c.Reduced = r.Reduced && !r.lowersPolicyOnly() // a policy that only gets weaker removes nothing from the scope, so a removed file was deleted
 	parts := []string{
 		"**What changed in the protected files.** SuiteWard counts the changed lines and points out some of them as marker lines; it does not judge them.",
 		strings.Join(changeFacts(c, true), "\n"),
@@ -318,4 +318,14 @@ func Visible(s string) string {
 		i += size
 	}
 	return b.String()
+}
+
+// receiptLinkPattern is the link to the receipt page of a pull request: a loopback address, as the settings allow, the repository and the number of the pull request. It is no
+// report link: the two patterns are apart, so that a link of the one kind is never taken for the other.
+var receiptLinkPattern = regexp.MustCompile(`^http://(?:127\.0\.0\.1|localhost):[0-9]{1,5}/receipts/[A-Za-z0-9._%-]+/[A-Za-z0-9._%-]+/([1-9][0-9]*)$`)
+
+// ValidReceiptLink reports whether link is the link to the receipt page of pull request pull: a loopback address, as the settings allow, and the path /receipts/<owner>/<repo>/<pull>.
+func ValidReceiptLink(link string, pull int) bool {
+	m := receiptLinkPattern.FindStringSubmatch(link)
+	return m != nil && pull >= 1 && m[1] == strconv.Itoa(pull) && !strings.Contains(link, "/../") && !strings.Contains(link, "/./") // a segment of dots climbs or stays
 }

@@ -31,7 +31,7 @@ func NewKey() (recipient, identity string, err error) {
 func ParseRecipient(s string) (*age.HybridRecipient, error) {
 	rec, err := age.ParseHybridRecipient(strings.TrimSpace(strings.TrimPrefix(s, byteOrderMark)))
 	if err != nil {
-		return nil, errors.New("the recovery recipient is not a post-quantum age public key (age1pq1...): backups use post-quantum keys, so a classic age1... key is refused")
+		return nil, errors.New("this is not a recovery public key that SuiteWard accepts: it must start with age1pq1 (a post-quantum key), and an ordinary age1... key is refused")
 	}
 	return rec, nil
 }
@@ -47,11 +47,11 @@ func ParseIdentity(kit string) (*age.HybridIdentity, error) {
 		}
 	}
 	if len(lines) != 1 {
-		return nil, fmt.Errorf("the recovery kit must hold exactly one identity line (AGE-SECRET-KEY-PQ-1...), it holds %d", len(lines))
+		return nil, fmt.Errorf("the recovery kit must hold exactly one private-key line (it starts with AGE-SECRET-KEY-PQ-1), but it holds %d", len(lines))
 	}
 	id, err := age.ParseHybridIdentity(lines[0])
 	if err != nil {
-		return nil, errors.New("the identity line of the recovery kit is not a post-quantum age secret key (AGE-SECRET-KEY-PQ-1...): backups use post-quantum keys, so a classic AGE-SECRET-KEY-1... key is refused")
+		return nil, errors.New("the private-key line of the recovery kit is not valid: it must start with AGE-SECRET-KEY-PQ-1 (a post-quantum key), and an ordinary AGE-SECRET-KEY-1... key is refused")
 	}
 	return id, nil
 }
@@ -65,10 +65,11 @@ func RecoveryKit(identity, recipient, instance string) string {
 # Recovery key (public): %s
 # Fingerprint: %s
 #
-# The line below is the private key that opens the encrypted backups of this SuiteWard instance
-# (suiteward-backup-*.tar.age). Restore a backup with the suiteward restore command and this file.
+# The last line of this file is the private key that opens the encrypted backups of this SuiteWard instance
+# (the files named suiteward-backup-*.tar.age). To restore a backup, run the suiteward restore command
+# and give it this file.
 #
-# Keep it off this machine, for example in a password manager. Without it no backup can be restored,
+# Keep this file off the computer, for example in a password manager. Without it no backup can be restored,
 # and anyone who has it can read every backup of this instance.
 %s
 `, instance, recipient, Fingerprint(recipient), identity)

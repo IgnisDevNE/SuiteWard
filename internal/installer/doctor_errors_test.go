@@ -19,7 +19,7 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("the pipe
 func TestDoctorReportsWhatPreventsItFromRunning(t *testing.T) {
 	t.Run("deps without an Exec", func(t *testing.T) {
 		var out bytes.Buffer
-		code := Doctor(context.Background(), Deps{GOOS: "linux", Getenv: func(string) string { return "" }}, filepath.Join(t.TempDir(), "settings.yaml"), &out, false)
+		code := Doctor(context.Background(), Deps{GOOS: "linux", Getenv: func(string) string { return "" }}, filepath.Join(t.TempDir(), "settings.yaml"), "", &out, false)
 		if code != 1 || !strings.Contains(out.String(), "FAIL settings") || !strings.Contains(out.String(), "report it") {
 			t.Errorf("exit %d, output %q", code, out.String())
 		}
@@ -30,7 +30,7 @@ func TestDoctorReportsWhatPreventsItFromRunning(t *testing.T) {
 		if err := SaveSettings(path, s); err != nil {
 			t.Fatal(err)
 		}
-		if code := Doctor(context.Background(), f.deps(), path, failingWriter{}, false); code != 1 {
+		if code := Doctor(context.Background(), f.deps(), path, "", failingWriter{}, false); code != 1 {
 			t.Errorf("exit %d for a healthy stack whose report could not be written, want 1", code)
 		}
 	})
@@ -40,7 +40,7 @@ func TestDoctorReportsWhatPreventsItFromRunning(t *testing.T) {
 		t.Setenv("HOME", "")
 		f := newFake("linux")
 		var out bytes.Buffer
-		if code := Doctor(context.Background(), f.deps(), "", &out, false); code != 1 || !strings.Contains(out.String(), "--settings PATH") {
+		if code := Doctor(context.Background(), f.deps(), "", "", &out, false); code != 1 || !strings.Contains(out.String(), "--settings PATH") {
 			t.Errorf("exit %d, output %q", code, out.String())
 		}
 		if len(f.calls) != 0 {
@@ -59,10 +59,10 @@ func TestDoctorMachineProblems(t *testing.T) {
 		fix        string
 	}{
 		{"the machines cannot be listed", []rule{{match: "machine list", err: errors.New("podman: not found")}}, "podman-machine-default", "", []string{"list the Podman machines", "not found"}, "installed"},
-		{"the list is not JSON", []rule{{match: "machine list", out: "not json"}}, "podman-machine-default", "", []string{"read the Podman machines"}, "machine list --format json"},
+		{"the list is not JSON", []rule{{match: "machine list", out: "not json"}}, "podman-machine-default", "", []string{"read the list of Podman machines"}, "machine list --format json"},
 		{"no machine of that name", []rule{{match: "machine list", out: `[{"Name":"other","Running":true}]`}}, "podman-machine-default", "", []string{"no Podman machine is called podman-machine-default"}, "podman machine init"},
-		{"no machine at all", []rule{{match: "machine list", out: `[]`}}, "", "", []string{"no Podman machine exists"}, "podman machine init"},
-		{"the machine is starting", []rule{{match: "machine list", out: `[{"Name":"podman-machine-default","Starting":true}]`}}, "podman-machine-default", "", []string{"still starting"}, "wait"},
+		{"no machine at all", []rule{{match: "machine list", out: `[]`}}, "", "", []string{"there is no Podman machine"}, "podman machine init"},
+		{"the machine is starting", []rule{{match: "machine list", out: `[{"Name":"podman-machine-default","Starting":true}]`}}, "podman-machine-default", "", []string{"still starting"}, "Wait"},
 		{"a machine with its own name is stopped", []rule{{match: "machine list", out: `[{"Name":"dev","Running":false}]`}}, "dev", "", []string{"dev is not running"}, "podman machine start dev"},
 		{"the machine is chosen by the environment", []rule{{match: "machine list", out: `[{"Name":"dev","Running":false}]`}}, "", "dev-root", []string{"dev is not running"}, "podman machine start dev"},
 		{"the first machine is taken when none is named or running", []rule{{match: "machine list", out: `[{"Name":"a","Running":false},{"Name":"b","Running":false}]`}}, "", "", []string{"a is not running"}, "podman machine start a"},
@@ -99,7 +99,7 @@ func TestDoctorRuntimeFixes(t *testing.T) {
 		check func(s *Settings)
 	}{
 		{"not Docker", colocated{engine: RuntimeDocker, over: []rule{{match: "version --format", out: podmanServer}}}, "Docker's own context", nil},
-		{"Docker does not answer", colocated{engine: RuntimeDocker, over: []rule{{match: "version --format", err: errors.New("no daemon")}}}, "start Docker", nil},
+		{"Docker does not answer", colocated{engine: RuntimeDocker, over: []rule{{match: "version --format", err: errors.New("no daemon")}}}, "Start Docker", nil},
 		{"Podman on Linux does not answer", colocated{over: []rule{{match: "info --format", err: errors.New("no socket")}}}, "podman info", nil},
 		{"Podman in a machine does not answer", colocated{goos: "windows", over: []rule{{match: "info --format", err: errors.New("no socket")}}}, "podman machine list", nil},
 		{"no single rootless connection", colocated{goos: "windows", over: []rule{{match: "system connection list", out: `[]`}}}, "rootless connection", func(s *Settings) { s.Connection = "" }},
@@ -132,11 +132,11 @@ func TestDoctorContainerProblems(t *testing.T) {
 		check string
 		want  []string
 	}{
-		{"an inspect output that is not JSON", colocated{over: []rule{{match: "inspect --type container " + ContainerDB, out: "not json"}}}, "containers", []string{"read the state of " + ContainerDB + " from its inspect output"}},
+		{"an inspect output that is not JSON", colocated{over: []rule{{match: "inspect --type container " + ContainerDB, out: "not json"}}}, "containers", []string{"read the state of the container " + ContainerDB}},
 		{"a database without a health check", colocated{state: map[string]map[string]any{ContainerDB: doctorStateOf("running", 0, "")}}, "containers", []string{ContainerDB, "no health check"}},
 		{"a migrate container that cannot be looked for", colocated{over: []rule{{match: "name=" + ContainerMigrate, err: errors.New("podman: not found")}}}, "containers", []string{"not found"}},
 		{"a migrate container that cannot be inspected", colocated{migrate: doctorStateOf("exited", 0, ""), over: []rule{{match: "inspect --type container " + ContainerMigrate, err: errors.New("it vanished")}}}, "containers", []string{"it vanished"}},
-		{"a restart policy that is not always", colocated{edit: noRestart}, "restart", []string{ContainerDB, `restart policy "no", want always`}},
+		{"a restart policy that is not always", colocated{edit: noRestart}, "restart", []string{ContainerDB, `restart policy is "no"`}},
 		{"podman-restart.service that cannot be read", colocated{over: []rule{{match: "podman-restart.service", err: errors.New("no user manager")}}}, "restart", []string{"read podman-restart.service", "no user manager"}},
 		{"podman-restart.service that does not exist", colocated{over: []rule{{match: "podman-restart.service", out: "LoadState=not-found\n"}}}, "restart", []string{"not installed"}},
 		{"a database that cannot be inspected, so its restart cannot be checked", colocated{over: []rule{{match: "inspect --type container " + ContainerDB, err: errors.New("no such container")}}}, "restart", []string{"not checked: containers"}},
@@ -183,12 +183,12 @@ func TestDoctorDockerPinProblems(t *testing.T) {
 			if name == ContainerDB {
 				obj["Config"].(map[string]any)["Image"] = "docker.io/library/postgres:99@sha256:" + strings.Repeat("d", 64)
 			}
-		}}, "want the pinned"},
+		}}, "this release pins"},
 		{"a service that is not pinned by a digest", colocated{engine: RuntimeDocker, edit: func(name string, obj map[string]any) {
 			if name == ContainerServe {
 				obj["Config"].(map[string]any)["Image"] = "ghcr.io/ignisdevne/suiteward:latest"
 			}
-		}}, "not pinned by a digest"},
+		}}, "not locked to one exact version"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -202,9 +202,9 @@ func TestDoctorDockerPinProblems(t *testing.T) {
 func TestDoctorStatusNamesWhatIsMissing(t *testing.T) {
 	cases := map[string]struct{ status, want string }{
 		"no version":              {`{"schemaVersion":20,"tier":"co-located","jobs":{"discarded":0},"outbox":{"failed":0}}`, "no version"},
-		"no jobs.discarded":       {`{"version":"v","schemaVersion":20,"tier":"co-located","jobs":{},"outbox":{"failed":0}}`, "no jobs.discarded"},
-		"no outbox.failed":        {`{"version":"v","schemaVersion":20,"tier":"co-located","jobs":{"discarded":0},"outbox":{}}`, "no outbox.failed"},
-		"several at once":         {`{}`, "no version, no schemaVersion, no tier, no jobs.discarded, no outbox.failed"},
+		"no jobs.discarded":       {`{"version":"v","schemaVersion":20,"tier":"co-located","jobs":{},"outbox":{"failed":0}}`, "no count of discarded jobs"},
+		"no outbox.failed":        {`{"version":"v","schemaVersion":20,"tier":"co-located","jobs":{"discarded":0},"outbox":{}}`, "no count of failed outbox messages"},
+		"several at once":         {`{}`, "no version is reported, no database version is reported, no installation type is reported, no count of discarded jobs is reported, no count of failed outbox messages is reported"},
 		"a body that is not JSON": {"<html>", "GET /status on port"},
 	}
 	for name, c := range cases {
@@ -248,7 +248,7 @@ func TestDoctorIsolatedProblemsThatNeedTheirOwnRig(t *testing.T) {
 	t.Run("a unit that is not loaded", func(t *testing.T) {
 		f, s := isolatedRig{over: []rule{{match: "suiteward.service", out: "LoadState=not-found\n"}}}.build(t)
 		_, res, _ := runDoctor(t, f, s)
-		wantFail(t, res, "units", "suiteward.service is not-found, not loaded")
+		wantFail(t, res, "units", "suiteward.service is not loaded (its state is not-found)")
 	})
 	t.Run("a unit that is a file the units directory cannot read", func(t *testing.T) {
 		rig := isolatedRig{}
@@ -261,7 +261,7 @@ func TestDoctorIsolatedProblemsThatNeedTheirOwnRig(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, res, _ := runDoctor(t, f, s)
-		wantFail(t, res, "pins", "read the unit suiteward.container")
+		wantFail(t, res, "pins", "read the unit file suiteward.container")
 	})
 	t.Run("the configuration directory comes from XDG_CONFIG_HOME when it is set", func(t *testing.T) {
 		f, s := isolatedRig{}.build(t)
@@ -274,7 +274,7 @@ func TestDoctorIsolatedProblemsThatNeedTheirOwnRig(t *testing.T) {
 		_, res, _ := runDoctor(t, f, s)
 		wantFail(t, res, "runtime")
 		wantOK(t, res, "pins")
-		if !strings.Contains(res["pins"].Detail, "were not compared because the runtime failed") {
+		if !strings.Contains(res["pins"].Detail, "were not compared because the container program failed") {
 			t.Errorf("the pins detail does not say the containers were not compared: %q", res["pins"].Detail)
 		}
 		wantFail(t, res, "memory", "not checked: runtime")

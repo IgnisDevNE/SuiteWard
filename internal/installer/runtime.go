@@ -21,7 +21,7 @@ const (
 // Errors a caller can distinguish.
 var (
 	ErrRootful        = errors.New("the container connection is rootful")
-	ErrNotDocker      = errors.New("the engine behind this docker command is not Docker")
+	ErrNotDocker      = errors.New("the container program behind this docker command is not Docker")
 	ErrNotDigestImage = errors.New("the image is not pinned by an sha256 digest")
 	ErrNoConnection   = errors.New("no single rootless machine connection to select")
 )
@@ -120,6 +120,7 @@ const (
 	SecretDatabaseURL      = secretPrefix + "database-url"
 	SecretGitHubAppKey     = secretPrefix + "github-app-key"
 	SecretMCPAuth          = secretPrefix + "mcp-token"
+	SecretExecutorAuth     = secretPrefix + "executor-token" // the executor API's bearer token: the service verifies it, the executor sends it
 )
 
 // parseImage reads an --image value into the reference the installer pins: a bare sha256:<64 hex> digest is the release image,

@@ -2,9 +2,11 @@ package scope_test
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"go.yaml.in/yaml/v3"
@@ -15,7 +17,9 @@ import (
 
 // FuzzParseDeclaration feeds hostile .suiteward.yml bytes to ParseDeclaration. Whatever it accepts must satisfy the
 // documented schema, checked against the YAML nodes directly: one document, a mapping with only the keys version
-// (the integer 1), include, exclude and runner, each key once, each list holding distinct strings that are patterns.
+// (the integer 1), include, exclude, runner and execution, each key once, each list holding distinct strings that are
+// patterns, the execution mapping holding only the keys profile, canonical and receipt with values from their fixed lists
+// (canonical and receipt only beside a profile), and Execution and Reductions agreeing with those values.
 // An extension beyond the brief: AddPatterns, which the scope notices use on the same bytes, must keep every
 // pattern and stay valid.
 func FuzzParseDeclaration(f *testing.F) {
@@ -24,6 +28,16 @@ func FuzzParseDeclaration(f *testing.F) {
 		"# only a comment\n", "---\n", "...\n", "version: 1\ninclude: [a, a]\n",
 		"version: !!str 1\n", "&a version: 1\ninclude: *a\n",
 		"version: 1\ninclude: ['!x']\n", "version: 1\nrunner: [~]\n",
+		"version: 1\nexecution:\n  profile: go\n  canonical: required\n  receipt: before-approval\n",
+		"version: 1\nexecution: {profile: go}\n", "version: 1\nexecution: {profile: go, canonical: off, receipt: off}\n",
+		"version: 1\nexecution: {canonical: required}\n", "version: 1\nexecution: {receipt: off}\n",
+		"version: 1\nexecution: {canonical: required, profile: go}\n", "version: 1\nexecution: {}\n",
+		"version: 1\nexecution: {profile: go, extra: x}\n", "version: 1\nexecution: {profile: rust}\n",
+		"version: 1\nexecution: {profile: go, canonical: before-approval}\n", "version: 1\nexecution: ~\n",
+		"version: 1\nexecution:\n", "version: 1\nexecution: {profile: &p go, receipt: *p}\n",
+		"version: 1\nexecution:\n  <<: {profile: go}\n", "version: 1\nexecution: {profile: 1}\n",
+		"version: 1\nexecution: {profile: go, profile: go}\n", "version: 1\nexecution: {profile: go}\nexecution: {profile: go}\n",
+		"version: 1\ninclude: [src/]\nexecution: {profile: go, receipt: required}\nrunner: [Makefile]\n",
 	} {
 		f.Add([]byte(seed))
 	}
@@ -38,7 +52,7 @@ func FuzzParseDeclaration(f *testing.F) {
 		if !bytes.Equal(d.Raw(), raw) || !d.Present() {
 			t.Fatalf("an accepted declaration does not keep its bytes: %q", raw)
 		}
-		checkSchema(t, raw)
+		execution := checkSchema(t, raw)
 		for name, list := range map[string][]scope.Pattern{"include": d.Include(), "exclude": d.Exclude(), "runner": d.Runner()} {
 			seen := map[string]bool{}
 			for _, p := range list {
@@ -48,11 +62,13 @@ func FuzzParseDeclaration(f *testing.F) {
 				seen[p.String()] = true
 			}
 		}
+		checkExecution(t, raw, d, execution)
 		checkAddPatterns(t, raw, d)
 	})
 }
 
-func checkSchema(t *testing.T, raw []byte) {
+// checkSchema checks the accepted raw against the schema and returns the values of its execution mapping.
+func checkSchema(t *testing.T, raw []byte) map[string]string {
 	t.Helper()
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	var root, extra yaml.Node
@@ -69,7 +85,7 @@ func checkSchema(t *testing.T, raw []byte) {
 	keys := map[string]*yaml.Node{}
 	for i := 0; i < len(top.Content); i += 2 {
 		key := top.Content[i]
-		if _, dup := keys[key.Value]; dup || key.Kind != yaml.ScalarNode || key.ShortTag() != "!!str" || !slices.Contains([]string{"version", "include", "exclude", "runner"}, key.Value) {
+		if _, dup := keys[key.Value]; dup || key.Kind != yaml.ScalarNode || key.ShortTag() != "!!str" || !slices.Contains([]string{"version", "include", "exclude", "runner", "execution"}, key.Value) {
 			t.Fatalf("accepted %q with the key %q (duplicate or not allowed)", raw, key.Value)
 		}
 		keys[key.Value] = top.Content[i+1]
@@ -89,6 +105,74 @@ func checkSchema(t *testing.T, raw []byte) {
 			}
 			seen[item.Value] = true
 		}
+	}
+	if execution, ok := keys["execution"]; ok {
+		return executionValues(t, raw, execution)
+	}
+	return nil
+}
+
+// executionValues checks the execution node against the schema, independently of ParseDeclaration, and returns its values.
+func executionValues(t *testing.T, raw []byte, node *yaml.Node) map[string]string {
+	t.Helper()
+	fixed := map[string][]string{
+		"profile":   {"go"},
+		"canonical": {"off", "advisory", "required"},
+		"receipt":   {"off", "advisory", "before-approval", "required"},
+	}
+	if node.Kind != yaml.MappingNode {
+		t.Fatalf("accepted %q whose execution is not a mapping", raw)
+	}
+	values := map[string]string{}
+	for i := 0; i < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		_, dup := values[key.Value]
+		if dup || key.Kind != yaml.ScalarNode || key.ShortTag() != "!!str" || value.Kind != yaml.ScalarNode || value.ShortTag() != "!!str" || !slices.Contains(fixed[key.Value], value.Value) {
+			t.Fatalf("accepted %q with the execution entry %q: %q (duplicate, unknown key or value, or not strings)", raw, key.Value, value.Value)
+		}
+		values[key.Value] = value.Value
+	}
+	if _, named := values["profile"]; !named && len(values) > 0 {
+		t.Fatalf("accepted %q whose execution has levels but no profile", raw)
+	}
+	return values
+}
+
+// checkExecution compares Execution with the values of the execution mapping (an empty mapping is no policy), and checks that
+// Reductions does not call an added or an unchanged policy a reduction and reports the removal of one level by level.
+func checkExecution(t *testing.T, raw []byte, d scope.Declaration, values map[string]string) {
+	t.Helper()
+	got, ok := d.Execution()
+	want, wantOK := scope.Execution{}, false
+	if profile := values["profile"]; profile != "" {
+		want, wantOK = scope.Execution{Profile: profile, Canonical: cmp.Or(values["canonical"], "advisory"), Receipt: cmp.Or(values["receipt"], "advisory")}, true
+	}
+	if got != want || ok != wantOK {
+		t.Fatalf("Execution() of %q = %+v, %v, want %+v, %v", raw, got, ok, want, wantOK)
+	}
+	s, none := scope.NewScope(d), scope.NewScope(scope.NoDeclaration())
+	if reductions := scope.Reductions(s, s); len(reductions) != 0 {
+		t.Fatalf("Reductions of %q against itself = %q", raw, reductions)
+	}
+	lowered := func(reductions []string) (n int) {
+		for _, entry := range reductions {
+			if strings.HasPrefix(entry, "execution ") {
+				n++
+			}
+		}
+		return n
+	}
+	wantLowered := 0
+	for _, level := range []string{want.Canonical, want.Receipt} {
+		if wantOK && level != "off" {
+			wantLowered++
+		}
+	}
+	if n := lowered(scope.Reductions(none, s)); n != 0 {
+		t.Fatalf("adding the policy of %q is reported as %d reductions", raw, n)
+	}
+	if n := lowered(scope.Reductions(s, none)); n != wantLowered {
+		t.Fatalf("removing the policy of %q is reported as %d reductions, want %d", raw, n, wantLowered)
 	}
 }
 

@@ -98,8 +98,8 @@ func newPRFlow(t *testing.T) *prFlow {
 	client := bootMust(rest.NewClient(func(ctx context.Context) (string, string, error) { return "token", "installation", nil }, server.Client(), server.URL, budget))
 	f := &prFlow{t: t, databaseURL: databaseURL, store: store, artifacts: artifacts, gh: gh, reader: bootMust(github.NewReader(client)),
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), clock: bootTime.Add(2 * time.Hour)}
-	f.checks = &checksJob{repos: []string{bootRepo}, reader: f.reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(),
-		commands: store, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: f.logger, now: func() time.Time { return f.clock }}
+	f.checks = (&checksJob{repos: []string{bootRepo}, reader: f.reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(),
+		commands: store, pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: f.logger, now: func() time.Time { return f.clock }}).withExecution(store.Execution(), store.ReceiptChecks(), time.Now())
 	publisher := &commentPublisher{writer: bootMust(github.NewWriter(client)), bot: newBotAccount(func(context.Context) (int64, error) { return cmtBotID, nil }), instance: newLazy(store.Instance),
 		owners: store, suites: store, reports: newChangeReports(store, artifacts), reportBase: prReportBase}
 	f.relay = bootMust(river.NewRelay(river.RelayConfig{Store: store, Publishers: map[string]river.Publisher{githubCommentKind: publisher.publish}, MaxAttempts: 3, Lease: time.Minute, Logger: f.logger}))
@@ -292,7 +292,7 @@ func (f *prFlow) merged() {
 		t.Fatalf("merge outcomes %q, want the promotion of V1", got)
 	}
 	f.pass()
-	f.wantComment(5, "merge:1001:5", "V1", "first canonical version", mgSHA5, "did not run the tests")
+	f.wantComment(5, "merge:1001:5", "V1", "first canonical version", mgSHA5, "checked the approval and the integrity of the protected files at that commit.")
 	f.wantComments(5, 2, "")
 	if _, err := merges.run(t.Context()); err != nil { // a replay decides and posts nothing again
 		t.Fatalf("merges replay: %v", err)
@@ -309,7 +309,7 @@ func (f *prFlow) secondPull() {
 	f.step()
 	f.pass()
 	f.wantCheck(6, checks.InProgress, "approval-missing", "P2-R1", " against V1")
-	f.wantComment(6, "revision:1001:P2-R1", "V1", "tests/a_test.go", "/suiteward approve P2-R1 <code>", "does not run tests",
+	f.wantComment(6, "revision:1001:P2-R1", "V1", "tests/a_test.go", "/suiteward approve P2-R1 <code>",
 		"- Files: 0 added, 1 modified, 0 removed", "- Lines: +1/−1 (counted in 1 of 1 files)", "[Full change report]("+prReportBase+"/reports/acme/widgets/P2-R1)")
 	f.wantComments(6, 1, "")
 	f.wantReportPage("P2-R1", "V1", "v2")

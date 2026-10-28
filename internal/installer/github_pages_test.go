@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -61,7 +62,7 @@ func TestGitHubQuestionIsExplainedOnAFullScreen(t *testing.T) {
 	if err != nil || yes {
 		t.Fatalf("wantsGitHub = %v, %v", yes, err)
 	}
-	for _, want := range []string{"What SuiteWard needs on GitHub", "GitHub App", "browser", "without GitHub", "later"} {
+	for _, want := range []string{"What SuiteWard needs on GitHub", "GitHub App", "browser", "without GitHub", "again"} {
 		if !shows(out.String(), want) {
 			t.Errorf("the page lacks %q:\n%s", want, out.String())
 		}
@@ -216,7 +217,7 @@ func TestTheOwnerLoginQuestionIsTheSameInPlainMode(t *testing.T) {
 	if err != nil || res.OwnerLogin != "alice" {
 		t.Fatalf("resolveGitHub = %q, %v", res.OwnerLogin, err)
 	}
-	if want := "GitHub login of the instance owner, the only account whose approvals count [alice]: "; !strings.Contains(out.String(), want) {
+	if want := "GitHub username of the owner, the only account that can approve changes [alice]: "; !strings.Contains(out.String(), want) {
 		t.Errorf("the plain question changed:\n%s", out.String())
 	}
 }
@@ -231,7 +232,7 @@ func TestTheTestCheckIsExplainedForEachRepositoryOnAFullScreen(t *testing.T) {
 	if err != nil || res.TestChecks["acme/r1"] != "CI / test" || res.TestChecks["acme/r2"] != "CI / test" {
 		t.Fatalf("resolveGitHub = %v, %v", res.TestChecks, err)
 	}
-	for _, want := range []string{"Required test check for acme/r1", "Required test check for acme/r2", "SuiteWard runs no tests", "SuiteWard / Contract", "CI / test"} {
+	for _, want := range []string{"Required test check for acme/r1", "Required test check for acme/r2", "SuiteWard does not replace your CI's tests", "SuiteWard / Contract", "CI / test"} {
 		if !shows(out.String(), want) {
 			t.Errorf("the screen never showed %q", want)
 		}
@@ -337,7 +338,7 @@ func startRulesetRunCtx(t *testing.T, ctx context.Context, g *fakeGitHub, flags 
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pw.Close() })
 	env, _ := flowEnv(t, g, flags, pr, true)
-	env.Command = flags["_command"] // the name that the messages of the flow give the program: empty, suiteward
+	env.Deps.Command = flags["_command"] // the name that the messages of the flow give the program: empty, suiteward
 	// Where the ruleset files go, when the test needs a folder that is not a temp directory.
 	if dir := flags["_settings-dir"]; dir != "" {
 		env.SettingsDir = dir
@@ -660,5 +661,29 @@ func TestTheFilesAreInTheScrollbackAfterACtrlCAtTheRulesetPause(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Since M2.1 SuiteWard runs tests, and no text of the installer says that it does not (runtime contract, "What a text says about running
+// tests"): the sources are read, because a screen shows only the texts a test happens to draw.
+func TestNoInstallerTextSaysThatSuiteWardRunsNoTests(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Clean(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, banned := range []string{"runs no tests", "does not run tests", "did not run any tests", "did not run the tests"} {
+			if strings.Contains(strings.ToLower(string(raw)), banned) {
+				t.Errorf("%s says %q", name, banned)
+			}
+		}
 	}
 }

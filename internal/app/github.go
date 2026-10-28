@@ -174,6 +174,7 @@ func lastErrorText(state githubsync.RepositoryState) string {
 type githubSync struct {
 	reconciler *githubsync.Reconciler
 	readers    setupReaders   // shared with the protection check: one budget for every token
+	archive    *github.Reader // reads the archive of a commit, with a token of its own (archivePermissions) and the same budget
 	writer     *github.Writer // posts the comments, with the comment token
 	checkRuns  *github.Checks // posts the check runs, with the checks token
 	bot        *botAccount    // SuiteWard's own account id, shared by the comment publisher and the command job
@@ -200,6 +201,8 @@ var (
 	commentPermissions = map[string]string{"metadata": "read", "pull_requests": "write"}
 	// checkPermissions is the map of the check run publisher, used for check runs only.
 	checkPermissions = map[string]string{"metadata": "read", "checks": "write"}
+	// archivePermissions is the map of archive reads: the contents of a commit and nothing a pull request or a check could use.
+	archivePermissions = map[string]string{"metadata": "read", "contents": "read"}
 )
 
 // githubAccess is what every token of the GitHub settings shares: the App, the
@@ -305,6 +308,10 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 		return nil, err
 	}
 	readers := setupReaders{read: read, protect: protect}
+	archive, err := access.reader(archivePermissions)
+	if err != nil {
+		return nil, err
+	}
 	writer, err := access.writer(commentPermissions)
 	if err != nil {
 		return nil, err
@@ -322,7 +329,7 @@ func composeGitHub(g config.GitHub, jobTimeout time.Duration, store githubsync.S
 	if err != nil {
 		return nil, fmt.Errorf("compose the synchronization: %w", err)
 	}
-	return &githubSync{reconciler: reconciler, budget: access.budget, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, writer: writer, checkRuns: checkRuns, bot: bot, appID: g.AppID, now: now, logger: logger}, nil
+	return &githubSync{reconciler: reconciler, budget: access.budget, repos: g.Repositories, jobTimeout: jobTimeout, readers: readers, archive: archive, writer: writer, checkRuns: checkRuns, bot: bot, appID: g.AppID, now: now, logger: logger}, nil
 }
 
 // tick is the github_sync_tick job: one cycle of every configured repository, paced by the previous tick's cost

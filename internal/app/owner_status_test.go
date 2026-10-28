@@ -66,11 +66,11 @@ func TestEffectiveTier(t *testing.T) {
 func TestStatusReportsTheOwnerAndTheEffectiveTier(t *testing.T) {
 	for name, test := range tierCases {
 		t.Run(name, func(t *testing.T) {
-			a := &api{logger: quietLogger(), tier: test.configured, owners: enrolledStore(t, test.enrolled), store: fakeStore{version: 12}}
+			a := &api{executorStatus: idleExecutorStatus(), logger: quietLogger(), tier: test.configured, owners: enrolledStore(t, test.enrolled), store: fakeStore{version: 12}}
 
 			code, body := call(t, a, http.MethodGet, "/status")
 
-			want := `{"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":12,"tier":"` + test.wantTier + `",
+			want := `{` + idleExecutionJSON + `,"version":"` + Version + `","instance":"1a2b3c4d","schemaVersion":12,"tier":"` + test.wantTier + `",
 				"jobs":{"available":0,"running":0,"retryable":0,"scheduled":0,"completed":0,"discarded":0},
 				"outbox":{"pending":0,"delivered":0,"failed":0}`
 			if test.wantNote != "" {
@@ -99,7 +99,7 @@ func (f failingOwners) Protection(context.Context) ([]owner.ProtectionResult, er
 }
 
 func TestStatusIsUnavailableWhenTheOwnerCannotBeRead(t *testing.T) {
-	a := &api{logger: quietLogger(), owners: failingOwners{errors.New("dial tcp db.internal:5432: password=hunter2")}, store: fakeStore{version: 12}}
+	a := &api{executorStatus: idleExecutorStatus(), logger: quietLogger(), owners: failingOwners{errors.New("dial tcp db.internal:5432: password=hunter2")}, store: fakeStore{version: 12}}
 
 	code, body := call(t, a, http.MethodGet, "/status")
 

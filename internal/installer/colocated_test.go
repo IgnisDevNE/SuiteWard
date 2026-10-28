@@ -38,6 +38,19 @@ type harness struct {
 	githubSeen  []githubEnv
 	status      func(ctx context.Context, address string) ([]byte, error) // GET /status of the service; nil: no owner is enrolled yet
 	atServe     map[string]bool                                           // facts at the moment the service container was started
+	exe         string                                                    // the program of this run, which the executor gets a copy of; program() makes a small one
+}
+
+// program is the program of this run: a small file of the test, so that the install copies bytes that a test can compare.
+func (h *harness) program() string {
+	h.t.Helper()
+	if h.exe == "" {
+		h.exe = filepath.Join(h.t.TempDir(), "suiteward")
+		if err := os.WriteFile(h.exe, []byte("the program of this run"), 0o755); err != nil { //nolint:gosec // a test program
+			h.t.Fatal(err)
+		}
+	}
+	return h.exe
 }
 
 func newHarness(t *testing.T, goos string) *harness {
@@ -45,6 +58,10 @@ func newHarness(t *testing.T, goos string) *harness {
 	h := &harness{t: t, f: newFake(goos), dir: t.TempDir(), busy: map[int]bool{}, atServe: map[string]bool{}}
 	h.f.env["USERNAME"] = "tester"
 	h.f.fail("image inspect", errors.New("no such image")) // pulled unless a test says the image is here
+	if goos == "windows" {
+		h.f.fail("/Query /TN", errors.New("schtasks: the system cannot find the file specified")) // no task of the executor yet: a test that has one says so first
+		h.f.idleListing = true                                                                    // a first install lists once
+	}
 	h.f.on("info --format {{.Host.Security.Rootless}}", "true\n")
 	h.f.on("--format {{json .State}} suiteward-db", `{"Status":"running","Health":{"Status":"healthy"}}`)
 	return h
@@ -55,6 +72,10 @@ func dockerHarness(t *testing.T, goos string) *harness {
 	h := &harness{t: t, f: newFake(goos), dir: t.TempDir(), busy: map[int]bool{}, atServe: map[string]bool{}}
 	h.f.env["USERNAME"] = "tester"
 	h.f.fail("image inspect", errors.New("no such image"))
+	if goos == "windows" {
+		h.f.fail("/Query /TN", errors.New("schtasks: the system cannot find the file specified"))
+		h.f.idleListing = true // a first install lists once
+	}
 	h.f.on("version --format", dockerDesktopServer).on("info --format", `["name=seccomp,profile=builtin"]`)
 	h.f.on("--format {{json .State}} suiteward-db", `{"Status":"running","Health":{"Status":"healthy"}}`)
 	return h
@@ -101,7 +122,9 @@ func (h *harness) uninstall(args ...string) error {
 }
 
 func (h *harness) newEnv() Env {
+	h.f.env["HOME"] = h.dir // where the executor's unit or launch agent goes: a directory of the test, never the real one
 	d := h.f.deps()
+	d.Executable = func() (string, error) { return h.program(), nil }
 	inner := d.Exec
 	d.Exec = func(ctx context.Context, name string, a []string, stdin io.Reader) ([]byte, error) {
 		var data []byte
@@ -304,6 +327,9 @@ func TestInstallPodmanBringsTheStackUpInOrder(t *testing.T) {
 		"run --detach --replace --name suiteward --network",
 	)
 	for _, c := range h.f.calls {
+		if isOSCall(c) {
+			continue // the executor is kept by the operating system, not by the engine
+		}
 		if c.args[0] != "--connection" || c.args[1] != "pm" {
 			t.Errorf("a call does not use the selected connection: %v", c.args)
 		}
@@ -330,7 +356,7 @@ func TestInstallPodmanBringsTheStackUpInOrder(t *testing.T) {
 	if s.Runtime != RuntimePodman || s.Connection != "pm" || s.HTTPPort != 18081 || s.MCPPort != 18091 {
 		t.Errorf("saved settings: %+v", s)
 	}
-	if !strings.Contains(h.out.String(), "GitHub is not configured") {
+	if !strings.Contains(h.out.String(), "GitHub is not set up yet") {
 		t.Errorf("the next steps do not say that setup needs GitHub:\n%s", h.out.String())
 	}
 }
@@ -422,7 +448,7 @@ func TestInstallRerunCreatesOnlyWhatIsMissing(t *testing.T) {
 	h := newHarness(t, "linux")
 	h.have(KindNetwork, NetworkName)
 	h.have(KindVolume, VolumeData, VolumeDBData)
-	for _, name := range []string{SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth} {
+	for _, name := range []string{SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth, SecretExecutorAuth} {
 		h.have(kindSecret, name)
 	}
 	h.first("secret inspect --showsecret --format {{.SecretData}} "+SecretDatabaseURL, DatabaseURL(appRole, "x")+"\n")
@@ -459,7 +485,7 @@ func TestInstallConvertsAV01xStack(t *testing.T) {
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(h.out.String(), "Upgrading an existing stack") {
+	if !strings.Contains(h.out.String(), "This installation comes from an older release") {
 		t.Errorf("the conversion was not announced:\n%s", h.out.String())
 	}
 	if owner := h.secretWrites(SecretDatabaseOwnerURL); len(owner) != 1 || owner[0] != DatabaseURL("suiteward", "ownerpw") {
@@ -518,7 +544,7 @@ func TestInstallStopsWhenTheDatabaseExits(t *testing.T) {
 	h := newHarness(t, "linux")
 	h.first("--format {{json .State}} suiteward-db", `{"Status":"exited"}`)
 	err := h.podman()
-	if err == nil || !strings.Contains(err.Error(), "exited") {
+	if err == nil || !strings.Contains(err.Error(), "stopped") {
 		t.Fatalf("got %v", err)
 	}
 	if len(h.f.find("psql")) != 0 {
@@ -590,7 +616,7 @@ func TestInstallTheIsolatedTierRunsOnLinuxOnly(t *testing.T) {
 
 func TestInstallRefusesAnUnknownRuntimeAndBadFlags(t *testing.T) {
 	h := newHarness(t, "linux")
-	if err := h.install("--runtime", "nerdctl", "--image", testImage); err == nil || !strings.Contains(err.Error(), "runtime") {
+	if err := h.install("--runtime", "nerdctl", "--image", testImage); err == nil || !strings.Contains(err.Error(), "container program") {
 		t.Errorf("runtime: %v", err)
 	}
 	if err := h.install("--no-such-flag"); !errors.Is(err, ErrUsage) {
@@ -645,7 +671,7 @@ func TestInstallAdoptionCarriesTheKnownFields(t *testing.T) {
 	h.existingStack(want, testImage, nil)
 	h.have(KindNetwork, NetworkName)
 	h.have(KindVolume, VolumeData, VolumeDBData)
-	h.have(kindSecret, SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth, SecretGitHubAppKey)
+	h.have(kindSecret, SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth, SecretExecutorAuth, SecretGitHubAppKey)
 	h.first("secret inspect --showsecret --format {{.SecretData}} "+SecretDatabaseURL, DatabaseURL(appRole, "x")+"\n")
 	h.roleExists = true
 	h.busy[18081], h.busy[18091] = true, true // the running service holds its own ports
@@ -948,7 +974,7 @@ func TestInstallWritesTheMCPTokenCopyAndRestrictsItOnWindows(t *testing.T) {
 	}
 	var acl []call
 	for _, c := range h.f.calls {
-		if c.name == "icacls" {
+		if c.name == "icacls" && c.args[0] == h.tokenPath() {
 			acl = append(acl, c)
 		}
 	}
@@ -959,7 +985,7 @@ func TestInstallWritesTheMCPTokenCopyAndRestrictsItOnWindows(t *testing.T) {
 	order := h.f.lines()
 	icacls, create := -1, -1
 	for i, c := range h.f.calls {
-		if c.name == "icacls" {
+		if c.name == "icacls" && c.args[0] == h.tokenPath() {
 			icacls = i
 		}
 		if strings.Contains(order[i], "secret create suiteward-mcp-token") {
@@ -1083,7 +1109,7 @@ func TestInstallEnablesPodmanRestartInAMachineWhoseUserCannot(t *testing.T) {
 				t.Fatalf("calls %v, want %v", got, tc.calls)
 			}
 			out := h.out.String()
-			if noted := strings.Contains(out, "podman-restart.service could not be enabled"); noted != tc.note {
+			if noted := strings.Contains(out, "Could not turn on podman-restart.service"); noted != tc.note {
 				t.Errorf("note printed: %v, want %v\n%s", noted, tc.note, out)
 			}
 			if tc.note && !strings.Contains(out, restartLink) {
@@ -1126,7 +1152,7 @@ func TestInstallDoesNotLinkRestartForAMachineUserThatIsNotAPlainName(t *testing.
 	}
 	var note string
 	for _, line := range strings.Split(h.out.String(), "\n") {
-		if strings.Contains(line, "podman-restart.service could not be enabled") {
+		if strings.Contains(line, "Could not turn on podman-restart.service") {
 			note = line
 		}
 	}
@@ -1181,7 +1207,7 @@ func TestInstallDockerNeedsConfirmationAndNamesTheReasons(t *testing.T) {
 	if len(h.f.calls) != 0 {
 		t.Errorf("the engine was called before the confirmation: %v", h.f.lines())
 	}
-	for _, want := range []string{"Podman", "rootful", "secrets"} {
+	for _, want := range []string{"Podman", "root", "secrets"} {
 		if !strings.Contains(h.out.String(), want) {
 			t.Errorf("the warning lacks %q:\n%s", want, h.out.String())
 		}
@@ -1223,7 +1249,7 @@ func TestInstallDockerBringsTheStackUpWithSecretVolumes(t *testing.T) {
 		"run --detach --name suiteward --network",
 	)
 	for _, c := range h.f.calls {
-		if c.name == "icacls" {
+		if c.name == "icacls" || isOSCall(c) {
 			continue
 		}
 		if c.name != dockerDesktopCLI || c.args[0] != "--context" || c.args[1] != "desktop-linux" {
@@ -1261,7 +1287,7 @@ func TestInstallDockerDoesNotAdoptAndRerunsFromItsSettings(t *testing.T) {
 	again.have(KindContainer, ContainerDB, ContainerServe)
 	again.have(KindNetwork, NetworkName)
 	again.have(KindVolume, VolumeData, VolumeDBData, "suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward")
-	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token"} {
+	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token", "executor-token"} {
 		again.haveDockerSecret(file)
 	}
 	again.first("cat /s/database-url", DatabaseURL(appRole, "x"))
@@ -1417,7 +1443,7 @@ func TestInstallRemembersTheImageSoADockerRerunNeedsNoFlag(t *testing.T) {
 	again.have(KindContainer, ContainerDB, ContainerServe)
 	again.have(KindNetwork, NetworkName)
 	again.have(KindVolume, VolumeData, VolumeDBData, "suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward")
-	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token"} {
+	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token", "executor-token"} {
 		again.haveDockerSecret(file)
 	}
 	again.first("cat /s/database-url", DatabaseURL(appRole, "x"))
@@ -1460,7 +1486,7 @@ func TestInstallSkipsSetupWhenAnOwnerIsEnrolled(t *testing.T) {
 			t.Fatalf("terminal=%v: setup ran although an owner is enrolled: %v", terminal, h.f.tty)
 		}
 		out := h.out.String()
-		for _, want := range []string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged", "To re-enroll", "suiteward enroll --settings " + quoteArg(h.settingsPath())} {
+		for _, want := range []string{"An owner (bob) is already enrolled", "owner setup was skipped", "authenticator secret (the TOTP secret) is unchanged", "To enroll again", "suiteward enroll --settings " + quoteArg(h.settingsPath())} {
 			if !strings.Contains(out, want) {
 				t.Errorf("terminal=%v: the output lacks %q:\n%s", terminal, want, out)
 			}
@@ -1498,11 +1524,11 @@ func TestInstallRerunWithoutTheFlowSaysWhetherAnOwnerIsEnrolled(t *testing.T) {
 			func(context.Context, string) ([]byte, error) {
 				return []byte(`{"version":"v0.2.0","owner":{"login":"bob","accountId":7,"enrolledAt":"2026-10-01T00:00:00Z"}}`), nil
 			},
-			[]string{"an owner (bob) is already enrolled", "setup was skipped", "TOTP secret is unchanged"},
+			[]string{"An owner (bob) is already enrolled", "owner setup was skipped", "authenticator secret (the TOTP secret) is unchanged"},
 		},
 		"no owner": {
 			func(context.Context, string) ([]byte, error) { return []byte(`{"version":"v0.2.0"}`), nil },
-			[]string{"no owner is enrolled", placeholder},
+			[]string{"No owner is enrolled yet", placeholder},
 		},
 		"unreadable": {
 			func(context.Context, string) ([]byte, error) { return nil, errors.New("dial tcp: connection refused") },

@@ -5,6 +5,14 @@ include:
   - scripts/test-*.ps1
   - scripts/install_test.sh
   - deploy/smoke_test.sh
+  - internal/adapters/postgres/pgtest/**
+  - internal/application/checks/checkstest/**
+  - internal/application/commands/commandstest/**
+  - internal/application/execution/executiontest/**
+  - internal/application/githubsync/githubsynctest/**
+  - internal/application/governance/governancetest/**
+  - internal/application/integrity/integritytest/**
+  - internal/application/owner/ownertest/**
 runner:
   - scripts/ci.ps1
   - scripts/check-*.ps1

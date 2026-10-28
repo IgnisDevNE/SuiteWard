@@ -24,7 +24,7 @@ func cmtNotice() governance.RevisionNotice {
 
 func cmtRevisionMessage(t *testing.T, notice governance.RevisionNotice, tier string) governance.OutboxMessage {
 	t.Helper()
-	message, err := newRevisionMessage(cmtTarget(), notice, tier)
+	message, err := newRevisionMessage(cmtTarget(), notice, tier, "")
 	if err != nil {
 		t.Fatalf("newRevisionMessage: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestRevisionCommentStaysBelowTheLimitsInTheWorstCase(t *testing.T) {
 		entry := string(rune('a'+i%26)) + hostile
 		notice.Added, notice.Modified, notice.Removed = append(notice.Added, entry), append(notice.Modified, entry), append(notice.Removed, entry)
 	}
-	message, err := newRevisionMessage(cmtTarget(), notice, "co-located")
+	message, err := newRevisionMessage(cmtTarget(), notice, "co-located", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestRevisionMessageRefusesWhatItCannotRender(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			notice, tier := cmtNotice(), "isolated"
 			change(&notice, &tier)
-			if _, err := newRevisionMessage(cmtTarget(), notice, tier); err == nil || strings.Contains(err.Error(), "SECRET") {
+			if _, err := newRevisionMessage(cmtTarget(), notice, tier, ""); err == nil || strings.Contains(err.Error(), "SECRET") {
 				t.Fatalf("newRevisionMessage = %v, want an error that does not quote the input", err)
 			}
 		})
@@ -354,7 +354,7 @@ func TestRevisionMessageOmitsTheReductionDetailOfAnotherChange(t *testing.T) {
 func TestRevisionMessageRefusesReductionDetailWithoutAReduction(t *testing.T) {
 	notice := cmtNotice()
 	notice.ReducedRules = []string{"rule /tests/**"}
-	if _, err := newRevisionMessage(cmtTarget(), notice, "isolated"); err == nil {
+	if _, err := newRevisionMessage(cmtTarget(), notice, "isolated", ""); err == nil {
 		t.Fatal("newRevisionMessage accepted reduction detail on a revision that does not reduce the scope")
 	}
 }
@@ -421,6 +421,39 @@ func TestRevisionMessageKeepsTheReductionDetailThatFits(t *testing.T) {
 	}
 }
 
+// A head that only weakens the execution policy reduces no path: its reduction is made of the two execution entries of scope.Reductions alone. The
+// revision comment is posted all the same, says that the policy is lowered and lists the levels, and has no claim about files or paths.
+func TestRevisionCommentOfAnExecutionOnlyWeakeningIsPostedWithTheLoweredLevels(t *testing.T) {
+	notice := cmtNotice()
+	notice.Reduced = true
+	notice.ReducedRules = []string{"execution canonical: required -> advisory", "execution receipt: advisory -> off"}
+
+	message := cmtRevisionMessage(t, notice, "isolated")
+
+	var payload revisionPayload
+	if err := json.Unmarshal(message.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Reduced || payload.ReducedOmitted || !slices.Equal(payload.ReducedRules, notice.ReducedRules) || len(payload.ReducedPaths) != 0 || payload.ReducedPathsTotal != 0 {
+		t.Fatalf("payload %+v, want the two execution entries kept, with no path and no total", payload)
+	}
+	w := newCmtWorld(t)
+	w.mustDeliver(message)
+	body := w.writer.posts()[0].body
+	for _, want := range []string{
+		"**This revision lowers the execution policy.**", "Execution policy lowered:\n\n```\ncanonical: required -> advisory\nreceipt: advisory -> off\n```", "/suiteward approve P2-R2 <code>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("comment lacks %q:\n%s", want, body)
+		}
+	}
+	for _, unwanted := range []string{"reduces the protected scope", "Rules removed", "Excludes added", "Paths that the scope no longer covers"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("comment contains %q for a head that only lowers the execution policy:\n%s", unwanted, body)
+		}
+	}
+}
+
 // GitHub takes a comment of 65536 characters. Whatever the repository's text is made of, the body of the longest revision a payload can hold, with
 // its marker, must fit, so the comment always posts.
 func TestRevisionCommentFitsGitHubWhateverTheTextIsMadeOf(t *testing.T) {
@@ -432,7 +465,7 @@ func TestRevisionCommentFitsGitHubWhateverTheTextIsMadeOf(t *testing.T) {
 			notice.Added, notice.Modified, notice.Removed, notice.Reduced = list(), list(), list(), true
 			notice.ReducedRules, notice.ReducedPaths = asRules(list()), list()
 			target := commentTarget{RepositoryID: cmtRepoID, Repo: strings.Repeat("a", 39) + "/" + strings.Repeat("a", 100), Pull: cmtPull}
-			message, err := newRevisionMessage(target, notice, "co-located")
+			message, err := newRevisionMessage(target, notice, "co-located", "")
 			if err != nil {
 				t.Fatal(err)
 			}

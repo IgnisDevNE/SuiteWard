@@ -1,7 +1,7 @@
 # SuiteWard engineering plan
 
-- **Updated:** 2026-10-22 (the MVP `v0.2.0` is released; phase M1.12, the installer, is next)
-- **Status:** Delivered through M1.11 and released as `v0.2.0` (2026-10-22), after the security hardening phase [SH](plan/phases/SH.md) and `v0.2.0-rc.1` to `rc.3`. [M1.12](plan/phases/M1.12.md), the installer, is next and ships as `v0.3.0-alpha.1`, the first version handed to testers.
+- **Updated:** 2026-10-27 (phase M2.1, canonical execution and the receipt with the Go profile, is in progress; the latest release is the pre-release `v0.4.0-alpha.3`)
+- **Status:** The MVP phases through M1.11 are delivered and released as `v0.2.0` (2026-10-22), after the security hardening phase [SH](plan/phases/SH.md). The installer phases M1.12 to M1.15 are released as alphas. [M2.1](plan/phases/M2.1.md), canonical execution and the receipt with the Go profile, is in progress.
 
 This plan builds on the [project baseline](project-baseline.md) and the [accepted ADRs](decisions/README.md). It concerns how SuiteWard itself is developed; the product's rules for governing customer repositories are separate.
 
@@ -16,7 +16,7 @@ This plan builds on the [project baseline](project-baseline.md) and the [accepte
 - Use standard Go `testing`, structured `log/slog`, explicit errors, and manual dependency composition. See the [development guide](development-guide.md).
 - Test-first for authority, consent, promotion, idempotency, concurrency, and adapter behavior; the `sw-reviewer` subagent checks the order. See [ADR 0025](decisions/0025-test-driven-development.md) and the [TDD rule](tdd.md).
 - Required checks cover Windows/Linux build and tests, formatting and static analysis, Linux race and vulnerability checks, and real PostgreSQL checks for the persistence adapter. Patch coverage is 90% and required; project coverage is informational. See the [CI and coverage guide](ci-and-coverage.md).
-- Preserve the roadmap: M0 proves the domain; M1 delivers integrity governance ("tamper-evident, human-approved test contract"); M2 adds canonical execution; M3 adds justified supply-chain hardening.
+- Preserve the roadmap: M0 proves the domain; M1 delivers integrity governance ("tamper-evident, human-approved test contract"); M2 is canonical execution (M2.1 the engine, the receipt and the Go profile, then Python and TypeScript); M3 adds justified supply-chain hardening.
 
 ## Task design rules
 
@@ -41,4 +41,4 @@ A task states its outcome, applicable ADRs and contracts, dependencies, owned fi
 
 ## Decisions still required
 
-See the [decision register](plan/decisions.md). Open gates: D-EXECUTION, D-MANAGED-EXECUTION, and D-HARDENING-CONTROLS. D-RELEASE is decided. The MVP backup is a plain `pg_dump` plus a tarball (D-INSTALL); encrypted backups, guided restore, the priority queue, and automatic protection repair are deferred to post-MVP.
+See the [decision register](plan/decisions.md). Open gates: D-MANAGED-EXECUTION and D-HARDENING-CONTROLS. D-EXECUTION and D-RELEASE are decided, and D-EXECUTION-LATER lists what M2.1 defers. Backups are encrypted and restored with `suiteward restore` since M1.13 (D-ARCHIVE, D-RESTORE); Release-asset backups, scheduled backups, the priority queue and automatic protection repair stay post-MVP.

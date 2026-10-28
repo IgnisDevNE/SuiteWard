@@ -122,7 +122,7 @@ func waitProcess(process windows.Handle) error {
 	case 0:
 		return nil
 	case closedWindowCode:
-		return fmt.Errorf("the setup window was closed before setup ended (exit code %#x)", code)
+		return fmt.Errorf("the setup window was closed before setup finished (exit code %#x)", code)
 	}
 	return fmt.Errorf("the setup window ended with exit code %d", code)
 }

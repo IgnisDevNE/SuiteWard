@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 )
 
 const localImage = "localhost/suiteward@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -76,7 +78,8 @@ func TestInstallPullsOnlyTheImageThatIsMissing(t *testing.T) {
 	}
 	pulls := h.f.find("pull ")
 	pg, _ := PostgresImage()
-	if len(pulls) != 1 || !strings.HasSuffix(pulls[0].line(), pg) {
+	// The image of the stack that is here is not pulled; the other two, the database and the Go image of the executor's sandboxes, are.
+	if len(pulls) != 2 || !strings.HasSuffix(pulls[0].line(), pg) || !strings.HasSuffix(pulls[1].line(), goprofile.Image) {
 		t.Errorf("pulls: %v", pulls)
 	}
 }
@@ -122,7 +125,7 @@ func TestInstallDockerRepairsServeAndMigrateHoldingDifferentAppURLs(t *testing.T
 	h := dockerHarness(t, "windows")
 	h.have(KindNetwork, NetworkName)
 	h.have(KindVolume, VolumeData, VolumeDBData, "suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward")
-	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token"} {
+	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token", "executor-token"} {
 		h.haveDockerSecret(file)
 	}
 	h.volumeFiles = map[string]string{
@@ -223,7 +226,7 @@ func TestInstallReportsItsProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := h.out.String()
-	wait, migrated := strings.Index(out, "Waiting for suiteward-db"), strings.Index(out, "suiteward migrate finished")
+	wait, migrated := strings.Index(out, "Waiting for the database (suiteward-db)"), strings.Index(out, "The database update (migration) finished")
 	if wait < 0 || migrated < wait {
 		t.Errorf("progress lines missing or out of order:\n%s", out)
 	}

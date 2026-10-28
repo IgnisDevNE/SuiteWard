@@ -26,13 +26,18 @@ type Interactive func(ctx context.Context, name string, args []string) error
 type Deps struct {
 	Exec        Exec
 	Interactive Interactive
-	GOOS        string
-	Getenv      func(string) string
+	// Executable is the path of this program, of which the executor runs a copy. A command that copies the program refuses a Deps without it; a test names a file of its own.
+	Executable func() (string, error)
+	GOOS       string
+	Getenv     func(string) string
 	// UserSID is the Windows SID of the current user, which restrictPath grants; only a Windows run asks for it.
 	UserSID func() (string, error)
 	// Command is how a command of the installer names this program in a hint: "suiteward" where the shell finds the program by that name,
 	// else the quoted path of the executable (commandName). Empty reads "suiteward". OSEnv sets it; a test that does not care leaves it out.
 	Command string
+	// instance is what the running command was given that names the instance it works on: a command that a hint suggests repeats it
+	// (suggest). Each command sets it from its own flags once they are parsed; empty is the default instance.
+	instance instanceArgs
 }
 
 // validate refuses a Deps with a missing function: a nil one would fail later, at the first container command.
@@ -45,7 +50,7 @@ func (d Deps) validate() error {
 
 // OSDeps runs real commands on this machine.
 func OSDeps() Deps {
-	return Deps{Exec: OSExec, Interactive: OSInteractive, GOOS: runtime.GOOS, Getenv: os.Getenv, UserSID: osUserSID}
+	return Deps{Exec: OSExec, Interactive: OSInteractive, GOOS: runtime.GOOS, Getenv: os.Getenv, UserSID: osUserSID, Executable: os.Executable}
 }
 
 // OSExec runs name with args. When name is an absolute path its directory is put first on the child's PATH, because

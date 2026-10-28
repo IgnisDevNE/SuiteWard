@@ -4,6 +4,7 @@
 - **Status:** Accepted design decision; implemented in M1.6b (the check publication), with the first-test-PR flow in M1.7b.
 - **M1.6b note (2026-10-14):** the first-test-PR flow returns to the MVP as phase M1.7b ([ADR 0010](0010-repository-bootstrap.md) amendment of 2026-10-14). The M1.6b states are in D-CHECKS.
 - **R1 note (2026-10-05):** the first-test-PR "Bootstrap ready for integration" flow and the priority eligibility described below are deferred to post-MVP (see the amendments to [ADR 0010](0010-repository-bootstrap.md) and [ADR 0022](0022-contract-change-pr-priority.md)); the MVP check has no waiting state, and a PR whose canonical baseline has changed is not ready until it has a new revision and fresh approval; the MVP also verifies that a project test check is required (see the [ADR 0016](0016-integrated-protection-onboarding.md) amendment).
+- **M2.1 note (2026-10-26):** under `canonical: required`, an opt-in policy, the check can also wait for or fail on SuiteWard's own execution of the approved tests. See the [amendment](#amendment-2026-10-26-canonical-execution-m21) at the end ([ADR 0028](0028-canonical-execution-and-the-receipt.md)).
 - **Product:** SuiteWard
 - **Scope:** Mandatory PR governance check, readiness semantics, and enforcement boundaries.
 - **Related:** [Exact approval](0002-exact-revision-approval.md), [bootstrap](0010-repository-bootstrap.md), [revocation](0011-approval-revocation-and-acknowledgments.md), [protected scope](0013-protected-scope-and-agent-assisted-review.md), and [post-merge promotion](0014-merge-triggered-canonical-promotion.md).
@@ -91,3 +92,13 @@ The mandatory check is a required product behavior to implement and verify. This
 - Integration contexts, supported merge methods, merge queues, and strictness of branch-update requirements. Supported merge methods and fork PRs: D-INTEGRATION (2026-10-15, phase M1.7) in the [decision register](../plan/decisions.md); merge queues remain open.
 - Reconciliation of pending changes to policy, canonical baseline, revocations, and already published successful checks.
 - Recovery from a repository merged through a bypass or while an external result was stale.
+
+## Amendment 2026-10-26: canonical execution (M2.1)
+
+[ADR 0028](0028-canonical-execution-and-the-receipt.md) lets SuiteWard run the approved tests, and a policy in the governed `.suiteward.yml` can make that run a condition of this check. The amendment changes three statements of this record and nothing else.
+
+- **"Success never means that SuiteWard executed the tests."** It holds by default, and under `canonical: advisory` and `off`. Under `canonical: required` the check is `success` only when the current head's canonical run is `complete` with no failing, missing or flaky test, and its summary then says that SuiteWard ran the approved tests and gives the counts. A pass never creates a `success` that exact approval and integrity did not already give: the gate only withholds.
+- **Non-success conditions.** The row "Evaluation cannot finish because necessary source, baseline, or service data is unavailable" now also covers an execution that is pending or unavailable: the check stays `in_progress`, with the reason. A failing, missing or flaky approved test is `failure`. Neither is ever `neutral` or `skipped`, as above. The separate `SuiteWard / Receipt` check is not required, so it may be `neutral`.
+- **Acceptance criterion 3** ("without an independent SuiteWard test execution") holds when `canonical` is not `required`.
+
+The owner's `/suiteward unblock <code>` can lift a run that is unavailable, for the current head only (the executor may be down). The check can then be `success` although the tests did not run, and its summary says that the owner unblocked the head. It never lifts a failing test or a pending run. The execution itself does not change the approval rules of this record.

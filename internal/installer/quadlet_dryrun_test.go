@@ -31,6 +31,8 @@ func TestRenderUnitsForTheQuadletDryRun(t *testing.T) {
 		"no-github": {
 			Digest: testDigest, Tier: config.TierIsolated, HTTPPort: 18082, MCPPort: 18092, JobTimeout: "30m", NoGitHub: true,
 		},
+		// A host whose administrator has not run the host step of this release: the service has no executor token to mount.
+		"no-executor": {Digest: testDigest, Tier: config.TierIsolated, HTTPPort: DefaultHTTPPort, MCPPort: DefaultMCPPort, NoExecutor: true},
 	}
 	for name, params := range shapes {
 		units, err := RenderUnits(params)

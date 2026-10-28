@@ -33,7 +33,7 @@ func TestDoctorLive(t *testing.T) {
 	if err := SaveSettings(path, s); err != nil {
 		t.Fatal(err)
 	}
-	code := Doctor(ctx, OSDeps(), path, testWriter{t}, false)
+	code := Doctor(ctx, OSDeps(), path, "", testWriter{t}, false)
 	t.Logf("exit code %d", code)
 }
 

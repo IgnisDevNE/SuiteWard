@@ -55,7 +55,7 @@ func setupOnFullScreen(t *testing.T, ctx context.Context, typed io.Reader, rt Ru
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = runSetup(ctx, "suiteward", rt, "alice", setupChecks, scr)
+	err = runSetup(ctx, Deps{}, rt, "alice", setupChecks, scr)
 	if closeErr := scr.Close(); closeErr != nil {
 		t.Fatal(closeErr)
 	}
@@ -90,7 +90,7 @@ func TestSetupRunsInAWindowOnlyOnWindowsAndMacOnAFullScreenOutsideSSH(t *testing
 			rt := &ttyRuntime{}
 			var err error
 			if tc.plain {
-				err = runSetup(context.Background(), "suiteward", rt, "alice", setupChecks, io.Discard)
+				err = runSetup(context.Background(), Deps{}, rt, "alice", setupChecks, io.Discard)
 			} else {
 				_, err = setupOnFullScreen(t, liveContext(t), strings.NewReader("\n\n"), rt)
 			}
@@ -231,6 +231,13 @@ func TestSetupExplainsItselfBeforeAndAfterTheHandOver(t *testing.T) {
 		t.Errorf("what stays in the scrollback is the question, not the result:\n%s", tail)
 	}
 	noRepeats(t, c.tail())
+	// The page before the hand-over names the TOTP secret; the terminal text and the page after it do not name it again.
+	if terminal := out[leave:enter]; strings.Contains(terminal, "TOTP") || !strings.Contains(terminal, "the authenticator secret (as a link and a key)") {
+		t.Errorf("the terminal text repeats the name of the TOTP secret, or lost the secret:\n%s", terminal)
+	}
+	if tail := c.tail(); strings.Contains(tail, "TOTP") {
+		t.Errorf("the page after setup repeats the name of the TOTP secret:\n%s", tail)
+	}
 }
 
 func TestSetupSaysItDidNotFinishWhenItFailsOnTheTerminal(t *testing.T) {
@@ -268,7 +275,7 @@ func TestSetupInAWindowStillNeedsARealTerminal(t *testing.T) {
 	win := newFakeWindow()
 	withSetupMachine(t, "windows", nil, win.start)
 	rt := &ttyRuntime{}
-	if err := runSetup(context.Background(), "suiteward", rt, "alice", setupChecks, io.Discard); err == nil || !strings.Contains(err.Error(), "terminal") || len(win.started) != 0 || rt.calls != 0 {
+	if err := runSetup(context.Background(), Deps{}, rt, "alice", setupChecks, io.Discard); err == nil || !strings.Contains(err.Error(), "terminal") || len(win.started) != 0 || rt.calls != 0 {
 		t.Fatalf("runSetup = %v after %d windows and %d runs; want the refusal that names the terminal", err, len(win.started), rt.calls)
 	}
 }
@@ -279,10 +286,10 @@ func TestPlainSetupIsUnchangedOnWindows(t *testing.T) {
 	win := newFakeWindow()
 	withSetupMachine(t, "windows", nil, win.start)
 	var out strings.Builder
-	if err := runSetup(context.Background(), "suiteward", &ttyRuntime{}, "alice", setupChecks, &out); err != nil {
+	if err := runSetup(context.Background(), Deps{}, &ttyRuntime{}, "alice", setupChecks, &out); err != nil {
 		t.Fatal(err)
 	}
-	want := "\nSetup enrolls you as the owner and prints a TOTP enrollment URI and secret, only on this terminal. Stop any session recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log setup's output.\n"
+	want := "\nSetup makes you the owner and shows an authenticator secret (the TOTP secret, as a link and a key), only on this terminal. Stop any screen recording or terminal logging now, and make sure no coding agent can read this terminal. The installer does not capture or log what setup prints.\n"
 	if out.String() != want || len(win.started) != 0 {
 		t.Errorf("plain output = %q after %d windows; want %q and none", out.String(), len(win.started), want)
 	}

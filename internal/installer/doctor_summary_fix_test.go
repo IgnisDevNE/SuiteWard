@@ -163,7 +163,7 @@ func TestTheWayBackAfterAFailedMigrationOnTheIsolatedTierNamesTheTierAndTheSetti
 	if err == nil {
 		t.Fatal("the upgrade went on after the migration failed")
 	}
-	want := " --tier isolated --settings " + quoteArg(settingsFile(u.home)) + "` with that kit"
+	want := "`" + (Deps{instance: u.named()}).suggest("restore") + " " // the tier and the settings file follow the subcommand; the file follows them
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("the way back is not scoped to this instance, want %q:\n%v", want, err)
 	}

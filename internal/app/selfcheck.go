@@ -242,6 +242,7 @@ var selfCheckTokens = []struct {
 	permissions map[string]string
 }{
 	{"synchronization", syncPermissions}, {"protection", protectionPermissions}, {"comment", commentPermissions}, {"check run", checkPermissions},
+	{"archive", archivePermissions},
 }
 
 // permissionRank orders the levels of a GitHub permission; an unknown level is below read.

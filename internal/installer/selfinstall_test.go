@@ -452,7 +452,7 @@ func TestTheOfferExplainsTheCopyAndThePathChangeBeforeItAsks(t *testing.T) {
 	}
 	v := o.run.question(t, 0)
 	text := compact(v.text())
-	for _, want := range []string{"suiteward.exe", pc.exe, pc.target(), pc.dir(), "user PATH", "New terminals find suiteward"} {
+	for _, want := range []string{"suiteward.exe", pc.exe, pc.target(), pc.dir(), "your PATH", "New terminals will find suiteward"} {
 		if !strings.Contains(text, compact(want)) {
 			t.Errorf("the page lacks %q:\n%s", want, v.dump())
 		}
@@ -506,7 +506,7 @@ func checkACopyThatWasAcceptedBy(t *testing.T, answer string) {
 	if got := strings.Count(o.run.console.tail(), `$env:Path +=`); got != 0 {
 		t.Errorf("the line for this terminal is in the scrollback %d times, want only its row:\n%s", got, o.run.console.tail())
 	}
-	if o.d.Command != "suiteward" || o.d.command() != "suiteward" {
+	if o.d.Command != "suiteward" || o.d.suggest("doctor") != "suiteward doctor" {
 		t.Errorf("the hints after the copy use %q, want suiteward", o.d.Command)
 	}
 	if len(o.warnings()) != 0 {
@@ -609,7 +609,7 @@ func TestARefreshThatFailsIsAWarningAndTheCopyStaysAsItWas(t *testing.T) {
 	if readText(t, pc.target()) != "OLD BUILD" {
 		t.Errorf("the copy holds %q after a refresh that failed", readText(t, pc.target()))
 	}
-	if !strings.Contains(compact(out), compact("The copy of suiteward.exe in "+pc.dir()+" was not updated")) || !strings.Contains(out, "access is denied") {
+	if !strings.Contains(compact(out), compact("Could not update the copy of suiteward.exe in "+pc.dir())) || !strings.Contains(out, "access is denied") {
 		t.Errorf("the output does not say that the copy was not updated, where, and why:\n%s", out)
 	}
 }
@@ -714,7 +714,7 @@ func TestAnotherSuitewardOnThePathIsNamedOnThePageAndTheHintsKeepTheirName(t *te
 	o := pc.offer(false, "1\n")
 	v := o.run.question(t, 0)
 	text := compact(v.text())
-	for _, want := range []string{pc.found, "another suiteward", "after it", "still answers"} {
+	for _, want := range []string{pc.found, "another suiteward", "after it", "keeps the name suiteward"} {
 		if !strings.Contains(text, compact(want)) {
 			t.Errorf("the page lacks %q:\n%s", want, v.dump())
 		}
@@ -857,7 +857,7 @@ func TestAPurgeOffersToRemoveTheCopyAndThePathEntry(t *testing.T) {
 		t.Errorf("the page is titled %q, want \"Remove the suiteward command\":\n%s", v.rows[0], v.dump())
 	}
 	text := compact(v.text())
-	for _, want := range []string{pc.target(), pc.dir(), "user PATH"} {
+	for _, want := range []string{pc.target(), pc.dir(), "your PATH"} {
 		if !strings.Contains(text, compact(want)) {
 			t.Errorf("the page lacks %q:\n%s", want, v.dump())
 		}
@@ -971,7 +971,7 @@ func TestACopyThatARunningProgramHoldsIsRenamedAsideAndTheRunSaysSo(t *testing.T
 		t.Errorf("the PATH still holds the folder: %q", pc.path.value)
 	}
 	// Nothing promises that a later run removes the copy aside: the person is told to delete it, and where it is.
-	if out := compact(run.console.tail()); !strings.Contains(out, compact("renamed to "+pc.target()+".old")) || !strings.Contains(out, compact("delete it by hand: "+pc.target()+".old")) || strings.Contains(out, "nextrun") {
+	if out := compact(run.console.tail()); !strings.Contains(out, compact("renamed to "+pc.target()+".old")) || !strings.Contains(out, compact(pc.target()+".old. Delete that file yourself")) || strings.Contains(out, "nextrun") {
 		t.Errorf("the run does not say where the copy went and that it is to be deleted by hand, or it promises a next run:\n%s", run.console.tail())
 	}
 }
@@ -1118,7 +1118,7 @@ func TestADevelopmentBuildLeavesTheCopyAsItIsAndSaysSo(t *testing.T) {
 				if readText(t, pc.target()) != "OLD BUILD" {
 					t.Errorf("the copy holds %q after a development build", readText(t, pc.target()))
 				}
-				if want := "this is a development build: the copy at " + pc.target() + " is left as it is"; !strings.Contains(compact(out), compact(want)) {
+				if want := "This is a development build, so the copy of suiteward.exe at " + pc.target() + " was left as it is"; !strings.Contains(compact(out), compact(want)) {
 					t.Errorf("the output lacks %q:\n%s", want, out)
 				}
 			})

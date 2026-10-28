@@ -145,8 +145,8 @@ func TestCheckSummaryNeverClaimsThatTestsRan(t *testing.T) {
 			if claim.MatchString(title + summary) {
 				t.Errorf("%s: claims that tests ran:\n%s", tc.reason, summary)
 			}
-			if !strings.Contains(summary, "does not run tests") {
-				t.Errorf("%s: the summary does not say that tests are not run", tc.reason)
+			if !strings.Contains(summary, "This check reports on the protected contract only.") || strings.Contains(summary, "does not run tests") {
+				t.Errorf("%s: the summary lacks its closing sentence, or says that SuiteWard does not run tests:\n%s", tc.reason, summary)
 			}
 		}
 	}
@@ -235,7 +235,7 @@ func TestCheckSummaryOfABootstrapThatIsReadyStatesWhatWillHappen(t *testing.T) {
 	for _, w := range []string{
 		"- State: `success`", "- Proposal revision: P3-R2", "approved the exact revision", "assessed the integrity of this head",
 		"No canonical contract exists yet", "first canonical version", "from the exact merge commit after", "- Installation tier: `isolated`",
-		"does not run tests",
+		"This check reports on the protected contract only.",
 	} {
 		if !strings.Contains(summary, w) {
 			t.Errorf("summary lacks %q:\n%s", w, summary)
@@ -296,7 +296,7 @@ func TestCheckSummaryOfAwaitingTheBootstrapStatesHowToStartOrSkip(t *testing.T) 
 	}
 	for _, w := range []string{
 		"SuiteWard has no canonical contract yet.", "- State: `in_progress`", "- Installation tier: `isolated`",
-		"`/suiteward propose`", "pull request that should carry the first contract", "`/suiteward skip <code>`", "does not run tests",
+		"`/suiteward propose`", "pull request that should carry the first contract", "`/suiteward skip <code>`", "This check reports on the protected contract only.",
 	} {
 		if !strings.Contains(summary, w) {
 			t.Errorf("summary lacks %q:\n%s", w, summary)
@@ -313,7 +313,7 @@ func TestCheckSummaryOfASkippedBootstrapSaysNothingWasAssessed(t *testing.T) {
 		t.Errorf("title %q", title)
 	}
 	for _, w := range []string{
-		"Skipped by the owner before the first contract.", "- State: `success`", "No canonical contract exists", "nothing was assessed", "does not run tests",
+		"Skipped by the owner before the first contract.", "- State: `success`", "No canonical contract exists", "nothing was assessed", "This check reports on the protected contract only.",
 	} {
 		if !strings.Contains(summary, w) {
 			t.Errorf("summary lacks %q:\n%s", w, summary)

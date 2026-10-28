@@ -17,6 +17,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/protection"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
@@ -97,14 +98,10 @@ func TestResolveGitHubWithAnExistingApp(t *testing.T) {
 	}
 	assertNoKey(t, out.String(), fmt.Sprint(res), fmt.Sprintf("%+v", res), fmt.Sprintf("%#v", res))
 	entries, err := os.ReadDir(env.SettingsDir)
-	if err != nil || len(entries) != 1 || entries[0].Name() != "suiteward-ruleset-acme-app.json" {
-		t.Fatalf("settings dir = %v, %v; want only the ruleset", entries, err)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("settings dir = %v, %v; want nothing: the protection is enforced, so the ruleset file is deleted", entries, err)
 	}
-	raw, _ := os.ReadFile(filepath.Join(env.SettingsDir, entries[0].Name()))
-	if string(raw) != goldenRuleset {
-		t.Errorf("ruleset file:\n%s", raw)
-	}
-	for _, want := range []string{"https://github.example/acme/app/settings/rules", "suiteward-ruleset-acme-app.json", "enforced"} {
+	for _, want := range []string{"https://github.example/acme/app/settings/rules", "suiteward-ruleset-acme-app.json", "enforced", "was deleted"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the output lacks %q:\n%s", want, out.String())
 		}
@@ -380,13 +377,15 @@ func TestResolveGitHubTestChecks(t *testing.T) {
 			t.Fatalf("error = %v", err)
 		}
 	})
-	t.Run("the contract check is not a test check", func(t *testing.T) {
-		g := newFakeGitHub(t)
-		env, _ := flowEnv(t, g, existingFlags(t, map[string]string{"test-check": protection.ContractCheck}), strings.NewReader(""), false)
-		if _, err := resolve(t, env); err == nil {
-			t.Fatal("the contract check was accepted as the test check")
-		}
-	})
+	for _, own := range []string{protection.ContractCheck, github.ReceiptCheckName} {
+		t.Run(own+" is not a test check", func(t *testing.T) {
+			g := newFakeGitHub(t)
+			env, _ := flowEnv(t, g, existingFlags(t, map[string]string{"test-check": own}), strings.NewReader(""), false)
+			if _, err := resolve(t, env); err == nil {
+				t.Fatalf("%s was accepted as the test check", own)
+			}
+		})
+	}
 	t.Run("a repository chooses its own with the repository key", func(t *testing.T) {
 		g := newFakeGitHub(t)
 		g.repos = manyRepos(2)
@@ -419,7 +418,7 @@ func TestResolveGitHubWarnsAboutPrivateRepositoriesOnFree(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := out.String()
-	for _, want := range []string{"GitHub Free", "acme/app", "public repository"} {
+	for _, want := range []string{"GitHub Free", "acme/app", "is public or the account is on a paid plan"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the warning lacks %q:\n%s", want, text)
 		}
@@ -471,8 +470,8 @@ func TestResolveGitHubWaitsForTheImport(t *testing.T) {
 	if !strings.Contains(out.String(), "Press Enter when the rulesets are imported") {
 		t.Errorf("the user was not asked to confirm the import:\n%s", out.String())
 	}
-	if _, err := os.Stat(filepath.Join(env.SettingsDir, "suiteward-ruleset-acme-app.json")); err != nil {
-		t.Error(err)
+	if rulesetFileExists(t, env.SettingsDir, "acme/app") {
+		t.Error("the ruleset file stayed after the import worked")
 	}
 	// With the wait skipped nothing is asked at all.
 	env, out = flowEnv(t, g, existingFlags(t, nil), strings.NewReader(""), true)
@@ -486,6 +485,7 @@ func TestResolveGitHubRulesetFileIsPrivate(t *testing.T) {
 		t.Skip("POSIX modes")
 	}
 	g := newFakeGitHub(t)
+	g.changeRepos(func(repos []fakeRepo) { repos[0].noRule = true }) // the file stays while the import is not done
 	env, _ := flowEnv(t, g, existingFlags(t, nil), strings.NewReader(""), false)
 	if _, err := resolve(t, env); err != nil {
 		t.Fatal(err)
@@ -521,7 +521,7 @@ func TestRunSetupPassesTheTerminalThroughAndCapturesNothing(t *testing.T) {
 	rt := &ttyRuntime{}
 	var out strings.Builder
 	checks := map[string]string{"acme/lib": "build", "acme/app": "CI / test"}
-	if err := runSetup(context.Background(), "suiteward", rt, "alice", checks, &out); err != nil {
+	if err := runSetup(context.Background(), Deps{}, rt, "alice", checks, &out); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"/suiteward", "setup", "--owner", "alice", "--test-check", "acme/app=CI / test", "--test-check", "acme/lib=build"}
@@ -555,14 +555,14 @@ func TestRunSetupRefusesWhatSetupWouldRefuse(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			rt := &ttyRuntime{}
-			if err := runSetup(context.Background(), "suiteward", rt, tc.owner, tc.checks, io.Discard); err == nil || rt.calls != 0 {
+			if err := runSetup(context.Background(), Deps{}, rt, tc.owner, tc.checks, io.Discard); err == nil || rt.calls != 0 {
 				t.Fatalf("runSetup = %v after %d calls", err, rt.calls)
 			}
 		})
 	}
 	t.Run("a failure of setup is returned", func(t *testing.T) {
 		rt := &ttyRuntime{err: errors.New("exit status 1")}
-		if err := runSetup(context.Background(), "suiteward", rt, "alice", map[string]string{"acme/app": "CI"}, io.Discard); !errors.Is(err, rt.err) {
+		if err := runSetup(context.Background(), Deps{}, rt, "alice", map[string]string{"acme/app": "CI"}, io.Discard); !errors.Is(err, rt.err) {
 			t.Fatalf("runSetup = %v", err)
 		}
 	})
@@ -591,5 +591,21 @@ func TestGitHubResultKeyDoesNotSurviveAnEncoder(t *testing.T) {
 		if strings.Contains(encoded, leak) {
 			t.Errorf("%s of a GitHubResult carries the private key:\n%s", name, encoded)
 		}
+	}
+}
+
+// SuiteWard publishes two checks of its own, and neither is a test of the repository.
+func TestTheReceiptCheckIsNeverOfferedAsATestCheck(t *testing.T) {
+	g := newFakeGitHub(t)
+	g.repos[0].checkRuns = []string{"CI / test", "SuiteWard / Contract", "SuiteWard / Receipt", "lint"}
+	flags := existingFlags(t, nil)
+	delete(flags, "test-check")
+	env, out := flowEnv(t, g, flags, strings.NewReader("2\n"), true)
+	res, err := resolve(t, env)
+	if err != nil || res.TestChecks["acme/app"] != "lint" {
+		t.Fatalf("resolveGitHub = %v, %v\n%s", res.TestChecks, err, out.String())
+	}
+	if text := out.String(); strings.Contains(text, "SuiteWard / Receipt") || strings.Contains(text, "3)") {
+		t.Errorf("the receipt check was offered:\n%s", text)
 	}
 }

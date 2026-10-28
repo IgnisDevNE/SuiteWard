@@ -16,6 +16,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/mcp"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/postgres"
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/river"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 )
 
@@ -103,28 +104,37 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 	}
 	tier := string(cfg.Tier)
 	reports := newChangeReports(store, artifacts) // one source for the report page, the revision comment and the check summary: one build at a time
-	a := &api{store: store, owners: store, logger: logger, tier: tier, reports: reports}
+	executions := store.Execution()
+	liveness := execution.NewLiveness(time.Now()) // one record for the whole process: the executor API (M2.1-T4) writes it, the jobs read it
+	executorConfigured := cfg.ExecutorToken != ""
+	a := &api{store: store, owners: store, logger: logger, tier: tier, reports: reports, receipts: newReceiptPages(store, artifacts, executions, store, store, tier),
+		executorStatus: &executorStatus{enabled: executorConfigured, jobs: executions, liveness: liveness}}
 	backend := &mcpBackend{store: store, owners: store, instance: store.Instance, now: time.Now, timeout: storeTimeout, logger: logger, tier: tier}
-	if cfg.GitHub != nil { // the GitHub settings are optional: unset, nothing GitHub-related is composed
+	trees, archives := treeReader(noTrees), archiveReader(noArchives) // the executor API reads GitHub through these: without the settings they fail
+	if cfg.GitHub != nil {                                            // the GitHub settings are optional: unset, nothing GitHub-related is composed
 		gh, err := composeGitHub(*cfg.GitHub, cfg.JobTimeout, failureLog{Store: store, logger: logger}, time.Now, logger)
 		if err != nil {
 			pool.Close()
 			return err
 		}
 		riverConfig.SyncTick, riverConfig.SyncRepo = gh.tick, gh.syncRepo
+		trees, archives = githubTrees(gh.readers.read), gh.archive.Archive
 		ids := &repositoryIDs{}
 		check := &protectionCheck{repos: gh.repos, appID: gh.appID, readers: gh.readers, store: store, ids: ids, logger: logger, now: time.Now, within: tickDeadline(cfg.JobTimeout)}
 		riverConfig.ProtectionCheck = check.run
 		problems := &bootstrapProblems{}
 		bootstrap := &bootstrapJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, problems: problems, logger: logger, now: time.Now}
 		riverConfig.Bootstrap = bootstrap.run
-		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: gh.repos, bot: gh.bot, reader: gh.readers.read, content: artifacts, contents: artifacts, pulls: store, tier: tier, logger: logger, now: time.Now}
+		commandJob := &commandsJob{ledger: store, owners: store, suites: store, syncs: store, repos: gh.repos, bot: gh.bot, reader: gh.readers.read, content: artifacts, contents: artifacts, pulls: store, tier: tier, logger: logger, now: time.Now,
+			executions: executions, liveness: liveness, executor: cfg.Executor, executorConfigured: executorConfigured}
 		riverConfig.Commands = commandJob.run
 		comments := &commentPublisher{writer: gh.writer, bot: gh.bot, instance: newLazy(store.Instance), owners: store, suites: store, logger: logger, reports: reports, reportBase: cfg.ReportBaseURL}
 		checkPoster := &checkPublisher{runs: gh.checkRuns, ledger: store.Checks(), instance: newLazy(store.Instance), appID: gh.appID, logger: logger, reports: reports}
+		receiptPoster := &receiptCheckPublisher{runs: gh.checkRuns, ledger: store.ReceiptChecks(), instance: newLazy(store.Instance), appID: gh.appID, logger: logger}
 		checkProblems := &bootstrapProblems{}
 		checkJob := &checksJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(), commands: store,
-			pulls: store, tier: tier, problems: checkProblems, logger: logger, now: time.Now}
+			pulls: store, tier: tier, problems: checkProblems, logger: logger, now: time.Now,
+			executions: executions, receipts: store.ReceiptChecks(), liveness: liveness, executor: cfg.Executor, executorConfigured: executorConfigured}
 		riverConfig.Checks = checkJob.run
 		mergeProblems := &bootstrapProblems{}
 		mergeJob := &mergesJob{repos: gh.repos, reader: gh.readers.read, owners: store, suites: store, content: artifacts, store: store, integrity: store.Integrity(), tier: tier,
@@ -132,7 +142,7 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		riverConfig.Merges = mergeJob.run
 		integrityJob := &integrityJob{owners: store, suites: store, content: artifacts, store: store.Integrity(), logger: logger, now: time.Now}
 		riverConfig.Integrity = integrityJob.run
-		riverConfig.Publishers = map[string]river.Publisher{githubCommentKind: comments.publish, githubCheckKind: checkPoster.publish}
+		riverConfig.Publishers = map[string]river.Publisher{githubCommentKind: comments.publish, githubCheckKind: checkPoster.publish, receiptCheckKind: receiptPoster.publish}
 		a.github = &githubStatus{repos: gh.repos, store: store, ids: ids, problems: problems, checks: checkProblems, merges: mergeProblems, integrity: &integrityStatus{owners: store, suites: store, store: store.Integrity()}, budget: gh.budget}
 		backend.repos = gh.repos
 		backend.ids = ids
@@ -149,6 +159,18 @@ func runService(ctx context.Context, cfg config.Config, logger *slog.Logger, han
 		return fmt.Errorf("start the job runtime: %w", err)
 	}
 	backend.inserter = runtime
+	if executorConfigured { // the executor API is served exactly when the token is set, with or without GitHub
+		wake := func(context.Context) error { return nil } // there is no checks job to wake without the GitHub settings
+		if cfg.GitHub != nil {
+			wake = func(ctx context.Context) error { return runtime.Wake(ctx, river.Wake{river.ChecksKind}) }
+		}
+		executorAPI, err := newExecutorAPI(executorDeps{token: []byte(cfg.ExecutorToken.Reveal()), store: executions, liveness: liveness, times: cfg.Executor, treeTimeout: treeReadTimeout, content: artifacts,
+			owners: store, trees: trees, archives: archives, wake: wake, stopping: a.stopping.Load, logger: logger, now: time.Now})
+		if err != nil {
+			return errors.Join(err, shutdown(logger, a, newHTTPServer(nil), runtime, pool, cfg.ShutdownTimeout))
+		}
+		a.executor = executorAPI
+	}
 	srv := newHTTPServer(newRouter(a))
 	var (
 		mcpServers []*http.Server

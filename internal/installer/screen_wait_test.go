@@ -94,7 +94,7 @@ func TestEveryCommandEndsOnAPageThatWaitsForEnter(t *testing.T) {
 		{"install host", 1, func(t *testing.T, c *termConsole, in io.Reader) error {
 			h := newHostFake()
 			env := Env{Deps: h.deps(), Term: Terminal{In: in, Out: &bytes.Buffer{}}, PortFree: func(int) error { return nil }, Sleep: func(time.Duration) {}, OpenScreen: c.open}
-			return installHost(ctx, []string{"--yes", "--metadata-rule", "no"}, env)
+			return installHost(ctx, append([]string{"--yes", "--metadata-rule", "no"}, hostSumsArgs(t, h)...), env)
 		}},
 		{"enroll", 3, func(t *testing.T, c *termConsole, in io.Reader) error { // one Enter starts setup, one ends its page of the real terminal
 			h := enrollHarness(t, statusNoOwner)
@@ -127,7 +127,7 @@ func TestEveryCommandEndsOnAPageThatWaitsForEnter(t *testing.T) {
 				return err
 			}
 			env := Env{Deps: f.deps(), Term: Terminal{In: in, Out: &bytes.Buffer{}}, OpenScreen: c.open}
-			Main(ctx, []string{"doctor", "--settings", path}, env, io.Discard)
+			Main(ctx, []string{"doctor", "--settings", path, "--token-file", coloTokenFile(t, f)}, env, io.Discard)
 			return nil
 		}},
 	}
@@ -166,7 +166,7 @@ func TestDoctorOnAFullScreenKeepsItsExitCodeWhenTheWaitEnds(t *testing.T) {
 			c := newTermConsole(&bytes.Buffer{})
 			env := Env{Deps: f.deps(), Term: Terminal{In: tc.in, Out: &bytes.Buffer{}}, OpenScreen: c.open}
 			var stderr bytes.Buffer
-			if code := Main(liveContext(t), []string{"doctor", "--settings", path}, env, &stderr); code != tc.wantCode {
+			if code := Main(liveContext(t), []string{"doctor", "--settings", path, "--token-file", coloTokenFile(t, f)}, env, &stderr); code != tc.wantCode {
 				t.Errorf("exit %d, want %d (stderr %q)", code, tc.wantCode, stderr.String())
 			}
 			if !strings.Contains(stderr.String(), tc.wantErr) || (tc.wantErr == "" && stderr.Len() != 0) {
@@ -223,7 +223,7 @@ func TestCtrlCDuringDoctorExits130AndCtrlCAtItsWaitKeepsItsCode(t *testing.T) {
 				env.OpenScreen = newTermConsole(&bytes.Buffer{}).open
 			}
 			var errOut bytes.Buffer
-			code = Main(ctx, []string{"doctor", "--settings", path}, env, &errOut)
+			code = Main(ctx, []string{"doctor", "--settings", path, "--token-file", coloTokenFile(t, f)}, env, &errOut)
 			return code, errOut.String()
 		}
 		t.Run(tc.name+", Ctrl-C during the checks", func(t *testing.T) {

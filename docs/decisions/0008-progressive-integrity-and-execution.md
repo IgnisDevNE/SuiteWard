@@ -1,7 +1,7 @@
 # ADR 0008: Deliver integrity before canonical execution
 
 - **Date:** 2026-09-26
-- **Status:** Accepted; M0 and M1 implemented and released (v0.1.0 onward), M2 and M3 planned. Amended 2026-10-20: release provenance, SBOM and keyless signing are adopted ahead of M3 (see the amendment below).
+- **Status:** Accepted; M0 and M1 implemented and released (v0.1.0 onward), M2 and M3 planned. Amended 2026-10-20: release provenance, SBOM and keyless signing are adopted ahead of M3 (see the amendment below). Amended 2026-10-26: M2 is delivered as phases M2.1 to M2.3, through a separate executor ([ADR 0028](0028-canonical-execution-and-the-receipt.md)).
 - **Scope:** Milestone order, assurance levels, and first execution backend.
 - **Origin:** Roadmap recovered from the original system design.
 
@@ -53,6 +53,10 @@ This verifies that the image was built and signed by this repository's release w
 ## Amendment 2026-10-21: the Deploy workflow is retired
 
 `deploy.yml`, its `:deploy` tag and the `remote-poc` environment were removed (D-DEPLOY). The statements above about `deploy.yml` describe it as it was. `release.yml` is now the only workflow that pushes an image, so every published image carries the provenance, the SBOM and the signature. CI builds the image for both platforms without pushing it.
+
+## Amendment 2026-10-26: M2 is delivered as M2.1 to M2.3, through a separate executor
+
+[ADR 0028](0028-canonical-execution-and-the-receipt.md) records the design of M2 and settles its open decisions for Go. M2 arrives one ecosystem at a time (M2.1 Go, M2.2 Python, M2.3 TypeScript), and the `DockerExecutionBackend` above is built as a separate executor process that drives a container runtime CLI, so the service never receives a runtime socket. An installation that requires execution does not accept integrity-only evidence when the executor is unavailable.
 
 ## Alternatives and consequences
 

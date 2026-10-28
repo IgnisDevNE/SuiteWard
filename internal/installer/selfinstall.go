@@ -13,14 +13,74 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/config"
 	"github.com/IgnisDevNE/SuiteWard/internal/installer/ui"
 )
 
 // selfName is what a command of the installer is called where the shell finds the program by name.
 const selfName = "suiteward"
 
-// command is how a hint names this program: Deps.Command, or suiteward when the run did not work it out.
-func (d Deps) command() string { return cmp.Or(d.Command, selfName) }
+// instanceArgs are the flags of the running command that name the instance it works on. A command that a hint suggests repeats them: on a
+// computer with a second instance, a command without them reaches the default one, and an upgrade, an uninstall or a purge of the wrong
+// instance is not undone. The ports, the runtime and the connection are not carried: the settings file of the instance holds them.
+type instanceArgs struct{ tier, settings, tokenFile string }
+
+// instance reads them from the run: --settings only of the command line (settingsPathFrom reads it nowhere else), and --token-file and
+// --tier of the command line or the answers file, as the commands resolve them.
+func (r *Resolver) instance() instanceArgs {
+	return instanceArgs{tier: r.preset("tier", ""), settings: r.flags["settings"], tokenFile: r.preset("token-file", "")}
+}
+
+// flags are the ones that subcommand defines, as a person pastes them: a command takes a flag only if it defines it (enroll has no --token-file,
+// doctor no --tier), and `install host`, the administrator's step on a server, names no instance.
+func (a instanceArgs) flags(sub string) []string {
+	tier, tokenFile := a.tier, a.tokenFile
+	switch sub {
+	case "install", "uninstall", "backup", "backup init", "restore":
+	case "enroll":
+		tokenFile = ""
+	case "doctor":
+		tier = ""
+	default:
+		return nil
+	}
+	var words []string
+	for _, f := range []struct{ name, value string }{{"tier", tier}, {"settings", a.settings}, {"token-file", tokenFile}} {
+		if f.value != "" {
+			words = append(words, "--"+f.name, quoteArg(f.value))
+		}
+	}
+	return words
+}
+
+// suggest is a command of this program as a hint writes it, the only way the installer writes the program's name into one: Deps.Command, or
+// suiteward when the run did not work it out, then sub (the subcommand, "install" or "backup init"), then the flags of the running command
+// that name the instance (Deps.instance), then args. The flags come right after the subcommand because the flag package stops at the first
+// argument that is not a flag, so they would not be read after a file or a placeholder.
+func (d Deps) suggest(sub string, args ...string) string {
+	words := append([]string{cmp.Or(d.Command, selfName), sub}, d.instance.flags(sub)...)
+	return strings.Join(append(words, args...), " ")
+}
+
+// onIsolated is d for the install and the upgrade of the isolated tier, whose hints name it with --tier isolated: a host that was set up by
+// hand has no settings file to say it.
+func (d Deps) onIsolated() Deps {
+	d.instance.tier = string(config.TierIsolated)
+	return d
+}
+
+// otherInstance is d for a hint about another instance than the one the run works on, which has none of its flags: the person adds those.
+func (d Deps) otherInstance() Deps {
+	d.instance = instanceArgs{}
+	return d
+}
+
+// removeOtherInstance is how a text names the removal of the instance that owns the computer's test runner, which is not known here: the
+// command has none of this run's flags, and the note says that the other instance's go with it, because a bare uninstall removes the default
+// instance, which may be the one this run works on. The install's refusal and doctor's fix both say it with this, so that they cannot drift.
+func (d Deps) removeOtherInstance() string {
+	return "`" + d.otherInstance().suggest("uninstall") + "` (pass that instance's `--settings` and `--token-file`; the default instance needs neither)"
+}
 
 // commandName is the Deps.Command of the running program: executable is os.Executable and lookPath is exec.LookPath. A hint that says
 // `suiteward doctor` is a command only where the shell finds this program by that name, as it does after the release is installed on the
@@ -251,11 +311,11 @@ func refreshCopy(ctx context.Context, env Env) Deps {
 		return d // no copy, or this program is the copy
 	}
 	if env.devBuild() {
-		scr.Keep("Note: this is a development build: the copy at %s is left as it is.\n", target)
+		scr.Keep("This is a development build, so the copy of suiteward.exe at %s was left as it is.\n", target)
 		return d
 	}
 	if err := s.copyTo(exe, dir); err != nil {
-		scr.Warn("The copy of suiteward.exe in %s was not updated: %v\n", dir, err)
+		scr.Warn("Could not update the copy of suiteward.exe in %s (%v). SuiteWard itself is not affected, and the older copy still runs.\n", dir, err)
 		return d
 	}
 	scr.Keep("Updated the copy of suiteward.exe: %s\n", target)
@@ -280,12 +340,12 @@ func offerSelf(ctx context.Context, env Env, rows *summaryRows) Deps {
 	}
 	exe, err := s.Executable()
 	if err != nil {
-		rows.warn("suiteward.exe was not copied to a folder on your PATH: this program was not found: " + err.Error())
+		rows.warn("suiteward.exe was not copied: the installer could not find its own file (" + err.Error() + "). SuiteWard works without the copy.")
 		return d
 	}
 	dir, err := s.folder(d)
 	if err != nil {
-		rows.warn("suiteward.exe was not copied to a folder on your PATH: " + err.Error())
+		rows.warn("suiteward.exe was not copied: " + err.Error() + ". SuiteWard works without the copy.")
 		return d
 	}
 	target := filepath.Join(dir, selfFile)
@@ -308,13 +368,13 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 	d, s, scr := env.Deps, env.Self, screenOn(env.Term.Out)
 	target := filepath.Join(dir, selfFile)
 	blocks := []ui.Block{
-		ui.Para("This installer is " + exe + ", which is not on your PATH, so a command that SuiteWard prints, such as suiteward doctor, does not work in a terminal."),
+		ui.Para("SuiteWard prints commands such as suiteward doctor, but a terminal cannot find this program (" + exe + "): its folder is not on your PATH, the list of folders a terminal searches for programs. A copy fixes that."),
 		ui.Fields(ui.KV{Key: "Copy to", Value: target}, ui.KV{Key: "Add to user PATH", Value: dir}),
 	}
 	if other != "" {
-		blocks = append(blocks, ui.Para("The shell finds another suiteward, "+other+". The copy goes after it on your PATH, so that one still answers to the name."))
+		blocks = append(blocks, ui.Para("A terminal already finds another suiteward at "+other+". The copy goes after it on your PATH, so that one keeps the name suiteward."))
 	} else {
-		blocks = append(blocks, ui.Para("New terminals find suiteward by name. This terminal keeps the PATH it started with: the summary shows the one line that fixes it here."))
+		blocks = append(blocks, ui.Para("New terminals will find suiteward by name. This terminal keeps the PATH it started with: the summary shows one line that fixes it here."))
 	}
 	scr.Page("Run suiteward from any terminal", blocks...)
 	def := 0 // Yes
@@ -323,7 +383,7 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 	}
 	yes, err := askYesNo(ctx, scr, "Copy suiteward.exe and add it to your PATH?", def)
 	if err != nil {
-		rows.warn("suiteward.exe was not copied to a folder on your PATH: " + err.Error())
+		rows.warn("suiteward.exe was not copied: " + err.Error() + ". SuiteWard works without the copy.")
 	}
 	if !yes {
 		return d
@@ -334,12 +394,12 @@ func offerCopy(ctx context.Context, env Env, rows *summaryRows, exe, dir, other 
 	}
 	changed, err := s.addToUserPath(dir, d.Getenv)
 	if err != nil {
-		rows.warn(fmt.Sprintf("suiteward.exe was copied to %s, but its folder was not added to your PATH: %v. Add %s to the PATH of your user (Settings, Environment Variables) to run suiteward by name.", target, err, dir))
+		rows.warn(fmt.Sprintf("suiteward.exe was copied to %s, but its folder was not added to your PATH (%v). To run suiteward by name, add %s to the PATH of your user (Settings, Environment Variables).", target, err, dir))
 		return d
 	}
 	if changed {
 		if err := s.Path.Announce(); err != nil {
-			rows.warn(fmt.Sprintf("Your PATH was changed, but the programs that run were not told (%v): a new terminal may need you to sign out and in again.", err))
+			rows.warn(fmt.Sprintf("Your PATH was changed, but running programs were not told (%v). A new terminal may need you to sign out and in again.", err))
 		}
 	}
 	if other != "" {
@@ -389,7 +449,7 @@ func offerRemoveCopy(ctx context.Context, env Env) {
 	hasCopy := there(target) || there(target+staleSuffix)
 	onPath, err := s.onUserPath(dir, d.Getenv)
 	if err != nil {
-		scr.Warn("The PATH of this user could not be read (%v), so whether it holds %s is not known.\n", err, dir)
+		scr.Warn("Could not read your PATH (%v), so it is not known whether it holds %s.\n", err, dir)
 	}
 	if !hasCopy && !onPath {
 		return
@@ -402,9 +462,9 @@ func offerRemoveCopy(ctx context.Context, env Env) {
 		found = append(found, ui.KV{Key: "User PATH entry", Value: dir})
 	}
 	scr.Page("Remove the suiteward command",
-		ui.Para("An install of this PC put the suiteward command where a terminal finds it: a copy of the installer, and its folder on your user PATH. The instance itself is gone."),
+		ui.Para("An earlier install made the suiteward command available in terminals: it put a copy of this program in a folder and added that folder to your PATH. SuiteWard itself is already removed."),
 		ui.Fields(found...),
-		ui.Para("A copy that a program is running is renamed aside, to suiteward.exe.old: delete that file by hand."))
+		ui.Para("If a program is using the copy, it is renamed to suiteward.exe.old instead: delete that file yourself."))
 	yes, err := askYesNo(ctx, scr, "Remove the copy and its PATH entry?", 1)
 	if err != nil {
 		scr.Warn("The suiteward command was not removed: %v\n", err)
@@ -425,12 +485,12 @@ func offerRemoveCopy(ctx context.Context, env Env) {
 func (s SelfInstall) removeFromPath(scr *ui.Screen, dir string, getenv func(string) string) {
 	changed, err := s.removeFromUserPath(dir, getenv)
 	if err != nil {
-		scr.Warn("The folder %s was not removed from your PATH: %v. Remove it in Settings, Environment Variables.\n", dir, err)
+		scr.Warn("Could not remove the folder %s from your PATH (%v). Remove it yourself in Settings, Environment Variables.\n", dir, err)
 		return
 	}
 	if changed {
 		if err := s.Path.Announce(); err != nil {
-			scr.Warn("Your PATH was changed, but the programs that run were not told (%v): a new terminal may need you to sign out and in again.\n", err)
+			scr.Warn("Your PATH was changed, but running programs were not told (%v). A new terminal may need you to sign out and in again.\n", err)
 		}
 		scr.Say("Removed %s from your PATH.\n", dir)
 	}
@@ -444,21 +504,21 @@ func (s SelfInstall) removeCopy(scr *ui.Screen, dir string) {
 	err := os.Remove(target)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) { // held
 		if rmErr := os.Remove(stale); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
-			scr.Warn("%s is in use (%v) and so is %s, where it would go: close the terminals that run suiteward and delete both by hand.\n", target, err, stale)
+			scr.Warn("%s is in use (%v), and so is %s, where it would go. Close the terminals that run suiteward and delete both files yourself.\n", target, err, stale)
 			return
 		}
 		if renameErr := s.Rename(target, stale); renameErr != nil {
-			scr.Warn("%s could not be removed (%v) nor renamed: close the terminals that run suiteward and delete it by hand.\n", target, renameErr)
+			scr.Warn("Could not remove or rename %s (%v). Close the terminals that run suiteward and delete the file yourself.\n", target, renameErr)
 			return
 		}
-		scr.Say("%s is in use, so it was renamed to %s; delete it by hand: %s\n", target, stale, stale)
+		scr.Say("%s is in use, so it was renamed to %s. Delete that file yourself.\n", target, stale)
 		return
 	}
 	if err == nil {
 		scr.Say("Removed %s.\n", target)
 	}
 	if rmErr := os.Remove(stale); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
-		scr.Warn("%s could not be removed (%v): delete it by hand.\n", stale, rmErr)
+		scr.Warn("Could not remove %s (%v). Delete it yourself.\n", stale, rmErr)
 	}
 }
 

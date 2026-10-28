@@ -17,21 +17,21 @@ func restrictPath(ctx context.Context, d Deps, path string, dir bool) error {
 	if d.GOOS == "windows" {
 		// The SID, not the name: a domain or Entra ID account may not resolve by name in icacls.
 		if d.UserSID == nil {
-			return errors.New("the installer has no way to find the SID of this user, so " + path + " cannot be restricted to it")
+			return errors.New("the installer cannot find the Windows account ID (SID) of this user, so it cannot make " + path + " private to this user")
 		}
 		sid, err := d.UserSID()
 		if err == nil && !strings.HasPrefix(sid, "S-1-") {
-			err = fmt.Errorf("%q is not a SID", sid)
+			err = fmt.Errorf("%q is not a Windows account ID (SID)", sid)
 		}
 		if err != nil {
-			return fmt.Errorf("find the SID of this user, so that %s can be restricted to it: %w", path, err)
+			return fmt.Errorf("could not find this user's Windows account ID (SID), so %s cannot be made private to this user: %w", path, err)
 		}
 		grant := "*" + sid + ":F"
 		if dir {
 			grant = "*" + sid + ":(OI)(CI)F"
 		}
 		if _, err := d.Exec(ctx, "icacls", []string{path, "/inheritance:r", "/grant:r", grant}, nil); err != nil {
-			return fmt.Errorf("restrict %s to this user: %w", path, err)
+			return fmt.Errorf("could not make %s private to this user: %w", path, err)
 		}
 		return nil
 	}
@@ -40,7 +40,7 @@ func restrictPath(ctx context.Context, d Deps, path string, dir bool) error {
 		mode = 0o700
 	}
 	if err := os.Chmod(path, mode); err != nil {
-		return fmt.Errorf("restrict %s to this user: %w", path, err)
+		return fmt.Errorf("could not make %s private to this user: %w", path, err)
 	}
 	return nil
 }
@@ -83,7 +83,7 @@ func ensureParent(parent string) error {
 	case err != nil:
 		return fmt.Errorf("look at %s: %w", parent, err)
 	case info.Mode().Type() != fs.ModeDir:
-		return fmt.Errorf("%s is a symbolic link or not a directory: a backup is never written through a link, so name a real directory with --backup-dir", parent)
+		return fmt.Errorf("%s is a shortcut (symbolic link) or not a folder. A backup is never written through a link, so name a real folder with `--backup-dir`", parent)
 	}
 	return nil
 }
@@ -101,28 +101,27 @@ func (e migratingError) Unwrap() error { return e.error }
 // withBackup adds where the backup is, and the way back or on that fits how far the upgrade got, to the error of a step that came
 // after the backup. unitsDir is the account's unit directory on the isolated tier, empty on the co-located one. Before migrate
 // the schema and the data are unchanged; a rerun of --upgrade does not help from there, because the stack no longer looks like
-// the installed old release (the co-located service is gone, the isolated units name the new release). scope is the tier and the settings
-// file of an isolated run (scopeFlags), for the command its message names; the co-located message names none.
-func withBackup(cmd string, err error, path, unitsDir, scope string) error {
+// the installed old release (the co-located service is gone, the isolated units name the new release).
+func withBackup(d Deps, err error, path, unitsDir string) error {
 	var migrating migratingError
 	switch {
 	case errors.As(err, &migrating) && unitsDir != "":
 		// The isolated tier runs the release its units name: they go back first, and the restore compares them with the backup's release.
-		return fmt.Errorf("%w\nThe backup is in %s; everything after it is lost. %s", err, path, goBackIsolated(cmd, path, unitsDir, scope))
+		return fmt.Errorf("%w\nThe backup is in %s. If you go back, everything after the backup is lost. %s", err, path, goBackIsolated(d, path, unitsDir))
 	case errors.As(err, &migrating):
-		return fmt.Errorf("%w\nThe backup is in %s. To go back, install the previous release and run `%s restore %s` with your recovery kit (the restore names the release to install); everything after the backup is lost (%s)", err, path, cmd, quoteArg(path), goingBack)
+		return fmt.Errorf("%w\nThe backup is in %s. To go back, install the previous release and run `%s` with your recovery kit (the restore tells you which release to install). Everything after the backup is lost. %s", err, path, d.suggest("restore", quoteArg(path)), goingBack)
 	}
-	advice := fmt.Sprintf("Migrate did not run, so the schema and the data are unchanged. The backup is in %s.", path)
+	advice := fmt.Sprintf("The database update (migration) did not run, so your data is unchanged. The backup is in %s.", path)
 	var stopped stoppedError
 	switch {
 	case unitsDir == "":
-		advice += " If the service is not running, run `" + cmd + " install` with the options of this run to start the release in the settings again; `" + cmd + " install --upgrade` retries the upgrade."
+		advice += " If the service is not running, run `" + d.suggest("install") + "` with the same options as this run to start the release in your settings again. `" + d.suggest("install", "--upgrade") + "` retries the upgrade."
 	case errors.As(err, &stopped):
 		// suiteward-migrate.service stays active after it ran (RemainAfterExit), so going on restarts it; starting the service alone
 		// would run the new release on the old schema.
-		advice += fmt.Sprintf(" suiteward.service is stopped, and the units this upgrade replaced are in %s. To go back, copy them to %s, run `systemctl --user daemon-reload` and `systemctl --user start suiteward.service`. To go on once the cause is fixed, run `systemctl --user daemon-reload`, then `systemctl --user restart suiteward-db.service` (only if the database image changed), then `systemctl --user restart suiteward-migrate.service` and `systemctl --user start suiteward.service`.", unitsKeptBeside(path), unitsDir)
+		advice += fmt.Sprintf(" suiteward.service is stopped, and the unit files this upgrade replaced are saved in %s. To go back, copy them to %s, then run `systemctl --user daemon-reload` and `systemctl --user start suiteward.service`. To go on once the cause is fixed, run `systemctl --user daemon-reload`, then `systemctl --user restart suiteward-db.service` (only if the database image changed), then `systemctl --user restart suiteward-migrate.service` and `systemctl --user start suiteward.service`.", unitsKeptBeside(path), unitsDir)
 	default:
-		advice += " Fix the cause and run `" + cmd + " install --upgrade` again."
+		advice += " Fix the cause, then run `" + d.suggest("install", "--upgrade") + "` again."
 	}
 	return fmt.Errorf("%w\n%s", err, advice)
 }

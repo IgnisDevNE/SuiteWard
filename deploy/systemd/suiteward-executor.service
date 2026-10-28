@@ -1,0 +1,36 @@
+# The SuiteWard executor of the isolated tier (ADR 0028, section 10): `suiteward execute`, a native process of the account suiteward-exec that
+# runs the sandboxes of canonical execution through that account's own rootless Podman. It is a systemd user unit: `suiteward install host`
+# writes it to /etc/systemd/user/ and enables it for suiteward-exec only, so it starts at boot with that account's lingering manager and runs
+# under the cgroup controllers that the drop-in user@.service.d/delegate.conf gives the manager. ConditionUser keeps the manager of every other
+# account from running it. The binary is a root-owned copy of the release's program, which `suiteward doctor` compares with the pin beside it.
+[Unit]
+Description=SuiteWard executor
+ConditionUser=suiteward-exec
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/local/libexec/suiteward/suiteward-executor execute
+Environment=SUITEWARD_EXECUTOR_URL=http://127.0.0.1:27081
+Environment=SUITEWARD_EXECUTOR_TOKEN_FILE=/etc/suiteward/executor-token
+Environment=SUITEWARD_EXECUTOR_RUNTIME=podman
+# MemoryMax is 3 GiB. What the executor holds at its peak: a module body that comes with no length, buffered up to what is left of the prefetch
+# budget (512 MiB) and for a moment about twice that (1 GiB); up to 64 MiB of output of one `go test` invocation, held and parsed (about 128 MiB);
+# and the analysis files of both sides in memory (a few hundred MiB at most). That is about 1.5 GiB live, and the Go runtime lets its heap grow to
+# about twice what is live before it collects, so the resident size can reach 3 GiB: a lower limit would kill the executor in the middle of a job
+# that is within every bound. A host that runs one sandbox at a time needs 8 GiB (3 GiB of sandbox, 3 GiB of executor, the database and the
+# service). Each sandbox gets a scope of its own under user@UID.service, bounded by its own `--memory 3g`, so it is outside this unit's 3 GiB: that is
+# assumed here and to be confirmed on a live host. NoNewPrivileges stays off: it would stop newuidmap and newgidmap, which rootless Podman needs.
+MemoryMax=3G
+MemorySwapMax=0
+# GOMEMLIMIT is a variable of the Go runtime, not a setting of the executor: below MemoryMax, it makes the runtime collect before the cgroup kills the process.
+Environment=GOMEMLIMIT=2500MiB
+# On SIGTERM the executor gives a job 30 s to finish and post its result, then kills its sandbox and exits: the stop timeout exceeds that. systemd
+# signals the main process only (mixed): the default would also reach the `podman run` child of a sandbox, which forwards it to `go test` and makes the
+# job fail; what is left after the timeout is killed.
+KillMode=mixed
+TimeoutStopSec=45
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

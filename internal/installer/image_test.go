@@ -58,7 +58,7 @@ func TestInstallColocatedRerunWithTheBareInstalledDigestIsNotAnUpgrade(t *testin
 	h.existingStack(colocatedSettings(), testImage, nil)
 	h.have(KindNetwork, NetworkName)
 	h.have(KindVolume, VolumeData, VolumeDBData)
-	h.have(kindSecret, SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth)
+	h.have(kindSecret, SecretDBAuth, SecretDatabaseOwnerURL, SecretDatabaseURL, SecretMCPAuth, SecretExecutorAuth)
 	h.first("secret inspect --showsecret --format {{.SecretData}} "+SecretDatabaseURL, DatabaseURL(appRole, "x")+"\n")
 	h.roleExists = true
 	h.busy[18081], h.busy[18091] = true, true

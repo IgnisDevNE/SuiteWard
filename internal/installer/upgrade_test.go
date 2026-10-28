@@ -471,7 +471,7 @@ func newDockerUpgrade(t *testing.T) (*harness, string) {
 	h.have(KindContainer, ContainerDB, ContainerServe)
 	h.have(KindNetwork, NetworkName)
 	h.have(KindVolume, VolumeData, VolumeDBData, "suiteward-secrets-suiteward-db", "suiteward-secrets-suiteward-migrate", "suiteward-secrets-suiteward")
-	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token"} {
+	for _, file := range []string{"postgres-password", "database-owner-url", "database-url", "mcp-token", "executor-token"} {
 		h.haveDockerSecret(file)
 	}
 	h.first("cat /s/database-url", DatabaseURL(appRole, "x"))
@@ -593,7 +593,7 @@ func TestUpgradeColocatedBeforeMigrateSaysTheDatabaseIsUnchanged(t *testing.T) {
 	if err == nil {
 		t.Fatal("the database start must fail")
 	}
-	for _, want := range []string{"schema and the data are unchanged", u.backup(), "If the service is not running, run `suiteward install` with the options of this run", "suiteward install --upgrade"} {
+	for _, want := range []string{"did not run, so your data is unchanged", u.backup(), "If the service is not running, run `" + (Deps{instance: u.named()}).suggest("install") + "` with the same options as this run", (Deps{instance: u.named()}).suggest("install", "--upgrade")} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the advice lacks %q:\n%v", want, err)
 		}
@@ -608,7 +608,7 @@ func TestUpgradeColocatedFromMigrateOnKeepsTheRestoreAdvice(t *testing.T) {
 		u := newUpgradeHarness(t, nil)
 		u.f.rules = append([]rule{{match: fail, err: errors.New(name + " failed")}}, u.f.rules...)
 		err := u.upgrade("--image", testImage, "--yes")
-		if err == nil || !strings.Contains(err.Error(), "restore") || strings.Contains(err.Error(), "schema and the data are unchanged") {
+		if err == nil || !strings.Contains(err.Error(), "restore") || strings.Contains(err.Error(), "did not run, so your data is unchanged") {
 			t.Fatalf("%s: once migrate ran the way back is the backup: %v", name, err)
 		}
 	}

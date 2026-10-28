@@ -22,17 +22,17 @@ func TestThePlainQuestionsOfTheInstallAreWhatTheyAlwaysWere(t *testing.T) {
 	}
 	out := h.out.String()
 	for _, want := range []string{
-		"Installation tier (co-located or isolated) [co-located]: ",
-		"Container runtime (podman recommended, docker discouraged) [podman]: ",
+		"Installation type (co-located or isolated) [co-located]: ",
+		"Container program (podman recommended, docker not recommended) [podman]: ",
 		"HTTP port on 127.0.0.1 [27081]: ",
 		"MCP port on 127.0.0.1 [27091]: ",
-		"Release image (pinned by digest) [" + testImage + "]: ",
+		"Release image (with its digest) [" + testImage + "]: ",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the plain output lacks the question %q:\n%s", want, out)
 		}
 	}
-	for _, page := range []string{"Where SuiteWard runs", "Container runtime\n", "Ports\n", "Release image\n", "reduced assurance", "Recommended"} {
+	for _, page := range []string{"Where SuiteWard runs", "Container program\n", "Ports\n", "Release image\n", "To start, choose co-located"} {
 		if strings.Contains(out, page) {
 			t.Errorf("the plain output carries the explanation %q", page)
 		}
@@ -50,7 +50,7 @@ func TestThePlainFlagKeepsTheQuestionsOfAFullScreenTerminalPlain(t *testing.T) {
 		t.Fatalf("Install: %v", err)
 	}
 	out := run.output()
-	if strings.Contains(out, esc) || !strings.Contains(out, "Installation tier (co-located or isolated) [co-located]: ") || strings.Contains(out, "Where SuiteWard runs") {
+	if strings.Contains(out, esc) || !strings.Contains(out, "Installation type (co-located or isolated) [co-located]: ") || strings.Contains(out, "Where SuiteWard runs") {
 		t.Errorf("a plain run on a terminal drew or explained:\n%s", out)
 	}
 }

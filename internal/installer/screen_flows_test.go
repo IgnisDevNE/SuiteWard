@@ -295,10 +295,10 @@ func TestInstallHostOnAFullScreenShowsTheSteps(t *testing.T) {
 	h := newHostFake()
 	c := newTermConsole(&bytes.Buffer{})
 	env := Env{Deps: h.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, PortFree: func(int) error { return nil }, Sleep: func(time.Duration) {}, OpenScreen: c.open}
-	if err := installHost(liveContext(t), []string{"--yes", "--metadata-rule", "no"}, env); err != nil {
+	if err := installHost(liveContext(t), append([]string{"--yes", "--metadata-rule", "no"}, hostSumsArgs(t, h)...), env); err != nil {
 		t.Fatal(err)
 	}
-	c.steps(t, "Podman", "Account", "Metadata", "Next")
+	c.steps(t, "Podman", "Account", "Metadata", "Executor", "Next")
 	if !c.closed() || !strings.Contains(c.tail(), "The host is ready.") {
 		t.Errorf("the next command must stay in the scrollback:\n%s", c.tail())
 	}
@@ -349,7 +349,7 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 	c := newTermConsole(&bytes.Buffer{})
 	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, OpenScreen: c.open}
 	var stderr bytes.Buffer
-	if code := Main(liveContext(t), []string{"doctor", "--settings", path}, env, &stderr); code != 1 {
+	if code := Main(liveContext(t), []string{"doctor", "--settings", path, "--token-file", coloTokenFile(t, f)}, env, &stderr); code != 1 {
 		t.Errorf("exit %d, want 1: a failed check is a failed doctor", code)
 	}
 	c.steps(t, "Doctor")
@@ -369,7 +369,7 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 	}
 	var piped bytes.Buffer
 	env = Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &piped}}
-	_ = Main(liveContext(t), []string{"doctor", "--settings", path}, env, &stderr)
+	_ = Main(liveContext(t), []string{"doctor", "--settings", path, "--token-file", coloTokenFile(t, f)}, env, &stderr)
 	port := regexp.MustCompile(`port \d+`) // the stack of each build listens on a port of its own
 	for _, line := range strings.Split(strings.TrimSpace(piped.String()), "\n") {
 		if name, ok := strings.CutPrefix(line, "ok "); ok {
@@ -410,7 +410,7 @@ func TestDoctorOnAFullScreenShowsItsChecksAndKeepsItsExitCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	env = Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, OpenScreen: c.open}
-	if code := Main(liveContext(t), []string{"doctor", "--json", "--settings", path}, env, &stderr); code != 0 {
+	if code := Main(liveContext(t), []string{"doctor", "--json", "--settings", path, "--token-file", coloTokenFile(t, f)}, env, &stderr); code != 0 {
 		t.Errorf("doctor --json exit %d", code)
 	}
 	if len(c.opened) != 0 || strings.Contains(c.out.String(), esc) {

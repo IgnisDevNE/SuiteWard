@@ -130,6 +130,9 @@ func entry(repository, comment int64, d commands.Disposition) commands.Entry {
 	if d == commands.Processed {
 		e.Operation = "consent-operation"
 	}
+	if d == commands.ModeSet {
+		e.Mode = "fix"
+	}
 	return e
 }
 
@@ -144,7 +147,10 @@ var (
 	CountedDispositions = []commands.Disposition{commands.InvalidCode, commands.ReplayedCode, commands.Processed}
 	IgnoredDispositions = []commands.Disposition{commands.Malformed, commands.UnknownProposal, commands.EditedFirst, commands.NoSuite, commands.NotCommand,
 		commands.Failed, commands.BeforeEnrollment, commands.IgnoredAuthor, commands.Proposed, commands.ProposeRefused, commands.Skipped,
-		commands.SkipRefused, commands.Suggested, commands.SuggestRefused, commands.OtherPull}
+		commands.SkipRefused, commands.Suggested, commands.SuggestRefused, commands.OtherPull,
+		commands.ReceiptRefused, commands.ModeSet, commands.ModeRefused, commands.Unblocked, commands.UnblockRefused}
+	// ExecutionDispositions are the five that M2.1 adds: none carries an operation id, and none counts for the check.
+	ExecutionDispositions = []commands.Disposition{commands.ReceiptRefused, commands.ModeSet, commands.ModeRefused, commands.Unblocked, commands.UnblockRefused}
 )
 
 func firstComment(id int64) observed {
@@ -175,6 +181,10 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		{"a skipped, proposed or suggested command never replaces the owner's latest approve or revoke", cmLatestNeverReplaced},
 		{"Skipped is true for a skipped entry of the pull created at or after since", cmSkipped},
 		{"LatestOwnerCommand rejects an invalid request", cmLatestInvalid},
+		{"the mode of a command is stored with its entry", cmModeStored},
+		{"an entry refuses a mode that is not fix, feature or refactor, a mode-set without one, and an operation on an execution disposition", cmExecutionInvalid},
+		{"a mode or an unblock after a wrong code never replaces it as the owner's latest command", cmLatestIgnoresExecution},
+		{"PreviewMode is the latest mode-set of the pull created at or after since", cmPreviewMode},
 		{"Instance is a stable 128-bit hexadecimal identifier", cmInstance},
 		{"a canceled context writes nothing", cmCanceled},
 	}
@@ -296,6 +306,7 @@ func cmRecordConflict(e *cmdEnv) {
 		"created":     func(x *commands.Entry) { x.CreatedAt = cmdTime(2) },
 		"digest":      func(x *commands.Entry) { x.BodyDigest = artifact.Hash([]byte("other")) },
 		"decided":     func(x *commands.Entry) { x.DecidedAt = cmdTime(10) },
+		"mode":        func(x *commands.Entry) { x.Mode = "fix" },
 	}
 	for name, mutate := range differs {
 		other := original
@@ -508,6 +519,120 @@ func cmLatestNeverReplaced(e *cmdEnv) {
 		e.must(err)
 		if !found || got.CommentID != 1 || got.Disposition != commands.InvalidCode {
 			e.t.Fatalf("after %s: LatestOwnerCommand = %+v, found %v; want the wrong code, comment 1", d, got, found)
+		}
+	}
+}
+
+func cmModeStored(e *cmdEnv) {
+	approve := entry(10, 1, commands.Processed)
+	approve.Mode = "feature" // an approve that carried a mode records it, whatever its disposition
+	e.must(e.store.Record(e.ctx, approve, nil))
+	e.must(e.store.Record(e.ctx, approve, nil))
+	for name, mode := range map[string]string{"another mode": "refactor", "none": ""} {
+		other := approve
+		other.Mode = mode
+		e.t.Run(name, func(t *testing.T) {
+			sub := *e
+			sub.t = t
+			sub.requireErr(sub.store.Record(sub.ctx, other, nil), commands.ErrConflict)
+		})
+	}
+	for i, mode := range []string{"fix", "feature", "refactor"} {
+		x := entry(10, int64(10+i), commands.InvalidCode)
+		x.Mode = mode
+		e.must(e.store.Record(e.ctx, x, nil))
+		e.must(e.store.Record(e.ctx, x, nil))
+	}
+	withoutMode := entry(10, 20, commands.Malformed)
+	e.must(e.store.Record(e.ctx, withoutMode, nil))
+	withoutMode.Mode = "fix"
+	e.requireErr(e.store.Record(e.ctx, withoutMode, nil), commands.ErrConflict)
+}
+
+func cmExecutionInvalid(e *cmdEnv) {
+	bad := map[string]func(*commands.Entry){
+		"an unknown mode":           func(x *commands.Entry) { x.Mode = "bugfix" },
+		"a mode in capitals":        func(x *commands.Entry) { x.Mode = "Fix" },
+		"a mode with a space":       func(x *commands.Entry) { x.Mode = "fix " },
+		"a mode-set without a mode": func(x *commands.Entry) { x.Disposition, x.Mode = commands.ModeSet, "" },
+	}
+	for _, d := range ExecutionDispositions {
+		bad["operation on "+string(d)] = func(x *commands.Entry) { x.Disposition, x.Operation = d, "op" }
+	}
+	for name, mutate := range bad {
+		x := entry(10, 1, commands.Malformed)
+		mutate(&x)
+		e.t.Run(name, func(t *testing.T) {
+			sub := *e
+			sub.t = t
+			sub.requireErr(sub.store.Record(sub.ctx, x, ack("ack-bad")), commands.ErrInvalid)
+		})
+	}
+	e.requireOutbox()
+	e.must(e.store.Record(e.ctx, entry(10, 1, commands.Malformed), nil)) // nothing was left behind
+}
+
+func cmLatestIgnoresExecution(e *cmdEnv) {
+	wrong := entry(10, 1, commands.InvalidCode)
+	wrong.AuthorID = ownerAccount
+	e.must(e.store.Record(e.ctx, wrong, nil))
+	for i, d := range ExecutionDispositions {
+		x := entry(10, int64(i+2), d)
+		x.AuthorID = ownerAccount
+		e.must(e.store.Record(e.ctx, x, nil))
+		got, found, err := e.store.LatestOwnerCommand(e.ctx, 10, 1, ownerAccount, 0)
+		e.must(err)
+		if !found || got.CommentID != 1 || got.Disposition != commands.InvalidCode {
+			e.t.Fatalf("after %s: LatestOwnerCommand = %+v, found %v; want the wrong code, comment 1", d, got, found)
+		}
+	}
+}
+
+func cmPreviewMode(e *cmdEnv) {
+	set := func(repository, comment int64, pull, created int, mode string) {
+		x := entry(repository, comment, commands.ModeSet)
+		x.PullNumber, x.CreatedAt, x.Mode = pull, cmdTime(created), mode
+		e.must(e.store.Record(e.ctx, x, nil))
+	}
+	preview := func(repository int64, pull, since int, wantMode string) {
+		e.t.Helper()
+		got, found, err := e.store.PreviewMode(e.ctx, repository, pull, cmdTime(since))
+		e.must(err)
+		if got != wantMode || found != (wantMode != "") {
+			e.t.Fatalf("PreviewMode(%d, %d, since %d) = %q, found %v; want %q", repository, pull, since, got, found, wantMode)
+		}
+	}
+	preview(10, 1, 0, "") // nothing recorded
+	set(10, 1, 1, 5, "fix")
+	preview(10, 1, 0, "fix")
+	set(10, 2, 1, 7, "refactor")
+	preview(10, 1, 0, "refactor") // the latest of the pull
+	set(10, 3, 1, 9, "feature")
+	preview(10, 1, 0, "feature")
+	preview(10, 1, 9, "feature") // created exactly at since counts
+	preview(10, 1, 8, "feature")
+	preview(10, 1, 10, "") // every mode-set is before the current enrollment
+	preview(10, 2, 0, "")  // another pull
+	preview(20, 1, 0, "")  // another repository
+	set(10, 4, 2, 6, "fix")
+	preview(10, 2, 0, "fix")
+	preview(10, 1, 0, "feature") // the other pull's mode never leaks
+
+	// Only a mode-set entry answers: an approve that carried a mode, and a refused mode, do not.
+	approve := entry(10, 5, commands.Processed)
+	approve.Mode, approve.CreatedAt = "fix", cmdTime(20)
+	e.must(e.store.Record(e.ctx, approve, nil))
+	refused := entry(10, 6, commands.ModeRefused)
+	refused.Mode, refused.CreatedAt = "refactor", cmdTime(21)
+	e.must(e.store.Record(e.ctx, refused, nil))
+	preview(10, 1, 0, "feature")
+	for name, args := range map[string]struct {
+		repository int64
+		pull       int
+	}{"repository": {0, 1}, "pull": {10, 0}, "huge pull": {10, 1 << 31}} {
+		_, _, err := e.store.PreviewMode(e.ctx, args.repository, args.pull, cmdTime(0))
+		if !errors.Is(err, commands.ErrInvalid) {
+			e.t.Fatalf("%s: error = %v; want ErrInvalid", name, err)
 		}
 	}
 }

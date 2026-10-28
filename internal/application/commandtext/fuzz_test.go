@@ -12,6 +12,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // FuzzParse feeds a hostile comment body to Parse. A command it reads must have the documented shape, and text
@@ -22,6 +23,9 @@ func FuzzParse(f *testing.F) {
 		"/SUITEWARD Approve P999999999-R1 000000", "/suiteward approve P01-R2 123456", "/suiteward skip 123456",
 		"/suiteward approve P1-R2 12345\u0663", "text\n \t/suiteward\trevoke P1-R1 111111 \t\r\n",
 		"\u017fuiteward approve P1-R1 123456", "````\n```\n/suiteward propose\n````", "-->\n/suiteward approve P1-R2 123456", "```\n/suiteward approve P1-R2 123456",
+		"/suiteward approve P1-R2 fix 123456", "/SUITEWARD Approve P1-R2 REFACTOR 123456", "/suiteward approve P1-R2 fixx 123456", "/suiteward approve P1-R2 feature",
+		"/suiteward revoke P1-R2 fix 123456", "/suiteward mode feature", "/suiteward mode", "/suiteward mode fix extra", "/suiteward unblock 123456", "/suiteward unblock P1-R1",
+		"```\n/suiteward mode fix\n```", "```\n/suiteward unblock 123456",
 	} {
 		f.Add(seed)
 	}
@@ -76,7 +80,7 @@ func checkParsed(t *testing.T, body string, p commandtext.Parsed) {
 			t.Fatalf("not a command, yet %+v for %q", p, body)
 		}
 	case commandtext.KindMalformed:
-		if p.Command != (commandtext.Command{}) || p.Reason < commandtext.UnknownVerb || p.Reason > commandtext.ExtraText {
+		if p.Command != (commandtext.Command{}) || p.Reason < commandtext.UnknownVerb || p.Reason > commandtext.BadMode {
 			t.Fatalf("malformed with %+v for %q", p, body)
 		}
 	case commandtext.KindCommand:
@@ -91,16 +95,19 @@ func checkParsed(t *testing.T, body string, p commandtext.Parsed) {
 
 func checkCommand(t *testing.T, body string, c commandtext.Command) {
 	t.Helper()
+	if c.Mode != execution.ModeNone && c.Verb != commandtext.Approve && c.Verb != commandtext.SetMode {
+		t.Fatalf("verb %d carries the mode %d: %+v from %q", c.Verb, c.Mode, c, body)
+	}
 	switch c.Verb {
 	case commandtext.Approve, commandtext.Revoke:
-		ref := commandtext.Reference(c.Proposal, c.Revision) // panics outside 1..999999999
-		proposal, revision, ok := commandtext.ParseReference(ref)
-		if !ok || proposal != c.Proposal || revision != c.Revision || !isCode(c.Code) || !strings.Contains(body, ref) || !strings.Contains(body, c.Code) {
-			t.Fatalf("command %+v does not hold its reference and 6-digit code, or they are not in %q", c, body)
-		}
-	case commandtext.Skip:
+		checkReferenced(t, body, c)
+	case commandtext.Skip, commandtext.Unblock:
 		if c.Proposal != 0 || c.Revision != 0 || !isCode(c.Code) || !strings.Contains(body, c.Code) {
-			t.Fatalf("skip %+v is not only a 6-digit code from %q", c, body)
+			t.Fatalf("verb %d %+v is not only a 6-digit code from %q", c.Verb, c, body)
+		}
+	case commandtext.SetMode:
+		if c.Proposal != 0 || c.Revision != 0 || c.Code != "" || c.Mode == execution.ModeNone || !spells(body, c.Mode) {
+			t.Fatalf("mode %+v is not only a mode that %q spells", c, body)
 		}
 	case commandtext.Propose, commandtext.Suggest:
 		if c.Proposal != 0 || c.Revision != 0 || c.Code != "" {
@@ -109,6 +116,24 @@ func checkCommand(t *testing.T, body string, c commandtext.Command) {
 	default:
 		t.Fatalf("unknown verb in %+v from %q", c, body)
 	}
+}
+
+// checkReferenced checks an approve or a revoke: the reference and the 6-digit code are in the body, and so is the mode when there is one.
+func checkReferenced(t *testing.T, body string, c commandtext.Command) {
+	t.Helper()
+	ref := commandtext.Reference(c.Proposal, c.Revision) // panics outside 1..999999999
+	proposal, revision, ok := commandtext.ParseReference(ref)
+	if !ok || proposal != c.Proposal || revision != c.Revision || !isCode(c.Code) || !strings.Contains(body, ref) || !strings.Contains(body, c.Code) {
+		t.Fatalf("command %+v does not hold its reference and 6-digit code, or they are not in %q", c, body)
+	}
+	if c.Mode != execution.ModeNone && !spells(body, c.Mode) {
+		t.Fatalf("command %+v names a mode that %q does not spell", c, body)
+	}
+}
+
+// spells reports whether body spells mode, in any case.
+func spells(body string, mode execution.Mode) bool {
+	return strings.Contains(strings.ToLower(body), mode.String())
 }
 
 // FuzzParseReference checks that a reference that is accepted is exactly what Reference writes.
@@ -267,6 +292,16 @@ func FuzzRenderers(f *testing.F) {
 	} {
 		f.Add(seed.sel, seed.item, seed.n, uint8(3), "version: 1\ninclude:\n  - "+seed.item+"\n")
 	}
+	// A revision that lowers the execution policy and nothing else: only execution entries, no path.
+	f.Add(uint8(1), "required -> advisory", uint8(2), uint8(4), "")
+	f.Add(uint8(1), "a`b```\n/suiteward propose", uint8(2), uint8(12), "")
+	// Text that holds an HTML comment opener or the end of one reaches every renderer: Parse hides what lies between them, so no body may hold an opener outside a fence.
+	for _, sel := range []uint8{0, 1, 2, 3, 4, 5, 6, 7} { // one for each renderer
+		for _, item := range []string{">0<!----", "<!--", "-->", "a<!--b-->c"} {
+			f.Add(sel, item, uint8(0x68), uint8('L'), "0")
+			f.Add(sel, item, uint8(6), uint8(3), "version: 1\n# "+item+"\n")
+		}
+	}
 	f.Fuzz(func(t *testing.T, sel uint8, item string, n, reps uint8, decl string) {
 		r, ok := renderers[int(sel)%len(renderers)](fuzzInput{item: item, n: n, reps: reps, decl: decl})
 		if !ok {
@@ -302,10 +337,18 @@ func renderRevision(in fuzzInput) (rendered, bool) {
 		r.Reduced, r.ReducedOmitted, r.ReducedPathsTotal = true, true, int(in.reps)
 	case in.n&2 != 0:
 		r.Reduced, r.ReducedRules, r.ReducedPaths = true, in.list(3, 20), in.list(4, 20)
+		// RevisionComment panics on an entry of none of these kinds; with no path and only execution entries the reduction lowers the policy alone.
+		kinds := []string{"rule ", "exclude ", "execution canonical: ", "execution receipt: "}
+		if in.reps&4 != 0 {
+			kinds, r.ReducedPaths = kinds[2:], nil
+		}
 		for i, rule := range r.ReducedRules {
-			r.ReducedRules[i] = "rule " + rule // RevisionComment panics on a rule that is neither a "rule " nor an "exclude " entry
+			r.ReducedRules[i] = kinds[(i+int(in.reps))%len(kinds)] + rule
 		}
 		r.ReducedPathsTotal = len(r.ReducedPaths) + int(in.reps)
+		if in.reps&4 != 0 {
+			r.ReducedPathsTotal = 0 // no path at all, so the lead is the policy-only one
+		}
 	}
 	return rendered{out: commandtext.RevisionComment(r)}, true
 }
@@ -459,6 +502,11 @@ func checkRendered(t *testing.T, r rendered) {
 			t.Fatalf("the link destination %q is not one SuiteWard writes, in %q", l[1], out)
 		}
 	}
+	// The narrowest rule that keeps Parse in step with the fences: no line outside a fence holds an HTML comment opener, not even in a code span, because Parse
+	// hides the lines up to the next "-->" whatever Markdown makes of it, and would read the fences that follow out of step.
+	if raw, _, _ := scanWith(out, func(line string) string { return line }); strings.Contains(raw, "<!--") {
+		t.Fatalf("an HTML comment opener is outside a code fence in %q", out)
+	}
 	text := link.ReplaceAllString(outside, "]")
 	if strings.Contains(text, sentinel) || strings.Contains(text, "<!--") || commandtext.Parse(text).Kind != commandtext.KindNotCommand {
 		t.Fatalf("hostile text, a hidden comment or a command is outside code: %q in %q", text, out)
@@ -472,7 +520,11 @@ type block struct{ info, content string }
 
 // scan reads body by the rules of GitHub Flavored Markdown and returns the text outside its code fences and code spans, the
 // fenced blocks, and an error for a fence that is not closed.
-func scan(body string) (outside string, blocks []block, err error) {
+func scan(body string) (outside string, blocks []block, err error) { return scanWith(body, stripSpans) }
+
+// scanWith is scan with strip applied to each line outside a fence: stripSpans leaves the text outside the code spans, and a function that
+// returns its line leaves the whole text outside the fences.
+func scanWith(body string, strip func(string) string) (outside string, blocks []block, err error) {
 	var text []string
 	var open *block
 	var mark byte
@@ -492,7 +544,7 @@ func scan(body string) (outside string, blocks []block, err error) {
 		} else if run, rest, ok := leadingRun(line, '~'); ok && run >= 3 {
 			open, mark, size = &block{info: strings.TrimSpace(rest)}, '~', run
 		} else {
-			text = append(text, stripSpans(line))
+			text = append(text, strip(line))
 		}
 	}
 	if open != nil {

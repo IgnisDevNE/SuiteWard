@@ -212,7 +212,7 @@ func TestCheckPublisherPostsEveryState(t *testing.T) {
 			if p.ExternalID != "suiteward:"+cmtInstance+":"+m.Key {
 				t.Fatalf("external id %q", p.ExternalID)
 			}
-			if p.Title != tc.title || !strings.Contains(p.Summary, "`isolated`") || !strings.Contains(p.Summary, "does not run tests") {
+			if p.Title != tc.title || !strings.Contains(p.Summary, "`isolated`") || !strings.Contains(p.Summary, "This check reports on the protected contract only.") || strings.Contains(p.Summary, "does not run tests") {
 				t.Fatalf("title %q, summary %q", p.Title, p.Summary)
 			}
 			if has := strings.Contains(p.Summary, "/suiteward approve P1-R2 <code>"); has != (tc.reason == "approval-missing") {

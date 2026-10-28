@@ -75,14 +75,14 @@ func TestColocatedServeKeepsTheFlagSetOfLocalPS1(t *testing.T) {
 		!slices.Equal(serve.Volumes, []string{VolumeData + ":/data"}) || len(serve.Args) != 0 {
 		t.Errorf("serve spec: %+v", serve)
 	}
-	if !slices.Equal(serve.Secrets, []string{SecretDatabaseURL, SecretMCPAuth}) {
+	if !slices.Equal(serve.Secrets, []string{SecretDatabaseURL, SecretMCPAuth, SecretExecutorAuth}) {
 		t.Errorf("serve secrets: %v", serve.Secrets)
 	}
 	if slices.Contains(serve.Secrets, SecretDatabaseOwnerURL) || strings.Contains(strings.Join(serve.Env, " "), "MIGRATION") {
 		t.Error("serve sees the owner URL")
 	}
 	wantEnv := []string{
-		"SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url", "SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token",
+		"SUITEWARD_DATABASE_URL_FILE=/run/secrets/database-url", "SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token", "SUITEWARD_EXECUTOR_TOKEN_FILE=/run/secrets/executor-token",
 		"SUITEWARD_INSTALLATION_TIER=co-located", "SUITEWARD_REPORT_BASE_URL=http://127.0.0.1:18081",
 	}
 	if !slices.Equal(serve.Env, wantEnv) {

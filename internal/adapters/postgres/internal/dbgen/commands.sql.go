@@ -23,7 +23,7 @@ func (q *Queries) GetInstanceID(ctx context.Context) (string, error) {
 }
 
 const getPRCommand = `-- name: GetPRCommand :one
-SELECT repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, decided_at
+SELECT repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, mode, decided_at
 FROM pr_commands WHERE repository_id = $1 AND comment_id = $2
 `
 
@@ -32,9 +32,22 @@ type GetPRCommandParams struct {
 	CommentID    int64
 }
 
-func (q *Queries) GetPRCommand(ctx context.Context, arg GetPRCommandParams) (PrCommand, error) {
+type GetPRCommandRow struct {
+	RepositoryID int64
+	CommentID    int64
+	PullNumber   int32
+	AuthorID     int64
+	CreatedAt    pgtype.Timestamptz
+	BodyDigest   string
+	Disposition  string
+	OperationID  pgtype.Text
+	Mode         pgtype.Text
+	DecidedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) GetPRCommand(ctx context.Context, arg GetPRCommandParams) (GetPRCommandRow, error) {
 	row := q.db.QueryRow(ctx, getPRCommand, arg.RepositoryID, arg.CommentID)
-	var i PrCommand
+	var i GetPRCommandRow
 	err := row.Scan(
 		&i.RepositoryID,
 		&i.CommentID,
@@ -44,15 +57,16 @@ func (q *Queries) GetPRCommand(ctx context.Context, arg GetPRCommandParams) (PrC
 		&i.BodyDigest,
 		&i.Disposition,
 		&i.OperationID,
+		&i.Mode,
 		&i.DecidedAt,
 	)
 	return i, err
 }
 
 const insertPRCommand = `-- name: InsertPRCommand :execrows
-INSERT INTO pr_commands (repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, decided_at)
+INSERT INTO pr_commands (repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, mode, decided_at)
 VALUES ($1, $2, $3, $4, $5, $6,
-        $7, $8, $9)
+        $7, $8, $9, $10)
 ON CONFLICT (repository_id, comment_id) DO NOTHING
 `
 
@@ -65,6 +79,7 @@ type InsertPRCommandParams struct {
 	BodyDigest   string
 	Disposition  string
 	OperationID  pgtype.Text
+	Mode         pgtype.Text
 	DecidedAt    pgtype.Timestamptz
 }
 
@@ -79,6 +94,7 @@ func (q *Queries) InsertPRCommand(ctx context.Context, arg InsertPRCommandParams
 		arg.BodyDigest,
 		arg.Disposition,
 		arg.OperationID,
+		arg.Mode,
 		arg.DecidedAt,
 	)
 	if err != nil {
@@ -88,7 +104,7 @@ func (q *Queries) InsertPRCommand(ctx context.Context, arg InsertPRCommandParams
 }
 
 const latestOwnerCommand = `-- name: LatestOwnerCommand :one
-SELECT repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, decided_at
+SELECT repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, mode, decided_at
 FROM pr_commands
 WHERE repository_id = $1 AND pull_number = $2 AND author_id = $3
   AND disposition IN ('invalid-code', 'replayed-code', 'processed')
@@ -104,16 +120,29 @@ type LatestOwnerCommandParams struct {
 	Before       int64
 }
 
+type LatestOwnerCommandRow struct {
+	RepositoryID int64
+	CommentID    int64
+	PullNumber   int32
+	AuthorID     int64
+	CreatedAt    pgtype.Timestamptz
+	BodyDigest   string
+	Disposition  string
+	OperationID  pgtype.Text
+	Mode         pgtype.Text
+	DecidedAt    pgtype.Timestamptz
+}
+
 // The owner's latest command on a pull that can set or clear the check: the greatest comment id among the wrong codes and the processed
 // commands, below before when it is not 0. The other rejected dispositions have no effect on the check (D-COMMANDS, "A wrong command has no effect").
-func (q *Queries) LatestOwnerCommand(ctx context.Context, arg LatestOwnerCommandParams) (PrCommand, error) {
+func (q *Queries) LatestOwnerCommand(ctx context.Context, arg LatestOwnerCommandParams) (LatestOwnerCommandRow, error) {
 	row := q.db.QueryRow(ctx, latestOwnerCommand,
 		arg.RepositoryID,
 		arg.PullNumber,
 		arg.AuthorID,
 		arg.Before,
 	)
-	var i PrCommand
+	var i LatestOwnerCommandRow
 	err := row.Scan(
 		&i.RepositoryID,
 		&i.CommentID,
@@ -123,6 +152,7 @@ func (q *Queries) LatestOwnerCommand(ctx context.Context, arg LatestOwnerCommand
 		&i.BodyDigest,
 		&i.Disposition,
 		&i.OperationID,
+		&i.Mode,
 		&i.DecidedAt,
 	)
 	return i, err
@@ -208,6 +238,27 @@ func (q *Queries) PendingCommands(ctx context.Context, arg PendingCommandsParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const previewMode = `-- name: PreviewMode :one
+SELECT mode FROM pr_commands
+WHERE repository_id = $1 AND pull_number = $2 AND disposition = 'mode-set' AND created_at >= $3::timestamptz
+ORDER BY comment_id DESC
+LIMIT 1
+`
+
+type PreviewModeParams struct {
+	RepositoryID int64
+	PullNumber   int32
+	Since        pgtype.Timestamptz
+}
+
+// The mode of the pull's latest mode-set entry (the greatest comment id) created at or after the current enrollment's enrolled_at.
+func (q *Queries) PreviewMode(ctx context.Context, arg PreviewModeParams) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, previewMode, arg.RepositoryID, arg.PullNumber, arg.Since)
+	var mode pgtype.Text
+	err := row.Scan(&mode)
+	return mode, err
 }
 
 const pullSkipped = `-- name: PullSkipped :one

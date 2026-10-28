@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
+	"os"
 	"strings"
 	"testing"
 )
@@ -28,15 +30,31 @@ type hostFake struct {
 	envsDiffer  bool
 	dnfFixesCVE bool
 	failOn      map[string]error // command name + " " + arguments containing the key -> its error
+
+	// The executor (host_executor_test.go).
+	execAccount       bool              // suiteward-exec exists (useradd makes it)
+	files             map[string]string // what cat prints for the files of the executor
+	hashes            map[string]string // what sha256sum prints for the installed binary (install makes it)
+	controllers       string            // the cgroup controllers of the executor's manager, before a restart
+	afterRestart      string            // and after a restart of it
+	execUnitState     string            // the ActiveState of the executor's unit
+	exe               string            // the program of this run
+	tornCopy          bool              // install leaves a file that is not the one it was given
+	execRunning       bool              // the executor's unit is running when the step starts
+	execEnabled       bool              // enable --now has started the executor's unit
+	imagePulled       bool              // the Go image is in the executor's rootless storage
+	pullFails         bool              // podman pull as the executor fails
+	pullLeavesNothing bool              // podman pull succeeds but the image is not there after it
 }
 
 func newHostFake() *hostFake {
 	return &hostFake{
 		goos: "linux", euid: "0", podman: "podman version 5.8.2", changelog: "* Mon - Resolves CVE-2026-57231\n", account: true,
-		subuid: "suiteward:100000:65536\n", subgid: "suiteward:100000:65536\n",
-		nftOutput: "table inet suiteward_imds { chain output { meta skuid suiteward ip daddr 169.254.169.254 reject } }",
-		paths:     map[string]bool{"/etc/suiteward/github.env": true},
-		symlinks:  map[string]bool{},
+		subuid: "suiteward:100000:65536\nsuiteward-exec:165536:65536\n", subgid: "suiteward:100000:65536\nsuiteward-exec:165536:65536\n",
+		nftOutput:   "table inet suiteward_imds { chain output { meta skuid suiteward ip daddr 169.254.169.254 reject } }",
+		paths:       map[string]bool{"/etc/suiteward/github.env": true},
+		symlinks:    map[string]bool{},
+		execAccount: true, files: map[string]string{}, hashes: map[string]string{}, controllers: "cpu cpuset io memory pids", afterRestart: "cpu cpuset io memory pids", execUnitState: "active",
 	}
 }
 
@@ -45,6 +63,12 @@ func (h *hostFake) deps() Deps {
 		GOOS:        h.goos,
 		Getenv:      func(string) string { return "" },
 		Interactive: func(context.Context, string, []string) error { return nil },
+		Executable: func() (string, error) {
+			if h.exe != "" {
+				return h.exe, nil
+			}
+			return os.Executable() // the test binary: a file that exists, for the tests that do not care which program is copied
+		},
 		Exec: func(_ context.Context, name string, args []string, stdin io.Reader) ([]byte, error) {
 			c := call{name: name, args: append([]string(nil), args...)}
 			if stdin != nil {
@@ -66,6 +90,9 @@ func (h *hostFake) answer(c call) ([]byte, error) {
 		if strings.Contains(c.name+" "+line, match) {
 			return nil, err
 		}
+	}
+	if out, ok, err := h.answerExecutor(c); ok {
+		return out, err
 	}
 	fail := errors.New(c.name + ": exit status 1")
 	switch {
@@ -169,9 +196,46 @@ func (h *hostFake) lines() []string {
 	return out
 }
 
-// runHost runs PrepareHost and returns everything it printed.
+// runHost runs PrepareHost and returns everything it printed. The step requires the release's SHA256SUMS: unless a test gives its own file, the
+// one that lists the program of the run is given.
 func runHost(t *testing.T, h *hostFake, flags map[string]string, tty bool, input string) (string, error) {
 	t.Helper()
+	return runHostAsGiven(t, h, withReleaseSums(t, h, flags), tty, input)
+}
+
+// withReleaseSums is flags with --sha256sums added, unless they have it: the file lists the program of the run as a release binary.
+func withReleaseSums(t *testing.T, h *hostFake, flags map[string]string) map[string]string {
+	t.Helper()
+	if _, ok := flags["sha256sums"]; ok {
+		return flags
+	}
+	if h.exe == "" {
+		h.exe = writeProgram(t)
+	}
+	flags = maps.Clone(flags)
+	if flags == nil {
+		flags = map[string]string{}
+	}
+	flags["sha256sums"] = execSums
+	if _, ok := h.files[execSums]; !ok {
+		h.files[execSums] = sha256File(t, h.exe) + "  suiteward_v0.4.0_linux_amd64\n"
+	}
+	return flags
+}
+
+// hostSumsArgs is the --sha256sums argument of a command line that runs the host step, with the file made on h.
+func hostSumsArgs(t *testing.T, h *hostFake) []string {
+	t.Helper()
+	withReleaseSums(t, h, nil)
+	return []string{"--sha256sums", execSums}
+}
+
+// runHostAsGiven runs PrepareHost with exactly the flags it is given.
+func runHostAsGiven(t *testing.T, h *hostFake, flags map[string]string, tty bool, input string) (string, error) {
+	t.Helper()
+	if h.exe == "" {
+		h.exe = writeProgram(t)
+	}
 	term, termOut := fakeTerminal(tty, input)
 	r := newTestResolver(t, flags, nil, term)
 	var out bytes.Buffer
@@ -289,7 +353,12 @@ func TestPrepareHostAddsSubordinateRangesOnlyWhereMissingAndFree(t *testing.T) {
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	usermod := h.callsTo("usermod")
+	var usermod []call // the executor's account has its own ranges in these files: the service account's are the question here
+	for _, c := range h.callsTo("usermod") {
+		if strings.HasSuffix(c.line(), " suiteward") {
+			usermod = append(usermod, c)
+		}
+	}
 	if len(usermod) != 1 {
 		t.Fatalf("one usermod call for the one missing range, got %v", h.lines())
 	}
@@ -323,7 +392,7 @@ func TestPrepareHostAsksAboutTheMetadataRuleAndNeverAssumes(t *testing.T) {
 	if _, err := runHost(t, h, nil, false, ""); err == nil || !strings.Contains(err.Error(), "metadata-rule") {
 		t.Fatalf("a non-interactive run that finds a metadata service must name --metadata-rule, got %v", err)
 	}
-	if h.has("tee", "") || h.has("systemctl", "enable") {
+	if writeOf(h, imdsRuleFile) != "" || h.has("systemctl", "enable --now "+imdsUnit) {
 		t.Fatalf("no rule may be installed without an answer: %v", h.lines())
 	}
 
@@ -333,7 +402,7 @@ func TestPrepareHostAsksAboutTheMetadataRuleAndNeverAssumes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "169.254.169.254") || h.has("tee", "") {
+	if !strings.Contains(out, "169.254.169.254") || writeOf(h, imdsRuleFile) != "" {
 		t.Fatalf("a declined prompt must install nothing and the prompt must name the address:\n%s\n%v", out, h.lines())
 	}
 
@@ -342,7 +411,7 @@ func TestPrepareHostAsksAboutTheMetadataRuleAndNeverAssumes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a host without a metadata service must not need an answer: %v", err)
 	}
-	if h.has("tee", "") || strings.Contains(out, "[y/N]") {
+	if writeOf(h, imdsRuleFile) != "" || strings.Contains(out, "[y/N]") {
 		t.Fatalf("no question and no rule without a metadata service:\n%s", out)
 	}
 }
@@ -405,7 +474,7 @@ func TestPrepareHostInstallsNftablesOnlyWithConsent(t *testing.T) {
 	}
 	run := func(h *hostFake, flags map[string]string) error {
 		term, _ := fakeTerminal(false, "")
-		return PrepareHost(context.Background(), newTestResolver(t, flags, nil, term), missingNft(h), io.Discard)
+		return PrepareHost(context.Background(), newTestResolver(t, withReleaseSums(t, h, flags), nil, term), missingNft(h), io.Discard)
 	}
 	h := newHostFake()
 	h.metadata = "200"
@@ -414,6 +483,7 @@ func TestPrepareHostInstallsNftablesOnlyWithConsent(t *testing.T) {
 	}
 	h = newHostFake()
 	h.metadata = "200"
+	h.exe = writeProgram(t)
 	if err := run(h, map[string]string{"metadata-rule": "yes", "yes": "true"}); err != nil || !h.has("dnf", "install -y nftables") {
 		t.Fatalf("with consent nftables is installed and the step goes on: %v, %v", err, h.lines())
 	}
@@ -472,7 +542,7 @@ func TestPrepareHostStopsOnADifferentExistingEnvFileAndLeavesAnIdenticalOneAlone
 	h := newHostFake()
 	h.paths[dest] = true
 	h.envsDiffer = true
-	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || h.has("rm", "") || h.has("install", "-m 0600 /etc") {
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err == nil || h.has("rm", "") || h.has("install", "-m 0600 /etc/suiteward/github.env") {
 		t.Fatalf("two different env files must stop without deleting or overwriting anything: %v", err)
 	}
 
@@ -481,7 +551,7 @@ func TestPrepareHostStopsOnADifferentExistingEnvFileAndLeavesAnIdenticalOneAlone
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	if h.has("install", "-m 0600 /etc") || h.has("rm", "") {
+	if h.has("install", "-m 0600 /etc/suiteward/github.env") || h.has("rm", "") {
 		t.Fatalf("an identical destination needs neither a copy nor a removal: %v", h.lines())
 	}
 }
@@ -512,7 +582,7 @@ func TestPrepareHostRefusesASymlinkWhereRootWouldChownAndCopy(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "symbolic link") || !strings.Contains(err.Error(), link) {
 			t.Fatalf("a symbolic link at %s must stop the run naming it, got %v", link, err)
 		}
-		if h.has("install", "-m 0700") && link != "/home/suiteward/.config/suiteward/github.env" || h.has("install", "-m 0600 /etc") {
+		if h.has("install", "-m 0700") && link != "/home/suiteward/.config/suiteward/github.env" || h.has("install", "-m 0600 /etc/suiteward/github.env") {
 			t.Fatalf("root must not chown or copy through a link at %s: %v", link, h.lines())
 		}
 	}

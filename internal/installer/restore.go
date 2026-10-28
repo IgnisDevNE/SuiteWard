@@ -52,17 +52,17 @@ func Restore(ctx context.Context, args []string, env Env) (err error) {
 	}
 	set := newFlagSet("restore")
 	instanceFlags(set)
-	set.String("kit", "", "the recovery kit file (default: the private key line of the kit is pasted, hidden, or piped in; a key is never an argument)")
-	set.String("plaintext-dir", "", "restore a backup directory of an earlier release (suiteward.sql, suiteward-artifacts.tar, status.json) instead of a file")
-	set.Bool("yes", false, "without a terminal: confirm the restore, together with --instance (a terminal asks you to type the instance id)")
-	set.String("instance", "", "without a terminal: the instance id of the backup, which --yes confirms")
-	set.String("backup-dir", "", "where the backup of the state that is replaced goes (default: a backups directory beside the MCP token copy, or in ~/.config/suiteward of the service account on the isolated tier)")
+	set.String("kit", "", "the recovery kit file (without it, you paste the last line of the kit, the private key, hidden, or pipe it in; a key is never typed as an argument)")
+	set.String("plaintext-dir", "", "restore from an unencrypted backup folder made by an earlier release (it holds suiteward.sql, suiteward-artifacts.tar and status.json), instead of a backup file")
+	set.Bool("yes", false, "confirm the restore when no one can type an answer; use it with --instance (on a terminal you type the instance id instead)")
+	set.String("instance", "", "the instance id of the backup, for use with --yes when no one can type an answer")
+	set.String("backup-dir", "", "where the safety backup of the current data goes (default: a backups folder beside the saved access token file; on a separate server, in ~/.config/suiteward of the service account)")
 	file, flags, err := parseWithFile(set, args, env.Term.Out)
 	if err != nil {
 		return err
 	}
 	if (file == "") == (flags["plaintext-dir"] == "") {
-		return fmt.Errorf("%w: name the backup file, or --plaintext-dir for the directory of an earlier release, and not both", ErrUsage)
+		return fmt.Errorf("%w: give either the backup file or --plaintext-dir (an unencrypted folder from an earlier release), not both and not neither", ErrUsage)
 	}
 	plain, err := wantsPlain(flags, nil)
 	if err != nil {
@@ -78,6 +78,7 @@ func Restore(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	env.Deps.instance = r.instance()
 	inst, err := locateInstance(ctx, r, env, flags)
 	if err != nil {
 		return err
@@ -198,21 +199,21 @@ func (x *restoreRun) verify(ctx context.Context) error {
 // the database must run and the application role must exist.
 func (x *restoreRun) preflight(ctx context.Context) error {
 	if err := x.inst.restore.unavailable; err != nil {
-		return fmt.Errorf("this stack cannot be restored: %w", err)
+		return fmt.Errorf("this installation cannot be restored: %w", err)
 	}
 	state, err := x.inst.rt.State(ctx, ContainerDB)
 	if err != nil {
-		return fmt.Errorf("look at the database container: %w", err)
+		return fmt.Errorf("could not look at the database container: %w", err)
 	}
 	if state.Status != "running" || state.Health != "healthy" {
-		return fmt.Errorf("the database container must run and be healthy for a restore (it is %q, %q): start it (%s) and run the restore again", state.Status, state.Health, x.inst.startCommand)
+		return fmt.Errorf("the database container must be running and healthy before a restore, but it is %q and %q. Start it with %s, then run the restore again. Nothing was changed", state.Status, state.Health, x.inst.startCommand)
 	}
 	exists, err := appRoleExists(ctx, x.inst.rt)
 	if err != nil {
-		return fmt.Errorf("look for the role %s: %w", appRole, err)
+		return fmt.Errorf("could not look for the database role %s: %w", appRole, err)
 	}
 	if !exists {
-		return fmt.Errorf("the application role %s does not exist in this database, and the dump records grants to it: install the release of the backup first, which creates it, then run the restore again", appRole)
+		return fmt.Errorf("the database has no role called %s, which the backup needs. Install the release the backup was made with first (that creates the role), then run the restore again. Nothing was changed", appRole)
 	}
 	return nil
 }
@@ -233,7 +234,7 @@ func (x *restoreRun) unpack(ctx context.Context) error {
 		return err
 	}
 	if x.work, err = os.MkdirTemp(x.inst.parent, ".suiteward-restore-"); err != nil {
-		return fmt.Errorf("create a private directory in %s: %w", x.inst.parent, err)
+		return fmt.Errorf("could not create a private folder in %s: %w", x.inst.parent, err)
 	}
 	if err := restrictPath(ctx, x.env.Deps, x.work, true); err != nil {
 		return err
@@ -243,7 +244,7 @@ func (x *restoreRun) unpack(ctx context.Context) error {
 		return err
 	}
 	if !reflect.DeepEqual(verified, unpacked) {
-		return fmt.Errorf("%w: the backup changed while it was read", archive.ErrInvalid)
+		return fmt.Errorf("%w: the backup file changed while it was being read", archive.ErrInvalid)
 	}
 	x.info, x.files = verified.Info, x.work
 	return nil
@@ -267,23 +268,23 @@ func validateInfo(i archive.Info) error {
 	default:
 		return nil
 	}
-	return fmt.Errorf("%w: the %s in the manifest of the backup is not what it should be (the value is not shown)", archive.ErrInvalid, field)
+	return fmt.Errorf("%w: the %s recorded inside the backup is not valid (the value is not shown)", archive.ErrInvalid, field)
 }
 
 // readArchive opens the file again, because a Reader reads its stream once.
 func (x *restoreRun) readArchive(read func(r *archive.Reader) (archive.Manifest, error)) (archive.Manifest, error) {
 	f, err := os.Open(filepath.Clean(x.file))
 	if err != nil {
-		return archive.Manifest{}, fmt.Errorf("open the backup %s: %w", x.file, err)
+		return archive.Manifest{}, fmt.Errorf("could not open the backup %s: %w", x.file, err)
 	}
 	defer func() { _ = f.Close() }()
 	r, err := archive.Open(f, x.identity)
 	if err != nil {
-		return archive.Manifest{}, fmt.Errorf("verify the backup %s: %w", x.file, err)
+		return archive.Manifest{}, fmt.Errorf("could not verify the backup %s: %w", x.file, err)
 	}
 	m, err := read(r)
 	if err != nil {
-		return archive.Manifest{}, fmt.Errorf("verify the backup %s: %w", x.file, err)
+		return archive.Manifest{}, fmt.Errorf("could not verify the backup %s: %w", x.file, err)
 	}
 	return m, nil
 }
@@ -299,8 +300,8 @@ func (x *restoreRun) readIdentity() (*age.HybridIdentity, error) {
 		kit, err = readKit(x.kit)
 	} else {
 		x.r.explain([]string{"recovery-key"}, "Open the backup",
-			ui.Para("A backup is encrypted to the recovery key of its instance. Paste the last line of the recovery kit that was saved when that key was made: it is the private key. "+
-				"The input is hidden and nothing of it is kept. To read the kit from a file instead, run the restore again with --kit PATH."))
+			ui.Para("The backup is locked with the recovery key of its instance. Paste the last line of the recovery kit you saved when that key was made: that line is the private key. "+
+				"The input is hidden and nothing of it is kept. To read the kit from a file instead, run the restore again with `--kit PATH`."))
 		kit, err = x.r.Secret("recovery-key", "Recovery key: the last line of your recovery kit, the private key")
 	}
 	if err != nil {
@@ -312,12 +313,12 @@ func (x *restoreRun) readIdentity() (*age.HybridIdentity, error) {
 func readKit(path string) ([]byte, error) {
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
-		return nil, fmt.Errorf("read the recovery kit %s: %w", path, err)
+		return nil, fmt.Errorf("could not read the recovery kit %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 	kit, err := io.ReadAll(io.LimitReader(f, maxKit+1))
 	if err != nil {
-		return nil, fmt.Errorf("read the recovery kit %s: %w", path, err)
+		return nil, fmt.Errorf("could not read the recovery kit %s: %w", path, err)
 	}
 	if len(kit) > maxKit {
 		return nil, fmt.Errorf("%s is too large to be a recovery kit", path)
@@ -329,7 +330,7 @@ func readKit(path string) ([]byte, error) {
 func (x *restoreRun) checkFiles() error {
 	for _, name := range []string{backupDump, backupVolume, backupStatus} {
 		if _, err := os.Stat(filepath.Join(x.files, name)); err != nil {
-			return fmt.Errorf("the backup has no %s: %w", name, err)
+			return fmt.Errorf("the backup does not contain %s: %w", name, err)
 		}
 	}
 	if err := dumpComplete(filepath.Join(x.files, backupDump)); err != nil {
@@ -341,13 +342,13 @@ func (x *restoreRun) checkFiles() error {
 	statusPath := filepath.Join(x.files, backupStatus)
 	raw, err := os.ReadFile(filepath.Clean(statusPath))
 	if err != nil {
-		return fmt.Errorf("read the status of the backup: %w", err)
+		return fmt.Errorf("could not read the status recorded in the backup: %w", err)
 	}
 	if x.doc, err = parseBackedUpStatus(raw); err != nil {
-		return fmt.Errorf("the status of the backup: %w", err)
+		return fmt.Errorf("the status recorded in the backup cannot be used: %w", err)
 	}
 	if x.doc.Unavailable && x.plaintext != "" { // only an archive of this release records that: a directory that says so is not a backup
-		return errors.New("the status of this directory says it was unavailable, which only an encrypted backup of this release records: it is not a backup this command restores")
+		return errors.New("this folder says its status was unavailable, which only an encrypted backup of this release records, so it is not a backup this command can restore")
 	}
 	if x.doc.Unavailable { // taken while the service did not answer: what the manifest says is all there is
 		x.doc.Version, x.doc.Instance = x.info.SuitewardVersion, x.info.Instance
@@ -355,7 +356,7 @@ func (x *restoreRun) checkFiles() error {
 	if x.plaintext != "" { // nothing records when a directory was made but its files
 		info, err := os.Stat(statusPath)
 		if err != nil {
-			return fmt.Errorf("look at the status of the backup: %w", err)
+			return fmt.Errorf("could not look at the status of the backup: %w", err)
 		}
 		x.info = archive.Info{SuitewardVersion: x.doc.Version, Instance: x.doc.Instance, CreatedAt: info.ModTime()}
 	}
@@ -378,7 +379,7 @@ func (x *restoreRun) checkRelease(ctx context.Context) error {
 	case x.current != nil && x.current.Version != x.info.SuitewardVersion:
 		return x.otherRelease(x.current.Version)
 	case x.current == nil && x.info.ImageDigest == "":
-		return fmt.Errorf("the service does not answer /status, and a backup without a manifest does not name its image, so its release (%s) cannot be compared with the one installed: start the service (%s) and run the restore again", x.info.SuitewardVersion, x.inst.startCommand)
+		return fmt.Errorf("the service does not answer on /status, and this backup does not say which image it was made with, so its release (%s) cannot be compared with the installed one. Start the service with %s, then run the restore again", x.info.SuitewardVersion, x.inst.startCommand)
 	case x.current == nil && digestOf(x.inst.image) != x.info.ImageDigest:
 		return x.otherRelease("the release " + digestOf(x.inst.image))
 	}
@@ -388,13 +389,13 @@ func (x *restoreRun) checkRelease(ctx context.Context) error {
 func (x *restoreRun) otherRelease(running string) error {
 	install := ""
 	if x.info.ImageDigest != "" {
-		install = " (`" + x.env.Deps.command() + " install --image " + releaseImageRepo + "@" + x.info.ImageDigest + "`)"
+		install = " (`" + x.env.Deps.suggest("install", "--image "+releaseImageRepo+"@"+x.info.ImageDigest) + "`)"
 	}
 	madeBy := "SuiteWard " + x.info.SuitewardVersion
 	if x.doc.Unavailable {
 		madeBy = "the release of the image " + x.info.ImageDigest
 	}
-	return fmt.Errorf("this backup was made by %s and this instance runs %s: a restore needs the same release, because migrations only go forward. Install the release of the backup first%s, then run the restore again", madeBy, running, install)
+	return fmt.Errorf("this backup was made by %s, but this instance runs %s. A restore needs the same release, because database updates only go forward. Install the backup's release first%s, then run the restore again. Nothing was changed", madeBy, running, install)
 }
 
 // dumpTail is how much of the end of a dump is searched for the line that ends it.
@@ -404,21 +405,21 @@ const dumpTail = 4096
 func dumpComplete(path string) error {
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
-		return fmt.Errorf("read the dump: %w", err)
+		return fmt.Errorf("could not read the database dump: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return fmt.Errorf("read the dump: %w", err)
+		return fmt.Errorf("could not read the database dump: %w", err)
 	}
 	// shortcut: the line that ends a dump is looked for in its last 4 KiB, where pg_dump puts it (only a \unrestrict line may follow).
 	n := min(info.Size(), dumpTail)
 	tail := make([]byte, n)
 	if _, err := f.ReadAt(tail, info.Size()-n); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("read the dump: %w", err)
+		return fmt.Errorf("could not read the database dump: %w", err)
 	}
 	if !strings.Contains(string(tail), "PostgreSQL database dump complete") {
-		return errors.New("the dump of the backup was cut short: it does not end as pg_dump ends a dump, so it is never loaded")
+		return errors.New("the database dump inside the backup is incomplete (it was cut short), so it is not restored. Nothing was changed")
 	}
 	return nil
 }
@@ -427,14 +428,14 @@ func dumpComplete(path string) error {
 func tarReadable(path string) error {
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
-		return fmt.Errorf("read the artifacts: %w", err)
+		return fmt.Errorf("could not read the saved files (artifacts) of the backup: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 	if info, err := f.Stat(); err != nil || info.Size() == 0 {
-		return errors.New("the artifacts of the backup are an empty file, not a tar file")
+		return errors.New("the saved files (artifacts) inside the backup are empty, so this is not a valid backup")
 	}
 	if err := listTar(f); err != nil {
-		return fmt.Errorf("the artifacts of the backup are not a readable tar file: %w", err)
+		return fmt.Errorf("the saved files (artifacts) inside the backup cannot be read: %w", err)
 	}
 	return nil
 }
@@ -457,25 +458,25 @@ func (x *restoreRun) preview() error {
 		if fingerprint, err = x.chooseSafetyKey(); err != nil {
 			return err
 		}
-		x.scr.Say("The state of this instance is backed up first, encrypted to the recovery key %s.\n", fingerprint)
+		x.scr.Say("Before anything is replaced, the current state of this instance is backed up, locked with the recovery key %s.\n", fingerprint)
 	}
 	if x.current == nil {
-		x.scr.Warn("This instance does not answer /status, so that backup records its status as unavailable, with the reason.\n")
+		x.scr.Warn("This instance does not answer on /status, so the safety backup records its status as unavailable (with the reason).\n")
 	}
 	return x.confirm()
 }
 
 // previewOrder is the order of the facts on the page of the confirmation. A window that is too small trims the page from its end, so the
 // facts that say what is being replaced by what come first.
-var previewOrder = []string{"Instance", "Release", "Owner", "Repositories", "Tier", "Made", "Schema", "Safety backup", "Backup"}
+var previewOrder = []string{"Instance ID", "Version", "Owner", "Repositories", "Installation type", "Made", "Database version", "Safety backup", "Backup"}
 
 // previewPage is the page of the confirmation on a full screen: what it is, what runs now, and what the backup holds. The warnings that
 // follow it outlast it when the window is too small for all of it.
 func (x *restoreRun) previewPage(safetyKey string) {
 	source, facts := x.backupFacts(true)
-	facts = append(facts, ui.KV{Key: "Backup", Value: source}, ui.KV{Key: "Safety backup", Value: "the state that is replaced, encrypted to " + safetyKey})
+	facts = append(facts, ui.KV{Key: "Backup", Value: source}, ui.KV{Key: "Safety backup", Value: "the current state, locked with the recovery key " + safetyKey})
 	slices.SortStableFunc(facts, func(a, b ui.KV) int { return slices.Index(previewOrder, a.Key) - slices.Index(previewOrder, b.Key) })
-	instance := "This instance does not answer /status."
+	instance := "This instance does not answer on /status."
 	if now := x.instanceFacts(); now != nil {
 		parts := make([]string, len(now))
 		for i, kv := range now {
@@ -510,12 +511,12 @@ func (x *restoreRun) backupFacts(compact bool) (source string, facts []ui.KV) {
 	}
 	return source, []ui.KV{
 		{Key: "Made", Value: x.info.CreatedAt.UTC().Format(time.RFC3339)},
-		{Key: "Release", Value: release},
-		{Key: "Instance", Value: x.doc.Instance},
-		{Key: "Tier", Value: cmp.Or(x.info.Tier, "not recorded")},
+		{Key: "Version", Value: release},
+		{Key: "Instance ID", Value: x.doc.Instance},
+		{Key: "Installation type", Value: cmp.Or(installationTypeWords(x.info.Tier), "not recorded")},
 		{Key: "Owner", Value: owner},
 		{Key: "Repositories", Value: repos},
-		{Key: "Schema", Value: schema},
+		{Key: "Database version", Value: schema},
 	}
 }
 
@@ -525,16 +526,16 @@ func (x *restoreRun) instanceFacts() []ui.KV {
 		return nil
 	}
 	return []ui.KV{
-		{Key: "Release", Value: x.current.Version},
-		{Key: "Instance", Value: x.current.Instance},
+		{Key: "Version", Value: x.current.Version},
+		{Key: "Instance ID", Value: x.current.Instance},
 		{Key: "Owner", Value: cmp.Or(x.current.owner(), "none enrolled")},
-		{Key: "Schema", Value: strconv.Itoa(x.current.SchemaVersion)},
+		{Key: "Database version", Value: strconv.Itoa(x.current.SchemaVersion)},
 	}
 }
 
 func (x *restoreRun) listFacts(facts []ui.KV) {
 	for _, kv := range facts {
-		x.scr.Say("  %-13s %s\n", kv.Key+":", kv.Value)
+		x.scr.Say("  %-18s %s\n", kv.Key+":", kv.Value)
 	}
 }
 
@@ -547,7 +548,7 @@ func (x *restoreRun) showBackup() {
 func (x *restoreRun) showInstance() {
 	now := x.instanceFacts()
 	if now == nil {
-		x.scr.Say("This instance does not answer /status.\n")
+		x.scr.Say("This instance does not answer on /status.\n")
 		return
 	}
 	x.scr.Say("This instance runs:\n")
@@ -555,28 +556,28 @@ func (x *restoreRun) showInstance() {
 }
 
 func (x *restoreRun) warn() {
-	replaced := "Restoring replaces the database and the artifacts of this instance with the backup's. What was approved, proposed or promoted after the backup is lost"
+	replaced := "Restoring replaces the database and the saved files (artifacts) of this instance with the backup's. What was approved, proposed or promoted after the backup is lost"
 	if x.mayHaveRepositories() {
-		replaced += ", and the default branch on GitHub may be ahead of the restored canonical"
+		replaced += ", and the default branch on GitHub may be ahead of the restored approved version"
 	}
 	x.scr.Warn("%s.\n", replaced)
 	if x.mayHaveRepositories() {
-		x.scr.Warn("Stop any other running instance that uses the same GitHub App before you go on: two instances would publish and promote for the same repositories.\n")
+		x.scr.Warn("Stop any other running instance that uses the same GitHub App before you go on. Two instances would publish and promote for the same repositories.\n")
 	}
 	if x.plaintext != "" {
-		x.scr.Warn("This backup is a plaintext directory: it is not encrypted, and nothing verifies who made it or that it is untouched. Whoever could read %s could read the TOTP secret in it.\n", x.plaintext)
+		x.scr.Warn("This backup is an unencrypted folder, and nothing checks who made it or that it is unchanged. Anyone who can read %s can read the authenticator secret (the TOTP secret) in it.\n", x.plaintext)
 	}
 	if x.doc.Unavailable {
-		x.scr.Warn("The status of this backup is not recorded (%s): it is the state of an instance that did not answer when the backup was taken, so its release is known by its image alone and nothing but that the service answers can be compared after the restore.\n", x.doc.Reason)
+		x.scr.Warn("This backup has no recorded status (%s): the instance did not answer when the backup was made. Its release is known only from its image, so after the restore the only thing that can be checked is that the service answers.\n", x.doc.Reason)
 	}
 	if x.current != nil && x.doc.Instance != unknownValue && x.current.Instance != x.doc.Instance { // "unknown" names no instance, so it is no other one
-		x.scr.Warn("This backup is of another instance (%s) than the one that runs here (%s): after the restore this instance is the backup's, and the authenticator entry of the backup is the one that works.\n", x.doc.Instance, x.current.Instance)
+		x.scr.Warn("This backup is from a different instance (%s) than the one running here (%s). After the restore this instance becomes the backup's, and only the authenticator entry of the backup will work.\n", x.doc.Instance, x.current.Instance)
 	}
 	if tier := string(x.inst.s.Tier); x.info.Tier != "" && x.info.Tier != tier {
 		if x.scr.FullScreen() { // one row: the page has few of them for the facts above the warnings, and the plain lines keep the reason
-			x.scr.Warn("Backup tier: %s; this instance: %s.\n", x.info.Tier, tier)
+			x.scr.Warn("Backup: %s; this one: %s.\n", strings.TrimPrefix(installationTypeWords(x.info.Tier), "on "), strings.TrimPrefix(installationTypeWords(tier), "on "))
 		} else {
-			x.scr.Warn("The backup was made on the %s tier and this instance is on the %s tier: the owner's enrollment records its tier, and /status says so after the restore.\n", x.info.Tier, tier)
+			x.scr.Warn("The backup comes from an installation %s, and this instance is %s. The owner's enrollment records the installation type, and /status shows it after the restore.\n", installationTypeWords(x.info.Tier), installationTypeWords(tier))
 		}
 	}
 }
@@ -592,7 +593,7 @@ func (x *restoreRun) chooseSafetyKey() (string, error) {
 	case x.identity != nil:
 		recipient = x.identity.Recipient().String()
 	default:
-		return "", errors.New("the state of this instance is backed up, encrypted, before it is replaced, and this instance has no recovery key (a plaintext backup has none to borrow): run `" + x.env.Deps.command() + " backup init` first, then run the restore again")
+		return "", errors.New("this instance has no recovery key, and the restore first makes an encrypted backup of the current state (an unencrypted backup folder has no key to borrow). Run `" + x.env.Deps.suggest("backup init") + "` first, then run the restore again. Nothing was changed")
 	}
 	key, err := archive.ParseRecipient(recipient)
 	if err != nil {
@@ -607,7 +608,7 @@ func (x *restoreRun) confirm() error {
 	id := x.doc.Instance
 	return x.r.confirmInstance(instanceConfirm{
 		id: id, action: "restore", ofWhat: "of the backup",
-		prompt: fmt.Sprintf("Type the instance id %s to replace the database and the artifacts of this instance with this backup: ", id),
+		prompt: fmt.Sprintf("Type the instance id %s to replace the database and the saved files of this instance with this backup: ", id),
 	})
 }
 
@@ -617,7 +618,7 @@ func (x *restoreRun) takeSafetyBackup(ctx context.Context) error {
 	b := x.inst.backup(x.env.Deps, x.inst.parent, x.safetyKey)
 	b.tolerateStatus = true // an instance that does not answer is backed up too, with its status recorded as unavailable
 	var path string
-	err := working(x.scr, "Backing up the state that is replaced", func() (err error) {
+	err := working(x.scr, "Backing up the current state before it is replaced", func() (err error) {
 		path, err = takeBackup(ctx, b)
 		return err
 	})
@@ -625,14 +626,14 @@ func (x *restoreRun) takeSafetyBackup(ctx context.Context) error {
 		return err
 	}
 	x.safety = path
-	x.scr.Keep("The state before the restore is in %s, encrypted to the recovery key %s.\n", path, archive.Fingerprint(x.safetyKey.String()))
+	x.scr.Keep("The state from before the restore is saved in %s, locked with the recovery key %s.\n", path, archive.Fingerprint(x.safetyKey.String()))
 	return nil
 }
 
 func (x *restoreRun) stop(ctx context.Context) error {
 	x.stage = stageStop
 	if err := working(x.scr, "Stopping the service", func() error { return x.inst.restore.stop(ctx) }); err != nil {
-		return fmt.Errorf("stop the service: %w", err)
+		return fmt.Errorf("could not stop the service: %w", err)
 	}
 	return nil
 }
@@ -642,7 +643,7 @@ func (x *restoreRun) load(ctx context.Context) error {
 	x.stage = stageLoad
 	dump, err := os.Open(filepath.Clean(filepath.Join(x.files, backupDump)))
 	if err != nil {
-		return fmt.Errorf("read the dump: %w", err)
+		return fmt.Errorf("could not read the database dump: %w", err)
 	}
 	defer func() { _ = dump.Close() }()
 	sql := io.MultiReader(strings.NewReader(loadBegin), dump, strings.NewReader(loadCommit))
@@ -650,7 +651,7 @@ func (x *restoreRun) load(ctx context.Context) error {
 		return err
 	}
 	x.stage = stageArtifacts
-	return working(x.scr, "Replacing the artifacts", func() error {
+	return working(x.scr, "Replacing the saved files (artifacts)", func() error {
 		if err := x.inst.restore.clearVolume(ctx); err != nil {
 			return err
 		}
@@ -663,7 +664,7 @@ func (x *restoreRun) load(ctx context.Context) error {
 func loadDump(ctx context.Context, rt Runtime, sql io.Reader) error {
 	argv := []string{"psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", ownerRole, "-d", "suiteward", "-f", "-"}
 	if _, err := rt.Exec(ctx, ContainerDB, argv, sql); err != nil {
-		return fmt.Errorf("psql in %s could not load the dump (its message is not shown: psql repeats the rows it fails on, and they hold the TOTP secret; the log of the database container may quote rows too, the TOTP secret included, so read it as something secret)", ContainerDB)
+		return fmt.Errorf("psql in %s could not load the database dump. Its message is hidden on purpose: it repeats the rows that failed, and those rows hold the authenticator secret (the TOTP secret). The log of the database container may quote them too, so treat it as secret", ContainerDB)
 	}
 	return nil
 }
@@ -702,14 +703,14 @@ func (x *restoreRun) waitForService(ctx context.Context) (statusDoc, error) {
 			x.env.Sleep(statusEvery)
 		}
 	}
-	return statusDoc{}, fmt.Errorf("the service was started, but /status does not answer (%w): read its logs", last)
+	return statusDoc{}, fmt.Errorf("the service was started, but it does not answer on /status (%w). Read its logs", last)
 }
 
 // compare reports what the service says after the restore beside the status that was backed up. A different release, schema or owner
 // is a restore that did not take; an integrity check that failed means the artifacts and the database do not come from one moment.
 func (x *restoreRun) compare(context.Context) error {
 	x.stage = stageCheck
-	problems, notes := compareStatus(x.env.Deps.command(), x.doc, x.after)
+	problems, notes := compareStatus(x.env.Deps, x.doc, x.after)
 	for _, note := range notes {
 		x.scr.Warn("%s\n", note)
 	}
@@ -717,20 +718,20 @@ func (x *restoreRun) compare(context.Context) error {
 		return fmt.Errorf("the restored instance does not match the backup: %s", strings.Join(problems, "; "))
 	}
 	if x.doc.Unavailable {
-		x.scr.Check("The service answers /status as release %s. The backup records no status, so nothing else could be compared.\n", x.after.Version)
+		x.scr.Check("The service answers on /status as release %s. The backup records no status, so nothing else could be compared.\n", x.after.Version)
 		return nil
 	}
-	x.scr.Check("The service reports the release %s, the schema %d and the owner %s of the backup.\n", x.after.Version, x.after.SchemaVersion, cmp.Or(x.after.owner(), "none"))
+	x.scr.Check("The service reports the release (%s), the database version (%d) and the owner (%s) of the backup.\n", x.after.Version, x.after.SchemaVersion, cmp.Or(x.after.owner(), "none"))
 	return nil
 }
 
-func compareStatus(cmd string, backup, after statusDoc) (problems, notes []string) {
+func compareStatus(d Deps, backup, after statusDoc) (problems, notes []string) {
 	if !backup.Unavailable { // a backup that records no status has nothing to be compared with but the integrity
 		if after.Version != backup.Version {
 			problems = append(problems, fmt.Sprintf("the service runs %s, the backup is of %s", after.Version, backup.Version))
 		}
 		if after.SchemaVersion != backup.SchemaVersion {
-			problems = append(problems, fmt.Sprintf("the schema is %d, the backup's is %d", after.SchemaVersion, backup.SchemaVersion))
+			problems = append(problems, fmt.Sprintf("the database version is %d, the backup's is %d", after.SchemaVersion, backup.SchemaVersion))
 		}
 		if after.owner() != backup.owner() {
 			problems = append(problems, fmt.Sprintf("the owner is %q, the backup's is %q", after.owner(), backup.owner()))
@@ -740,9 +741,9 @@ func compareStatus(cmd string, backup, after statusDoc) (problems, notes []strin
 		switch g.Integrity {
 		case "passed":
 		case "failed":
-			problems = append(problems, g.Repo+": the integrity check failed, so the artifacts and the database do not come from the same moment")
+			problems = append(problems, g.Repo+": the integrity check failed, so the saved files and the database are not from the same moment")
 		default:
-			notes = append(notes, g.Repo+": the integrity check has not passed yet (it runs when the service starts, after each promotion and every hour): look at `"+cmd+" doctor` in a moment")
+			notes = append(notes, g.Repo+": the integrity check has not passed yet. It runs when the service starts, after each promotion and every hour: run `"+d.suggest("doctor")+"` in a moment")
 		}
 	}
 	return problems, notes
@@ -752,14 +753,15 @@ func compareStatus(cmd string, backup, after statusDoc) (problems, notes []strin
 func (x *restoreRun) failed(err error) error {
 	state := map[restoreStage]string{
 		stageStop:      "the service may be stopped, and nothing else was changed",
-		stageLoad:      "the database was not changed (the load is one transaction that is committed only after the last line of the dump, and the server rolls it back when a statement fails or the stream is cut short), and neither were the artifacts",
-		stageArtifacts: "the database was replaced with the backup's, and the artifacts were not, or only in part",
-		stageStart:     "the database and the artifacts are the backup's, but the service did not come up",
-		stageCheck:     "the database and the artifacts are the backup's, and the service runs, but it does not match",
+		stageLoad:      "the database was not changed (the load is a single transaction that the server cancels if anything fails), and neither were the saved files (artifacts)",
+		stageArtifacts: "the database now holds the backup's data, but the saved files (artifacts) were not replaced, or only in part",
+		stageStart:     "the database and the saved files are the backup's, but the service did not start",
+		stageCheck:     "the database and the saved files are the backup's and the service runs, but it does not match the backup",
 	}[x.stage]
-	advice := fmt.Sprintf("The restore stopped here: %s.\nTo get the service back: %s.\nTo run the restore again: %s restore %s.", state, x.inst.restore.recovery, x.env.Deps.command(), x.source())
+	advice := fmt.Sprintf("The restore stopped here: %s.\nTo start the service again: %s.\n", state, x.inst.restore.recovery) +
+		"To run the restore again: `" + x.env.Deps.suggest("restore", x.source()) + "`."
 	if x.safety != "" {
-		advice += fmt.Sprintf("\nTo go back to the state before the restore: %s restore %s, with the recovery kit of that backup.", x.env.Deps.command(), quoteArg(x.safety))
+		advice += "\nTo go back to the state before the restore: `" + x.env.Deps.suggest("restore", quoteArg(x.safety)) + "`, with the recovery kit of that backup."
 	}
 	return fmt.Errorf("%w\n%s", err, advice)
 }
@@ -777,25 +779,25 @@ func listTar(r io.Reader) error {
 }
 
 // canonicalBehind is what a restore leaves behind: the canonical it restored can be behind the default branch on GitHub.
-const canonicalBehind = "The restored canonical may be behind the default branch on GitHub: to bring it level, open one corrective pull request from the current default branch (any small change outside the protected files), approve the revision its check names, and merge it (details: docs/backup.md)."
+const canonicalBehind = "The restored approved version (the canonical) may be behind the default branch on GitHub. To bring it level, open one small corrective pull request from the current default branch (any small change outside the protected files), approve the revision its check names, and merge it. Details: docs/backup.md."
 
 func (x *restoreRun) finish() {
 	x.scr.Say("Restored the backup of the instance %s (%s) into this instance.\n", x.doc.Instance, x.info.SuitewardVersion)
-	x.scr.Keep("The credentials of this installation are not in a backup, so they are as they were: the database passwords and the MCP token. The owner's TOTP enrollment is the backup's.\n")
+	x.scr.Keep("A backup holds no credentials, so these stay as they were: the database passwords, the access token and the test runner's token (the test runner, also called the executor, is not part of a backup either, and keeps working). The owner's authenticator secret (the TOTP secret) is the backup's.\n")
 	if !x.scr.FullScreen() && x.mayHaveRepositories() { // a full screen has it on the summary page, which Close keeps
 		x.scr.Keep("%s\n", canonicalBehind)
 	}
-	x.scr.Say("Check the instance with `%s doctor`.\n", x.env.Deps.command())
+	x.scr.Say("Check the instance with `%s`.\n", x.env.Deps.suggest("doctor"))
 	if x.inst.s.BackupRecipient == "" {
-		x.scr.Warn("No recovery key is set on this instance: run `%s backup init` to back it up.\n", x.env.Deps.command())
+		x.scr.Warn("This instance has no recovery key yet: run `%s` so that it can be backed up.\n", x.env.Deps.suggest("backup init"))
 	}
 }
 
 func (x *restoreRun) summary() []ui.KV {
 	rows := summaryRows{
 		{Key: "Restored", Value: x.restored()},
-		{Key: "Instance", Value: x.doc.Instance},
-		{Key: "Release", Value: x.after.Version},
+		{Key: "Instance ID", Value: x.doc.Instance},
+		{Key: "Version", Value: x.after.Version},
 	}
 	rows.add("Backup before", x.safety)
 	if x.mayHaveRepositories() {

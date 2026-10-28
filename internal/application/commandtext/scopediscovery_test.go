@@ -286,7 +286,7 @@ func TestScopeNoticeListsThePathsAndGivesTheDeclarationAndTheEditLink(t *testing
 		"```\ninternal/x/x_test.go\ne2e/testdata/a.json\n```", "not protected by the current contract",
 		"```\n" + string(n.Declaration) + "```",
 		"creates a protected change", "owner approves", "Nothing is protected until",
-		"does not change the check", "does not run tests",
+		"does not change the check",
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
@@ -386,7 +386,7 @@ func TestScopeNoticeWithoutSubmodulesIsUnchanged(t *testing.T) {
 		"SuiteWard suggests this declaration, the current canonical `.suiteward.yml` with the new patterns added. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - \"*_test.go\"\n  - \"**/testdata/**\"\n```\n\n" +
 		"To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](https://github.com/octo-org/widgets/edit/feature/add-tests/.suiteward.yml) and paste the declaration. SuiteWard never commits it for you: the commit is yours.\n\n" +
 		"Committing it creates a protected change, which the owner approves like any other change to the protected files. Nothing is protected until that change is approved and promoted.\n\n" +
-		"This comment is a suggestion, not an approval. It does not change the check, and SuiteWard does not run tests.\n"
+		"This comment is a suggestion, not an approval. It does not change the check.\n"
 	if got := noticeText(t, notice()); got != want {
 		t.Errorf("got %q\nwant %q", got, want)
 	}
@@ -629,7 +629,7 @@ func TestRevisionCommentWithoutReductionDetailIsUnchanged(t *testing.T) {
 	const want = "**SuiteWard contract change P7-R3**\n\nThis pull request changes the protected files against the canonical contract V4. SuiteWard proposes the change as P7-R3 for the owner's approval.\n\n- Base canonical version: V4\n- Installation tier: `isolated`\n\n" +
 		"Protected files added:\n\n```\ntests/new_test.go\n```\n\nProtected files modified:\n\n```\ntests/a.go\ntests/b.go\n```\n\nProtected files removed:\n\n```\ntests/old.go\n```\n\n" +
 		"**This revision reduces the protected scope.** Review it carefully before approving.\n\n" +
-		"This comment is a record, not an approval. SuiteWard compares the protected files only; it does not run tests. To approve this exact revision, comment:\n\n```\n/suiteward approve P7-R3 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\nThis supersedes `P7-R2`.\n"
+		"This comment is a record, not an approval. To approve this exact revision, comment:\n\n```\n/suiteward approve P7-R3 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\nThis supersedes `P7-R2`.\n"
 	if got := revisionText(t, r); got != want {
 		t.Errorf("got %q\nwant %q", got, want)
 	}
@@ -733,7 +733,7 @@ func TestRevisionCommentWithReductionDetailFitsInAComment(t *testing.T) {
 				r.Added, r.Modified, r.Removed = long(size), long(size), long(size)
 				r.ReducedRules, r.ReducedPaths = long(size), long(size)
 				for i := range r.ReducedRules {
-					r.ReducedRules[i] = [...]string{"rule ", "exclude "}[i%2] + r.ReducedRules[i]
+					r.ReducedRules[i] = [...]string{"rule ", "exclude ", "execution canonical: ", "execution receipt: "}[i%4] + r.ReducedRules[i]
 				}
 				body := revisionText(t, r)
 				if body == "" || len(body) >= maxComment*3/4 || !utf8.ValidString(body) {

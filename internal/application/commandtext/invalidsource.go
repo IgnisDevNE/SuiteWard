@@ -68,7 +68,7 @@ func InvalidSourceComment(s InvalidSourceNotice) string {
 	}
 	return paragraphs("**SuiteWard could not read the contract source of this pull request**", problem, next,
 		"Any canonical contract already in force stays in force, and the check stays `failure` until a push fixes it.",
-		"This comment is evidence, not an approval, and SuiteWard does not run tests.")
+		"This comment is evidence, not an approval.")
 }
 
 // editSentence is the paragraph that links to GitHub's editor for .suiteward.yml on the pull request's branch, led by lead; none for a notice without the link.
@@ -88,7 +88,7 @@ func editSentence(s InvalidSourceNotice, lead string) string {
 // alone is offered, so there is none either for a path that was cut, which is not the link's path, or for one that the fence shows
 // escaped, which is not the pattern to paste.
 func acceptLink(s InvalidSourceNotice) string {
-	if strings.ContainsAny(s.Path, `*?[\`) || (len(s.Declaration) == 0 && (s.PathCut || hasHidden(s.Path))) {
+	if strings.ContainsAny(s.Path, `*?[\`) || (len(s.Declaration) == 0 && (s.PathCut || !shownAsIs(s.Path))) {
 		return ""
 	}
 	choice := "Or accept the link by adding its exact anchored path to `exclude` in `.suiteward.yml`:\n\n" + fencedLines([]string{"/" + s.Path})

@@ -54,7 +54,7 @@ func TestRulesetJSONRefusesWhatCannotBeRequired(t *testing.T) {
 	for _, tc := range []struct {
 		appID int64
 		check string
-	}{{0, "CI / test"}, {fakeAppID, ""}, {fakeAppID, "  "}, {fakeAppID, "SuiteWard / Contract"}} {
+	}{{0, "CI / test"}, {fakeAppID, ""}, {fakeAppID, "  "}, {fakeAppID, "SuiteWard / Contract"}, {fakeAppID, "SuiteWard / Receipt"}} {
 		if _, err := rulesetJSON(tc.appID, tc.check); err == nil {
 			t.Errorf("rulesetJSON(%d, %q) was accepted", tc.appID, tc.check)
 		}

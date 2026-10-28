@@ -29,7 +29,7 @@ func TestBackupInitNamesTheProgramAsTheRunReachesIt(t *testing.T) {
 		t.Errorf("keys = %v, want a refusal that names `%s backup init --replace`", err, swCmd)
 	}
 	k.kept()
-	if want := "`" + swCmd + " backup`, and `" + swCmd + " install --upgrade`"; !strings.Contains(out.String(), want) {
+	if want := "`" + swCmd + " backup` and `" + swCmd + " install --upgrade` lock their backups"; !strings.Contains(out.String(), want) {
 		t.Errorf("the output lacks %q:\n%s", want, out.String())
 	}
 }
@@ -39,21 +39,22 @@ func TestAnInstallOfAnotherReleaseSaysToUpgradeWithTheProgramOfTheRun(t *testing
 	env := h.newEnv()
 	env.Deps.Command = swCmd
 	args := []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "podman", "--connection", "pm", "--image", oldImage}
-	if err := Install(context.Background(), args, env); err == nil || !strings.Contains(err.Error(), "use `"+swCmd+" install --upgrade`") {
-		t.Errorf("Install = %v, want a refusal that says to use `%s install --upgrade`", err, swCmd)
+	want := "run `" + (Deps{Command: swCmd, instance: h.named()}).suggest("install", "--upgrade") + "`"
+	if err := Install(context.Background(), args, env); err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("Install = %v, want a refusal that says to %s", err, want)
 	}
 }
 
 func TestTheRefusalsOfTheSettingsAndOfTheRecoveryKeyNameTheProgramAsTheRunReachesIt(t *testing.T) {
-	if _, _, err := loadSaved(swCmd, filepath.Join(t.TempDir(), "gone.yaml"), true); err == nil || !strings.Contains(err.Error(), "only `"+swCmd+" install` makes a settings file") {
+	if _, _, err := loadSaved(swDeps, filepath.Join(t.TempDir(), "gone.yaml"), true); err == nil || !strings.Contains(err.Error(), "only `"+swCmd+" install` makes a settings file") {
 		t.Errorf("loadSaved = %v, want a refusal that names `%s install`", err, swCmd)
 	}
 	h := newHarness(t, "linux")
 	env := h.newEnv()
 	env.Deps.Command = swCmd
 	err := Install(context.Background(), []string{"--settings", h.settingsPath(), "--backup-recipient", "age1x"}, env)
-	if err == nil || !strings.Contains(err.Error(), "run `"+swCmd+" backup init`") {
-		t.Errorf("Install = %v, want a refusal that names `%s backup init`", err, swCmd)
+	if want := "run `" + (Deps{Command: swCmd, instance: instanceArgs{settings: h.settingsPath()}}).suggest("backup init") + "`"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("Install = %v, want a refusal that says to %s", err, want)
 	}
 }
 
@@ -65,7 +66,7 @@ func doctorAs(t *testing.T, f *fakeEngine, cmd, path string) map[string]doctorRe
 	deps := f.deps()
 	deps.Command = cmd
 	var out bytes.Buffer
-	Doctor(context.Background(), deps, path, &out, true)
+	Doctor(context.Background(), deps, path, "", &out, true)
 	var list []doctorResult
 	if err := json.Unmarshal(out.Bytes(), &list); err != nil {
 		t.Fatalf("doctor --json printed %q: %v", out.String(), err)
@@ -89,7 +90,7 @@ func savedAt(t *testing.T, s Settings) string {
 func TestDoctorNamesTheProgramAsTheRunReachesIt(t *testing.T) {
 	t.Run("no settings file", func(t *testing.T) {
 		res := doctorAs(t, newFake("linux"), swCmd, filepath.Join(t.TempDir(), "settings.yaml"))
-		if fix := res["settings"].Fix; !strings.Contains(fix, "run `"+swCmd+" install` first") {
+		if fix := res["settings"].Fix; !strings.Contains(fix, "Run `"+swCmd+" install` first") {
 			t.Errorf("the fix is %q, want one that names `%s install`", fix, swCmd)
 		}
 	})
@@ -148,26 +149,27 @@ func TestEnrollNamesTheProgramAsTheRunReachesIt(t *testing.T) {
 	if got := enrollAs(t); !strings.Contains(got, "run `"+swCmd+" install --upgrade --tier co-located` first") {
 		t.Errorf("a host with no settings file is told %q, want `%s install --upgrade --tier co-located`", got, swCmd)
 	}
-	if got := enrollAs(t, "--tier", "co-located"); !strings.Contains(got, "run `"+swCmd+" install --upgrade`, which converts") {
-		t.Errorf("a co-located stack with no settings file is told %q, want `%s install --upgrade`", got, swCmd)
+	// The tier that enroll was given is repeated: the command that makes the settings file must name it too.
+	if got := enrollAs(t, "--tier", "co-located"); !strings.Contains(got, "run `"+swCmd+" install --tier co-located --upgrade`, which saves the settings file") {
+		t.Errorf("a co-located stack with no settings file is told %q, want `%s install --tier co-located --upgrade`", got, swCmd)
 	}
-	if err := func() error { _, err := enrollChecks(swCmd, &Resolver{}, GitHub{}); return err }(); err == nil || !strings.Contains(err.Error(), "run `"+swCmd+" install --github yes` first") {
+	if err := func() error { _, err := enrollChecks(swDeps, &Resolver{}, GitHub{}); return err }(); err == nil || !strings.Contains(err.Error(), "run `"+swCmd+" install --github yes` first") {
 		t.Errorf("enrollChecks = %v, want a refusal that names `%s install --github yes`", err, swCmd)
 	}
 }
 
 func TestTheMessagesOfTheInstanceNameTheProgramAsTheRunReachesIt(t *testing.T) {
-	if err := (instance{settingsPath: "/s.yaml"}).needSettings(swCmd); err == nil || !strings.Contains(err.Error(), "run `"+swCmd+" install --upgrade`, which saves them") {
+	if err := (instance{settingsPath: "/s.yaml"}).needSettings(swDeps); err == nil || !strings.Contains(err.Error(), "`"+swCmd+" install --upgrade`, which saves one") {
 		t.Errorf("needSettings = %v, want a message that names `%s install --upgrade`", err, swCmd)
 	}
-	steps := colocatedSteps(swCmd, nil, colocatedSettings(), testImage, screenOn(&bytes.Buffer{}))
-	if !strings.Contains(steps.recovery, "run `"+swCmd+" install` with the options of this run") {
+	steps := colocatedSteps(swDeps, nil, colocatedSettings(), testImage, screenOn(&bytes.Buffer{}))
+	if !strings.Contains(steps.recovery, "run `"+swCmd+" install` with the same options as this run") {
 		t.Errorf("the way back to a running service is %q, want it to name `%s install`", steps.recovery, swCmd)
 	}
 }
 
 func TestNothingInstalledNamesTheInstallAsTheRunReachesIt(t *testing.T) {
-	err := nothingInstalled(swCmd)
+	err := nothingInstalled(swDeps)
 	if !errors.Is(err, ErrNothingInstalled) || !strings.Contains(err.Error(), "install first with `"+swCmd+" install`") {
 		t.Errorf("nothingInstalled = %v, want ErrNothingInstalled that says to install first with `%s install`", err, swCmd)
 	}
@@ -177,8 +179,9 @@ func TestNothingInstalledNamesTheInstallAsTheRunReachesIt(t *testing.T) {
 	env := h.newEnv()
 	env.Deps.Command = swCmd
 	args := []string{"--upgrade", "--tier", "co-located", "--runtime", "podman", "--connection", "pm", "--image", testImage, "--token-file", h.tokenPath()}
-	if err := Install(context.Background(), args, env); !errors.Is(err, ErrNothingInstalled) || !strings.Contains(err.Error(), "install first with `"+swCmd+" install`") {
-		t.Errorf("an upgrade of nothing = %v, want ErrNothingInstalled that says to install first with `%s install`", err, swCmd)
+	want := "install first with `" + swCmd + " install --tier co-located --token-file " + quoteArg(h.tokenPath()) + "`" // the run named the tier and the token file
+	if err := Install(context.Background(), args, env); !errors.Is(err, ErrNothingInstalled) || !strings.Contains(err.Error(), want) {
+		t.Errorf("an upgrade of nothing = %v, want ErrNothingInstalled that says to %s", err, want)
 	}
 }
 
@@ -193,12 +196,11 @@ func TestAnIsolatedUpgradeNamesTheProgramAsTheRunReachesIt(t *testing.T) {
 	if err := Install(context.Background(), args, env); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Check the instance with `" + swCmd + " doctor`."; !strings.Contains(u.out.String(), want) {
+	if want := "To check that everything works, run `" + swCmd + " doctor --settings " + quoteArg(settingsFile(u.home)) + "`."; !strings.Contains(u.out.String(), want) {
 		t.Errorf("the output lacks %q:\n%s", want, u.out.String())
 	}
-	r := &Resolver{flags: map[string]string{"settings": "/s.yaml"}}
-	if got, want := installCommand(swCmd, r, true), swCmd+" install --tier isolated --settings /s.yaml"; got != want {
-		t.Errorf("installCommand = %q, want %q", got, want)
+	if got, want := withInstance(instanceArgs{settings: "/s.yaml"}).onIsolated().suggest("install"), swCmd+" install --tier isolated --settings /s.yaml"; got != want {
+		t.Errorf("the install command = %q, want %q", got, want)
 	}
 }
 
@@ -214,7 +216,7 @@ func TestTheRulesetStepNamesDoctorAsTheRunReachesIt(t *testing.T) {
 		run.result(t)
 		_ = run.env.Out.(*ui.Screen).Close()
 		tail := run.out.String()[strings.LastIndex(run.out.String(), leaveAlt):]
-		if want := "then run " + swCmd + " doctor to check the protection"; !strings.Contains(tail, want) {
+		if want := "then run `" + swCmd + " doctor` to check the protection"; !strings.Contains(tail, want) {
 			t.Errorf("the warning that is kept lacks %q:\n%s", want, tail)
 		}
 	})
@@ -229,7 +231,7 @@ func TestTheRulesetStepNamesDoctorAsTheRunReachesIt(t *testing.T) {
 		run.result(t)
 		_ = run.env.Out.(*ui.Screen).Close()
 		tail := run.out.String()[strings.LastIndex(run.out.String(), leaveAlt):]
-		if want := "Run the checks again at any time with " + swCmd + " doctor."; !strings.Contains(tail, want) {
+		if want := "To check again at any time, run `" + swCmd + " doctor`."; !strings.Contains(tail, want) {
 			t.Errorf("the scrollback lacks %q:\n%s", want, tail)
 		}
 	})
@@ -241,10 +243,10 @@ func TestTheEndOfSetupNamesEnrollAsTheRunReachesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := afterSetup(scr, swCmd, errors.New("boom")); err == nil {
+	if err := afterSetup(scr, swDeps, errors.New("boom")); err == nil {
 		t.Fatal("afterSetup hid the failure of setup")
 	}
-	mustSay(t, viewOf(t, run.output(), 100, 30), "run "+swCmd+" enroll to try again")
+	mustSay(t, viewOf(t, run.output(), 100, 30), "run `"+swCmd+" enroll` to try again")
 	_ = scr.Close()
 }
 
@@ -260,15 +262,15 @@ func TestASetupThatDoesNotEndInTimeSaysToRunEnrollAgainAsTheRunReachesIt(t *test
 		t.Fatal(openErr)
 	}
 	defer func() { _ = scr.Close() }()
-	if got := afterSetup(scr, swCmd, err); got == nil || !strings.Contains(got.Error(), "run "+swCmd+" enroll again") {
+	if got := afterSetup(scr, swDeps, err); got == nil || !strings.Contains(got.Error(), "run "+swCmd+" enroll again") {
 		t.Errorf("afterSetup = %v, want an error that says to run `%s enroll` again", got, swCmd)
 	}
 }
 
 func TestTheIsolatedImageRefusalNamesTheUpgradeAsTheRunReachesIt(t *testing.T) {
 	r := newTestResolver(t, map[string]string{"image": "sha256:" + strings.Repeat("b", 64)}, nil, Terminal{In: strings.NewReader(""), Out: &syncBuffer{}})
-	_, err := chooseImage(swCmd, r, strings.Repeat("a", 64), func() (bool, error) { return false, nil }, func(string, ...any) {})
-	if err == nil || !strings.Contains(err.Error(), "use `"+swCmd+" install --upgrade`") {
-		t.Errorf("chooseImage = %v, want a refusal that says to use `%s install --upgrade`", err, swCmd)
+	_, err := chooseImage(swDeps, r, strings.Repeat("a", 64), func() (bool, error) { return false, nil }, func(string, ...any) {})
+	if err == nil || !strings.Contains(err.Error(), "run `"+swCmd+" install --upgrade`") {
+		t.Errorf("chooseImage = %v, want a refusal that says to run `%s install --upgrade`", err, swCmd)
 	}
 }

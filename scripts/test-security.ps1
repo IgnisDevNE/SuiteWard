@@ -31,7 +31,7 @@ try {
     $scan = Invoke-Scan
     if ($scan.Passed -or -not $scan.Output.Contains('unpinned-uses')) { throw 'A workflow with an unpinned action was accepted.' }
     # Neither a configuration outside the tree (the environment) nor an inline comment may suppress a finding.
-    $outside = Join-Path $testRoot '../zizmor-outside.yml'
+    $outside = Join-Path ([IO.Path]::GetTempPath()) "zizmor-outside-$([Guid]::NewGuid().ToString('N')).yml"
     Set-Content -LiteralPath $outside -Value "rules:`n  unpinned-uses:`n    disable: true`n"
     $env:ZIZMOR_CONFIG = $outside
     try { $scan = Invoke-Scan } finally { Remove-Item Env:ZIZMOR_CONFIG; Remove-Item -LiteralPath $outside -Force }

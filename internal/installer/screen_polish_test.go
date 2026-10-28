@@ -36,7 +36,7 @@ func TestTheSummaryNamesTheInstanceByItsIdAndTheReleaseByItsVersion(t *testing.T
 		t.Fatal(err)
 	}
 	tail := c.tail()
-	for _, want := range []string{"Instance: " + testInstance + "\n", "Release: v0.2.0\n"} {
+	for _, want := range []string{"Instance ID: " + testInstance + "\n", "Version: v0.2.0\n"} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, tail)
 		}
@@ -54,12 +54,12 @@ func TestTheSummaryOfAnUpgradeHasOneReleaseRowAndAnImageRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	tail := c.tail()
-	for _, want := range []string{"Instance: " + testInstance + "\n", "Release: v0.2.0\n", "Image: " + digestOf(testImage) + " (was "} {
+	for _, want := range []string{"Instance ID: " + testInstance + "\n", "Version: v0.2.0\n", "Image: " + digestOf(testImage) + " (was "} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, tail)
 		}
 	}
-	if got := len(regexp.MustCompile(`(?m)^Release: `).FindAllString(tail, -1)); got != 1 {
+	if got := len(regexp.MustCompile(`(?m)^Version: `).FindAllString(tail, -1)); got != 1 {
 		t.Errorf("the summary has %d Release rows, want 1:\n%s", got, tail)
 	}
 }
@@ -76,12 +76,12 @@ func TestTheSummaryOfAnIsolatedUpgradeHasTheSameRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	tail := c.tail()
-	for _, want := range []string{"Instance: " + testInstance + "\n", "Release: v0.2.0\n", "Image: " + testDigest + " (was " + oldDigest + ")\n"} {
+	for _, want := range []string{"Instance ID: " + testInstance + "\n", "Version: v0.2.0\n", "Image: " + testDigest + " (was " + oldDigest + ")\n"} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, tail)
 		}
 	}
-	if got := len(regexp.MustCompile(`(?m)^Release: `).FindAllString(tail, -1)); got != 1 {
+	if got := len(regexp.MustCompile(`(?m)^Version: `).FindAllString(tail, -1)); got != 1 {
 		t.Errorf("the summary has %d Release rows, want 1:\n%s", got, tail)
 	}
 }
@@ -212,26 +212,26 @@ func TestTheDockerPageFitsTheSmallestWindowAndItsPointsHangUnderTheirText(t *tes
 	if strings.Contains(v.text(), trimmed) {
 		t.Errorf("the Docker page is trimmed at 60x20:\n%s", v.dump())
 	}
-	mustSay(t, v, "This is a confirmation: typing yes accepts the risks below.")
-	if row := v.row("- Docker's daemon"); !strings.HasPrefix(row, "    - Docker") {
+	mustSay(t, v, "Type yes to accept the risks below.")
+	if row := v.row("- Docker's service"); !strings.HasPrefix(row, "    - Docker") {
 		t.Errorf("the first point is %q, want it under the head's text, behind its dash:\n%s", row, v.dump())
 	}
-	if row := v.row("its containers are not isolated"); !strings.HasPrefix(row, "      its containers") {
+	if row := v.row("whoever controls it can reach"); !strings.HasPrefix(row, "      whoever") {
 		t.Errorf("what the first point wraps to is %q, want it under the text after the dash:\n%s", row, v.dump())
 	}
 }
 
 // A backup of the other tier adds a warning to a page that has few rows for it: the warning is short on a full screen, and the page still
 // shows which instance is replaced by which backup at 80x24.
-func TestTheRestorePageOfABackupOfAnotherTierStillShowsTheInstanceAndTheReleaseAt80x24(t *testing.T) {
+func TestTheRestorePageOfABackupOfAnotherTierStillShowsTheInstanceAndTheVersionAt80x24(t *testing.T) {
 	run, _ := restoreOnScreen(t, 80, 24, config.TierIsolated)
 	v := run.question(t, 0)
-	for _, fact := range []string{"  Instance", "  Release"} {
+	for _, fact := range []string{"  Instance ID", "  Version"} {
 		if row := v.row(fact); !strings.HasPrefix(row, fact) {
 			t.Errorf("the page does not show the fact %q of the backup (row %q):\n%s", strings.TrimSpace(fact), row, v.dump())
 		}
 	}
-	mustSay(t, v, "Backup tier: isolated; this instance: co-located.", "Type the instance id "+testInstance+" to confirm")
+	mustSay(t, v, "Backup: a separate server; this one: this computer.", "Type the instance id "+testInstance+" to confirm")
 }
 
 // ---- what stays as it was ----
@@ -258,7 +258,7 @@ func TestTheImageQuestionOfAFullScreenKeepsItsAnswers(t *testing.T) {
 		if got, err := askImage(r, stackInstalled{}); err != nil || got != testImage {
 			t.Fatalf("askImage = %q, %v, want the typed image", got, err)
 		}
-		if !shows(out.String(), "Release image (pinned by digest)") || shows(out.String(), "Default "+releaseImageRepo) {
+		if !shows(out.String(), "Release image (with its digest)") || shows(out.String(), "Default "+releaseImageRepo) {
 			t.Errorf("a question with no default is not the one it was:\n%s", out.String())
 		}
 	})
@@ -286,7 +286,7 @@ func TestThePlainRestoreOfABackupOfAnotherTierKeepsTheLongWarning(t *testing.T) 
 	if err := u.restore(file, confirmed(t, t.TempDir())...); err != nil {
 		t.Fatal(err)
 	}
-	want := "The backup was made on the isolated tier and this instance is on the co-located tier: the owner's enrollment records its tier, and /status says so after the restore."
+	want := "The backup comes from an installation on a separate server, and this instance is on this computer. The owner's enrollment records the installation type, and /status shows it after the restore."
 	if !strings.Contains(u.out.String(), want) {
 		t.Errorf("the plain output lacks the warning about the tier:\n%s", u.out.String())
 	}
@@ -378,7 +378,7 @@ func TestThePurgeBoxOfAnInstanceWithNoIdSaysThisInstance(t *testing.T) {
 		t.Fatalf("Uninstall: %v\n%s", err, run.output())
 	}
 	v := run.question(t, 0)
-	mustSay(t, v, "This deletes the database, the artifacts, the secrets and the settings of this instance.", "Type the instance id "+unknownValue+" to confirm")
+	mustSay(t, v, "This deletes the database, the saved files (artifacts), the secrets and the settings of this instance.", "Type the instance id "+unknownValue+" to confirm")
 	if strings.Contains(v.text(), "of instance "+unknownValue) {
 		t.Errorf("the box calls the instance %q:\n%s", unknownValue, v.dump())
 	}

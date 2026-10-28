@@ -222,8 +222,8 @@ func TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay(t *testing.T) {
 	// Two pull requests change the protected tests; the checks job proposes each change and the owner approves both against V1.
 	clock := bootTime.Add(2 * time.Hour)
 	cycle(clock, map[int]string{4: bootHead, 5: cjHead2, 6: cjHead3})
-	checks := &checksJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(), commands: store,
-		pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}
+	checks := (&checksJob{repos: []string{bootRepo}, reader: reader, owners: store, suites: store, contents: artifacts, content: artifacts, ledger: store.Checks(), integrity: store.Integrity(), commands: store,
+		pulls: store, tier: owner.TierIsolated, problems: &bootstrapProblems{}, logger: logger, now: func() time.Time { return clock }}).withExecution(store.Execution(), store.ReceiptChecks(), time.Now())
 	if err := checks.run(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestMergesJobOnPostgreSQLPromotesAndCommentsThroughTheRelay(t *testing.T) {
 		pass()
 	}
 	check := func(pull int, key string, want ...string) { requireMergeComment(t, gh, instance, pull, key, want...) }
-	check(6, "merge:1001:6", "V2", mgSHA6, "did not run the tests")
+	check(6, "merge:1001:6", "V2", mgSHA6, "checked the approval and the integrity of the protected files at that commit.")
 	check(5, "merge:1001:5", "stays at V2", "canonical contract changed after")
 
 	// A replay: the job decides nothing again and nothing is posted again.

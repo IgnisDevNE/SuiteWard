@@ -20,8 +20,8 @@ import (
 var ErrNothingInstalled = errors.New("nothing is installed here")
 
 // nothingInstalled is ErrNothingInstalled with the install to run first.
-func nothingInstalled(cmd string) error {
-	return fmt.Errorf("%w: install first with `%s install`", ErrNothingInstalled, cmd)
+func nothingInstalled(d Deps) error {
+	return fmt.Errorf("%w: install first with `%s`", ErrNothingInstalled, d.suggest("install"))
 }
 
 // upgradeTarget is the release image the upgrade moves to: --image, else the release this binary carries.
@@ -30,7 +30,7 @@ func upgradeTarget(r *Resolver) (string, error) {
 	if !ok {
 		embedded, have := ReleaseImage()
 		if !have {
-			return "", errors.New("this is a development build and carries no release image: pass --image " + releaseImageRepo + "@sha256:<signed index digest>")
+			return "", errors.New("this is a development build, so it does not know which release image to install. Pass `--image " + releaseImageRepo + "@sha256:<signed index digest>`")
 		}
 		return embedded, nil
 	}
@@ -77,8 +77,8 @@ func confirmUpgrade(r *Resolver, plan upgradePlan, parent, recipient string, ser
 	if recipient != "" {
 		key = "the recovery key " + archive.Fingerprint(recipient)
 	}
-	r.say("An encrypted backup of the database and the artifacts is made first, as a new file under %s, encrypted to %s.\n", parent, key)
-	ok, err := r.confirm("yes", "Back up and upgrade now?")
+	r.say("First, an encrypted backup of the database and the saved files (artifacts) is made as a new file under %s, locked with %s.\n", parent, key)
+	ok, err := r.confirm("yes", "Back up and upgrade now? If you answer no, the upgrade stops here.")
 	if err != nil {
 		return err
 	}
@@ -108,14 +108,6 @@ func (r *Resolver) askYes(question string) (bool, error) {
 	}
 	yes, err := parseYesNo("answer", answer)
 	return err == nil && yes, nil
-}
-
-func doctorHint(cmd, settingsPath string, defaultPath bool) string {
-	hint := cmd + " doctor"
-	if !defaultPath {
-		hint += " --settings " + quoteArg(settingsPath)
-	}
-	return hint
 }
 
 // installedDBImage is the image the database container runs now.
@@ -161,14 +153,18 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err := guardDefaultSettings(t, rt.Name(), connection); err != nil {
 		return err
 	}
+	tokenFile, err := instanceTokenFile(r, env, t) // before any change: a second instance names its own, or the executor of the main one is touched
+	if err != nil {
+		return err
+	}
 	base, previous, err := existingStackFor(ctx, rt, t.saved, t.haveSaved, true)
 	if err != nil {
 		return err
 	}
 	if !previous.Known {
-		return nothingInstalled(env.Deps.command())
+		return nothingInstalled(env.Deps)
 	}
-	if err := refuseUnfinishedInstall(env.Deps.command(), pendingAppPath(t.settingsPath), func() (GitHub, error) { return base.GitHub, nil }); err != nil {
+	if err := refuseUnfinishedInstall(env.Deps, pendingAppPath(t.settingsPath), func() (GitHub, error) { return base.GitHub, nil }); err != nil {
 		return err
 	}
 	s := base
@@ -182,7 +178,7 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err != nil {
 		return err
 	}
-	if err := refuseChangedSettings(asked, s, installCommand(env.Deps.command(), r, false)); err != nil {
+	if err := refuseChangedSettings(asked, s, env.Deps); err != nil {
 		return err
 	}
 	dbImage, err := installedDBImage(ctx, rt)
@@ -193,24 +189,21 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 	if err != nil {
 		return err
 	}
+	pin, err := releasePin(r, env.Deps) // before anything is changed, a run with nothing to upgrade included
+	if err != nil {
+		return err
+	}
 	plan := upgradePlan{oldImage: previous.Image, newImage: image, oldDB: dbImage, newDB: postgres}
 	// A stack without a settings file (made by local.ps1) is converted even when it runs this release: the settings are saved.
 	if plan.current() && t.haveSaved {
-		d := refreshCopy(ctx, env) // first: the hint names the program as the refreshed copy answers
-		r.say("Nothing to upgrade: already on %s. Check the instance with `%s`.\n", digestOf(image), doctorHint(d.command(), t.settingsPath, t.defaultPath))
-		return holdPage(scr)
+		return upgradeColocatedCurrent(ctx, r, env, rt, s, tokenFile, image, pin)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
 	agreed, err := settleRecipient(r, env, &s)
 	if err != nil {
 		return err
 	}
-	c := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, image: image, previous: previous, tokenFile: r.preset("token-file", "")}
-	if c.tokenFile == "" {
-		if c.tokenFile, err = defaultTokenFile(env.Deps); err != nil {
-			return err
-		}
-	}
+	c := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: env.Term.Out, s: s}, image: image, previous: previous, tokenFile: tokenFile, executorPin: pin}
 	if c.secrets, err = c.readSecretState(ctx); err != nil {
 		return err
 	}
@@ -242,18 +235,19 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 		return fmt.Errorf("%w (%s; the backup is in %s)", err, inst.changed(), dir)
 	}
 	if c.stack, err = ColocatedStack(c.s, image); err != nil {
-		return withBackup(env.Deps.command(), err, dir, "", "")
+		return withBackup(env.Deps, err, dir, "")
 	}
 	scr.Step(4)
 	if err := c.bringUp(ctx, func() error { return SaveSettings(t.settingsPath, c.s) }); err != nil {
-		return withBackup(env.Deps.command(), err, dir, "", "")
+		return withBackup(env.Deps, err, dir, "")
 	}
 	scr.Step(5)
 	c.restartAfterReboot(ctx)
 	c.env.Deps = refreshCopy(ctx, c.env) // before the hints below, which name the program as the refreshed copy answers
-	cmd := c.env.Deps.command()
-	upgraded(scr, image, dir, goBackColocated(cmd, engine, previous.Image, dir, scopeFlags(r, false)), doctorHint(cmd, t.settingsPath, t.defaultPath))
+	c.setUpExecutor(ctx)                 // after it: what it says names the program as the refreshed copy answers
+	upgraded(scr, image, dir, goBackColocated(c.env.Deps, engine, previous.Image, dir), c.env.Deps.suggest("doctor"))
 	c.installSelf(ctx)
+	c.endPlainUpgrade(scr)
 	return showSummary(scr, func() []ui.KV { return c.upgradeSummary(ctx, t) })
 }
 
@@ -262,16 +256,16 @@ func upgradeColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 // is asked whether to make one: a no ends the run here, and a yes (agreed) is acted on once the service answers, because the instance id of
 // /status names the kit. The key is stored with the settings when the upgrade is done.
 func settleRecipient(r *Resolver, env Env, s *Settings) (agreed bool, err error) {
-	if err := askedRecipient(env.Deps.command(), r, s); err != nil {
+	if err := askedRecipient(env.Deps, r, s); err != nil {
 		return false, err
 	}
 	if s.BackupRecipient != "" {
 		return false, nil
 	}
 	if !env.Term.IsTerminal {
-		return false, noKeyError(env.Deps.command(), true)
+		return false, noKeyError(env.Deps, true)
 	}
-	if err := askForKey(env.Deps.command(), r, true); err != nil {
+	if err := askForKey(env.Deps, r, true); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -290,7 +284,7 @@ func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, di
 	b := inst.backup(env.Deps, dir, recipient)
 	b.beside = beside
 	var path string
-	err = working(r.screen, "Backing up the database and the artifacts", func() (err error) {
+	err = working(r.screen, "Backing up the database and the saved files", func() (err error) {
 		path, err = takeBackup(ctx, b)
 		return err
 	})
@@ -301,39 +295,35 @@ func upgradeBackup(ctx context.Context, r *Resolver, env Env, inst *instance, di
 // backup are kept, so that they are still there when the screen has gone.
 func upgraded(scr *ui.Screen, image, backupPath, goBack, doctor string) {
 	scr.Say("Upgraded to %s.\n", digestOf(image))
-	scr.Keep("The backup is in %s. It holds the TOTP secret, encrypted to your recovery key: keep its kit off this machine.\n", backupPath)
+	scr.Keep("The backup is in %s. It holds the authenticator secret (the TOTP secret), locked with your recovery key. Keep the recovery kit off this computer.\n", backupPath)
 	scr.Keep("%s\n", goBack)
 	scr.Say("Check the instance with `%s`.\n", doctor)
 }
 
+// endPlainUpgrade ends a plain run with the reduced-assurance notice, as a plain install does: a full screen says it in the summary, and a plain run
+// has none.
+func (c *colocatedInstall) endPlainUpgrade(scr *ui.Screen) {
+	if !scr.FullScreen() {
+		c.say("%s\n", reducedAssuranceNotice)
+	}
+}
+
 // goingBack is where the steps of the way back after an upgrade are written down.
-const goingBack = "the steps: docs/backup.md, Going back after an upgrade"
+const goingBack = "The steps are in docs/backup.md, under Going back after an upgrade."
 
 // goBackColocated is the way back after the upgrade of a co-located stack: a restore alone cannot undo an upgrade that migrated, so the stack
 // and its data volumes go first, and the previous release is installed before the backup is restored.
-func goBackColocated(cmd, engine, previousImage, backupPath, scope string) string {
-	return fmt.Sprintf("To go back, remove the stack and its data volumes (`%[8]s uninstall --yes%[1]s`, then `%[2]s volume rm %[3]s %[4]s`), install the previous release (`%[8]s install --image %[5]s%[1]s`), then run `%[8]s restore %[6]s%[1]s` with that kit; migrations only go forward, so it must be the previous release (%[7]s).",
-		scope, engine, VolumeData, VolumeDBData, previousImage, quoteArg(backupPath), goingBack, cmd)
+func goBackColocated(d Deps, engine, previousImage, backupPath string) string {
+	return "To go back, remove the installation and its data volumes (`" + d.suggest("uninstall", "--yes") + "`, then `" + engine + " volume rm " + VolumeData + " " + VolumeDBData +
+		"`), install the previous release (`" + d.suggest("install", "--image "+previousImage) + "`), then run `" + d.suggest("restore", quoteArg(backupPath)) +
+		"` with that kit. It must be the previous release, because database updates only go forward. " + goingBack
 }
 
 // goBackIsolated is the way back after the upgrade of an isolated host: the unit files that the upgrade replaced were kept beside the backup;
 // they go back, systemd reloads them and the service stops, and then the backup is restored.
-func goBackIsolated(cmd, backupPath, unitsDir, scope string) string {
-	return fmt.Sprintf("To go back, copy the unit files that this upgrade replaced, from %s to %s, then run `systemctl --user daemon-reload` and `systemctl --user stop suiteward.service`, and then `%s restore %s%s` with that kit; migrations only go forward, so the units must be the previous release's (%s).",
-		unitsKeptBeside(backupPath), unitsDir, cmd, quoteArg(backupPath), scope, goingBack)
-}
-
-// scopeFlags names the tier and the settings file of this run when they are not the defaults, for a command that a message tells the person
-// to run next: copied on a PC with a second instance, it must reach this one (the command line of this run, as enrollCommand takes it).
-func scopeFlags(r *Resolver, isolated bool) string {
-	flags := ""
-	if isolated {
-		flags += " --tier isolated"
-	}
-	if path, ok := r.flags["settings"]; ok {
-		flags += " --settings " + quoteArg(path)
-	}
-	return flags
+func goBackIsolated(d Deps, backupPath, unitsDir string) string {
+	return fmt.Sprintf("To go back, copy the unit files that this upgrade replaced from %s to %s, then run `systemctl --user daemon-reload` and `systemctl --user stop suiteward.service`, and then ", unitsKeptBeside(backupPath), unitsDir) +
+		"`" + d.suggest("restore", quoteArg(backupPath)) + "` with that kit. The units must be the previous release's, because database updates only go forward. " + goingBack
 }
 
 // The wait for /status of a service the upgrade started: at most startWaitTries probes, and a deadline on the whole wait, because a
@@ -344,7 +334,7 @@ const (
 )
 
 // startServicePrompt is what an upgrade asks of a service that does not answer /status, which the backup records.
-const startServicePrompt = "The service is not running, so the backup cannot record its status. Start the installed service now?"
+const startServicePrompt = "The service is not running, so the backup cannot record its status. Start the installed service now? If you answer no, the upgrade stops and nothing is changed."
 
 // ensureServiceUp makes sure /status answers before the backup. A service that does not is started as it is installed, on a terminal
 // and after a yes; otherwise, or when the start does not help, the upgrade refuses. --yes confirms the upgrade plan only: nothing
@@ -353,7 +343,7 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	if _, err := status(ctx); err == nil {
 		return false, nil
 	}
-	refuse := fmt.Errorf("the service is not running, so the backup cannot record its status: start it (%s) and run the upgrade again; --yes confirms the upgrade plan only, it does not start the service", startCommand)
+	refuse := fmt.Errorf("the service is not running, so the backup cannot record its status. Start it with %s, then run the upgrade again. `--yes` only confirms the upgrade plan: it does not start the service. Nothing was changed", startCommand)
 	if !r.term.IsTerminal {
 		return false, refuse
 	}
@@ -362,13 +352,13 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 	case errors.Is(err, io.EOF): // the input ended: no answer is not a yes
 		return false, refuse
 	case err != nil:
-		return false, fmt.Errorf("read the answer to the start of the service: %w", err)
+		return false, fmt.Errorf("could not read your answer: %w", err)
 	case !yes:
 		return false, refuse
 	}
-	const manual = "take the backup by hand instead (dump the database and copy the artifacts volume yourself; details: docs/backup.md, Appendix A), then upgrade"
+	const manual = "take the backup by hand instead (dump the database and copy the saved files (artifacts) yourself; details: docs/backup.md, Appendix A), then upgrade"
 	if err := start(ctx); err != nil {
-		return false, fmt.Errorf("start the installed service: %w; %s", err, manual)
+		return false, fmt.Errorf("could not start the installed service: %w; %s", err, manual)
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, startWait)
 	defer cancel()
@@ -384,7 +374,7 @@ func ensureServiceUp(ctx context.Context, r *Resolver, env Env, status func(cont
 		}
 	}
 	if lastErr != nil {
-		return true, fmt.Errorf("the service was started, but /status still does not answer (%w): read its logs; or %s", lastErr, manual)
+		return true, fmt.Errorf("the service was started, but it still does not answer on /status (%w). Read its logs; or %s", lastErr, manual)
 	}
 	bar.set(1, "answers")
 	return true, nil
@@ -404,7 +394,7 @@ func (c *colocatedInstall) startInstalled(ctx context.Context) error {
 // refuseUnfinishedInstall refuses an upgrade while an earlier install is unfinished: the App it recorded holds the key secret, and the
 // upgrade would start the stack again with the App of the settings, which GitHub refuses with that key. settings is called only when
 // a record exists.
-func refuseUnfinishedInstall(cmd, pendingPath string, settings func() (GitHub, error)) error {
+func refuseUnfinishedInstall(d Deps, pendingPath string, settings func() (GitHub, error)) error {
 	pending, found, err := loadPendingApp(pendingPath)
 	if err != nil || !found {
 		return err
@@ -416,6 +406,6 @@ func refuseUnfinishedInstall(cmd, pendingPath string, settings func() (GitHub, e
 	if !recordWins(&gh, &pending) {
 		return nil
 	}
-	return fmt.Errorf("an earlier install did not finish: it created the App %s and recorded it in %s, and that App's key is the secret %s now. Finish that install first, with a plain `%s install` (it takes the recorded App up), then upgrade",
-		pending.Slug, pendingPath, SecretGitHubAppKey, cmd)
+	return fmt.Errorf("an earlier install did not finish: it created the GitHub App %s and recorded it in %s, and that App's key is stored as the secret %s. Finish that install first by running `%s` (it picks up the recorded App), then upgrade. Nothing was changed",
+		pending.Slug, pendingPath, SecretGitHubAppKey, d.suggest("install"))
 }

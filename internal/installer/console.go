@@ -149,7 +149,7 @@ func showSummary(scr *ui.Screen, rows func() []ui.KV) error {
 		return err
 	}
 	if interrupted {
-		return fmt.Errorf("the check of the instance that ends the command did not finish: %w", context.Canceled)
+		return fmt.Errorf("the final checks of the instance did not finish: %w", context.Canceled)
 	}
 	return nil
 }

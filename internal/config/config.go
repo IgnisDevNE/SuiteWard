@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 const (
@@ -24,7 +26,7 @@ const (
 	redacted = "[redacted]"
 
 	maxGitHubRepositories = 20 // D-SYNC
-	minMCPTokenBytes      = 32
+	minTokenBytes         = 32 // MCP_TOKEN and EXECUTOR_TOKEN
 )
 
 // GitHub caps an owner at 39 characters and a name at 100: the size of a payload that carries the repository is measured with that longest name.
@@ -77,10 +79,21 @@ type Config struct {
 	Tier                 Tier
 	// ReportBaseURL is the loopback origin of the instance (http://127.0.0.1:<port> or http://localhost:<port>) that the change report links name; empty for no link.
 	ReportBaseURL string
+	// ExecutorToken is the bearer token of the executor API; empty when EXECUTOR_TOKEN is unset: the executor routes are not served.
+	ExecutorToken Secret
+	// Executor holds the durations of the executor settings, with or without a token.
+	Executor ExecutorTimes
 	// GitHub is nil when the synchronization settings are not configured.
 	GitHub *GitHub
 	// MCP is nil when MCP_TOKEN is unset: no local MCP listener.
 	MCP *MCP
+}
+
+// ExecutorTimes are the durations of the executor settings (see docs/contracts/runtime.md, "Settings" and "Execution").
+type ExecutorTimes struct {
+	JobTimeout time.Duration // how long one attempt may run once an executor leased it
+	LeaseWait  time.Duration // how long the service may go without seeing an executor before its pending jobs are unavailable
+	GitHubWait time.Duration // how long a job may keep failing to read GitHub before it is unavailable
 }
 
 // MCP holds the settings of the local MCP listener (see docs/contracts/runtime.md, "Local MCP").
@@ -148,6 +161,7 @@ func Load(lookup func(string) (string, bool), environ []string, readFile func(st
 	c.OutboxLease = number(l, "OUTBOX_LEASE", "1m", 5*time.Second, 0, time.ParseDuration)
 	c.Tier = l.tier("INSTALLATION_TIER")
 	c.ReportBaseURL = l.reportBaseURL("REPORT_BASE_URL")
+	c.ExecutorToken, c.Executor = l.executor()
 	c.GitHub = l.github()
 	c.MCP = l.mcp(c.HTTPAddr)
 
@@ -300,8 +314,8 @@ func (l *loader) mcp(httpAddr string) *MCP {
 
 	m := MCP{Addr: "127.0.0.1:8090", Token: Secret(token)}
 	// An empty value here was already reported by raw.
-	if token != "" && len(token) < minMCPTokenBytes {
-		l.fail("MCP_TOKEN", fmt.Errorf("must be at least %d bytes", minMCPTokenBytes))
+	if token != "" && len(token) < minTokenBytes {
+		l.fail("MCP_TOKEN", fmt.Errorf("must be at least %d bytes", minTokenBytes))
 	}
 	if addr != "" {
 		m.Addr = addr
@@ -322,6 +336,21 @@ func (l *loader) mcp(httpAddr string) *MCP {
 		}
 	}
 	return &m
+}
+
+// executor reads the executor settings. An unset token is valid (the executor routes are not served); the durations are validated either way.
+func (l *loader) executor() (Secret, ExecutorTimes) {
+	token, _ := l.present("EXECUTOR_TOKEN", true)
+	// An empty value here was already reported by raw.
+	if token != "" && len(token) < minTokenBytes {
+		l.fail("EXECUTOR_TOKEN", fmt.Errorf("must be at least %d bytes", minTokenBytes))
+	}
+	// The job timeout starts where a hung test still ends as go test's own kill, a minute past its -timeout, and not as the executor's drop of the attempt 30 s before the deadline (see execution.MinJobTimeout). The lease wait starts above the executor's 60 s error backoff, so a live executor that backs off is still seen.
+	return Secret(token), ExecutorTimes{
+		JobTimeout: number(l, "EXECUTOR_JOB_TIMEOUT", "30m", execution.MinJobTimeout, 6*time.Hour, time.ParseDuration),
+		LeaseWait:  number(l, "EXECUTOR_LEASE_WAIT", "2m", 2*time.Minute, time.Hour, time.ParseDuration),
+		GitHubWait: number(l, "EXECUTOR_GITHUB_WAIT", "30m", time.Minute, 6*time.Hour, time.ParseDuration),
+	}
 }
 
 func (l *loader) positive(name, value string) int64 {

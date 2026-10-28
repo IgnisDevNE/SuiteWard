@@ -136,7 +136,7 @@ func TestHostDnfRunsUnderASpinnerOnAFullScreen(t *testing.T) {
 	h := newHostFake()
 	h.podman = ""
 	scr, br, out := fullScreenOn(t, liveContext(t), strings.NewReader(""))
-	r := newTestResolver(t, map[string]string{"yes": "true", "metadata-rule": "no"}, nil, Terminal{In: br, Out: scr, ReadPassword: func() ([]byte, error) { return nil, nil }})
+	r := newTestResolver(t, withReleaseSums(t, h, map[string]string{"yes": "true", "metadata-rule": "no"}), nil, Terminal{In: br, Out: scr, ReadPassword: func() ([]byte, error) { return nil, nil }})
 	if err := PrepareHost(context.Background(), r, h.deps(), scr); err != nil {
 		t.Fatal(err)
 	}
@@ -184,8 +184,9 @@ func TestCommandsReportAFailedTerminalWithTheirOwnError(t *testing.T) {
 		}
 	})
 	t.Run("install host", func(t *testing.T) {
-		env := Env{Deps: newHostFake().deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, PortFree: func(int) error { return nil }, Sleep: func(time.Duration) {}, OpenScreen: broken}
-		if err := installHost(context.Background(), []string{"--yes", "--metadata-rule", "no"}, env); err == nil || !strings.Contains(err.Error(), lost) {
+		h := newHostFake()
+		env := Env{Deps: h.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, PortFree: func(int) error { return nil }, Sleep: func(time.Duration) {}, OpenScreen: broken}
+		if err := installHost(context.Background(), append([]string{"--yes", "--metadata-rule", "no"}, hostSumsArgs(t, h)...), env); err == nil || !strings.Contains(err.Error(), lost) {
 			t.Errorf("install host returned %v", err)
 		}
 	})
@@ -217,9 +218,9 @@ func TestTheDockerWarningIsOneWarningWithItsPointsOnTheScreenAndInTheScrollback(
 		t.Fatal(err)
 	}
 	// A full screen has the same two points in fewer words, so that the smallest window still shows them above the question.
-	want := "! Docker is allowed on this computer, but Podman is strongly recommended.\n" +
-		"    - Docker's daemon runs as root: its containers are not isolated from whoever controls it.\n" +
-		"    - Its secrets live in volumes that anyone who controls the daemon can read.\n"
+	want := "! Docker works on this computer, but Podman is strongly recommended.\n" +
+		"    - Docker's service runs as root: whoever controls it can reach the containers.\n" +
+		"    - Its secrets are in volumes that anyone who controls the service can read.\n"
 	if got := c.tail(); got != want {
 		t.Errorf("the scrollback holds\n%s\nwant\n%s", got, want)
 	}
@@ -260,7 +261,7 @@ func TestTheSummaryOfAnInstallWithoutGitHubWaitsForTheServiceToAnswer(t *testing
 		return c.tail(), asked
 	}
 
-	if tail, _ := run(t, 3); !strings.Contains(tail, "Release: v0.2.0\n") {
+	if tail, _ := run(t, 3); !strings.Contains(tail, "Version: v0.2.0\n") {
 		t.Errorf("the summary has no Release row although the service answered a few seconds in:\n%s", tail)
 	}
 	// A service that never answers is waited for as long as the install waits for it with GitHub, and the summary still comes.
@@ -291,7 +292,7 @@ func TestTheSummaryOfAnUpgradeWaitsForTheServiceToAnswer(t *testing.T) {
 	if err := Install(liveContext(t), args, env); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(c.tail(), "Instance: "+testInstance+"\n") || !strings.Contains(c.tail(), "Release: v0.2.0\n") {
+	if !strings.Contains(c.tail(), "Instance ID: "+testInstance+"\n") || !strings.Contains(c.tail(), "Version: v0.2.0\n") {
 		t.Errorf("the summary has no Instance and Release rows although the service answered a few tries in:\n%s", c.tail())
 	}
 }

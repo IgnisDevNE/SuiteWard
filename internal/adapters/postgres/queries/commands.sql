@@ -28,13 +28,13 @@ LIMIT sqlc.arg(max_rows)::int;
 
 -- Rows affected: 0 means the comment already has an entry, which GetPRCommand reads.
 -- name: InsertPRCommand :execrows
-INSERT INTO pr_commands (repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, decided_at)
+INSERT INTO pr_commands (repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, mode, decided_at)
 VALUES (sqlc.arg(repository_id), sqlc.arg(comment_id), sqlc.arg(pull_number), sqlc.arg(author_id), sqlc.arg(created_at), sqlc.arg(body_digest),
-        sqlc.arg(disposition), sqlc.narg(operation_id), sqlc.arg(decided_at))
+        sqlc.arg(disposition), sqlc.narg(operation_id), sqlc.narg(mode), sqlc.arg(decided_at))
 ON CONFLICT (repository_id, comment_id) DO NOTHING;
 
 -- name: GetPRCommand :one
-SELECT repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, decided_at
+SELECT repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, mode, decided_at
 FROM pr_commands WHERE repository_id = sqlc.arg(repository_id) AND comment_id = sqlc.arg(comment_id);
 
 -- name: GetInstanceID :one
@@ -43,11 +43,18 @@ SELECT instance_id FROM suiteward_instance WHERE singleton;
 -- The owner's latest command on a pull that can set or clear the check: the greatest comment id among the wrong codes and the processed
 -- commands, below before when it is not 0. The other rejected dispositions have no effect on the check (D-COMMANDS, "A wrong command has no effect").
 -- name: LatestOwnerCommand :one
-SELECT repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, decided_at
+SELECT repository_id, comment_id, pull_number, author_id, created_at, body_digest, disposition, operation_id, mode, decided_at
 FROM pr_commands
 WHERE repository_id = sqlc.arg(repository_id) AND pull_number = sqlc.arg(pull_number) AND author_id = sqlc.arg(author_id)
   AND disposition IN ('invalid-code', 'replayed-code', 'processed')
   AND (sqlc.arg(before)::bigint = 0 OR comment_id < sqlc.arg(before)::bigint)
+ORDER BY comment_id DESC
+LIMIT 1;
+
+-- The mode of the pull's latest mode-set entry (the greatest comment id) created at or after the current enrollment's enrolled_at.
+-- name: PreviewMode :one
+SELECT mode FROM pr_commands
+WHERE repository_id = sqlc.arg(repository_id) AND pull_number = sqlc.arg(pull_number) AND disposition = 'mode-set' AND created_at >= sqlc.arg(since)::timestamptz
 ORDER BY comment_id DESC
 LIMIT 1;
 

@@ -90,13 +90,13 @@ func (s Settings) Validate() error {
 	var errs []error
 	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
 	if s.Tier != config.TierCoLocated && s.Tier != config.TierIsolated {
-		add("tier %q is not %s or %s", s.Tier, config.TierCoLocated, config.TierIsolated)
+		add("tier (the installation type) %q is not %s or %s", s.Tier, config.TierCoLocated, config.TierIsolated)
 	}
 	switch {
 	case s.Runtime != RuntimePodman && s.Runtime != RuntimeDocker:
-		add("runtime %q is not %s or %s", s.Runtime, RuntimePodman, RuntimeDocker)
+		add("runtime (the container program) %q is not %s or %s", s.Runtime, RuntimePodman, RuntimeDocker)
 	case s.Tier == config.TierIsolated && s.Runtime != RuntimePodman:
-		add("the isolated tier runs on Podman only, not %s", s.Runtime)
+		add("an isolated install runs on Podman only, not %s", s.Runtime)
 	}
 	if s.Connection != "" && !connectionName.MatchString(s.Connection) {
 		add("connection %q is not a plain connection or context name", s.Connection)
@@ -113,11 +113,11 @@ func (s Settings) Validate() error {
 		add("http_port and mcp_port must be distinct")
 	}
 	if s.Image != "" && !digestImage.MatchString(s.Image) {
-		add("image %q is not pinned by an sha256 digest", s.Image)
+		add("image %q does not end in a sha256 fingerprint (digest), as in name@sha256:<64 hex>", s.Image)
 	}
 	if s.JobTimeout != "" {
 		if d, err := time.ParseDuration(s.JobTimeout); err != nil || d <= 0 {
-			add("job_timeout %q is not a positive Go duration", s.JobTimeout)
+			add("job_timeout %q is not a positive duration such as 5m", s.JobTimeout)
 		}
 	}
 	if s.BackupRecipient != "" {

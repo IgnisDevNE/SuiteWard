@@ -134,6 +134,8 @@ func TestRenderUnitsGolden(t *testing.T) {
 		"Environment=SUITEWARD_GITHUB_APP_KEY_FILE=/run/secrets/github-app-key",
 		"Secret=suiteward-mcp-token,type=mount,target=/run/secrets/mcp-token,uid=65532,mode=0400",
 		"Environment=SUITEWARD_MCP_TOKEN_FILE=/run/secrets/mcp-token",
+		"Secret=suiteward-executor-token,type=mount,target=/run/secrets/executor-token,uid=65532,mode=0400",
+		"Environment=SUITEWARD_EXECUTOR_TOKEN_FILE=/run/secrets/executor-token",
 		"EnvironmentFile=%h/.config/suiteward/github.env", "Environment=SUITEWARD_INSTALLATION_TIER=isolated",
 		"Environment=SUITEWARD_REPORT_BASE_URL=http://127.0.0.1:27081",
 		"Volume=suiteward-data.volume:/data", "ReadOnly=true", "DropCapability=ALL", "NoNewPrivileges=true",

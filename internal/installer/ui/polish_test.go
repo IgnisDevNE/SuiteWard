@@ -75,9 +75,9 @@ func TestAFailureIsDrawnInRed(t *testing.T) {
 // summaryDemo is a summary of an install with a failing doctor: twelve rows, and a warning for each check that failed.
 func summaryDemo() ([]KV, []string) {
 	rows := []KV{
-		{"Tier", "co-located"}, {"Runtime", "Podman (rootless)"}, {"Instance", "1a2b3c4d"}, {"Release", "v0.2.0"}, {"GitHub App", "1234 on Acme"},
+		{"Installation type", "co-located"}, {"Container program", "Podman (runs without administrator rights)"}, {"Instance ID", "1a2b3c4d"}, {"Version", "v0.2.0"}, {"GitHub App", "1234, installed on Acme"},
 		{"Repositories", "Acme/api, Acme/web"}, {"Owner", "alice (enrolled now)"}, {"Status", "http://127.0.0.1:27081/status"},
-		{"Token file", `C:\Users\owner\AppData\Local\SuiteWard\mcp-token`}, {"Settings", `C:\Users\owner\AppData\Local\SuiteWard\settings.yaml`},
+		{"Access token file", `C:\Users\owner\AppData\Local\SuiteWard\mcp-token`}, {"Settings file", `C:\Users\owner\AppData\Local\SuiteWard\settings.yaml`},
 		{"Doctor", "3 ok, 0 warnings, 7 failures"}, {"Check again", `suiteward doctor --settings C:\Users\owner\AppData\Local\SuiteWard\settings.yaml`},
 	}
 	var warns []string
@@ -115,7 +115,7 @@ func TestASummaryTallerThanTheWindowTrimsItsWarningsFromTheEnd(t *testing.T) {
 			if len(lines) > w.height-frameRows {
 				t.Fatalf("%d rows in a body of %d:\n%s", len(lines), w.height-frameRows, text)
 			}
-			for _, want := range []string{"Tier  ", "Instance  ", "Status  ", "Doctor  "} {
+			for _, want := range []string{"Installation type  ", "Instance ID  ", "Status  ", "Doctor  "} {
 				if !strings.Contains(text, want) {
 					t.Errorf("the summary lost its %q row:\n%s", strings.TrimSpace(want), text)
 				}
@@ -127,7 +127,7 @@ func TestASummaryTallerThanTheWindowTrimsItsWarningsFromTheEnd(t *testing.T) {
 				t.Errorf("the last warning is still on the screen, so nothing was trimmed from the end:\n%s", text)
 			}
 			mustClose(t, s)
-			if printed := afterLastLeave(out.String()); !strings.Contains(printed, "check1") || !strings.Contains(printed, "check7") || !strings.Contains(printed, "Settings:") {
+			if printed := afterLastLeave(out.String()); !strings.Contains(printed, "check1") || !strings.Contains(printed, "check7") || !strings.Contains(printed, "Settings file:") {
 				t.Errorf("Close does not print everything the window could not show:\n%s", printed)
 			}
 		})
@@ -147,7 +147,7 @@ func TestASummaryWhoseRowsDoNotFitKeepsTheKeyRows(t *testing.T) {
 	if len(lines) > 14 {
 		t.Fatalf("%d rows in a body of 14:\n%s", len(lines), text)
 	}
-	for _, want := range []string{"Tier  ", "Instance  ", "Status  ", "Doctor  ", trimRow} {
+	for _, want := range []string{"Installation type  ", "Instance ID  ", "Status  ", "Doctor  ", trimRow} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the summary lost %q:\n%s", strings.TrimSpace(want), text)
 		}

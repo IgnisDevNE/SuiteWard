@@ -21,7 +21,7 @@ func TestStatusNamesAnEnrolledRepositoryThatIsNotConfigured(t *testing.T) {
 		"configured among other": {[]string{"acme/other", "acme/widgets"}, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
-			a := &api{owners: enrolledStore(t, "isolated"), logger: quietLogger(), tier: "isolated", store: fakeStore{version: 12}}
+			a := &api{executorStatus: idleExecutorStatus(), owners: enrolledStore(t, "isolated"), logger: quietLogger(), tier: "isolated", store: fakeStore{version: 12}}
 			if test.repos != nil {
 				a.github = &githubStatus{repos: test.repos, store: githubsynctest.NewMemory(), ids: &repositoryIDs{}, problems: &bootstrapProblems{}, checks: &bootstrapProblems{}, merges: &bootstrapProblems{}, integrity: noVerdicts(), budget: fakeBudget{}}
 			}

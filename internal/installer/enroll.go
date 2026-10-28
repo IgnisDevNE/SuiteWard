@@ -29,10 +29,10 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	fs := newFlagSet("enroll")
-	fs.String("owner", "", "the GitHub login of the instance owner (default: the enrolled owner, else asked)")
-	fs.String("settings", "", "the installer settings file (default: the per-user configuration directory)")
-	fs.String("tier", "", "co-located (this computer) or isolated (default: the saved settings')")
-	fs.Var(&listFlag{}, "test-check", "the test check of a repository, OWNER/NAME=CHECK; repeat it (default: the saved one, else asked)")
+	fs.String("owner", "", "the GitHub username of the owner (default: the enrolled owner, else asked)")
+	fs.String("settings", "", "the file where the installer keeps its settings (default: your user configuration folder)")
+	fs.String("tier", "", "installation type: co-located (on this computer, next to your coding agent) or isolated (on a separate server) (default: the one in the saved settings)")
+	fs.Var(&listFlag{}, "test-check", "the name of the check your CI publishes, as OWNER/NAME=CHECK; repeat the flag for more repositories (default: the saved one, else asked)")
 	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)
 	if err != nil {
@@ -40,7 +40,7 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 	}
 	// Setup prints the TOTP secret on its terminal: with no real terminal here, it would go to a pipe or a file.
 	if !setupTerminal() {
-		return errors.New("enroll needs a terminal: setup prints the TOTP secret")
+		return errors.New("enroll needs a real terminal, because it shows the authenticator secret (the TOTP secret) there, and nothing was changed: run it from your own terminal, not through a pipe or a script")
 	}
 	plain, err := wantsPlain(flags, nil)
 	if err != nil {
@@ -56,16 +56,17 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	env.Deps.instance = r.instance()
 	settingsPath, defaultPath, err := settingsPathFrom(flags)
 	if err != nil {
 		return err
 	}
-	saved, haveSaved, err := loadSaved(env.Deps.command(), settingsPath, !defaultPath)
+	saved, haveSaved, err := loadSaved(env.Deps, settingsPath, !defaultPath)
 	if err != nil {
 		return err
 	}
 	// Enroll refuses a co-located stack with no settings file (colocatedEnrollTarget), so that is not what a host that has none is offered.
-	if err := tierNeeded(r, haveSaved, env.Deps.GOOS, "run `"+env.Deps.command()+" install --upgrade --tier co-located` first, which saves the settings file of a co-located stack"); err != nil {
+	if err := tierNeeded(r, haveSaved, env.Deps.GOOS, "run `"+env.Deps.suggest("install", "--upgrade --tier co-located")+"` first, which saves the settings file of a co-located installation"); err != nil {
 		return err
 	}
 	var target enrollTarget
@@ -77,7 +78,7 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 	case config.TierCoLocated:
 		target, err = colocatedEnrollTarget(ctx, r, env, installTarget{settingsPath: settingsPath, defaultPath: defaultPath, saved: saved, haveSaved: haveSaved})
 	default:
-		err = fmt.Errorf("tier %q is not %s or %s", tier, config.TierCoLocated, config.TierIsolated)
+		err = fmt.Errorf("the installation type %q is not %s or %s", tier, config.TierCoLocated, config.TierIsolated)
 	}
 	if err != nil {
 		return err
@@ -91,9 +92,9 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 
 // colocatedEnrollTarget finds the stack as uninstall and upgrade do: the guards of the install apply.
 func colocatedEnrollTarget(ctx context.Context, r *Resolver, env Env, t installTarget) (enrollTarget, error) {
-	if !t.haveSaved { // enrolling again replaces the TOTP secret: not of an instance that defaults picked
-		return enrollTarget{}, fmt.Errorf("there is no settings file at %s, so nothing says which instance this is, and enrolling again replaces its TOTP secret: "+
-			"run `%s install --upgrade`, which converts the stack and saves the settings file, or pass --settings with the file of the instance; nothing was changed", t.settingsPath, env.Deps.command())
+	if !t.haveSaved { // enrolling again replaces the authenticator secret: not of an instance that defaults picked
+		return enrollTarget{}, fmt.Errorf("there is no settings file at %s, so nothing says which instance this is, and enrolling again replaces that instance's authenticator secret (the TOTP secret). Nothing was changed: "+
+			"run `%s`, which saves the settings file, or pass --settings with the file of the instance", t.settingsPath, env.Deps.suggest("install", "--upgrade"))
 	}
 	rt, connection, err := openRuntime(ctx, r, env, t.saved, false)
 	if err != nil {
@@ -107,7 +108,7 @@ func colocatedEnrollTarget(ctx context.Context, r *Resolver, env Env, t installT
 		return enrollTarget{}, err
 	}
 	if !previous.Known {
-		return enrollTarget{}, nothingInstalled(env.Deps.command())
+		return enrollTarget{}, nothingInstalled(env.Deps)
 	}
 	s := base
 	s.Tier, s.Runtime, s.Connection = config.TierCoLocated, rt.Name(), connection
@@ -127,7 +128,7 @@ func isolatedEnrollTarget(ctx context.Context, s Settings, env Env) (enrollTarge
 		return enrollTarget{}, err
 	}
 	if !st.found {
-		return enrollTarget{}, nothingInstalled(env.Deps.command())
+		return enrollTarget{}, nothingInstalled(env.Deps)
 	}
 	if s.GitHub.AppID == 0 {
 		if s.GitHub, err = readGitHubEnvFile(host.envPath); err != nil {
@@ -143,7 +144,7 @@ func isolatedEnrollTarget(ctx context.Context, s Settings, env Env) (enrollTarge
 func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) error {
 	body, err := t.status(ctx)
 	if err != nil {
-		return fmt.Errorf("the service must be running: start it, then run enroll again (/status could not be read: %w)", err)
+		return fmt.Errorf("the service must be running: start it, then run enroll again (its status could not be read: %w)", err)
 	}
 	enrolled, err := parseEnrolledOwner(body)
 	if err != nil {
@@ -154,7 +155,7 @@ func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) erro
 		def = ""
 	}
 	r.explain([]string{"owner"}, "Instance owner", ownerPage)
-	owner, err := r.Value("owner", "GitHub login of the instance owner, the only account whose approvals count", def)
+	owner, err := r.Value("owner", "GitHub username of the owner, the only account that can approve changes", def)
 	if err != nil {
 		return err
 	}
@@ -163,28 +164,28 @@ func enrollOwner(ctx context.Context, r *Resolver, env Env, t enrollTarget) erro
 			return err
 		}
 	}
-	checks, err := enrollChecks(env.Deps.command(), r, t.github)
+	checks, err := enrollChecks(env.Deps, r, t.github)
 	if err != nil {
 		return err
 	}
-	if err := runSetup(ctx, env.Deps.command(), t.rt, owner, checks, env.Term.Out); err != nil {
+	if err := runSetup(ctx, env.Deps, t.rt, owner, checks, env.Term.Out); err != nil {
 		return err
 	}
 	r.screen.Check("%s is enrolled as the owner.\n", owner) // the page that enroll then holds for Enter
 	return nil
 }
 
-// confirmEnrollAgain is the typed word that replacing the TOTP secret of an enrolled owner needs. On a full screen it has a page that says
+// confirmEnrollAgain is the typed word that replacing the authenticator secret of an enrolled owner needs. On a full screen it has a page that says
 // what is replaced and that the word is a confirmation; a plain screen asks the one question it always asked.
 func confirmEnrollAgain(r *Resolver, enrolled, owner string) error {
 	replaces := ""
 	if enrolled != unknownLogin && !strings.EqualFold(enrolled, owner) {
 		replaces = fmt.Sprintf("the owner %s with %s and ", enrolled, owner)
 	}
-	what := fmt.Sprintf("An owner (%s) is already enrolled. Enrolling again replaces %sthe TOTP secret: the old authenticator entry stops working, and you add the new secret that setup shows to your authenticator.", enrolled, replaces)
+	what := fmt.Sprintf("An owner (%s) is already enrolled. Enrolling again replaces %sthe authenticator secret (the TOTP secret): the old entry in your authenticator app stops working, and you add the new secret that setup shows to your app.", enrolled, replaces)
 	prompt := what + "\nType \"enroll\" to replace it: "
 	if r.screen.FullScreen() {
-		r.screen.Page("Enroll the owner again", ui.Para(what), ui.Para("This is a confirmation: nothing changes until you type enroll."))
+		r.screen.Page("Enroll the owner again", ui.Para(what), ui.Para("Nothing changes until you type enroll."))
 		prompt = `Type "enroll" to confirm: `
 	}
 	line, err := r.ask(prompt)
@@ -198,9 +199,9 @@ func confirmEnrollAgain(r *Resolver, enrolled, owner string) error {
 }
 
 // enrollChecks is the test check of each repository of the instance: from --test-check, else from the saved settings, else asked.
-func enrollChecks(cmd string, r *Resolver, gh GitHub) (map[string]string, error) {
+func enrollChecks(d Deps, r *Resolver, gh GitHub) (map[string]string, error) {
 	if len(gh.Repositories) == 0 {
-		return nil, fmt.Errorf("GitHub is not configured on this instance, so there is no repository to enroll for: run `%s install --github yes` first", cmd)
+		return nil, fmt.Errorf("GitHub is not set up on this instance, so there is no repository to enroll for: run `%s` first", d.suggest("install", "--github yes"))
 	}
 	value, _ := r.given("test-check")
 	listed, isList, err := parseTestCheckList(value)
@@ -208,11 +209,11 @@ func enrollChecks(cmd string, r *Resolver, gh GitHub) (map[string]string, error)
 		return nil, err
 	}
 	if value != "" && !isList {
-		return nil, errors.New("--test-check is OWNER/NAME=CHECK, given once for each repository")
+		return nil, errors.New("--test-check takes OWNER/NAME=CHECK, once for each repository")
 	}
 	for repo := range listed {
 		if !slices.ContainsFunc(gh.Repositories, func(name string) bool { return strings.EqualFold(name, repo) }) {
-			return nil, fmt.Errorf("test-check names %s, which this instance does not serve", repo)
+			return nil, fmt.Errorf("--test-check names %s, which this instance does not protect", repo)
 		}
 	}
 	checks := make(map[string]string, len(gh.Repositories))

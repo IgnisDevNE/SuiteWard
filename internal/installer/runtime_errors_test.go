@@ -66,7 +66,7 @@ func TestNewDockerRefusesWhatItCannotIdentify(t *testing.T) {
 		rules func(f *fakeEngine)
 		want  string
 	}{
-		{"the engine does not answer", func(f *fakeEngine) { f.fail("version --format", errInjected) }, "the Docker engine does not answer"},
+		{"the engine does not answer", func(f *fakeEngine) { f.fail("version --format", errInjected) }, "the container program (Docker) does not answer"},
 		{"the version is not JSON", func(f *fakeEngine) { f.on("version --format", "not json") }, "read the Docker server version"},
 		{"no server is reported", func(f *fakeEngine) { f.on("version --format", "{}") }, "reported no server"},
 		{"the engine is not Docker", func(f *fakeEngine) { f.on("version --format", `{"Platform":{"Name":"Podman Engine"},"Version":"5"}`) }, ErrNotDocker.Error()},
@@ -178,7 +178,7 @@ func TestRuntimesRefuseABadRunSpecBeforeRunningAnything(t *testing.T) {
 			}
 			unknown := ok
 			unknown.Secrets = []string{"suiteward-nothing"}
-			if err := rt.Run(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the stack") {
+			if err := rt.Run(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the installation") {
 				t.Errorf("an unknown secret: %v", err)
 			}
 			if len(f.find("run ")) != 0 {
@@ -293,16 +293,16 @@ func TestPodmanSecretsRefuseWhatIsNotInTheCatalogOrCannotBeDone(t *testing.T) {
 	secrets := rt.Secrets()
 	identified := len(f.calls) // asking the engine who it is is not asking about the secret
 	const unknown = "suiteward-nothing"
-	if _, err := secrets.Exists(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the stack") {
+	if _, err := secrets.Exists(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the installation") {
 		t.Errorf("Exists of an unknown secret = %v", err)
 	}
-	if err := secrets.Write(ctx, unknown, []byte("v"), false); err == nil || !strings.Contains(err.Error(), "is not a secret of the stack") {
+	if err := secrets.Write(ctx, unknown, []byte("v"), false); err == nil || !strings.Contains(err.Error(), "is not a secret of the installation") {
 		t.Errorf("Write of an unknown secret = %v", err)
 	}
-	if _, err := secrets.Read(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the stack") {
+	if _, err := secrets.Read(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the installation") {
 		t.Errorf("Read of an unknown secret = %v", err)
 	}
-	if err := secrets.Remove(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the stack") {
+	if err := secrets.Remove(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the installation") {
 		t.Errorf("Remove of an unknown secret = %v", err)
 	}
 	if len(f.calls) != identified {
@@ -343,16 +343,16 @@ func TestDockerSecretsRefuseWhatIsNotInTheCatalogOrCannotBeDone(t *testing.T) {
 	secrets := rt.Secrets()
 	identified := len(f.calls) // asking the engine who it is is not asking about the secret
 	const unknown = "suiteward-nothing"
-	if _, err := secrets.Exists(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the stack") {
+	if _, err := secrets.Exists(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the installation") {
 		t.Errorf("Exists of an unknown secret = %v", err)
 	}
-	if err := secrets.Write(ctx, unknown, []byte("v"), true); err == nil || !strings.Contains(err.Error(), "is not a secret of the stack") {
+	if err := secrets.Write(ctx, unknown, []byte("v"), true); err == nil || !strings.Contains(err.Error(), "is not a secret of the installation") {
 		t.Errorf("Write of an unknown secret = %v", err)
 	}
-	if _, err := secrets.Read(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the stack") {
+	if _, err := secrets.Read(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the installation") {
 		t.Errorf("Read of an unknown secret = %v", err)
 	}
-	if err := secrets.Remove(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the stack") {
+	if err := secrets.Remove(ctx, unknown); err == nil || !strings.Contains(err.Error(), "is not a secret of the installation") {
 		t.Errorf("Remove of an unknown secret = %v", err)
 	}
 	if ok, err := secrets.(interface {

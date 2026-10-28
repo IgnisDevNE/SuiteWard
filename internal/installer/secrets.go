@@ -35,6 +35,7 @@ var secretCatalog = []secretSpec{
 	{SecretDatabaseURL, "database-url", []consumer{{ContainerMigrate, uidService}, {ContainerServe, uidService}}},
 	{SecretGitHubAppKey, "github-app-key", []consumer{{ContainerServe, uidService}}},
 	{SecretMCPAuth, "mcp-token", []consumer{{ContainerServe, uidService}}},
+	{SecretExecutorAuth, "executor-token", []consumer{{ContainerServe, uidService}}},
 }
 
 func lookupSecret(name string) (secretSpec, error) {
@@ -43,7 +44,7 @@ func lookupSecret(name string) (secretSpec, error) {
 			return s, nil
 		}
 	}
-	return secretSpec{}, fmt.Errorf("%q is not a secret of the stack", name)
+	return secretSpec{}, fmt.Errorf("%q is not a secret of the installation", name)
 }
 
 // secretFor finds a secret and the uid container reads it as; a container that is not one of its consumers is refused.
@@ -191,7 +192,7 @@ func (s dockerSecrets) Read(ctx context.Context, name string) ([]byte, error) {
 
 // readFailed is the error of a failed secret read: no cause, because whatever the command said may include the value.
 func readFailed(name string) error {
-	return fmt.Errorf("read the secret %s failed (the engine's message is not shown: it may quote the value)", name)
+	return fmt.Errorf("read the secret %s failed (the container program's message is hidden on purpose: it may quote the value)", name)
 }
 
 // Consistent says whether every consumer's volume holds the same value of a secret that more than one container reads. A

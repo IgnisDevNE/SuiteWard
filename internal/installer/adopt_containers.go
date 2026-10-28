@@ -67,15 +67,15 @@ func parseInspect(name string, raw []byte) (inspected, error) {
 	if strings.HasPrefix(string(raw), "[") { // `inspect` prints an array of one
 		var list []inspected
 		if err := json.Unmarshal(raw, &list); err != nil {
-			return in, fmt.Errorf("read the inspect output of %s: %w", name, err)
+			return in, fmt.Errorf("could not read what the container program reports about %s: %w", name, err)
 		}
 		if len(list) != 1 {
-			return in, fmt.Errorf("the inspect output of %s describes %d containers, want 1", name, len(list))
+			return in, fmt.Errorf("the container program reports %d containers named %s, but there should be exactly 1", len(list), name)
 		}
 		return list[0], nil
 	}
 	if err := json.Unmarshal(raw, &in); err != nil {
-		return in, fmt.Errorf("read the inspect output of %s: %w", name, err)
+		return in, fmt.Errorf("could not read what the container program reports about %s: %w", name, err)
 	}
 	return in, nil
 }
@@ -101,7 +101,7 @@ func adoptContainers(raw map[string][]byte, refreshDB bool) (Adopted, error) {
 			continue // a stack that ran migrate with --rm has no such container
 		}
 		if !ok {
-			return Adopted{}, fmt.Errorf("the inspect output of %s is missing", name)
+			return Adopted{}, fmt.Errorf("the container program's report about %s is missing", name)
 		}
 		in, err := parseInspect(name, data)
 		if err != nil {
@@ -127,6 +127,21 @@ func adoptContainers(raw map[string][]byte, refreshDB bool) (Adopted, error) {
 	// variable must have the port's value, or it is a diff.
 	if _, has := envMap(parsed[ContainerServe].Config.Env)[reportBaseURLEnv]; !has {
 		stack.Serve.Env = slices.DeleteFunc(stack.Serve.Env, func(e string) bool { return strings.HasPrefix(e, reportBaseURLEnv+"=") })
+	}
+	// A service of an earlier release has no executor token, a known shape that the next install or upgrade completes; one that has only the
+	// variable or only the secret is a diff.
+	serve := parsed[ContainerServe]
+	_, hasToken := envMap(serve.Config.Env)[executorAuthFileEnv]
+	hasSecret := slices.ContainsFunc(serve.Config.Secrets, func(s struct {
+		Name string
+		UID  int
+		Mode int
+	}) bool {
+		return s.Name == SecretExecutorAuth
+	})
+	if !hasToken && !hasSecret {
+		stack.Serve.Env = slices.DeleteFunc(stack.Serve.Env, func(e string) bool { return strings.HasPrefix(e, executorAuthFileEnv+"=") })
+		stack.Serve.Secrets = slices.DeleteFunc(stack.Serve.Secrets, func(name string) bool { return name == SecretExecutorAuth })
 	}
 	specs := []RunSpec{stack.DB, stack.Migrate}
 	if len(diffs) == 0 { // a service whose known fields could not be read is already reported, and its defaults would only repeat it

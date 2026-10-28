@@ -23,6 +23,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks/checkstest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands/commandstest"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/execution/executiontest"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/integrity/integritytest"
@@ -47,6 +48,18 @@ type cjCountingReader struct {
 	files     map[int][]github.PullFile // the files each pull request changes
 	filesErr  error                     // every PullFiles fails with it
 	fileReads int
+
+	mergeBases map[string]string // the merge base of each head; absent means execMergeBase
+	mergeErrs  map[string]error  // the failure of the merge base read of a head
+	baseReads  int               // the merge base reads
+}
+
+func (r *cjCountingReader) MergeBase(_ context.Context, _, _, head string) (string, error) {
+	r.baseReads++
+	if err := r.mergeErrs[head]; err != nil {
+		return "", err
+	}
+	return cmp.Or(r.mergeBases[head], execMergeBase), nil
 }
 
 func (r *cjCountingReader) PullFiles(_ context.Context, _ string, number int) ([]github.PullFile, error) {
@@ -108,6 +121,9 @@ type cjJobWorld struct {
 	problems *bootstrapProblems
 	clock    time.Time
 	heads    map[int]string // the open pull requests of bootRepo and their heads
+
+	jobs     *executiontest.Memory // the execution ledger of the job
+	receipts *recordingReceipts    // the ledger of the Receipt check
 }
 
 func newCJWorld(t *testing.T, canonical bool, options ...func(*bootOptions)) *cjJobWorld {
@@ -157,8 +173,9 @@ func wrapCJWorld(t *testing.T, b *bootWorld) *cjJobWorld {
 		clock: bootTime.Add(2 * time.Hour), heads: map[int]string{4: bootHead}}
 	w.reader = &cjCountingReader{fakeBootReader: b.reader, reads: map[string]int{}}
 	w.ledger = &cjRecordingLedger{Store: w.memory}
-	w.check = &checksJob{repos: b.job.repos, reader: w.reader, owners: b.owners, suites: b.suites, contents: nopContents{}, content: b.content, ledger: w.ledger, integrity: w.verdicts, commands: w.cmds,
-		pulls: b.pulls, tier: b.tier, problems: w.problems, logger: slog.New(slog.NewJSONHandler(b.logs, nil)), now: func() time.Time { return w.clock }}
+	w.jobs, w.receipts = executiontest.NewMemory(w.cmds), &recordingReceipts{ReceiptMemory: executiontest.NewReceiptMemory()}
+	w.check = (&checksJob{repos: b.job.repos, reader: w.reader, owners: b.owners, suites: b.suites, contents: nopContents{}, content: b.content, ledger: w.ledger, integrity: w.verdicts, commands: w.cmds,
+		pulls: b.pulls, tier: b.tier, problems: w.problems, logger: slog.New(slog.NewJSONHandler(b.logs, nil)), now: func() time.Time { return w.clock }}).withExecution(w.jobs, w.receipts, w.clock)
 	return w
 }
 
@@ -811,7 +828,7 @@ func TestTheChecksJobIsTheOnlyWriterOfCheckStates(t *testing.T) {
 	repository := os.DirFS(filepath.Join("..", ".."))
 	var callers []string
 	err := fs.WalkDir(repository, "internal", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || strings.Contains(filepath.ToSlash(path), "/checkstest/") { // the in-memory ledger and its conformance suite are test support
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || strings.Contains(filepath.ToSlash(path), "/checkstest/") || strings.Contains(filepath.ToSlash(path), "/executiontest/") { // the in-memory ledgers and their conformance suites are test support
 			return err
 		}
 		source, err := fs.ReadFile(repository, path)

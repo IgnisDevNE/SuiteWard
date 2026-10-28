@@ -116,34 +116,40 @@ func TestCommandNameIsSuitewardWhenThePathOfThisProgramIsNotKnown(t *testing.T) 
 	}
 }
 
+// swDeps is the Deps of a run that reaches the program as swCmd; withInstance is that run given the flags that name an instance.
+var swDeps = Deps{Command: swCmd}
+
+func withInstance(a instanceArgs) Deps { return Deps{Command: swCmd, instance: a} }
+
 func TestADepsWithoutACommandNamesTheProgramSuiteward(t *testing.T) {
-	if got := (Deps{}).command(); got != "suiteward" {
-		t.Errorf("command() = %q, want suiteward", got)
+	if got := (Deps{}).suggest("doctor"); got != "suiteward doctor" {
+		t.Errorf("suggest = %q, want suiteward doctor", got)
 	}
-	if got := (Deps{Command: swCmd}).command(); got != swCmd {
-		t.Errorf("command() = %q, want %q", got, swCmd)
+	if got := swDeps.suggest("doctor"); got != swCmd+" doctor" {
+		t.Errorf("suggest = %q, want %q", got, swCmd+" doctor")
 	}
 }
 
 // ---- the builders of the hints take the name of the run ----
 
 func TestTheHintBuildersNameTheProgramAsTheRunReachesIt(t *testing.T) {
+	settings := withInstance(instanceArgs{settings: "/s.yaml"})
 	cases := []struct{ name, got, want string }{
-		{"doctor", doctorHint(swCmd, "/s.yaml", true), swCmd + " doctor"},
-		{"doctor with settings", doctorHint(swCmd, "/home/me/My Settings/s.yaml", false), swCmd + " doctor --settings '/home/me/My Settings/s.yaml'"},
-		{"enroll", enrollCommand(swCmd, &Resolver{flags: map[string]string{"settings": "/s.yaml"}}, false), swCmd + " enroll --settings /s.yaml"},
-		{"enroll isolated", enrollCommand(swCmd, &Resolver{}, true), swCmd + " enroll --tier isolated"},
-		{"no key", noKeyError(swCmd, false).Error(), "run `" + swCmd + " backup init` first"},
-		{"no key in an upgrade", noKeyError(swCmd, true).Error(), "run `" + swCmd + " backup init` first"},
-		{"the way back of a co-located upgrade", goBackColocated(swCmd, "podman", "ghcr.io/x@sha256:1", "/b/one.tar.age", " --settings /s.yaml"),
-			"`" + swCmd + " uninstall --yes --settings /s.yaml`"},
-		{"the way back, install", goBackColocated(swCmd, "podman", "ghcr.io/x@sha256:1", "/b/one.tar.age", ""), "`" + swCmd + " install --image ghcr.io/x@sha256:1`"},
-		{"the way back, restore", goBackColocated(swCmd, "podman", "ghcr.io/x@sha256:1", "/b/one.tar.age", ""), "`" + swCmd + " restore /b/one.tar.age`"},
-		{"the way back of an isolated upgrade", goBackIsolated(swCmd, "/b/one.tar.age", "/u", " --tier isolated"), "`" + swCmd + " restore /b/one.tar.age --tier isolated`"},
-		{"a co-located upgrade that migrated", withBackup(swCmd, migratingError{errors.New("boom")}, "/b/one.tar.age", "", "").Error(), "run `" + swCmd + " restore /b/one.tar.age`"},
-		{"a co-located upgrade before migrate", withBackup(swCmd, errors.New("boom"), "/b/one.tar.age", "", "").Error(), "run `" + swCmd + " install` with the options of this run"},
-		{"a co-located upgrade before migrate, retry", withBackup(swCmd, errors.New("boom"), "/b/one.tar.age", "", "").Error(), "`" + swCmd + " install --upgrade` retries the upgrade"},
-		{"an isolated upgrade that went on", withBackup(swCmd, errors.New("boom"), "/b/one.tar.age", "/u", "").Error(), "run `" + swCmd + " install --upgrade` again"},
+		{"doctor", swDeps.suggest("doctor"), swCmd + " doctor"},
+		{"doctor with settings", withInstance(instanceArgs{settings: "/home/me/My Settings/s.yaml"}).suggest("doctor"), swCmd + " doctor --settings '/home/me/My Settings/s.yaml'"},
+		{"enroll", settings.suggest("enroll"), swCmd + " enroll --settings /s.yaml"},
+		{"enroll isolated", swDeps.onIsolated().suggest("enroll"), swCmd + " enroll --tier isolated"},
+		{"no key", noKeyError(swDeps, false).Error(), "Run `" + swCmd + " backup init` first"},
+		{"no key in an upgrade", noKeyError(swDeps, true).Error(), "Run `" + swCmd + " backup init` first"},
+		{"the way back of a co-located upgrade", goBackColocated(settings, "podman", "ghcr.io/x@sha256:1", "/b/one.tar.age"),
+			"`" + swCmd + " uninstall --settings /s.yaml --yes`"},
+		{"the way back, install", goBackColocated(swDeps, "podman", "ghcr.io/x@sha256:1", "/b/one.tar.age"), "`" + swCmd + " install --image ghcr.io/x@sha256:1`"},
+		{"the way back, restore", goBackColocated(swDeps, "podman", "ghcr.io/x@sha256:1", "/b/one.tar.age"), "`" + swCmd + " restore /b/one.tar.age`"},
+		{"the way back of an isolated upgrade", goBackIsolated(swDeps.onIsolated(), "/b/one.tar.age", "/u"), "`" + swCmd + " restore --tier isolated /b/one.tar.age`"},
+		{"a co-located upgrade that migrated", withBackup(swDeps, migratingError{errors.New("boom")}, "/b/one.tar.age", "").Error(), "run `" + swCmd + " restore /b/one.tar.age`"},
+		{"a co-located upgrade before migrate", withBackup(swDeps, errors.New("boom"), "/b/one.tar.age", "").Error(), "run `" + swCmd + " install` with the same options as this run"},
+		{"a co-located upgrade before migrate, retry", withBackup(swDeps, errors.New("boom"), "/b/one.tar.age", "").Error(), "`" + swCmd + " install --upgrade` retries the upgrade"},
+		{"an isolated upgrade that went on", withBackup(swDeps, errors.New("boom"), "/b/one.tar.age", "/u").Error(), "run `" + swCmd + " install --upgrade` again"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -164,8 +170,8 @@ func TestTheNoteOfARestoreNamesDoctorAsTheRunReachesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, notes := compareStatus(swCmd, after, after)
-	if len(notes) != 1 || !strings.Contains(notes[0], "look at `"+swCmd+" doctor`") {
+	_, notes := compareStatus(swDeps, after, after)
+	if len(notes) != 1 || !strings.Contains(notes[0], "run `"+swCmd+" doctor` in a moment") {
 		t.Errorf("notes = %q, want one that names `%s doctor`", notes, swCmd)
 	}
 }
@@ -182,7 +188,7 @@ func TestBackupNamesTheRestoreAsTheRunReachesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := oneArchive(t, dir)
-	if want := "To restore it, run `" + swCmd + " restore " + quoteArg(path) + "` with that kit."; !strings.Contains(u.out.String(), want) {
+	if want := "To restore it, run `" + (Deps{Command: swCmd, instance: u.named()}).suggest("restore", quoteArg(path)) + "` with that kit."; !strings.Contains(u.out.String(), want) {
 		t.Errorf("the output lacks %q:\n%s", want, u.out.String())
 	}
 	if strings.Contains(u.out.String(), "`suiteward restore") {
@@ -196,8 +202,8 @@ func TestABackupWithoutAKeyNamesBackupInitAsTheRunReachesIt(t *testing.T) {
 	env.Deps.Command = swCmd
 	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--runtime", "podman", "--connection", "pm", "--to", t.TempDir()}
 	err := Backup(context.Background(), args, env)
-	if err == nil || !strings.Contains(err.Error(), "run `"+swCmd+" backup init` first") {
-		t.Fatalf("got %v, want a refusal that names `%s backup init`", err, swCmd)
+	if want := "Run `" + (Deps{Command: swCmd, instance: u.named()}).suggest("backup init") + "` first"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("got %v, want a refusal that says %q", err, want)
 	}
 }
 
@@ -210,7 +216,8 @@ func TestAnUpgradeNamesItsNextCommandsAsTheRunReachesThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := u.out.String()
-	for _, want := range []string{"`" + swCmd + " uninstall --yes --settings ", "`" + swCmd + " install --image ", "`" + swCmd + " restore ", "Check the instance with `" + swCmd + " doctor --settings "} {
+	d := Deps{Command: swCmd, instance: u.named()}
+	for _, want := range []string{"`" + d.suggest("uninstall", "--yes") + "`", "`" + d.suggest("install", "--image "), "`" + d.suggest("restore") + " ", "Check the instance with `" + d.suggest("doctor") + "`"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the output of the upgrade lacks %q:\n%s", want, out)
 		}
@@ -229,7 +236,7 @@ func TestAnUpgradeThatHasNothingToDoNamesDoctorAsTheRunReachesIt(t *testing.T) {
 	if err := Install(context.Background(), args, env); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Check the instance with `" + swCmd + " doctor --settings "; !strings.Contains(u.out.String(), want) {
+	if want := "Check the instance with `" + (Deps{Command: swCmd, instance: u.named()}).suggest("doctor") + "`"; !strings.Contains(u.out.String(), want) {
 		t.Errorf("the output lacks %q:\n%s", want, u.out.String())
 	}
 }
@@ -241,7 +248,7 @@ func TestARestoreNamesDoctorAsTheRunReachesIt(t *testing.T) {
 	if err := Restore(context.Background(), u.restoreArgs(aBackup(t, nil), confirmed(t, t.TempDir())...), env); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Check the instance with `" + swCmd + " doctor`."; !strings.Contains(u.out.String(), want) {
+	if want := "Check the instance with `" + (Deps{Command: swCmd, instance: u.named()}).suggest("doctor") + "`."; !strings.Contains(u.out.String(), want) {
 		t.Errorf("the output lacks %q:\n%s", want, u.out.String())
 	}
 	if strings.Contains(u.out.String(), "`suiteward ") {
@@ -257,10 +264,10 @@ func TestTheMessagesOfARestoreNameTheProgramAsTheRunReachesIt(t *testing.T) {
 	x.finish()
 	for name, c := range map[string]struct{ got, want string }{
 		"another release": {x.otherRelease("the release x").Error(), "(`" + swCmd + " install --image " + releaseImageRepo + "@" + testDigest + "`)"},
-		"no recovery key": {noKey.Error(), "run `" + swCmd + " backup init` first"},
-		"run again":       {x.failed(errors.New("boom")).Error(), "To run the restore again: " + swCmd + " restore /b/one.tar.age."},
-		"way back":        {x.failed(errors.New("boom")).Error(), "To go back to the state before the restore: " + swCmd + " restore /b/safety.tar.age, with"},
-		"after":           {out.String(), "run `" + swCmd + " backup init` to back it up."},
+		"no recovery key": {noKey.Error(), "Run `" + swCmd + " backup init` first"},
+		"run again":       {x.failed(errors.New("boom")).Error(), "To run the restore again: `" + swCmd + " restore /b/one.tar.age`."},
+		"way back":        {x.failed(errors.New("boom")).Error(), "To go back to the state before the restore: `" + swCmd + " restore /b/safety.tar.age`, with"},
+		"after":           {out.String(), "run `" + swCmd + " backup init` so that it can be backed up."},
 	} {
 		if !strings.Contains(c.got, c.want) {
 			t.Errorf("%s: got %q, want it to contain %q", name, c.got, c.want)
@@ -273,8 +280,8 @@ func TestAnUpgradeRefusedForAnUnfinishedInstallNamesInstallAsTheRunReachesIt(t *
 	if err := savePendingApp(path, PendingApp{AppID: 7, Slug: "suiteward-acme", Account: "acme", AccountType: "Organization"}); err != nil {
 		t.Fatal(err)
 	}
-	err := refuseUnfinishedInstall(swCmd, path, func() (GitHub, error) { return GitHub{AppID: 3}, nil })
-	if err == nil || !strings.Contains(err.Error(), "with a plain `"+swCmd+" install`") {
+	err := refuseUnfinishedInstall(swDeps, path, func() (GitHub, error) { return GitHub{AppID: 3}, nil })
+	if err == nil || !strings.Contains(err.Error(), "by running `"+swCmd+" install`") {
 		t.Errorf("got %v, want a refusal that names `%s install`", err, swCmd)
 	}
 }

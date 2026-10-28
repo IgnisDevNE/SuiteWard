@@ -51,7 +51,7 @@ func locateInstance(ctx context.Context, r *Resolver, env Env, flags map[string]
 	if err != nil {
 		return instance{}, err
 	}
-	saved, haveSaved, err := loadSaved(env.Deps.command(), settingsPath, !defaultPath)
+	saved, haveSaved, err := loadSaved(env.Deps, settingsPath, !defaultPath)
 	if err != nil {
 		return instance{}, err
 	}
@@ -66,7 +66,7 @@ func locateInstance(ctx context.Context, r *Resolver, env Env, flags map[string]
 	case config.TierCoLocated:
 		return locateColocated(ctx, r, env, installTarget{settingsPath: settingsPath, defaultPath: defaultPath, saved: saved, haveSaved: haveSaved})
 	default:
-		return instance{}, fmt.Errorf("tier %q is not %s or %s", tier, config.TierCoLocated, config.TierIsolated)
+		return instance{}, fmt.Errorf("the installation type %q is not %s or %s", tier, config.TierCoLocated, config.TierIsolated)
 	}
 }
 
@@ -83,7 +83,7 @@ func locateColocated(ctx context.Context, r *Resolver, env Env, t installTarget)
 		return instance{}, err
 	}
 	if !previous.Known {
-		return instance{}, nothingInstalled(env.Deps.command())
+		return instance{}, nothingInstalled(env.Deps)
 	}
 	s := base
 	s.Tier, s.Runtime, s.Connection, s.Image = config.TierCoLocated, rt.Name(), connection, previous.Image
@@ -105,7 +105,7 @@ func locateColocated(ctx context.Context, r *Resolver, env Env, t installTarget)
 		rt: rt, s: s, settingsPath: t.settingsPath, haveSettings: t.haveSaved, image: previous.Image, status: c.readStatus,
 		parent:       backupParent(r, filepath.Dir(tokenFile)),
 		startCommand: fmt.Sprintf("`%s start %s`, then, once it is healthy, `%s start %s`", engine, ContainerDB, engine, ContainerServe),
-		restore:      colocatedSteps(env.Deps.command(), rt, s, previous.Image, r.screen),
+		restore:      colocatedSteps(env.Deps, rt, s, previous.Image, r.screen),
 	}, nil
 }
 
@@ -119,7 +119,7 @@ func locateIsolated(ctx context.Context, r *Resolver, env Env, s Settings, haveS
 		return instance{}, err
 	}
 	if !st.found {
-		return instance{}, nothingInstalled(env.Deps.command())
+		return instance{}, nothingInstalled(env.Deps)
 	}
 	// The ports and the release are the installed ones, whatever an older settings file says.
 	s.HTTPPort, s.MCPPort, s.JobTimeout, s.Image = st.adopted.Settings.HTTPPort, st.adopted.Settings.MCPPort, st.adopted.Settings.JobTimeout, st.adopted.Image
@@ -199,15 +199,15 @@ func parseBackedUpStatus(body []byte) (statusDoc, error) {
 func parseStatus(body []byte) (statusDoc, error) {
 	var d statusDoc
 	if err := json.Unmarshal(body, &d); err != nil {
-		return statusDoc{}, errors.New("the answer of /status is not JSON")
+		return statusDoc{}, errors.New("the answer of /status is not readable")
 	}
 	switch {
 	case d.Version == "":
-		return statusDoc{}, errors.New("/status reports no version")
+		return statusDoc{}, errors.New("/status shows no version")
 	case !plainName.MatchString(d.Version):
-		return statusDoc{}, errors.New("/status reports a version that is not a plain name (the value is not shown)")
+		return statusDoc{}, errors.New("/status shows a version that is not a plain name (the value is not shown)")
 	case !instanceID.MatchString(d.Instance):
-		return statusDoc{}, errors.New("/status reports no instance id (8 hexadecimal characters): this service is older than the installer supports")
+		return statusDoc{}, errors.New("/status shows no instance id (8 hexadecimal characters): this service is older than this installer supports")
 	}
 	d.clean()
 	return d, nil
@@ -217,7 +217,7 @@ func parseStatus(body []byte) (statusDoc, error) {
 func (i instance) readStatus(ctx context.Context) ([]byte, statusDoc, error) {
 	body, err := i.status(ctx)
 	if err != nil {
-		return nil, statusDoc{}, fmt.Errorf("read GET /status of the service (its version and instance id belong in the backup): start it (%s) and run this again: %w", i.startCommand, err)
+		return nil, statusDoc{}, fmt.Errorf("could not read /status of the service (the backup records its version and instance id). Start the service with %s, then run this again: %w", i.startCommand, err)
 	}
 	doc, err := parseStatus(body)
 	if err != nil {
@@ -228,9 +228,9 @@ func (i instance) readStatus(ctx context.Context) ([]byte, statusDoc, error) {
 
 // needSettings refuses a command that keeps something in the settings file when there is none: install first, or the upgrade that
 // converts the stack saves them.
-func (i instance) needSettings(cmd string) error {
+func (i instance) needSettings(d Deps) error {
 	if !i.haveSettings {
-		return fmt.Errorf("there are no settings at %s to keep the recovery key in: install first, or run `%s install --upgrade`, which saves them", i.settingsPath, cmd)
+		return fmt.Errorf("there is no settings file at %s to keep the recovery key in. Run `%s` first, or `%s`, which saves one", i.settingsPath, d.suggest("install"), d.suggest("install", "--upgrade"))
 	}
 	return nil
 }
@@ -276,11 +276,11 @@ func (r *Resolver) confirmInstance(c instanceConfirm) error {
 		case !yes || given == "":
 			because := "the input is not a terminal"
 			if r.term.IsTerminal {
-				because = "--yes does not ask"
+				because = "`--yes` does not ask"
 			}
-			return fmt.Errorf("confirm the %s with --yes and --instance %s: nothing can ask you to type the instance id here, because %s", c.action, c.id, because)
+			return fmt.Errorf("to confirm the %s, give `--yes` and `--instance %s`: nothing can ask you to type the instance id here, because %s", c.action, c.id, because)
 		case given != c.id:
-			return fmt.Errorf("the %s was not confirmed: --instance %s is not the instance id %s (%s): nothing was changed", c.action, given, c.ofWhat, c.id)
+			return fmt.Errorf("the %s was not confirmed: `--instance %s` is not the instance id %s (%s). Nothing was changed", c.action, given, c.ofWhat, c.id)
 		}
 		return nil
 	}
@@ -293,10 +293,10 @@ func (r *Resolver) confirmInstance(c instanceConfirm) error {
 	case errors.Is(err, io.EOF):
 		line = ""
 	case err != nil:
-		return fmt.Errorf("read the confirmation: %w", err)
+		return fmt.Errorf("could not read your answer: %w", err)
 	}
 	if line != c.id {
-		return fmt.Errorf("the %s was not confirmed: you did not type the instance id %s: nothing was changed", c.action, c.id)
+		return fmt.Errorf("the %s was not confirmed: you did not type the instance id %s. Nothing was changed", c.action, c.id)
 	}
 	return nil
 }
@@ -312,7 +312,7 @@ type tierSteps struct {
 
 // colocatedSteps: the service container is removed (a volume that a container uses cannot be), and made again by the run of its
 // own spec, the one an upgrade uses, so a restore changes nothing about how the stack is run.
-func colocatedSteps(cmd string, rt Runtime, s Settings, image string, scr *ui.Screen) tierSteps {
+func colocatedSteps(d Deps, rt Runtime, s Settings, image string, scr *ui.Screen) tierSteps {
 	stack, err := ColocatedStack(s, image)
 	return tierSteps{
 		unavailable: err,
@@ -324,14 +324,14 @@ func colocatedSteps(cmd string, rt Runtime, s Settings, image string, scr *ui.Sc
 			return rt.Create(ctx, KindVolume, VolumeData)
 		},
 		start: func(ctx context.Context) error {
-			return working(scr, "Running the migration and starting the service", func() error {
+			return working(scr, "Updating the database and starting the service", func() error {
 				if err := rt.Run(ctx, stack.Migrate); err != nil {
-					return fmt.Errorf("the migration failed, so the service was not started: %w", err)
+					return fmt.Errorf("the database update (migration) failed, so the service was not started: %w", err)
 				}
 				return rt.Run(ctx, stack.Serve)
 			})
 		},
-		recovery: "run `" + cmd + " install` with the options of this run: it creates the service again from the settings, and the volumes and the secrets are kept",
+		recovery: "run `" + d.suggest("install") + "` with the same options as this run: it creates the service again from your settings, and your data and secrets are kept",
 	}
 }
 

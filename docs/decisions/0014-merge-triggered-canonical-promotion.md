@@ -94,3 +94,7 @@ Independent canonical execution remains a later M2 capability. Choosing its firs
 - Optional future external-CI policy gates and the later M2 execution profile.
 
 This decision accepts the default M1 promotion flow, not a proof of the unresolved integration protocol.
+
+## Note 2026-10-27: SuiteWard runs tests since M2.1
+
+This record describes M1, which ran no tests. [ADR 0028](0028-canonical-execution-and-the-receipt.md) lets SuiteWard run the approved tests on the heads of open pull requests where the canonical declaration names a profile. Promotion still rests on the exact approval and the integrity of the integrated files, as above, and runs no tests at the merge commit. Under `canonical: required` a merge is reachable only after the `SuiteWard / Contract` check passed the head's canonical run, or after the owner unblocked a run that was unavailable ([ADR 0015](0015-required-contract-check.md#amendment-2026-10-26-canonical-execution-m21)). The outcome comments no longer say that SuiteWard did not run the tests ([D-M2.1](../plan/decisions.md#d-m21-canonical-execution-the-receipt-and-the-go-profile)).

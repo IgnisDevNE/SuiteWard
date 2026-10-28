@@ -17,7 +17,7 @@ import (
 var ErrForwardOnly = errors.New("schema migrations are forward only")
 
 // SupportedVersion is the schema version this build migrates to and expects at runtime.
-const SupportedVersion int64 = 20
+const SupportedVersion int64 = 22
 
 //go:embed *.sql
 var migrationFiles embed.FS

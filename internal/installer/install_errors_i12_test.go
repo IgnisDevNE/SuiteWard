@@ -23,7 +23,7 @@ func TestUpgradeColocatedAStartThatCannotBeAnsweredOrCannotBeHealthyRefuses(t *t
 	u.downUntilStarted()
 	u.first("--format {{json .State}} "+ContainerDB, `{"Status":"exited"}`)
 	err := u.upgradeAt(true, "\n", "--yes")
-	if err == nil || !strings.Contains(err.Error(), "exited before it became healthy") || !strings.Contains(err.Error(), "docs/backup.md") {
+	if err == nil || !strings.Contains(err.Error(), "stopped before it was ready") || !strings.Contains(err.Error(), "docs/backup.md") {
 		t.Fatalf("got %v, want the failed health of the database and the manual backup", err)
 	}
 	if u.startCalls(ContainerServe) != 0 {
@@ -109,7 +109,7 @@ func TestResolveGitHubNewAppWithAKeySecretAndNoAppNamed(t *testing.T) {
 	env, _ := flowEnv(t, g, flags, strings.NewReader(""), false)
 	env.KeyExists = func(context.Context) (bool, error) { return true, nil }
 	env.ReadKey = func(context.Context) ([]byte, error) { return nil, nil }
-	if _, err := resolve(t, env); err == nil || !strings.Contains(err.Error(), "remove it, then run again") || len(g.requests) != 0 {
+	if _, err := resolve(t, env); err == nil || !strings.Contains(err.Error(), "remove the secret, then run again") || len(g.requests) != 0 {
 		t.Fatalf("got %v, requests %v", err, g.requests)
 	}
 }
@@ -123,7 +123,7 @@ func TestUpgradeColocatedAStartQuestionThatCannotBeReadIsAnError(t *testing.T) {
 	term.Out = &u.out
 	env.Term = term
 	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--upgrade", "--backup-dir", u.backups, "--runtime", "podman", "--connection", "pm", "--image", testImage}
-	if err := Install(context.Background(), args, env); err == nil || !strings.Contains(err.Error(), "read the answer") || u.startCalls(ContainerDB) != 0 {
+	if err := Install(context.Background(), args, env); err == nil || !strings.Contains(err.Error(), "read your answer") || u.startCalls(ContainerDB) != 0 {
 		t.Fatalf("got %v", err)
 	}
 }

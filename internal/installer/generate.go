@@ -24,3 +24,6 @@ func NewMCPToken() (string, error) { return randomHex(32) }
 func DatabaseURL(user, password string) string {
 	return "postgres://" + user + ":" + password + "@suiteward-db:5432/suiteward?sslmode=disable"
 }
+
+// NewExecutorToken returns the bearer token of the executor API: 32 random bytes as lowercase hex, like the MCP token and as long.
+func NewExecutorToken() (string, error) { return randomHex(32) }

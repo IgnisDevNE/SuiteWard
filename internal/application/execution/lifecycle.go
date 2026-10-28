@@ -246,4 +246,6 @@ func (j Job) Swept(p ExpireParams) (next Job, changed, serviceRow bool) {
 
 // WaitsForRunner reports whether the job waits for the test runner: it is leased, or pending for a reason other than a failing GitHub read
 // (a job that waits on GitHub waits for GitHub, and has its own bound).
-func (j Job) WaitsForRunner() bool { return false }
+func (j Job) WaitsForRunner() bool {
+	return j.State == StateLeased || (j.State == StatePending && j.Reason != ReasonGitHubUnavailable)
+}

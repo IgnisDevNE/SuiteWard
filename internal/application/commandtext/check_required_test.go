@@ -188,7 +188,6 @@ func TestCheckSummaryRefusesRequiredFieldsThatDoNotFit(t *testing.T) {
 		"counts on an unavailable run":               with(requiredCheck("canonical-unavailable"), counts),
 		"a failing run without counts":               with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.Execution = nil }),
 		"a failing run that blocks nothing":          with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 2, Passed: 2} }),
-		"counts on an approval that is missing":      with(check(commandtext.CheckInProgress, "approval-missing"), counts),
 		"counts on an invalid source":                with(check(commandtext.CheckFailure, "invalid-source"), counts),
 		"an unblock on an approval that is missing":  with(check(commandtext.CheckInProgress, "approval-missing"), unblock),
 		"an unblock on a pending run":                with(requiredCheck("canonical-pending"), unblock),

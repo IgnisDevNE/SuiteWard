@@ -3,6 +3,7 @@ package execution
 import (
 	"cmp"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
@@ -37,9 +38,16 @@ type CanonicalTest struct {
 // approved version, and an excluded test has no state that counts, so neither is in it.
 //
 // It is known only when both runs are complete and the canonical run is governed by the manifest that governs the receipt run: a canonical run under the manifest
-// of the revision (the head is approved) has no counterpart. Otherwise known is false and the set is empty, which reads as 0 and is never an absence.
+// of the revision (the head is approved) has no counterpart. Otherwise known is false and the set is empty, which reads as 0 and is never an absence. Every job has
+// a governing manifest, so a complete run with none is a caller that did not fill it, and is ErrNoGoverningDigest: two missing digests never compare equal.
 func Weakened(receipt, canonical WeakenedRun, receiptTests []ReceiptTest, canonicalTests []CanonicalTest) (tests []TestID, known bool, err error) {
-	if receipt.Status != RunComplete || canonical.Status != RunComplete || receipt.Governing.IsZero() || receipt.Governing != canonical.Governing {
+	if receipt.Status != RunComplete || canonical.Status != RunComplete {
+		return nil, false, nil
+	}
+	if receipt.Governing.IsZero() || canonical.Governing.IsZero() {
+		return nil, false, fmt.Errorf("%w: a complete run that the weakened set compares", ErrNoGoverningDigest)
+	}
+	if receipt.Governing != canonical.Governing {
 		return nil, false, nil
 	}
 	failing := map[TestID]bool{}

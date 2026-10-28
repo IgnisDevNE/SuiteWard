@@ -368,3 +368,21 @@ func TestDoctorPromisesNoTestRunnerFromAnInstallInAFolderWithAPercentSign(t *tes
 		})
 	}
 }
+
+// The way out of a refused folder names the install with a place to fill in. The old token file is the one with the percent sign: repeated, as the
+// other hints repeat the flags of the instance, it would be refused again as printed. The uninstall keeps it, because that is what it removes.
+func TestTheWayOutOfAFolderWithAPercentSignDoesNotRepeatTheTokenFileThatIsRefused(t *testing.T) {
+	f, s := colocated{goos: "windows", folder: "50%off"}.build(t)
+	files := coloExecFilesOf(t, f)
+	writeFile(t, files.binary, "the previous release")
+	sum := sha256.Sum256([]byte("the previous release"))
+	writeFile(t, files.pin, hex.EncodeToString(sum[:])+"  suiteward-executor.exe\n")
+	settings, tokenFile := savedAt(t, s), coloTokenFile(t, f)
+	fix := doctorMain(t, f, "--settings", settings, "--token-file", tokenFile)["executor.binary"].Fix
+	uninstall := "`suiteward uninstall --settings " + quoteArg(settings) + " --token-file " + quoteArg(tokenFile) + "`"
+	_, after, _ := strings.Cut(fix, "then run `")
+	install, _, _ := strings.Cut(after, "`")
+	if want := "suiteward install --settings " + quoteArg(settings) + " --token-file <a file in a folder without a percent sign>"; install != want || !strings.Contains(fix, uninstall) {
+		t.Errorf("the fix is %q, want the uninstall %s and then the install %q", fix, uninstall, want)
+	}
+}

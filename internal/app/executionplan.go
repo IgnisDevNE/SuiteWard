@@ -303,7 +303,7 @@ func (j *checksJob) wantCanonical(ctx context.Context, s *pullState, x *executio
 		}
 		spec.GoverningDigest, spec.GoverningSource = bound.manifest, domain.ManifestSource(reference)
 	}
-	if err := j.canonicalJob(ctx, spec); err != nil {
+	if err := j.canonicalJob(ctx, spec, s.enrollment.EnrolledAt); err != nil {
 		return wantedJob{}, err
 	}
 	return wantedOf(spec), nil
@@ -355,21 +355,28 @@ func (j *checksJob) holder(ctx context.Context, spec execution.Spec) (execution.
 }
 
 // replaceable reports whether a fresh job may replace the job that holds a binding: only one that is unavailable for executor-not-configured
-// once an executor token is configured, or for no-executor once the last real executor request (a lease request or a heartbeat that
-// arrived: the startup clock is none) is later than its end ("Recovery"). Both times are compared at the precision that is stored, because a
-// stored time has no monotonic reading.
-func (j *checksJob) replaceable(job execution.Job) bool {
+// once an executor token is configured, or for no-executor once the last real executor request (a lease request, a heartbeat or a result post
+// that arrived: the startup clock is none) is later than its end ("Recovery"), and the owner did not unblock it: an unblock holds until the next push
+// (docs/contracts/runtime.md, "The early unblock and its hold"), whether it ended the job or lifted it after the wait. since is the current enrollment's
+// enrolled_at. Both times are compared at the precision that is stored, because a stored time has no monotonic reading.
+func (j *checksJob) replaceable(ctx context.Context, job execution.Job, since time.Time) (bool, error) {
 	if job.State != execution.StateUnavailable {
-		return false
+		return false, nil
 	}
 	switch job.Reason {
 	case execution.ReasonNotConfigured:
-		return j.executorConfigured
+		return j.executorConfigured, nil
 	case execution.ReasonNoExecutor:
-		last, requested := j.liveness.LastRequest()
-		return requested && execution.Stored(last).After(job.FinishedAt)
+		if !j.liveness.HeardSince(job.FinishedAt) {
+			return false, nil
+		}
+		held, err := j.executions.Unblocked(ctx, job.ID, since)
+		if err != nil {
+			return false, fmt.Errorf("read the unblock of job %d: %w", job.ID, err)
+		}
+		return !held, nil
 	}
-	return false
+	return false, nil
 }
 
 // unconfigured is the reason a job is created final without an executor token, and none with one.
@@ -388,10 +395,15 @@ func (j *checksJob) enqueue(ctx context.Context, spec execution.Spec, final exec
 }
 
 // canonicalJob creates the canonical job of the head under spec unless one holds its binding: without an executor token it is created already unavailable.
-func (j *checksJob) canonicalJob(ctx context.Context, spec execution.Spec) error {
+func (j *checksJob) canonicalJob(ctx context.Context, spec execution.Spec, since time.Time) error {
 	held, found, err := j.holder(ctx, spec)
-	if err != nil || (found && !j.replaceable(held)) {
+	if err != nil {
 		return err
+	}
+	if found {
+		if replace, err := j.replaceable(ctx, held, since); err != nil || !replace {
+			return err
+		}
 	}
 	return j.enqueue(ctx, spec, j.unconfigured())
 }
@@ -404,8 +416,10 @@ func (j *checksJob) receiptJob(ctx context.Context, s *pullState, x *executionRu
 	if err != nil {
 		return false, err
 	}
-	if found && !j.replaceable(held) {
-		return true, nil
+	if found {
+		if replace, err := j.replaceable(ctx, held, s.enrollment.EnrolledAt); err != nil || !replace {
+			return true, err
+		}
 	}
 	if spec.ChangedPaths, spec.ChangedTotal, err = j.revisionChanges(ctx, bound, x.policy); err != nil || spec.ChangedTotal == 0 {
 		return false, err

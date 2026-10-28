@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/base64"
@@ -515,6 +516,27 @@ func (p executorPlan) foreign(registered bool) (bool, error) {
 	default:
 		return definitionNames(p.definition, unitValue(p.binary))
 	}
+}
+
+// definitionIsCurrent says whether the definition that this instance registered is the one this build makes. Only the task of Windows can be an older
+// one that matters (the wrapper run by itself, with a window): it is read from the file the install left beside the wrapper, not from the answer of
+// schtasks, which comes in the console code page. The wrapper depends on the engine, which doctor may not reach, so it is not compared.
+func (p executorPlan) definitionIsCurrent(d Deps) (bool, error) {
+	if p.goos != "windows" {
+		return true, nil
+	}
+	if d.UserSID == nil {
+		return false, errors.New("the installer has no way to find the SID of this user, which the scheduled task of the executor names")
+	}
+	sid, err := d.UserSID()
+	if err != nil {
+		return false, fmt.Errorf("find the SID of this user: %w", err)
+	}
+	on, err := os.ReadFile(filepath.Clean(p.taskXML))
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", p.taskXML, err)
+	}
+	return bytes.Equal(on, p.windowsTask(sid)), nil
 }
 
 // definitionNames says that the file exists and does not name the program: the definition is another instance's.

@@ -75,6 +75,10 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	}
 	d.checkExecutorToken(plan) // the install makes the token copy and the service's token whatever becomes of the executor, so its fix stays the install's
 	d.checkExecutorColocatedBinary(plan, fix)
+	current, definitionErr := true, error(nil) // the registered definition is this build's: the one of another instance is not read
+	if stateErr == nil && !other && registered {
+		current, definitionErr = plan.definitionIsCurrent(d.deps)
+	}
 	switch {
 	case stateErr != nil:
 		d.fail("executor.lifecycle", "ask the operating system about the executor: "+stateErr.Error(), d.installFix())
@@ -82,6 +86,10 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 		d.fail("executor.lifecycle", "the executor of this user is registered for another instance, not for the token file "+tokenFile+": a computer has one executor", fix)
 	case !registered:
 		d.fail("executor.lifecycle", "the executor is not registered with the operating system: it should be "+executorMechanism(plan.goos), d.installFix())
+	case definitionErr != nil:
+		d.fail("executor.lifecycle", "read the definition of the executor: "+definitionErr.Error(), d.installFix())
+	case !current:
+		d.fail("executor.lifecycle", "the scheduled task of the executor is an older version: it opens a window, and nothing starts the executor again if it stops", d.installFix())
 	default:
 		d.pass("executor.lifecycle", "the executor is registered as "+executorMechanism(plan.goos))
 	}

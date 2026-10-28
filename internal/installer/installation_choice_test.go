@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -311,24 +312,29 @@ func TestAnInstallationFlagIsNeverAskedAbout(t *testing.T) {
 	}
 }
 
-// A chosen installation is not a typed flag: the tier page and its notice are still shown, and the tier it gives is read where the run reads it.
+// A chosen installation is not a typed flag: the tier page and its notice are still shown. The list never gives a tier either: the settings file of
+// every candidate exists and names its own, and a list that is stale or was edited must not send a command to the other tier.
 func TestAChosenInstallationDoesNotSkipTheTierPage(t *testing.T) {
 	useDefaultConfigDir(t)
 	defaultSettingsOf(t, colocatedSettings())
-	isolated := isolatedSettings()
-	second := settingsOf(t, isolated)
-	if err := recordInstallation(runtime.GOOS, second, "", isolated, ""); err != nil {
+	second := settingsOf(t, colocatedSettings())
+	lying := colocatedSettings()
+	lying.Tier = config.TierIsolated // what the list says, against the file
+	if err := recordInstallation(runtime.GOOS, second, "", lying, ""); err != nil {
 		t.Fatal(err)
 	}
-	r, c := keyResolver(t, false, nil, nil, "\x1b[B\r"+"\r") // the installation, then the tier
+	r, c := keyResolver(t, false, nil, nil, "[B"+"") // the installation, then the tier
 	if err := r.chooseInstallation(choiceDeps(t)); err != nil {
 		t.Fatal(err)
 	}
-	if r.chosen["tier"] != string(config.TierIsolated) || r.preset("tier", "x") != string(config.TierIsolated) {
-		t.Errorf("chosen is %v: want the isolated tier, which preset reads", r.chosen)
+	if r.chosen["settings"] != second {
+		t.Fatalf("chosen is %v, want the second installation", r.chosen)
+	}
+	if tier, set := r.chosen["tier"]; set || r.preset("tier", string(config.TierCoLocated)) != string(config.TierCoLocated) {
+		t.Errorf("the list gave the tier %q: only the settings file names it", tier)
 	}
 	if _, given := r.given("tier"); given || !r.asks("tier") {
-		t.Error("a chosen tier counts as typed: the tier page would be skipped")
+		t.Error("a chosen installation counts as a typed tier: the tier page would be skipped")
 	}
 	if _, err := chooseTier(r, config.TierCoLocated); err != nil {
 		t.Fatal(err)
@@ -338,6 +344,25 @@ func TestAChosenInstallationDoesNotSkipTheTierPage(t *testing.T) {
 		if !strings.Contains(c.out.String(), want) {
 			t.Errorf("the tier page lacks %q, so the notice of the co-located tier was skipped:\n%s", want, c.out.String())
 		}
+	}
+}
+
+// An entry that says isolated for a co-located settings file does not send a purge to the other tier.
+func TestAnEntryThatNamesTheOtherTierDoesNotChangeWhatAUninstallDoes(t *testing.T) {
+	useDefaultConfigDir(t)
+	defaultSettingsOf(t, colocatedSettings())
+	h := purgeHarness(t)
+	lying := colocatedSettings()
+	lying.Tier = config.TierIsolated
+	if err := recordInstallation(runtime.GOOS, h.settingsPath(), h.tokenPath(), lying, testInstance); err != nil {
+		t.Fatal(err)
+	}
+	env := h.consoleOf(true, h.settingsPath()+"\n"+testInstance+"\n")
+	if err := Uninstall(context.Background(), []string{"--plain", "--purge"}, env); err != nil {
+		t.Fatalf("%v\n%s", err, h.out.String())
+	}
+	if got, want := h.removed("volume rm"), []string{VolumeData, VolumeDBData}; !slices.Equal(got, want) {
+		t.Errorf("volumes removed: %v, want %v: the purge did not run on the co-located tier\n%s", got, want, h.out.String())
 	}
 }
 

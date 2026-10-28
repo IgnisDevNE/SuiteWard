@@ -36,7 +36,7 @@ func readExecutorHandover(configDir string) (token []byte, found bool, err error
 	}
 	token = bytes.TrimSpace(raw)
 	if len(token) < minExecutorTokenBytes {
-		return nil, false, fmt.Errorf("%s holds a token shorter than %d bytes, which the service refuses. An administrator removes %s and runs `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>` again, which makes a new one", file, minExecutorTokenBytes, executorAuthEtc)
+		return nil, false, fmt.Errorf("%s holds a token shorter than %d bytes, which the service refuses. An administrator removes %s and runs `sudo suiteward install host --sha256sums <the release's SHA256SUMS file>` again, which makes a new one", file, minExecutorTokenBytes, executorAuthEtc)
 	}
 	return token, true, nil
 }
@@ -72,7 +72,7 @@ func settleExecutorSecret(ctx context.Context, store SecretStore, token []byte, 
 // step: an upgrade cannot run again at the release that is installed, so it names the install.
 func noExecutorNote(again string) string {
 	return "The host has no token for the test runner (the executor) for this account yet, so the service runs without one and cannot run the approved tests. " +
-		"An administrator makes the test runner and its token with `sudo suiteward install host --sha256sums <the SHA256SUMS of the release>`; then run " + again + ".\n"
+		"An administrator makes the test runner and its token with `sudo suiteward install host --sha256sums <the release's SHA256SUMS file>`; then run " + again + ".\n"
 }
 
 // executorHostNote is what an uninstall says of the executor: it is the administrator's, and the service account cannot reach it.
@@ -116,7 +116,7 @@ func (e executorSetup) currentNote(serviceWithout bool, install string) string {
 	if !serviceWithout || !e.found {
 		return ""
 	}
-	return fmt.Sprintf("The host step made a test runner token that the service does not have yet. Run %#q to give it, which restarts the service.\n", install)
+	return fmt.Sprintf("The host step made a token for the test runner (the executor) that the service does not have yet. Run %#q to give it, which restarts the service.\n", install)
 }
 
 // rotated is whether the service has an executor token secret that is not the host step's copy: the administrator removed the token and the host
@@ -152,7 +152,7 @@ func (e executorSetup) settleCurrent(ctx context.Context, env Env, scr *ui.Scree
 	if err := waitStable(ctx, env, scr, httpPort); err != nil {
 		return false, err
 	}
-	_, err = fmt.Fprintf(env.Term.Out, "The host step made a new test runner token. It replaced the service's, and the service was restarted to read it. The release is current already.\n")
+	_, err = fmt.Fprintf(env.Term.Out, "The host step made a new token for the test runner (the executor). It replaced the service's, and the service was restarted to read it. The release is current already.\n")
 	return true, err
 }
 

@@ -483,7 +483,7 @@ func TestInstallConvertsAV01xStack(t *testing.T) {
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(h.out.String(), "This stack comes from an older release") {
+	if !strings.Contains(h.out.String(), "This installation comes from an older release") {
 		t.Errorf("the conversion was not announced:\n%s", h.out.String())
 	}
 	if owner := h.secretWrites(SecretDatabaseOwnerURL); len(owner) != 1 || owner[0] != DatabaseURL("suiteward", "ownerpw") {

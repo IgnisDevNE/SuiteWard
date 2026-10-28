@@ -81,7 +81,7 @@ func (dk *Docker) identify(ctx context.Context) (Engine, error) {
 		if strings.Contains(strings.ToLower(server.Platform.Name+componentNames(server.Components)), "podman") || (server.Platform.Name == "" && len(server.Components) == 0) {
 			what = "Podman"
 		}
-		return Engine{}, fmt.Errorf("%w: the engine behind %s is %s %s (%s); select Docker's own context or CLI, or install the stack with --runtime podman",
+		return Engine{}, fmt.Errorf("%w: the engine behind %s is %s %s (%s); select Docker's own context or CLI, or install with --runtime podman",
 			ErrNotDocker, dk.bin, what, server.Version, server.Platform.Name)
 	}
 	out, err = dk.run(ctx, nil, "info", "--format", "{{json .SecurityOptions}}")

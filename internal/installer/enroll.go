@@ -65,7 +65,7 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 		return err
 	}
 	// Enroll refuses a co-located stack with no settings file (colocatedEnrollTarget), so that is not what a host that has none is offered.
-	if err := tierNeeded(r, haveSaved, env.Deps.GOOS, "run `"+env.Deps.command()+" install --upgrade --tier co-located` first, which saves the settings file of a co-located stack"); err != nil {
+	if err := tierNeeded(r, haveSaved, env.Deps.GOOS, "run `"+env.Deps.command()+" install --upgrade --tier co-located` first, which saves the settings file of a co-located installation"); err != nil {
 		return err
 	}
 	var target enrollTarget

@@ -416,7 +416,7 @@ func installHost(ctx context.Context, args []string, env Env) (err error) {
 	fs.String("answers", "", "read answers from this YAML file (a flag wins over it)")
 	fs.Bool("yes", false, "answer yes to installing Podman (with dnf)")
 	fs.String("metadata-rule", "", "yes or no: block the service account from the cloud provider's metadata address")
-	fs.String("http-port", "", "port of the service's web address on this server, which the test runner connects to (default: the port of the installed stack, else 27081)")
+	fs.String("http-port", "", "port of the service's web address on this server, which the test runner connects to (default: the port of the existing installation, else 27081)")
 	fs.String("sha256sums", "", "(required) the release's SHA256SUMS file, already verified. It must list this program, which is installed as the test runner")
 	fs.Bool("plain", false, plainUsage)
 	flags, err := parse(fs, args, env.Term.Out)

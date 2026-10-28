@@ -260,9 +260,17 @@ func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 	}
 	out := c.out.String()
 	page := pageText(t, out[:strings.LastIndex(out, leaveAlt)], 80, 24)
-	for _, want := range []string{"Installation type co-located", "Instance ID 1a2b3c4d", "Status http://127.0.0.1:47081/status", "Doctor ", "failures", "Check again", "FAIL protection.Acme/api"} {
+	// The notice of the reduced assurance is the first warning of a real summary, and on a page this full it takes the room of the checks'
+	// warnings: the Doctor row says how many failed, and the scrollback that Close leaves holds every one of them.
+	for _, want := range []string{"Installation type co-located", "Instance ID 1a2b3c4d", "Status http://127.0.0.1:47081/status", "Doctor ", "failures", "Check again", reducedAssuranceKey} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the summary page lacks %q at 80x24:\n%s", want, page)
+		}
+	}
+	scrollback := out[strings.LastIndex(out, leaveAlt):]
+	for _, want := range []string{"FAIL protection.Acme/api", "FAIL protection.Acme/web", reducedAssuranceKey} {
+		if !strings.Contains(flat(scrollback), want) {
+			t.Errorf("the scrollback lacks %q:\n%s", want, scrollback)
 		}
 	}
 }

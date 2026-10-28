@@ -22,13 +22,13 @@ import (
 // The user of a database URL, read without parsing the URL: a parse error would repeat the URL, password included.
 var urlUser = regexp.MustCompile(`^postgres://([^:/@]+):`)
 
-// ErrForeignContainer means a container of the stack's name exists that this installer did not make.
-var ErrForeignContainer = errors.New("a container of the stack's name exists that this installer did not make")
+// ErrForeignContainer means a container named like one of SuiteWard's exists that this installer did not make.
+var ErrForeignContainer = errors.New("a container named like one of SuiteWard's exists that this installer did not make")
 
 // reducedAssuranceNotice is what the co-located tier gives up against the isolated one. It is a security disclosure, and it is said here, once: on
 // the page that introduces the tier and in the summary of an install (a plain run prints it at the end), and nowhere else, so the doctor
 // rows of the test runner do not repeat it.
-const reducedAssuranceNotice = "On this computer the test runner and SuiteWard run as your user, next to your coding agent, so these checks catch mistakes, not a determined agent."
+const reducedAssuranceNotice = "On this computer the test runner (the executor) and SuiteWard run as your user, next to your coding agent, so these checks catch mistakes, not a determined agent."
 
 // installTarget is where the install keeps its settings and what is already there.
 type installTarget struct {
@@ -489,7 +489,7 @@ func (c colocatedInstall) readSecretState(ctx context.Context) (secretState, err
 		return secretState{}, err
 	}
 	if !haveDB && (haveOwner || haveURL) {
-		return secretState{}, fmt.Errorf("the install cannot repair the database secrets: %s is missing while the others exist, so nothing was changed. Remove the stack and its secrets to start over", SecretDBAuth)
+		return secretState{}, fmt.Errorf("the install cannot repair the database secrets: %s is missing while the others exist, so nothing was changed. Remove the installation and its secrets to start over", SecretDBAuth)
 	}
 	haveToken, err := secrets.Exists(ctx, SecretMCPAuth)
 	if err != nil {
@@ -512,11 +512,11 @@ func (c colocatedInstall) readSecretState(ctx context.Context) (secretState, err
 	}
 	m := urlUser.FindSubmatch(current)
 	if m == nil {
-		return secretState{}, fmt.Errorf("the secret %s does not hold a PostgreSQL database address, so nothing was changed. Remove the stack and its secrets to start over", SecretDatabaseURL)
+		return secretState{}, fmt.Errorf("the secret %s does not hold a PostgreSQL database address, so nothing was changed. Remove the installation and its secrets to start over", SecretDatabaseURL)
 	}
 	// A v0.1.x stack has the owner URL where the application URL is now: its user is the owner.
 	if string(m[1]) == ownerRole {
-		screenOn(c.out).Warn("This stack comes from an older release: the secret %s holds the database owner's address. The install creates the limited role %s and puts its address there. The owner's address moves to %s, which only the migration step reads. This is expected; nothing to do.\n",
+		screenOn(c.out).Warn("This installation comes from an older release: the secret %s holds the database owner's address. The install creates the limited role %s and puts its address there. The owner's address moves to %s, which only the migration step reads. This is expected; nothing to do.\n",
 			SecretDatabaseURL, appRole, SecretDatabaseOwnerURL)
 		state.needAppURL = true
 	}
@@ -568,14 +568,14 @@ func (c colocatedInstall) bringUp(ctx context.Context, save func() error) error 
 	if err := c.ensureRole(ctx, c.secrets.needAppURL); err != nil {
 		return err
 	}
-	if err := working(scr, "Preparing the database (migration)", func() error { return c.rt.Run(ctx, c.stack.Migrate) }); err != nil {
+	if err := working(scr, "Updating the database (migration)", func() error { return c.rt.Run(ctx, c.stack.Migrate) }); err != nil {
 		service := "so the service was not started"
 		if c.keepServe {
 			service = "the running service was left as it was"
 		}
-		return migratingError{fmt.Errorf("the database migration (suiteward migrate) failed, %s: %w", service, err)}
+		return migratingError{fmt.Errorf("the database update (migration, suiteward migrate) failed, %s: %w", service, err)}
 	}
-	scr.Check("The database is prepared: the migration (suiteward migrate) finished and the schema is up to date.\n")
+	scr.Check("The database update (migration) finished: the schema is up to date.\n")
 	if err := save(); err != nil {
 		return migratingError{err}
 	}
@@ -735,7 +735,7 @@ func (c colocatedInstall) checkTokenFile() error {
 func (c colocatedInstall) ensureMCPToken(ctx context.Context) error {
 	if c.secrets.haveToken {
 		if _, err := os.Stat(c.tokenFile); err != nil {
-			screenOn(c.out).Warn("The secret %s exists, but the token file %s does not, so your coding agent's client has no token. To get a new one, remove the stack and its secrets, then install again.\n", SecretMCPAuth, c.tokenFile)
+			screenOn(c.out).Warn("The secret %s exists, but the token file %s does not, so your coding agent's client has no token. To get a new one, remove the installation and its secrets, then install again.\n", SecretMCPAuth, c.tokenFile)
 		}
 		return nil
 	}

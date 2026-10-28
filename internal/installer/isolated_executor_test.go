@@ -170,7 +170,7 @@ func TestInstallIsolatedNamesTheHostStepWhenTheHTTPPortChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "install host --sha256sums <the SHA256SUMS of the release> --http-port 19081") {
+	if !strings.Contains(out, "install host --sha256sums <the release's SHA256SUMS file> --http-port 19081") {
 		t.Errorf("the executor is pointed at the old port by the administrator's step: the output must name the re-run with the new port:\n%s", out)
 	}
 }
@@ -287,7 +287,7 @@ func TestUpgradeIsolatedAtTheInstalledReleaseSettlesATokenThatTheHostStepRotated
 	if !u.f.has("systemctl --user restart suiteward.service") {
 		t.Errorf("the service reads its secrets when it starts: %v", u.f.lines())
 	}
-	if out := u.out.String(); strings.Contains(out, "Nothing to upgrade") || !strings.Contains(out, "test runner token") {
+	if out := u.out.String(); strings.Contains(out, "Nothing to upgrade") || !strings.Contains(out, "new token for the test runner") {
 		t.Errorf("the output must say that the token was replaced and not that there is nothing to do:\n%s", out)
 	}
 }

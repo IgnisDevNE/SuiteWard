@@ -100,3 +100,31 @@ func TestTheSummaryKeepsTheEnrollInstructionWhenTheProgramIsRunByAnotherName(t *
 		}
 	}
 }
+
+// A command is a whole word of the fix: the program's name and the subcommand, between backticks or standing alone. What is part of a longer command
+// (one with its own flags) or of a longer word is not written again, and the fix stays as the service wrote it.
+func TestWriteCommandsWritesOnlyWholeCommands(t *testing.T) {
+	d := Deps{instance: instanceArgs{settings: "/s.yaml"}}
+	install, enroll := "`"+d.suggest("install")+"`", "`"+d.suggest("enroll")+"`"
+	for name, c := range map[string]struct {
+		fix   string
+		named []string
+		want  string
+	}{
+		"between backticks":                {"run `suiteward install` now", []string{"install"}, "run " + install + " now"},
+		"alone, before a space":            {"run suiteward install now", []string{"install"}, "run " + install + " now"},
+		"alone, before punctuation":        {"(run suiteward enroll), then wait", []string{"enroll"}, "(run " + enroll + "), then wait"},
+		"alone, at the end":                {"run suiteward install", []string{"install"}, "run " + install},
+		"two commands, one pass":           {"run `suiteward enroll` where you ran `suiteward install`", []string{"enroll", "install"}, "run " + enroll + " where you ran " + install},
+		"a command that is not named":      {"run `suiteward enroll` or `suiteward install`", []string{"enroll"}, "run " + enroll + " or `suiteward install`"},
+		"a longer command, quoted":         {"run `suiteward install --upgrade` now", []string{"install"}, "run `suiteward install --upgrade` now"},
+		"a longer command, alone":          {"run suiteward install --upgrade now", []string{"install"}, "run suiteward install --upgrade now"},
+		"a longer word":                    {"the suiteward installer", []string{"install"}, "the suiteward installer"},
+		"a word before it":                 {"the xsuiteward install", []string{"install"}, "the xsuiteward install"},
+		"a long command and a longer word": {"run `suiteward install --upgrade` now; the suiteward installer", []string{"install"}, "run `suiteward install --upgrade` now; the suiteward installer"},
+	} {
+		if got := d.writeCommands(c.fix, c.named); got != c.want {
+			t.Errorf("%s: %q became %q, want %q", name, c.fix, got, c.want)
+		}
+	}
+}

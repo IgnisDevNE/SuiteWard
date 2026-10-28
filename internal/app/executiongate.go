@@ -105,5 +105,23 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 // last real executor request (docs/contracts/runtime.md, "The early unblock and its hold"). It reads both plans, whether the owner's command ended the job or lifted it after
 // the lease wait. The comment that warns the owner reads it.
 func (j *checksJob) runnerBack(ctx context.Context, s *pullState) (bool, error) {
+	for _, plan := range []execution.Plan{execution.PlanCanonical, execution.PlanReceipt} {
+		jobs, err := j.executions.HeadJobs(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, plan)
+		if err != nil {
+			return false, fmt.Errorf("read the %s jobs of the head: %w", plan, err)
+		}
+		for _, job := range jobs {
+			if job.State != execution.StateUnavailable || job.Reason != execution.ReasonNoExecutor || !j.liveness.HeardSince(job.FinishedAt) {
+				continue
+			}
+			unblocked, err := j.executions.Unblocked(ctx, job.ID, s.enrollment.EnrolledAt)
+			if err != nil {
+				return false, fmt.Errorf("read the unblock of job %d: %w", job.ID, err)
+			}
+			if unblocked {
+				return true, nil
+			}
+		}
+	}
 	return false, nil
 }

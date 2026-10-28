@@ -133,15 +133,15 @@ func TestTheHintBuildersNameTheProgramAsTheRunReachesIt(t *testing.T) {
 		{"doctor with settings", doctorHint(swCmd, "/home/me/My Settings/s.yaml", false), swCmd + " doctor --settings '/home/me/My Settings/s.yaml'"},
 		{"enroll", enrollCommand(swCmd, &Resolver{flags: map[string]string{"settings": "/s.yaml"}}, false), swCmd + " enroll --settings /s.yaml"},
 		{"enroll isolated", enrollCommand(swCmd, &Resolver{}, true), swCmd + " enroll --tier isolated"},
-		{"no key", noKeyError(swCmd, false).Error(), "run `" + swCmd + " backup init` first"},
-		{"no key in an upgrade", noKeyError(swCmd, true).Error(), "run `" + swCmd + " backup init` first"},
+		{"no key", noKeyError(swCmd, false).Error(), "Run `" + swCmd + " backup init` first"},
+		{"no key in an upgrade", noKeyError(swCmd, true).Error(), "Run `" + swCmd + " backup init` first"},
 		{"the way back of a co-located upgrade", goBackColocated(swCmd, "podman", "ghcr.io/x@sha256:1", "/b/one.tar.age", " --settings /s.yaml"),
 			"`" + swCmd + " uninstall --yes --settings /s.yaml`"},
 		{"the way back, install", goBackColocated(swCmd, "podman", "ghcr.io/x@sha256:1", "/b/one.tar.age", ""), "`" + swCmd + " install --image ghcr.io/x@sha256:1`"},
 		{"the way back, restore", goBackColocated(swCmd, "podman", "ghcr.io/x@sha256:1", "/b/one.tar.age", ""), "`" + swCmd + " restore /b/one.tar.age`"},
 		{"the way back of an isolated upgrade", goBackIsolated(swCmd, "/b/one.tar.age", "/u", " --tier isolated"), "`" + swCmd + " restore /b/one.tar.age --tier isolated`"},
 		{"a co-located upgrade that migrated", withBackup(swCmd, migratingError{errors.New("boom")}, "/b/one.tar.age", "", "").Error(), "run `" + swCmd + " restore /b/one.tar.age`"},
-		{"a co-located upgrade before migrate", withBackup(swCmd, errors.New("boom"), "/b/one.tar.age", "", "").Error(), "run `" + swCmd + " install` with the options of this run"},
+		{"a co-located upgrade before migrate", withBackup(swCmd, errors.New("boom"), "/b/one.tar.age", "", "").Error(), "run `" + swCmd + " install` with the same options as this run"},
 		{"a co-located upgrade before migrate, retry", withBackup(swCmd, errors.New("boom"), "/b/one.tar.age", "", "").Error(), "`" + swCmd + " install --upgrade` retries the upgrade"},
 		{"an isolated upgrade that went on", withBackup(swCmd, errors.New("boom"), "/b/one.tar.age", "/u", "").Error(), "run `" + swCmd + " install --upgrade` again"},
 	}
@@ -165,7 +165,7 @@ func TestTheNoteOfARestoreNamesDoctorAsTheRunReachesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, notes := compareStatus(swCmd, after, after)
-	if len(notes) != 1 || !strings.Contains(notes[0], "look at `"+swCmd+" doctor`") {
+	if len(notes) != 1 || !strings.Contains(notes[0], "run `"+swCmd+" doctor` in a moment") {
 		t.Errorf("notes = %q, want one that names `%s doctor`", notes, swCmd)
 	}
 }
@@ -196,7 +196,7 @@ func TestABackupWithoutAKeyNamesBackupInitAsTheRunReachesIt(t *testing.T) {
 	env.Deps.Command = swCmd
 	args := []string{"--settings", u.settingsPath(), "--token-file", u.tokenPath(), "--runtime", "podman", "--connection", "pm", "--to", t.TempDir()}
 	err := Backup(context.Background(), args, env)
-	if err == nil || !strings.Contains(err.Error(), "run `"+swCmd+" backup init` first") {
+	if err == nil || !strings.Contains(err.Error(), "Run `"+swCmd+" backup init` first") {
 		t.Fatalf("got %v, want a refusal that names `%s backup init`", err, swCmd)
 	}
 }
@@ -257,10 +257,10 @@ func TestTheMessagesOfARestoreNameTheProgramAsTheRunReachesIt(t *testing.T) {
 	x.finish()
 	for name, c := range map[string]struct{ got, want string }{
 		"another release": {x.otherRelease("the release x").Error(), "(`" + swCmd + " install --image " + releaseImageRepo + "@" + testDigest + "`)"},
-		"no recovery key": {noKey.Error(), "run `" + swCmd + " backup init` first"},
-		"run again":       {x.failed(errors.New("boom")).Error(), "To run the restore again: " + swCmd + " restore /b/one.tar.age."},
-		"way back":        {x.failed(errors.New("boom")).Error(), "To go back to the state before the restore: " + swCmd + " restore /b/safety.tar.age, with"},
-		"after":           {out.String(), "run `" + swCmd + " backup init` to back it up."},
+		"no recovery key": {noKey.Error(), "Run `" + swCmd + " backup init` first"},
+		"run again":       {x.failed(errors.New("boom")).Error(), "To run the restore again: `" + swCmd + " restore /b/one.tar.age`."},
+		"way back":        {x.failed(errors.New("boom")).Error(), "To go back to the state before the restore: `" + swCmd + " restore /b/safety.tar.age`, with"},
+		"after":           {out.String(), "run `" + swCmd + " backup init` so that it can be backed up."},
 	} {
 		if !strings.Contains(c.got, c.want) {
 			t.Errorf("%s: got %q, want it to contain %q", name, c.got, c.want)

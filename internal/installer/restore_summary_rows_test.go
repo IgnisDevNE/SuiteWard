@@ -125,7 +125,7 @@ func TestARestoreOfABackupWhoseStatusIsNotRecordedKeepsTheCanonicalBehindLine(t 
 func TestTheRestoreWarningNamesTheDefaultBranchOnlyForABackupThatMayHoldRepositories(t *testing.T) {
 	const (
 		replaces = "What was approved, proposed or promoted after the backup is lost"
-		ahead    = "the default branch on GitHub may be ahead of the restored canonical"
+		ahead    = "the default branch on GitHub may be ahead of the restored approved version"
 	)
 	for _, tc := range []struct {
 		name  string

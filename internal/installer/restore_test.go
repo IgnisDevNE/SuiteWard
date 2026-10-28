@@ -265,12 +265,12 @@ func TestRestoreRefusesBeforeChangingAnything(t *testing.T) {
 		}, good, mention("dump", "cut short")},
 		{"artifacts that are not a tarball", func(t *testing.T) string {
 			return aBackup(t, func(_ *backup, e *backupEngine) { e.volume = "TARBYTES" })
-		}, good, mention("artifacts", "tar")},
+		}, good, mention("saved files", "cannot be read")},
 		{"another release", func(t *testing.T) string { return aBackup(t, backupOfVersion("v0.1.9", testImage)) }, good, mention("v0.1.9", "v0.2.0", releaseImageRepo+"@"+testDigest, "install")},
 		{"no way to confirm", func(t *testing.T) string { return aBackup(t, nil) }, func(t *testing.T) []string { return []string{"--kit", writeTestKit(t, t.TempDir())} }, mention("--yes", "--instance", testInstance)},
 		{"an instance that is not the backup's", func(t *testing.T) string { return aBackup(t, nil) }, func(t *testing.T) []string {
 			return []string{"--kit", writeTestKit(t, t.TempDir()), "--yes", "--instance", "deadbeef"}
-		}, mention("not confirmed", "nothing was changed")},
+		}, mention("not confirmed", "Nothing was changed")},
 		{"--yes without the instance", func(t *testing.T) string { return aBackup(t, nil) }, func(t *testing.T) []string {
 			return []string{"--kit", writeTestKit(t, t.TempDir()), "--yes"}
 		}, mention("--instance")},
@@ -474,7 +474,7 @@ func TestRestoreOfABackupWhoseStatusWasUnavailableWarnsAndComparesTheImage(t *te
 		}
 	}
 	// An instance that the backup could not name is not another instance than this one.
-	if strings.Contains(u.out.String(), "another instance") {
+	if strings.Contains(u.out.String(), "different instance") {
 		t.Errorf("the preview says that an instance that is not known is another one:\n%s", u.out.String())
 	}
 	u.assertOrder("rm --force --ignore --time 45 suiteward", " -q -v ON_ERROR_STOP=1", "volume import suiteward-data", "--name suiteward --network")
@@ -565,7 +565,7 @@ func TestRestoreWarnsOfAnotherInstanceAndAnotherTier(t *testing.T) {
 	if err := u.restore(file, "--kit", writeTestKit(t, t.TempDir()), "--yes", "--instance", "0a0b0c0d"); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"0a0b0c0d", "isolated", "another instance", "tier"} {
+	for _, want := range []string{"0a0b0c0d", "on a separate server", "different instance", "installation type"} {
 		if !strings.Contains(u.out.String(), want) {
 			t.Errorf("the preview lacks %q:\n%s", want, u.out.String())
 		}
@@ -593,7 +593,7 @@ func TestRestoreOfAPlaintextDirectoryWarnsAndNeedsNoKit(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := u.out.String()
-	for _, want := range []string{"plaintext", "not encrypted", "v0.2.0", "octo"} {
+	for _, want := range []string{"unencrypted folder", "v0.2.0", "octo"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the output lacks %q:\n%s", want, out)
 		}
@@ -641,8 +641,8 @@ func TestRestoreThatFailsAfterTheStopNamesTheSafetyBackupAndHowToGoOn(t *testing
 		rule rule
 		want []string
 	}{
-		{"the load", rule{match: " -q -v ON_ERROR_STOP=1", err: errors.New("psql: ERROR: COPY owner, line 1: \"HUNTER2-TOTP\"")}, []string{"the database was not changed", "rolls it back", "may quote rows", "suiteward install"}},
-		{"the import", rule{match: "volume import", err: errInjected}, []string{errInjected.Error(), "database was replaced", "suiteward restore"}},
+		{"the load", rule{match: " -q -v ON_ERROR_STOP=1", err: errors.New("psql: ERROR: COPY owner, line 1: \"HUNTER2-TOTP\"")}, []string{"the database was not changed", "single transaction", "may quote them", "suiteward install"}},
+		{"the import", rule{match: "volume import", err: errInjected}, []string{errInjected.Error(), "database now holds the backup's data", "suiteward restore"}},
 		{"the migration", rule{match: "run --rm --replace --name suiteward-migrate", err: errInjected}, []string{errInjected.Error(), "suiteward install"}},
 		{"the start", rule{match: "run --detach --replace --name suiteward --network", err: errInjected}, []string{errInjected.Error(), "suiteward install"}},
 	}

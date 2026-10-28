@@ -556,10 +556,10 @@ func TestUpgradeIsolatedBeforeMigrateSaysTheDatabaseIsUnchangedAndNamesTheOldUni
 	}
 	path := oneArchive(t, u.backups)
 	for _, want := range []string{
-		"schema and the data are unchanged", path, unitsKeptBeside(path), "suiteward.service is stopped",
+		"did not run, so your data is unchanged", path, unitsKeptBeside(path), "suiteward.service is stopped",
 		// To go back: the old units, then the reload and the start. To go on: the units name the new release, and the migration unit
 		// stays active from the old one, so it is restarted, not just the service started.
-		"copy them to " + unitDir(u.home) + ", run `systemctl --user daemon-reload` and `systemctl --user start suiteward.service`",
+		"copy them to " + unitDir(u.home) + ", then run `systemctl --user daemon-reload` and `systemctl --user start suiteward.service`",
 		"run `systemctl --user daemon-reload`, then `systemctl --user restart suiteward-db.service` (only if the database image changed), then `systemctl --user restart suiteward-migrate.service` and `systemctl --user start suiteward.service`",
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -575,7 +575,7 @@ func TestUpgradeIsolatedFailingToStopTheServiceDoesNotClaimItIsStopped(t *testin
 	u := newIsoUpgrade(t, nil)
 	u.f.failOn["systemctl --user stop suiteward.service"] = errors.New("stop failed")
 	err := u.upgrade("--image", testDigest, "--yes")
-	if err == nil || !strings.Contains(err.Error(), "schema and the data are unchanged") || !strings.Contains(err.Error(), "suiteward install --upgrade") || strings.Contains(err.Error(), "is stopped") || strings.Contains(err.Error(), "restore") {
+	if err == nil || !strings.Contains(err.Error(), "did not run, so your data is unchanged") || !strings.Contains(err.Error(), "suiteward install --upgrade") || strings.Contains(err.Error(), "is stopped") || strings.Contains(err.Error(), "restore") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -588,7 +588,7 @@ func TestUpgradeIsolatedFromMigrateOnKeepsTheRestoreAdvice(t *testing.T) {
 		u := newIsoUpgrade(t, nil)
 		u.f.failOn[fail] = errors.New(name + " failed")
 		err := u.upgrade("--image", testDigest, "--yes")
-		if err == nil || !strings.Contains(err.Error(), "restore") || strings.Contains(err.Error(), "schema and the data are unchanged") {
+		if err == nil || !strings.Contains(err.Error(), "restore") || strings.Contains(err.Error(), "did not run, so your data is unchanged") {
 			t.Fatalf("%s: once migrate has run the way back is the backup: %v", name, err)
 		}
 	}

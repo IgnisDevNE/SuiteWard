@@ -32,7 +32,7 @@ func TestTheSummaryPageOfARestoreSaysHowToBringTheCanonicalLevel(t *testing.T) {
 	run, _ := restoreOnScreen(t, termWidth, termHeight, config.TierCoLocated)
 	out := run.output()
 	page := pageText(t, out[:strings.LastIndex(out, leaveAlt)], termWidth, termHeight)
-	for _, want := range []string{"Restored", "may be behind the default branch on GitHub", "one corrective pull request", "details: docs/backup.md"} {
+	for _, want := range []string{"Restored", "may be behind the default branch on GitHub", "one small corrective pull request", "Details: docs/backup.md"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the summary page lacks %q:\n%s", want, page)
 		}

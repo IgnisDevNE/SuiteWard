@@ -256,16 +256,16 @@ func TestBackupThatFailsLeavesNothingBehind(t *testing.T) {
 		edit func(b *backup)
 		want string
 	}{
-		{"the status cannot be read", func(b *backup) { b.status = func(context.Context) ([]byte, error) { return nil, errInjected } }, "read GET /status"},
+		{"the status cannot be read", func(b *backup) { b.status = func(context.Context) ([]byte, error) { return nil, errInjected } }, "read /status of the service"},
 		{"the status names no instance", func(b *backup) {
 			b.status = func(context.Context) ([]byte, error) { return []byte(`{"version":"v0.2.0"}`), nil }
 		}, "instance"},
 		{"the dump fails", func(b *backup) { b.rt = &backupEngine{dumpErr: errInjected} }, "pg_dump in suiteward-db"},
-		{"the dump is not SQL", func(b *backup) { b.rt = &backupEngine{dump: "ERROR: the database is down\n"} }, "printed no SQL dump"},
+		{"the dump is not SQL", func(b *backup) { b.rt = &backupEngine{dump: "ERROR: the database is down\n"} }, "produced no database dump"},
 		{"the volume cannot be exported", func(b *backup) { b.rt = &backupEngine{dump: dumpText, exportErr: errInjected} }, errInjected.Error()},
 		{"the spool directory cannot be restricted", func(b *backup) {
 			b.d = windowsDepsWith(sidOK, func(context.Context, string, []string, io.Reader) ([]byte, error) { return nil, errInjected })
-		}, "restrict"},
+		}, "private to this user"},
 		{"the exported volume cannot be restricted", func(b *backup) {
 			b.d = windowsDepsWith(sidOK, func(_ context.Context, _ string, args []string, _ io.Reader) ([]byte, error) {
 				if strings.HasSuffix(args[0], backupVolume) {
@@ -273,7 +273,7 @@ func TestBackupThatFailsLeavesNothingBehind(t *testing.T) {
 				}
 				return nil, nil
 			})
-		}, "restrict"},
+		}, "private to this user"},
 		{"the archive cannot be restricted", func(b *backup) {
 			b.d = windowsDepsWith(sidOK, func(_ context.Context, _ string, args []string, _ io.Reader) ([]byte, error) {
 				if strings.HasSuffix(args[0], ".tar.age") {
@@ -281,7 +281,7 @@ func TestBackupThatFailsLeavesNothingBehind(t *testing.T) {
 				}
 				return nil, nil
 			})
-		}, "restrict"},
+		}, "private to this user"},
 		{"what goes beside the archive fails", func(b *backup) { b.beside = func(string) error { return errInjected } }, errInjected.Error()},
 	}
 	for _, tc := range cases {
@@ -406,7 +406,7 @@ func TestBackupThatMayLackAStatusRecordsItAsUnavailable(t *testing.T) {
 	// A backup that does not tolerate it still needs the status.
 	strict := newBackup(t, &backupEngine{dump: dumpText})
 	strict.status = down
-	if _, err := takeBackup(context.Background(), strict); err == nil || !strings.Contains(err.Error(), "read GET /status") {
+	if _, err := takeBackup(context.Background(), strict); err == nil || !strings.Contains(err.Error(), "read /status of the service") {
 		t.Errorf("a backup without a status was taken: %v", err)
 	}
 }

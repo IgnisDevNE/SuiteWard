@@ -231,7 +231,7 @@ func TestTheRestorePageOfABackupOfAnotherTierStillShowsTheInstanceAndTheReleaseA
 			t.Errorf("the page does not show the fact %q of the backup (row %q):\n%s", strings.TrimSpace(fact), row, v.dump())
 		}
 	}
-	mustSay(t, v, "Backup tier: isolated; this instance: co-located.", "Type the instance id "+testInstance+" to confirm")
+	mustSay(t, v, "Backup: a separate server; this one: this computer.", "Type the instance id "+testInstance+" to confirm")
 }
 
 // ---- what stays as it was ----
@@ -286,7 +286,7 @@ func TestThePlainRestoreOfABackupOfAnotherTierKeepsTheLongWarning(t *testing.T) 
 	if err := u.restore(file, confirmed(t, t.TempDir())...); err != nil {
 		t.Fatal(err)
 	}
-	want := "The backup was made on the isolated tier and this instance is on the co-located tier: the owner's enrollment records its tier, and /status says so after the restore."
+	want := "The backup comes from an installation on a separate server, and this instance is on this computer. The owner's enrollment records the installation type, and /status shows it after the restore."
 	if !strings.Contains(u.out.String(), want) {
 		t.Errorf("the plain output lacks the warning about the tier:\n%s", u.out.String())
 	}

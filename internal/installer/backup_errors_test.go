@@ -31,11 +31,11 @@ func TestRestrictPathRefusesWhatItCannotRestrict(t *testing.T) {
 		d    Deps
 		want string
 	}{
-		{"no way to find the SID", windowsDepsWith(nil, ok), "no way to find the SID"},
-		{"a SID that cannot be found", windowsDepsWith(func() (string, error) { return "", errInjected }, ok), "find the SID of this user"},
-		{"a SID that is not one", windowsDepsWith(func() (string, error) { return "tester", nil }, ok), `"tester" is not a SID`},
-		{"icacls that fails", windowsDepsWith(sid, func(context.Context, string, []string, io.Reader) ([]byte, error) { return nil, errInjected }), "restrict"},
-		{"a path that is not there", Deps{GOOS: "linux"}, "restrict"},
+		{"no way to find the SID", windowsDepsWith(nil, ok), "cannot find the Windows account ID (SID)"},
+		{"a SID that cannot be found", windowsDepsWith(func() (string, error) { return "", errInjected }, ok), "could not find this user's Windows account ID"},
+		{"a SID that is not one", windowsDepsWith(func() (string, error) { return "tester", nil }, ok), `"tester" is not a Windows account ID (SID)`},
+		{"icacls that fails", windowsDepsWith(sid, func(context.Context, string, []string, io.Reader) ([]byte, error) { return nil, errInjected }), "private to this user"},
+		{"a path that is not there", Deps{GOOS: "linux"}, "private to this user"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,7 +85,7 @@ func TestEnsureParentRefusesWhatIsNotADirectory(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureParent(file); err == nil || !strings.Contains(err.Error(), "not a directory") {
+	if err := ensureParent(file); err == nil || !strings.Contains(err.Error(), "not a folder") {
 		t.Errorf("a file as the parent: %v", err)
 	}
 	if err := ensureParent(filepath.Join(file, "sub")); err == nil || !strings.Contains(err.Error(), file) {
@@ -116,9 +116,9 @@ func TestWithBackupAdviseByHowFarTheUpgradeGot(t *testing.T) {
 		want     []string
 		not      []string
 	}{
-		{"after migrate started", migratingError{cause}, "", []string{"suiteward restore /backups/one.tar.age", "lost"}, []string{"Migrate did not run"}},
-		{"before migrate, co-located", cause, "", []string{"Migrate did not run", "suiteward install --upgrade"}, []string{"daemon-reload"}},
-		{"before migrate, isolated, service still running", cause, "/units", []string{"Migrate did not run", "Fix the cause and run `suiteward install --upgrade` again"}, []string{"daemon-reload"}},
+		{"after migrate started", migratingError{cause}, "", []string{"suiteward restore /backups/one.tar.age", "lost"}, []string{"did not run, so your data is unchanged"}},
+		{"before migrate, co-located", cause, "", []string{"did not run, so your data is unchanged", "suiteward install --upgrade"}, []string{"daemon-reload"}},
+		{"before migrate, isolated, service still running", cause, "/units", []string{"did not run, so your data is unchanged", "Fix the cause, then run `suiteward install --upgrade` again"}, []string{"daemon-reload"}},
 		{"before migrate, isolated, service stopped", stoppedError{cause}, "/units", []string{"suiteward.service is stopped", "daemon-reload", "/units", "/backups/one.units"}, nil},
 	}
 	for _, tc := range cases {

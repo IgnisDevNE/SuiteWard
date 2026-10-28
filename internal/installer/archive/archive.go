@@ -31,7 +31,7 @@ var (
 	// format does not allow, or a member that differs from its manifest. A caller also gets it for a member it must not add.
 	ErrInvalid = errors.New("invalid backup")
 	// ErrWrongKey is Open's answer when the identity is not the one this backup was encrypted to.
-	ErrWrongKey = errors.New("this identity does not open the backup: use the recovery kit of the instance that made it")
+	ErrWrongKey = errors.New("this recovery kit does not open the backup: use the kit of the instance that made it")
 )
 
 func invalid(format string, args ...any) error {

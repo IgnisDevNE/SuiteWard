@@ -17,7 +17,7 @@ import (
 const storedWord = "stored"
 
 // kitWarning is said whenever a kit is written: it is the only way to read a backup.
-const kitWarning = "The recovery kit %s holds the private key that opens every backup of this instance. Copy it off this machine now, for example into a password manager, and delete this copy. Without it no backup can be restored, and anyone who has it can read every backup."
+const kitWarning = "The recovery kit %s holds the private key that opens every backup of this instance. Copy it off this computer now, for example into a password manager, and delete this copy. Without it no backup can be restored, and anyone who has it can read every backup."
 
 // BackupInit is `suiteward backup init [--kit PATH] [--yes] [--replace] [flags]`: it makes the key pair of this instance, writes the
 // private half into a recovery kit that the owner keeps off the machine, and stores only the public half in the settings.
@@ -28,8 +28,8 @@ func BackupInit(ctx context.Context, args []string, env Env) (err error) {
 	set := newFlagSet("backup init")
 	instanceFlags(set)
 	set.String("kit", "", "where the recovery kit is written (default: suiteward-recovery-kit-<instance>.txt in the current directory); a file is never overwritten")
-	set.Bool("yes", false, "without a terminal: say that the kit is copied off this machine (a terminal asks you to type "+storedWord+")")
-	set.Bool("replace", false, "replace the recovery key that is set: the backups made with it still need its kit")
+	set.Bool("yes", false, "confirm that the kit is copied off this computer, when no one can type an answer (on a terminal you type "+storedWord+" instead)")
+	set.Bool("replace", false, "replace the recovery key that is set (backups made with it still need its kit)")
 	flags, err := parse(set, args, env.Term.Out)
 	if err != nil {
 		return err
@@ -91,7 +91,7 @@ type keyInit struct {
 func (k *keyInit) keys(ctx context.Context) error {
 	if old := k.inst.s.BackupRecipient; old != "" {
 		if !k.replace {
-			return fmt.Errorf("a recovery key is set already (%s): the backups made with it need its kit. To replace it with a new key, run `%s backup init --replace`", archive.Fingerprint(old), k.env.Deps.command())
+			return fmt.Errorf("this instance already has a recovery key (%s), and backups made with it need its kit. To replace it with a new key, run `%s backup init --replace`", archive.Fingerprint(old), k.env.Deps.command())
 		}
 		k.replaced = archive.Fingerprint(old)
 	}
@@ -118,13 +118,13 @@ func (k *keyInit) writeKit(ctx context.Context) error {
 	text := archive.RecoveryKit(k.identity, k.recipient, k.instance)
 	if err := writeRestrictedFile(ctx, k.env.Deps, k.kit, []byte(text)); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return fmt.Errorf("the recovery kit %s exists already and is never overwritten: name another file with --kit, or move that one away", k.kit)
+			return fmt.Errorf("the recovery kit file %s already exists and is never overwritten. Name another file with `--kit`, or move that one away", k.kit)
 		}
 		return err
 	}
 	if k.r.term.IsTerminal { // the typed word below is what the page explains; with --yes nobody is asked
 		k.r.screen.Page("Keep the recovery kit",
-			ui.Para("This is a confirmation: SuiteWard cannot see whether you copied the kit, so type "+storedWord+" only once it is off this machine."))
+			ui.Para("This is a confirmation: SuiteWard cannot see whether you copied the kit, so type "+storedWord+" only once it is off this computer."))
 	}
 	k.r.screen.Critical(kitWarning+"\n", k.kit) // the most important text of this command: a red box on a full screen, the Warn it was in plain mode
 	if err := k.confirmStored(); err != nil {
@@ -137,13 +137,13 @@ func (k *keyInit) writeKit(ctx context.Context) error {
 func (k *keyInit) confirmStored() error {
 	if !k.r.term.IsTerminal {
 		if !k.yes {
-			return fmt.Errorf("nothing can ask you to type %q here (the input is not a terminal): copy the kit off this machine and run the command again with --yes", storedWord)
+			return fmt.Errorf("nothing can ask you to type %q here, because the input is not a terminal. Copy the kit off this computer, then run the command again with `--yes`", storedWord)
 		}
 		return nil
 	}
-	prompt := fmt.Sprintf("Type %q once the kit is copied off this machine: ", storedWord)
+	prompt := fmt.Sprintf("Type %q once the kit is copied off this computer: ", storedWord)
 	if k.r.screen.FullScreen() { // the page above says that the word is a confirmation
-		prompt = fmt.Sprintf("Type %q to confirm that the kit is copied off this machine: ", storedWord)
+		prompt = fmt.Sprintf("Type %q to confirm that the kit is copied off this computer: ", storedWord)
 	}
 	line, err := k.r.ask(prompt)
 	switch {
@@ -153,7 +153,7 @@ func (k *keyInit) confirmStored() error {
 		return fmt.Errorf("read the confirmation: %w", err)
 	}
 	if line != storedWord {
-		return fmt.Errorf("you did not type %q, so the key was not stored and the kit was removed: %s", storedWord, k.inst.changed())
+		return fmt.Errorf("you did not type %q, so the key was not saved and the kit file was removed: %s", storedWord, k.inst.changed())
 	}
 	return nil
 }
@@ -175,12 +175,12 @@ func (k *keyInit) store() error {
 // kept says what the owner must not lose, in lines that outlast the screen.
 func (k *keyInit) kept() {
 	scr := k.r.screen
-	scr.Keep("The recovery kit is in %s. Keep it off this machine: it is the only way to restore a backup.\n", k.kit)
+	scr.Keep("The recovery kit is in %s. Keep it off this computer: without it no backup can be restored.\n", k.kit)
 	scr.Keep("Recovery key: %s\n", archive.Fingerprint(k.recipient))
 	if k.replaced != "" {
 		scr.Keep("The backups made with the key %s still need its kit: keep that one too.\n", k.replaced)
 	}
-	scr.Say("Backups are now encrypted to this key: `%s backup`, and `%s install --upgrade`.\n", k.env.Deps.command(), k.env.Deps.command())
+	scr.Say("From now on, `%s backup` and `%s install --upgrade` lock their backups with this key.\n", k.env.Deps.command(), k.env.Deps.command())
 }
 
 func (k *keyInit) summary() []ui.KV {

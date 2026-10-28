@@ -42,9 +42,9 @@ func TestTheRestorePageSaysThatTheTypedIdIsAConfirmationAndShowsWhatIsConfirmed(
 	mustSay(t, v,
 		"This is a confirmation",
 		"What was approved, proposed or promoted after the backup is lost",
-		"the default branch on GitHub may be ahead of the restored canonical",
+		"the default branch on GitHub may be ahead of the restored approved version",
 		"This instance runs",
-		"Safety backup the state that is replaced, encrypted to "+archive.Fingerprint(u.settings().BackupRecipient),
+		"Safety backup the current state, locked with the recovery key "+archive.Fingerprint(u.settings().BackupRecipient),
 		"Type the instance id "+testInstance+" to confirm",
 	)
 	if row := v.row("Instance"); !strings.Contains(row, testInstance) {
@@ -74,7 +74,7 @@ func TestTheRestorePageStillShowsTheInstanceAndTheReleaseAt80x24(t *testing.T) {
 	if row := v.row("Release"); !strings.Contains(row, "v0.2.0") {
 		t.Errorf("the page does not show the release of the backup (row %q):\n%s", row, v.dump())
 	}
-	mustSay(t, v, "This is a confirmation", "This instance runs", "ahead of the restored canonical", "Type the instance id "+testInstance+" to confirm")
+	mustSay(t, v, "This is a confirmation", "This instance runs", "ahead of the restored approved version", "Type the instance id "+testInstance+" to confirm")
 }
 
 // A fact is shown whole or not at all: "Safety backup" without the key it names is worse than none.
@@ -93,7 +93,7 @@ func TestTheRestorePageKeepsItsTitleItsWarningAndItsQuestionAt80x24(t *testing.T
 	if !strings.HasPrefix(v.rows[0], "Restore preview") {
 		t.Errorf("the page is titled %q, want \"Restore preview\"", v.rows[0])
 	}
-	mustSay(t, v, "ahead of the restored canonical", "Type the instance id "+testInstance+" to confirm")
+	mustSay(t, v, "ahead of the restored approved version", "Type the instance id "+testInstance+" to confirm")
 }
 
 // After the restore, what it leaves behind is said once, in a line that stays when the screen has gone: the canonical can be behind the
@@ -101,7 +101,7 @@ func TestTheRestorePageKeepsItsTitleItsWarningAndItsQuestionAt80x24(t *testing.T
 func TestTheClosingMessageOfARestoreSaysHowToBringTheCanonicalLevel(t *testing.T) {
 	run, _ := restoreOnScreen(t, termWidth, termHeight, config.TierCoLocated)
 	tail := run.console.tail()
-	for _, want := range []string{"may be behind the default branch on GitHub", "one corrective pull request", "approve the revision its check names", "details: docs/backup.md"} {
+	for _, want := range []string{"may be behind the default branch on GitHub", "one small corrective pull request", "approve the revision its check names", "Details: docs/backup.md"} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("the scrollback after the restore lacks %q:\n%s", want, tail)
 		}
@@ -119,15 +119,15 @@ func TestThePlainRestoreKeepsItsPromptAndSaysWhatToDoAboutTheCanonicalAtTheEnd(t
 		t.Fatal(err)
 	}
 	out := u.out.String()
-	prompt := "Type the instance id " + testInstance + " to replace the database and the artifacts of this instance with this backup: "
+	prompt := "Type the instance id " + testInstance + " to replace the database and the saved files of this instance with this backup: "
 	if !strings.Contains(out, prompt) {
 		t.Errorf("the plain prompt changed:\n%s", out)
 	}
-	warning := "Restoring replaces the database and the artifacts of this instance with the backup's. What was approved, proposed or promoted after the backup is lost, and the default branch on GitHub may be ahead of the restored canonical.\n"
+	warning := "Restoring replaces the database and the saved files (artifacts) of this instance with the backup's. What was approved, proposed or promoted after the backup is lost, and the default branch on GitHub may be ahead of the restored approved version.\n"
 	if !strings.Contains(out, warning) {
 		t.Errorf("the plain warning is not the short one:\n%s", out)
 	}
-	closing := "The restored canonical may be behind the default branch on GitHub: to bring it level, open one corrective pull request from the current default branch (any small change outside the protected files), approve the revision its check names, and merge it (details: docs/backup.md).\n"
+	closing := "The restored approved version (the canonical) may be behind the default branch on GitHub. To bring it level, open one small corrective pull request from the current default branch (any small change outside the protected files), approve the revision its check names, and merge it. Details: docs/backup.md.\n"
 	if at := strings.Index(out, closing); at < strings.Index(out, prompt) {
 		t.Errorf("the plain output lacks the closing line, or has it before the confirmation:\n%s", out)
 	}
@@ -152,7 +152,7 @@ func goBackLine(output string) string {
 // migrated: the previous release must run first, and on a co-located stack that means removing the stack and its volumes, on an isolated one
 // putting the replaced units back.
 func TestTheEndOfAnUpgradeSaysHowToGoBackOnItsTier(t *testing.T) {
-	const pointer = "the steps: docs/backup.md, Going back after an upgrade"
+	const pointer = "The steps are in docs/backup.md, under Going back after an upgrade"
 	t.Run("co-located", func(t *testing.T) {
 		u := newUpgradeHarness(t, nil)
 		if err := u.upgradeAt(false, "", "--yes"); err != nil {
@@ -163,7 +163,7 @@ func TestTheEndOfAnUpgradeSaysHowToGoBackOnItsTier(t *testing.T) {
 		// instance, an unscoped `volume rm` or `uninstall` would reach the default one.
 		for _, want := range []string{
 			"`suiteward uninstall --yes" + settings + "`", "`podman --connection pm volume rm " + VolumeData + " " + VolumeDBData + "`",
-			"`suiteward install --image " + oldImage + settings + "`", "`suiteward restore " + path + settings + "` with that kit", "migrations only go forward", pointer,
+			"`suiteward install --image " + oldImage + settings + "`", "`suiteward restore " + path + settings + "` with that kit", "database updates only go forward", pointer,
 		} {
 			if !strings.Contains(text, want) {
 				t.Errorf("the line that says how to go back lacks %q:\n%s", want, text)
@@ -181,7 +181,7 @@ func TestTheEndOfAnUpgradeSaysHowToGoBackOnItsTier(t *testing.T) {
 		text, archive := goBackLine(u.out.String()), oneArchive(t, u.backups)
 		for _, want := range []string{
 			unitsKeptBeside(archive), "`systemctl --user daemon-reload`", "`systemctl --user stop suiteward.service`",
-			"`suiteward restore " + quoteArg(archive) + " --tier isolated --settings " + quoteArg(settingsFile(u.home)) + "` with that kit", "migrations only go forward", pointer,
+			"`suiteward restore " + quoteArg(archive) + " --tier isolated --settings " + quoteArg(settingsFile(u.home)) + "` with that kit", "database updates only go forward", pointer,
 		} {
 			if !strings.Contains(text, want) {
 				t.Errorf("the line that says how to go back lacks %q:\n%s", want, text)
@@ -199,7 +199,7 @@ func TestAMessageThatPointedToASectionOfADocumentSaysWhatToDo(t *testing.T) {
 		err := withBackup("suiteward", migratingError{errors.New("migrate failed")}, "/b/backup.tar.age", "", "")
 		text := err.Error()
 		// The steps of the way back are those of the tier: the message points to them instead of saying them in one line.
-		for _, want := range []string{"install the previous release and run `suiteward restore /b/backup.tar.age`", "everything after the backup is lost", "the steps: docs/backup.md, Going back after an upgrade"} {
+		for _, want := range []string{"install the previous release and run `suiteward restore /b/backup.tar.age`", "Everything after the backup is lost", "The steps are in docs/backup.md, under Going back after an upgrade"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("the message lacks %q: %s", want, text)
 			}
@@ -220,7 +220,7 @@ func TestAMessageThatPointedToASectionOfADocumentSaysWhatToDo(t *testing.T) {
 	t.Run("a release other than the backup's", func(t *testing.T) {
 		x := &restoreRun{info: archive.Info{SuitewardVersion: "v0.1.0", ImageDigest: oldDigest}}
 		err := x.otherRelease("v0.2.0")
-		if err == nil || !strings.Contains(err.Error(), "Install the release of the backup first") || strings.Contains(err.Error(), "section 3") {
+		if err == nil || !strings.Contains(err.Error(), "Install the backup's release first") || strings.Contains(err.Error(), "section 3") {
 			t.Errorf("got %v", err)
 		}
 	})
@@ -228,7 +228,7 @@ func TestAMessageThatPointedToASectionOfADocumentSaysWhatToDo(t *testing.T) {
 		u := restoreHarness(t)
 		u.roleExists = false
 		err := u.restore(aBackup(t, nil), confirmed(t, t.TempDir())...)
-		if err == nil || !strings.Contains(err.Error(), "install the release of the backup first, which creates it") || strings.Contains(err.Error(), "section 3") {
+		if err == nil || !strings.Contains(err.Error(), "Install the release the backup was made with first (that creates the role)") || strings.Contains(err.Error(), "section 3") {
 			t.Errorf("got %v", err)
 		}
 	})
@@ -255,7 +255,7 @@ func TestTheRecoveryKitWarningIsACriticalBoxAndTheTypedWordIsAConfirmation(t *te
 	if !strings.HasPrefix(v.rows[0], "Keep the recovery kit") {
 		t.Errorf("the page is titled %q, want \"Keep the recovery kit\"", v.rows[0])
 	}
-	mustSay(t, v, "This is a confirmation", "holds the private key that opens every backup", "Without it no backup can be restored", `Type "stored" to confirm that the kit is copied off this machine`)
+	mustSay(t, v, "This is a confirmation", "holds the private key that opens every backup", "Without it no backup can be restored", `Type "stored" to confirm that the kit is copied off this computer`)
 	if v.row("╭") == "" || v.row("╰") == "" || !strings.HasPrefix(strings.TrimSpace(v.row("holds the private key")), "│") {
 		t.Errorf("the kit warning is not in a box:\n%s", v.dump())
 	}
@@ -272,7 +272,7 @@ func TestThePlainRecoveryKitWarningAndPromptAreWhatTheyWere(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := u.out.String()
-	for _, want := range []string{fmt.Sprintf(kitWarning+"\n", kit), `Type "stored" once the kit is copied off this machine: `} {
+	for _, want := range []string{fmt.Sprintf(kitWarning+"\n", kit), `Type "stored" once the kit is copied off this computer: `} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the plain output lacks %q:\n%s", want, out)
 		}

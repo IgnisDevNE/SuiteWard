@@ -210,8 +210,8 @@ func TestBackupInitWithoutATerminalNeedsYesAndStillWarns(t *testing.T) {
 	if err := u.backupInit("--kit", filepath.Join(t.TempDir(), "kit.txt"), "--yes"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(u.out.String(), "off this machine") {
-		t.Errorf("--yes does not hide the warning about keeping the kit off the machine:\n%s", u.out.String())
+	if !strings.Contains(u.out.String(), "off this computer") {
+		t.Errorf("--yes does not hide the warning about keeping the kit off the computer:\n%s", u.out.String())
 	}
 }
 

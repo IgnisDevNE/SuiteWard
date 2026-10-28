@@ -630,9 +630,9 @@ func (c colocatedInstall) reportStarted() {
 	if len(started) == 0 {
 		return
 	}
-	github := "not configured"
+	github := "not set up"
 	if c.s.GitHub.AppID != 0 {
-		github = "configured"
+		github = "set up"
 	}
 	scr.Check("Started %s (%s). GitHub is %s.\n", strings.Join(started, " and "), c.image, github)
 }

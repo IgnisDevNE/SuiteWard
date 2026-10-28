@@ -590,7 +590,7 @@ func chooseTier(r *Resolver, def config.Tier) (string, error) {
 		r.screen.Steps(steps...)
 		r.screen.Page("Where SuiteWard runs",
 			ui.Fields(
-				ui.KV{Key: string(config.TierCoLocated), Value: "On this computer, next to your coding agent: the simplest way to start. " + reducedAssuranceNotice},
+				ui.KV{Key: string(config.TierCoLocated), Value: "The simplest way to start. " + reducedAssuranceNotice},
 				ui.KV{Key: string(config.TierIsolated), Value: "On a separate Linux server or user account that your coding agent cannot reach: the strongest protection. It needs an EL9 server, such as AlmaLinux."}),
 			ui.Para("To start, choose co-located."))
 	}

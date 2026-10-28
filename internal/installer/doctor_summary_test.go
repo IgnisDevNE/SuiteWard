@@ -239,8 +239,8 @@ func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 		}
 	}
 	var rows summaryRows
-	for _, kv := range [][2]string{{"Tier", "co-located"}, {"Runtime", "Podman (rootless)"}, {"Instance", "1a2b3c4d"}, {"Release", "v0.4.0-alpha.2"}, {"GitHub App", "1234 on Acme"},
-		{"Repositories", "Acme/api, Acme/web"}, {"Owner", "alice (enrolled now)"}, {"Status", "http://127.0.0.1:47081/status"}, {"Settings", path}} {
+	for _, kv := range [][2]string{{"Installation type", "co-located"}, {"Container program", "Podman (runs without administrator rights)"}, {"Instance ID", "1a2b3c4d"}, {"Version", "v0.4.0-alpha.2"}, {"GitHub App", "1234, installed on Acme"},
+		{"Repositories", "Acme/api, Acme/web"}, {"Owner", "alice (enrolled now)"}, {"Status", "http://127.0.0.1:47081/status"}, {"Settings file", path}} {
 		rows.add(kv[0], kv[1])
 	}
 	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}}
@@ -259,7 +259,7 @@ func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 	}
 	out := c.out.String()
 	page := pageText(t, out[:strings.LastIndex(out, leaveAlt)], 80, 24)
-	for _, want := range []string{"Status http://127.0.0.1:47081/status", "Doctor ", "failures", "Check again", "FAIL protection.Acme/api"} {
+	for _, want := range []string{"Installation type co-located", "Instance ID 1a2b3c4d", "Status http://127.0.0.1:47081/status", "Doctor ", "failures", "Check again", "FAIL protection.Acme/api"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the summary page lacks %q at 80x24:\n%s", want, page)
 		}

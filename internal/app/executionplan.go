@@ -86,23 +86,37 @@ func (w wantedJob) holds(job execution.Job) bool {
 type executionRun struct {
 	policy executionPolicy
 	known  bool // the policy was read: a run that could not read it plans nothing and cancels nothing as unwanted
-	failed bool // the policy could not be read: no new success is decided while it cannot say whether the canonical run gates the check, and the wait rule applies
+	failed bool // the policy could not be read, or the manifest that the jobs run against could not be kept: no new success is decided while the run cannot say whether the canonical run gates the check, and the wait rule applies
 }
 
-// executionRunOf reads the policy of the project, once for the run. Before the first canonical, and for a canonical that failed its integrity
-// verification, nothing is planned. A policy that cannot be read is the error, and the run decides nothing.
+// executionRunOf reads the policy of the project, once for the run, and keeps the manifest that its jobs run against. Before the first canonical, and for a
+// canonical that failed its integrity verification, nothing is planned. A policy that cannot be read, or a manifest that cannot be kept, is the error, and the
+// run decides nothing.
 func (j *checksJob) executionRunOf(ctx context.Context, suite suiteView) (*executionRun, error) {
 	x := &executionRun{}
 	if suite.canonical == "" || suite.integrityFailed {
 		return x, nil
 	}
 	policy, err := j.policy(ctx, suite)
+	if err == nil && policy.wants() {
+		err = j.keepCanonicalManifest(ctx, suite)
+	}
 	if err != nil {
 		x.failed = true
 		return x, err
 	}
 	x.policy, x.known = policy, true
 	return x, nil
+}
+
+// keepCanonicalManifest puts the manifest of the canonical in the content store, where the lease and the download of a job read it
+// (docs/contracts/runtime.md, "What the checks job does for execution"). A canonical job that the head's revision does not govern runs against it, and so does a
+// receipt job, whose revision expects the current canonical (a revision that expects another one is not planned). A bootstrap or an upgrade promoted that version
+// without recording a revision, so the store holds nothing of it but what this puts there; it does on every run, so that a job that exists already, one of an
+// earlier version or one whose object was lost, is healed by the next one. It is the manifest of the Suite view, never one read back from the store. The
+// manifest of a revision that governs a canonical job is not in the database, only its digest: the revision's own writer stores it (assess).
+func (j *checksJob) keepCanonicalManifest(ctx context.Context, suite suiteView) error {
+	return storeManifest(ctx, j.content, suite.base)
 }
 
 // sweep applies the expiry of leases, the no-executor wait and the GitHub bound to every open job (docs/contracts/runtime.md, "Job lifecycle").

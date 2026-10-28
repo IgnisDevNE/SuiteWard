@@ -261,10 +261,10 @@ func (s Set) Next() (Next, error) {
 // lost says that a run is unavailable and the owner has not unblocked it.
 func lost(j Job) bool { return j.State == JobUnavailable && !j.Unblocked }
 
-// approveBlocked says that every approve would be refused for its mode (mode-not-met) and would use its code: the receipt is required, complete and not empty, and
-// none of fix, feature and refactor is met.
+// approveBlocked says that the receipt is complete and the approve gate refuses every mode: none of fix, feature and refactor is met, so every approve would be refused
+// (mode-not-met) and would use its code. The gate decides the rest: only a required, non-empty receipt refuses a mode.
 func (s Set) approveBlocked() (bool, error) {
-	if !s.wantsReceipt() || s.ReceiptLevel != ReceiptLevelRequired || s.ReceiptJob.State != JobComplete || s.ReceiptCounts.Empty() {
+	if !s.wantsReceipt() || s.ReceiptJob.State != JobComplete {
 		return false, nil
 	}
 	for _, mode := range []Mode{ModeFix, ModeFeature, ModeRefactor} {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -299,12 +300,16 @@ func TestAFirstInstallOnWindowsSetsUpNoExecutorWhenTheProcessesCannotBeListed(t 
 			if err := Install(context.Background(), args, env); err != nil {
 				t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
 			}
-			// The cause (what the listing reports) comes first, once; then why the install stopped and who can help.
+			// The cause (what the listing reports) comes first, once; then why the install stopped and who can help. The listing may already say that a
+			// policy stopped PowerShell, and the note does not say that a second time.
 			const cause = "could not list the programs that run on this computer: "
-			const then = ". PowerShell may be restricted here. Without that list, SuiteWard could never stop or update the test runner, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server"
+			const then = ". Without that list, SuiteWard could never stop or update the test runner, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server"
 			out := h.out.String()
 			if strings.Count(out, cause) != 1 || !strings.Contains(out, then) || strings.Contains(out, "programs running on this computer") || strings.Contains(out, "Detail:") {
 				t.Errorf("the output must say once that the programs could not be listed, then %q:\n%s", then, out)
+			}
+			if n := len(restrictedPowerShell.FindAllString(out, -1)); n > 1 {
+				t.Errorf("the output says %d times that PowerShell may be blocked:\n%s", n, out)
 			}
 			// Running the install again leads nowhere on a computer whose organization restricts PowerShell, so the generic advice is left out.
 			if strings.Contains(out, "Fix the cause") {
@@ -568,3 +573,7 @@ func TestAnInstallAgainStartsTheTaskWhenOnlyAnotherInstancesExecutorRunsOnWindow
 		t.Errorf("another instance's processes were ended: %v", left)
 	}
 }
+
+// restrictedPowerShell is a sentence that says that PowerShell may be blocked on this computer: the listing's own (a policy may have stopped it)
+// and the note's earlier one (it may be restricted here).
+var restrictedPowerShell = regexp.MustCompile(`a policy may have stopped PowerShell|PowerShell may be restricted here`)

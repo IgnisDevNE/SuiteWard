@@ -241,3 +241,18 @@ func TestNoHintWritesACommandOfThisProgramWithoutTheFlagsOfTheInstance(t *testin
 		})
 	}
 }
+
+// The same refusal from the install: the removal of the other instance names none of this instance's flags, and says that its own go there, because
+// a bare `uninstall` removes the default instance, which may be the one the install is for. The install of this one keeps its flags.
+func TestAnInstallThatFindsTheExecutorOfAnotherInstanceSuggestsNoFlagsForItsRemoval(t *testing.T) {
+	h := newHarness(t, "linux")
+	writeAnotherInstancesUnit(t, h)
+	if err := h.podman(); err != nil {
+		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
+	}
+	want := "remove the other instance with `suiteward uninstall` (pass that instance's `--settings` and `--token-file`; the default instance needs neither), then run `" +
+		(Deps{instance: h.named()}).suggest("install") + "` again"
+	if out := h.out.String(); !strings.Contains(out, want) {
+		t.Errorf("the output lacks %q:\n%s", want, out)
+	}
+}

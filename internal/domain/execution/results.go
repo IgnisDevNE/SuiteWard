@@ -162,7 +162,7 @@ func (s Set) NotResponding(silent bool) (Waiting, bool) {
 // Lead says what the first sentence of a results comment is about.
 type Lead uint8
 
-// The leads, the first that matches. The zero Lead is no set: nothing is wanted.
+// The leads, the first that matches. The zero Lead is no set: nothing is wanted, or the set is not final.
 const (
 	LeadNotRun    Lead = iota + 1 // every wanted run is unavailable
 	LeadPartial                   // one wanted run is complete and another is unavailable
@@ -170,13 +170,14 @@ const (
 	LeadClean                     // nothing needs attention
 )
 
-// Lead is the lead of the set.
+// Lead is the lead of the set. A set that is not final has none (the zero Lead), so that a waiting head never reads as one that needs no attention.
 func (s Set) Lead() Lead {
+	if !s.Final() {
+		return 0
+	}
 	jobs := s.wantedJobs()
 	unavailable := countJobs(jobs, JobUnavailable)
 	switch {
-	case len(jobs) == 0:
-		return 0
 	case unavailable == len(jobs):
 		return LeadNotRun
 	case unavailable > 0 && countJobs(jobs, JobComplete) > 0:

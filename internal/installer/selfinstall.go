@@ -26,9 +26,9 @@ const selfName = "suiteward"
 type instanceArgs struct{ tier, settings, tokenFile string }
 
 // instance reads them from the run: --settings only of the command line (settingsPathFrom reads it nowhere else), and --token-file and
-// --tier of the command line or the answers file, as the commands resolve them.
+// --tier of the command line or the answers file, as the commands resolve them; each, after those, from the installation that was chosen.
 func (r *Resolver) instance() instanceArgs {
-	return instanceArgs{tier: r.preset("tier", ""), settings: r.flags["settings"], tokenFile: r.preset("token-file", "")}
+	return instanceArgs{tier: r.preset("tier", ""), settings: r.settingsFlag(), tokenFile: r.preset("token-file", "")}
 }
 
 // flags are the ones that subcommand defines, as a person pastes them: a command takes a flag only if it defines it (enroll has no --token-file,

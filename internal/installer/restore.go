@@ -78,6 +78,9 @@ func Restore(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	if err := r.chooseInstallation(env.Deps); err != nil {
+		return err
+	}
 	env.Deps.instance = r.instance()
 	inst, err := locateInstance(ctx, r, env)
 	if err != nil {

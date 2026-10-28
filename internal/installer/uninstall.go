@@ -56,6 +56,9 @@ func Uninstall(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	if err := r.chooseInstallation(env.Deps); err != nil {
+		return err
+	}
 	env.Deps.instance = r.instance()
 	settingsPath, defaultPath, err := settingsPathFrom(r)
 	if err != nil {

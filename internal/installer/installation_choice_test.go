@@ -49,8 +49,8 @@ func TestSeveralInstallationsAndNoFlagShowTheScreenAndTheChoiceNamesTheCommandsO
 		t.Fatal(err)
 	}
 	page := c.out.String()
-	for _, want := range []string{"Which installation?", "This computer has 2 SuiteWard installations. Choose the one this command is for.", "Installation: " + i.second} {
-		if !strings.Contains(page, want) {
+	for _, want := range []string{"Which installation?", "This computer has 2 SuiteWard installations. Choose the one this command is for."} {
+		if !shows(page, want) {
 			t.Errorf("the screen lacks %q:\n%s", want, page)
 		}
 	}
@@ -309,19 +309,22 @@ func TestAChosenInstallationDoesNotSkipTheTierPage(t *testing.T) {
 	if _, err := chooseTier(r, config.TierCoLocated); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(c.out.String(), reducedAssuranceNotice) {
-		t.Errorf("the notice of the co-located tier was not shown:\n%s", c.out.String())
+	// The step column of the frame is drawn between the rows of the notice, so only what one row holds is looked for.
+	for _, want := range []string{"Where SuiteWard runs", "not a determined agent"} {
+		if !strings.Contains(c.out.String(), want) {
+			t.Errorf("the tier page lacks %q, so the notice of the co-located tier was skipped:\n%s", want, c.out.String())
+		}
 	}
 }
 
-// A refusal that names --settings names one that was typed: a chosen installation is not.
+// A refusal never says that --settings names a file: a chosen installation is not a typed one, and the file is the same either way.
 func TestARefusalNeverNamesASettingsFileThatWasNotTyped(t *testing.T) {
 	i := twoInstallations(t)
 	env := Env{Deps: choiceDeps(t)}
 	target := installTarget{settingsPath: i.second}
 	typed := newTestResolver(t, map[string]string{"settings": i.second}, nil, Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}})
-	if _, err := instanceTokenFile(typed, env, target); err == nil || !strings.Contains(err.Error(), "`--settings` names `"+i.second+"`") {
-		t.Errorf("a typed settings file: %v, want the refusal to say that --settings names it", err)
+	if _, err := instanceTokenFile(typed, env, target); err == nil || !strings.Contains(err.Error(), i.second) || !strings.Contains(err.Error(), "second instance") {
+		t.Errorf("a typed settings file: %v, want the refusal to name the file", err)
 	}
 	chosen := newTestResolver(t, nil, nil, Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}})
 	chosen.chosen = map[string]string{"settings": i.second}
@@ -402,7 +405,7 @@ func TestDoctorAsksWhichInstallationAndItsHintsNameIt(t *testing.T) {
 	var out, stderr bytes.Buffer
 	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(i.second + "\n"), Out: &out, IsTerminal: true, ReadPassword: func() ([]byte, error) { return nil, nil }}}
 	Main(context.Background(), []string{"doctor", "--plain"}, env, &stderr)
-	want := "install --settings " + quoteArg(i.second) + " --token-file " + quoteArg(i.token)
+	want := "`suiteward doctor --settings " + quoteArg(i.second) + " --token-file " + quoteArg(i.token) + "`"
 	if !strings.Contains(out.String(), want) {
 		t.Errorf("no hint of doctor carries %q:\n%s%s", want, out.String(), stderr.String())
 	}

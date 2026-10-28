@@ -34,7 +34,7 @@ func (r *Resolver) chooseInstallation(d Deps) error {
 	}
 	found, stale, err := installationCandidates(d.GOOS)
 	if err != nil {
-		return fmt.Errorf("%w. To go on, say which installation with `--settings <file>` and `--token-file <file>`, or delete that list: an install writes it again", err)
+		return fmt.Errorf("%w. To go on, say which installation with `--settings <file>` and `--token-file <file>`, or fix or delete that list. Each installation adds its own entry again the next time it is installed or upgraded", err)
 	}
 	switch {
 	case len(found) == 0:
@@ -64,8 +64,9 @@ func severalInstallations(settingsFiles []string) string {
 	return "This computer has several SuiteWard installations (" + strings.Join(settingsFiles, ", ") + "). Say which one with `--settings <file>` and `--token-file <file>`."
 }
 
-// pickInstallation asks which of the installations: a page and a list on a full screen, the list as lines and a typed settings file on a plain
-// one.
+// pickInstallation asks which of the installations. No row is preselected and an empty answer picks nothing: Enter must never pick the main
+// installation for a person who did not look. A full screen shows each installation in full above the choice, because a row of the choice cuts a long
+// path and its description with it; a plain screen lists them as lines and asks for the typed settings file.
 func (r *Resolver) pickInstallation(d Deps, found []candidate, stale int) (candidate, error) {
 	intro := fmt.Sprintf("This computer has %d SuiteWard installations. Choose the one this command is for.", len(found))
 	skipped := ""
@@ -74,40 +75,45 @@ func (r *Resolver) pickInstallation(d Deps, found []candidate, stale int) (candi
 	} else if stale > 1 {
 		skipped = fmt.Sprintf("%d listed installations were skipped: their settings files are gone.", stale)
 	}
-	blocks := []ui.Block{ui.Para(intro)}
-	if skipped != "" {
-		blocks = append(blocks, ui.Para(skipped))
-	}
-	choices := make([]ui.Choice, len(found))
-	for i, c := range found {
-		choices[i] = ui.Choice{Name: c.Settings, Desc: c.describe()}
-	}
-	// The question has no key: a flag or an answers-file key of its name must not answer it, so it never goes through Value or Select of the
-	// resolver. The first row is the default installation when there is one.
+	// The question has no key: a flag or an answers-file key of its name must not answer it, so it never goes through Value or Select of the resolver.
 	var name string
 	if r.screen.FullScreen() {
+		blocks := []ui.Block{ui.Para(intro)}
+		if skipped != "" {
+			blocks = append(blocks, ui.Para(skipped))
+		}
+		choices := make([]ui.Choice, len(found))
+		for i, c := range found {
+			blocks = append(blocks, ui.Fields(ui.KV{Key: "Settings file", Value: c.Settings}, ui.KV{Key: "Details", Value: c.describe()}))
+			choices[i] = ui.Choice{Name: c.Settings, Desc: c.describe()}
+		}
 		r.screen.Page("Which installation?", blocks...)
-		picked, err := r.screen.Select("Installation", choices, 0)
+		picked, err := r.screen.Select("Installation", choices, -1)
 		if err != nil {
 			return candidate{}, err
 		}
 		name = choices[picked].Name
 	} else {
 		r.say("This computer has %d SuiteWard installations:\n", len(found))
-		for _, c := range choices {
-			r.say("  %s\n    %s\n", c.Name, c.Desc)
+		for _, c := range found {
+			r.say("  %s\n    %s\n", c.Settings, c.describe())
 		}
 		if skipped != "" {
 			r.say("(%s)\n", skipped)
 		}
-		var err error
-		if name, err = r.screen.Ask("Installation (type the settings file of one of them)", found[0].Settings); err != nil {
-			return candidate{}, err
+		for name == "" {
+			var err error
+			if name, err = r.screen.Ask("Installation (type the settings file of one of them)", ""); err != nil {
+				return candidate{}, err
+			}
+			if name == "" {
+				r.say("Type the settings file of one of the installations listed above.\n")
+			}
 		}
 	}
 	i := slices.IndexFunc(found, func(c candidate) bool { return samePath(d.GOOS, c.Settings, name) })
 	if i < 0 {
-		return candidate{}, fmt.Errorf("%q is not the settings file of one of the installations listed above", name)
+		return candidate{}, fmt.Errorf("%q is not the settings file of one of the installations listed above. Nothing was changed. Run the command again and type one of the settings files listed", name)
 	}
 	return found[i], nil
 }

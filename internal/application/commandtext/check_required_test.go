@@ -8,13 +8,17 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 )
 
-// The summary of the Contract check under canonical: required (docs/contracts/runtime.md, "The canonical gate"): counts only, the tier, "Excluded tests are not
-// covered." when some are, and the owner's unblock. A canonical-* reason, the counts or the unblock tell it from the usual summary.
+// The summary of the Contract check under canonical: required (docs/contracts/runtime.md, "The canonical gate"): counts only, in the words of the results comment, the tier, and
+// the sentence that excluded tests are not covered when some are, and the owner's unblock. A canonical-* reason, the counts or the unblock tell it from the usual summary.
 
 const (
 	requiredClosing = "This check reports on the protected contract and on the run of its approved tests."
 	usualClosing    = "This check reports on the protected contract only."
-	unblockedText   = "The owner unblocked this head: its canonical run was unavailable, so the approved tests did not run on it."
+	unblockedText   = "The owner unblocked this commit. The approved tests could not run on it, so this check passes without them."
+
+	// The counts of a complete canonical run, in the words of the results comment (the check says what the comment says).
+	passedCounts = "Approved tests: 12 tests ran. 9 passed. 0 failed. 0 gave no result. 0 gave different results when they ran again. 3 were skipped. 3 approved tests cannot be run by SuiteWard and are not covered."
+	ranCounts    = "Approved tests: 14 tests ran. 9 passed. 1 failed. 1 gave no result. 1 gave different results when they ran again. 2 were skipped. 3 approved tests cannot be run by SuiteWard and are not covered."
 )
 
 // requiredReasons are the reasons of the canonical gate, each with its state, its title and a phrase only its text holds.
@@ -25,10 +29,10 @@ var requiredReasons = []struct {
 	phrase string
 	name   string
 }{
-	{commandtext.CheckInProgress, "canonical-pending", "Canonical run pending", "has not finished", "in_progress"},
-	{commandtext.CheckInProgress, "canonical-unavailable", "Canonical run unavailable", "could not run the approved tests", "in_progress"},
+	{commandtext.CheckInProgress, "canonical-pending", "Approved tests pending", "have not finished on this commit", "in_progress"},
+	{commandtext.CheckInProgress, "canonical-unavailable", "Approved tests could not run", "could not run the approved tests", "in_progress"},
 	{commandtext.CheckInProgress, "canonical-not-responding", "Test runner not responding", "has not answered for about half a minute", "in_progress"},
-	{commandtext.CheckFailure, "canonical-failing", "Canonical tests failing", "fails, is missing or is flaky", "failure"},
+	{commandtext.CheckFailure, "canonical-failing", "Approved tests failing", "fails, is missing or is flaky", "failure"},
 }
 
 // passed is the counts of a complete canonical run that no test blocks: 12 tests ran, and 3 are excluded.
@@ -60,7 +64,7 @@ func TestRequiredCheckSummaryStatesTheCanonicalRunItIsWaitingForOrCouldNotMake(t
 		if title != tc.title {
 			t.Errorf("%s: title %q, want %q", tc.reason, title, tc.title)
 		}
-		for _, w := range []string{tc.phrase, "- State: `" + tc.name + "`", "- Proposal revision: P3-R2", "- Canonical version: V4", "- Installation tier: `isolated`", requiredClosing} {
+		for _, w := range []string{tc.phrase, "- State: `" + tc.name + "`", "- Proposal revision: P3-R2", "- Approved version: V4", "- Installation tier: `isolated`", requiredClosing} {
 			if !strings.Contains(summary, w) {
 				t.Errorf("%s: summary lacks %q:\n%s", tc.reason, w, summary)
 			}
@@ -92,14 +96,14 @@ func TestRequiredCheckSummaryStatesTheCountsOfACompleteRun(t *testing.T) {
 		counts *commandtext.CheckExecution
 		ran    string
 	}{
-		{"failing", "canonical-failing", commandtext.CheckFailure, ran(), "14 tests ran: 9 passed, 2 skipped, 1 failed, 1 missing, 1 flaky."},
-		{"ready", "ready", commandtext.CheckSuccess, passed(), "12 tests ran: 9 passed, 3 skipped, 0 failed, 0 missing, 0 flaky."},
-		{"unchanged", "unchanged", commandtext.CheckSuccess, passed(), "12 tests ran: 9 passed, 3 skipped, 0 failed, 0 missing, 0 flaky."},
+		{"failing", "canonical-failing", commandtext.CheckFailure, ran(), ranCounts},
+		{"ready", "ready", commandtext.CheckSuccess, passed(), passedCounts},
+		{"unchanged", "unchanged", commandtext.CheckSuccess, passed(), passedCounts},
 	} {
 		c := check(tc.state, tc.reason)
 		c.Execution = tc.counts
 		title, summary := checkText(t, c)
-		for _, w := range []string{tc.ran, "Excluded tests (not run): 3. Excluded tests are not covered.", requiredClosing} {
+		for _, w := range []string{tc.ran, requiredClosing} {
 			if !strings.Contains(summary, w) {
 				t.Errorf("%s: summary lacks %q:\n%s", tc.name, w, summary)
 			}
@@ -114,22 +118,22 @@ func TestRequiredCheckSummaryOfARunWithNothingExcludedDoesNotSayThatExcludedTest
 	c := check(commandtext.CheckSuccess, "ready")
 	c.Execution = &commandtext.CheckExecution{Tests: 3, Passed: 3}
 	_, summary := checkText(t, c)
-	if !strings.Contains(summary, "3 tests ran: 3 passed, 0 skipped, 0 failed, 0 missing, 0 flaky.") || !strings.Contains(summary, "Excluded tests (not run): 0.") ||
-		strings.Contains(summary, "not covered") {
+	const want = "Approved tests: 3 tests ran. 3 passed. 0 failed. 0 gave no result. 0 gave different results when they ran again. 0 were skipped."
+	if !strings.Contains(summary, want+"\n\n") || strings.Contains(summary, "not covered") || strings.Contains(summary, "cannot be run") {
 		t.Errorf("summary:\n%s", summary)
 	}
 }
 
-// A canonical run with no declared test is complete: the summary says "0 tests ran".
-func TestRequiredCheckSummaryOfACanonicalRunWithNoDeclaredTestSaysZeroTestsRan(t *testing.T) {
+// A canonical run with no declared test is complete: the summary says that none are declared, so none ran.
+func TestRequiredCheckSummaryOfACanonicalRunWithNoDeclaredTestSaysThatNoneAreDeclared(t *testing.T) {
 	c := check(commandtext.CheckSuccess, "unchanged")
 	c.Execution = &commandtext.CheckExecution{}
 	_, summary := checkText(t, c)
-	if !strings.Contains(summary, "0 tests ran.") || strings.Contains(summary, "passed") {
+	if !strings.Contains(summary, "Approved tests: none are declared, so none ran.\n\n") || strings.Contains(summary, "passed") {
 		t.Errorf("summary:\n%s", summary)
 	}
 	c.Execution = &commandtext.CheckExecution{Tests: 1, Passed: 1}
-	if _, summary := checkText(t, c); !strings.Contains(summary, "1 test ran: 1 passed") {
+	if _, summary := checkText(t, c); !strings.Contains(summary, "Approved tests: 1 test ran. 1 passed.") {
 		t.Errorf("one test is not 1 test ran:\n%s", summary)
 	}
 }
@@ -223,7 +227,7 @@ func TestRequiredCheckSummaryOfARunnerThatDoesNotRespondAsksToCheckTheRunnerAndO
 			t.Errorf("the summary lacks %q:\n%s", w, summary)
 		}
 	}
-	if strings.Contains(summary, "tests ran") || strings.Contains(summary, "Excluded tests") {
+	if strings.Contains(summary, "tests ran") || strings.Contains(summary, "Approved tests:") {
 		t.Errorf("the summary of a run that has not started states counts:\n%s", summary)
 	}
 }

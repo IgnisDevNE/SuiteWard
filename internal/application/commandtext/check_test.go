@@ -17,17 +17,17 @@ var checkReasons = []struct {
 	next   string // a phrase of the next action
 	name   string // the state as the summary names it
 }{
-	{commandtext.CheckSuccess, "unchanged", "match the canonical contract", "nothing is required", "success"},
-	{commandtext.CheckSuccess, "ready", "ready for integration", "integrate this pull request", "success"},
-	{commandtext.CheckInProgress, "approval-missing", "no current approval", "To approve this exact revision, comment:", "in_progress"},
-	{commandtext.CheckInProgress, "not-current", "is not current", "update the branch", "in_progress"},
-	{commandtext.CheckInProgress, "assessment-pending", "has not finished assessing", "nothing is required", "in_progress"},
-	{commandtext.CheckInProgress, "source-unavailable", "truncated the file tree", "reducing the number of files", "in_progress"},
-	{commandtext.CheckInProgress, "runner-uncovered", "runner files that the protected scope does not cover", "protect the files", "in_progress"},
-	{commandtext.CheckInProgress, "fork-unsupported", "from forks are not supported yet", "from a branch of this repository", "in_progress"},
-	{commandtext.CheckFailure, "invalid-source", "is invalid", "and push", "failure"},
-	{commandtext.CheckFailure, "integrity-failed", "stored canonical contract failed its integrity verification", "restore the artifact store from a backup", "failure"},
-	{commandtext.CheckFailure, "owner-command-rejected", "latest command on this pull request was rejected", "with a new code", "failure"},
+	{commandtext.CheckSuccess, "unchanged", "They match the approved contract", "nothing to do", "success"},
+	{commandtext.CheckSuccess, "ready", "ready to merge", "merge this pull request", "success"},
+	{commandtext.CheckInProgress, "approval-missing", "has not approved this exact revision of the change yet", "To approve this exact revision, comment:", "in_progress"},
+	{commandtext.CheckInProgress, "not-current", "is out of date", "update the branch", "in_progress"},
+	{commandtext.CheckInProgress, "assessment-pending", "has not finished checking this commit", "nothing to do", "in_progress"},
+	{commandtext.CheckInProgress, "source-unavailable", "cut short the list of files", "reduce the number of files", "in_progress"},
+	{commandtext.CheckInProgress, "runner-uncovered", "runner files, which control how tests run", "protect the files", "in_progress"},
+	{commandtext.CheckInProgress, "fork-unsupported", "does not support pull requests from forks yet", "from a branch of this repository", "in_progress"},
+	{commandtext.CheckFailure, "invalid-source", "may be invalid", "and push", "failure"},
+	{commandtext.CheckFailure, "integrity-failed", "stored copy of the approved contract failed its integrity check", "restore SuiteWard's stored files from a backup", "failure"},
+	{commandtext.CheckFailure, "owner-command-rejected", "rejected the owner's latest command on this pull request", "with a new code", "failure"},
 }
 
 func check(state commandtext.CheckState, reason string) commandtext.Check {
@@ -206,7 +206,7 @@ func TestCheckSummaryOfAMissingApprovalBeforeTheFirstContractNamesTheProposedFir
 	c := check(commandtext.CheckInProgress, "approval-missing")
 	c.Version = 0
 	_, summary := checkText(t, c)
-	for _, w := range []string{"carries the proposed first contract P3-R2", "awaiting the owner's approval of that exact revision", "```\n/suiteward approve P3-R2 <code>\n```", "- Proposal revision: P3-R2"} {
+	for _, w := range []string{"proposes the first contract (P3-R2)", "It waits for the owner to approve this exact revision", "```\n/suiteward approve P3-R2 <code>\n```", "- Proposal revision: P3-R2"} {
 		if !strings.Contains(summary, w) {
 			t.Errorf("summary lacks %q:\n%s", w, summary)
 		}
@@ -218,7 +218,7 @@ func TestCheckSummaryOfAMissingApprovalBeforeTheFirstContractNamesTheProposedFir
 
 func TestCheckSummaryOfAMissingApprovalAgainstACanonicalIsUnchanged(t *testing.T) {
 	_, summary := checkText(t, check(commandtext.CheckInProgress, "approval-missing"))
-	if !strings.Contains(summary, "This head changes the protected contract and has no current approval from the owner for its exact revision.") || strings.Contains(summary, "first contract") {
+	if !strings.Contains(summary, "This commit changes the protected contract, and the owner has not approved this exact revision of the change yet.") || strings.Contains(summary, "first contract") {
 		t.Errorf("the text against a canonical changed:\n%s", summary)
 	}
 }
@@ -233,15 +233,15 @@ func TestCheckSummaryOfABootstrapThatIsReadyStatesWhatWillHappen(t *testing.T) {
 		t.Errorf("title %q", title)
 	}
 	for _, w := range []string{
-		"- State: `success`", "- Proposal revision: P3-R2", "approved the exact revision", "assessed the integrity of this head",
-		"No canonical contract exists yet", "first canonical version", "from the exact merge commit after", "- Installation tier: `isolated`",
+		"- State: `success`", "- Proposal revision: P3-R2", "approved the first contract that this pull request proposes", "SuiteWard checked this commit",
+		"No approved contract exists yet", "makes the first approved version from the merge commit", "- Installation tier: `isolated`",
 		"This check reports on the protected contract only.",
 	} {
 		if !strings.Contains(summary, w) {
 			t.Errorf("summary lacks %q:\n%s", w, summary)
 		}
 	}
-	if strings.Contains(summary, "Canonical version:") || strings.Contains(summary, "/suiteward") || strings.Contains(summary, "reduced") {
+	if strings.Contains(summary, "Approved version:") || strings.Contains(summary, "/suiteward") || strings.Contains(summary, "reduced") {
 		t.Errorf("summary names a canonical version that does not exist, offers a command or states a reduced assurance:\n%s", summary)
 	}
 }
@@ -295,31 +295,31 @@ func TestCheckSummaryOfAwaitingTheBootstrapStatesHowToStartOrSkip(t *testing.T) 
 		t.Errorf("title %q", title)
 	}
 	for _, w := range []string{
-		"SuiteWard has no canonical contract yet.", "- State: `in_progress`", "- Installation tier: `isolated`",
+		"SuiteWard has no approved contract yet", "- State: `in_progress`", "- Installation tier: `isolated`",
 		"`/suiteward propose`", "pull request that should carry the first contract", "`/suiteward skip <code>`", "This check reports on the protected contract only.",
 	} {
 		if !strings.Contains(summary, w) {
 			t.Errorf("summary lacks %q:\n%s", w, summary)
 		}
 	}
-	if strings.Contains(summary, "/suiteward approve") || strings.Contains(summary, "Canonical version:") || strings.Contains(summary, "Proposal revision:") {
+	if strings.Contains(summary, "/suiteward approve") || strings.Contains(summary, "Approved version:") || strings.Contains(summary, "Proposal revision:") {
 		t.Errorf("summary names an approve command, a canonical version or a revision that does not exist:\n%s", summary)
 	}
 }
 
-func TestCheckSummaryOfASkippedBootstrapSaysNothingWasAssessed(t *testing.T) {
+func TestCheckSummaryOfASkippedBootstrapSaysNothingWasChecked(t *testing.T) {
 	title, summary := checkText(t, noCanonical(commandtext.CheckSuccess, "bootstrap-skipped"))
 	if title == "" || strings.Contains(title, "\n") || len(title) > 80 {
 		t.Errorf("title %q", title)
 	}
 	for _, w := range []string{
-		"Skipped by the owner before the first contract.", "- State: `success`", "No canonical contract exists", "nothing was assessed", "This check reports on the protected contract only.",
+		"The owner chose to skip this check before the first contract exists.", "- State: `success`", "SuiteWard checked nothing on this commit", "this success is not a contract result", "This check reports on the protected contract only.",
 	} {
 		if !strings.Contains(summary, w) {
 			t.Errorf("summary lacks %q:\n%s", w, summary)
 		}
 	}
-	if strings.Contains(summary, "/suiteward approve") || strings.Contains(summary, "Canonical version:") {
+	if strings.Contains(summary, "/suiteward approve") || strings.Contains(summary, "Approved version:") {
 		t.Errorf("summary offers an approve command or names a canonical version that does not exist:\n%s", summary)
 	}
 }

@@ -76,10 +76,10 @@ func TestInvalidSourceCommentRefusesWhatItCannotRender(t *testing.T) {
 func TestTheInvalidSourceCheckSummaryNamesLinksAndTheDeclarationButNoSubmodule(t *testing.T) {
 	title, summary := commandtext.CheckSummary(check(commandtext.CheckFailure, "invalid-source"))
 
-	if title != "Invalid contract source" {
-		t.Errorf("title %q, want %q", title, "Invalid contract source")
+	if title != "Contract files are invalid" {
+		t.Errorf("title %q, want %q", title, "Contract files are invalid")
 	}
-	for _, want := range []string{"`.suiteward.yml`", "symlink", "The canonical contract stays in force.", "remove the symlink or point it to a regular file", "exact anchored path to `exclude`", "scope reduction that the owner approves", "and push"} {
+	for _, want := range []string{"`.suiteward.yml`", "symlink", "The approved contract stays in force.", "remove the symlink, or point it to a regular file, and push", "the exact path of the symlink, from the top of the repository, to `exclude`", "The owner must approve that, and nothing reached through the symlink stays protected."} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, summary)
 		}

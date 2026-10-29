@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // CheckState is the conclusion of the SuiteWard / Contract check (D-CHECKS) and of the SuiteWard / Receipt check.
@@ -61,93 +63,85 @@ type checkReason struct {
 }
 
 var checkReasons = map[string]checkReason{
-	"bootstrap-awaiting": {CheckInProgress, "No canonical contract yet",
-		"SuiteWard has no canonical contract yet. This head is not assessed against a contract until the first one exists.",
-		"Next: the owner comments `/suiteward propose` on the pull request that should carry the first contract, " +
-			"or `/suiteward skip <code>` with a current code from the authenticator app to let this pull request merge before the first contract."},
+	"bootstrap-awaiting": {CheckInProgress, "No approved contract yet",
+		"SuiteWard has no approved contract yet, so it cannot check this commit against one. This is not a problem with your change.",
+		"Next: the owner comments `/suiteward propose` on the pull request that should carry the first contract. " +
+			"To let this pull request merge without one, the owner comments `/suiteward skip <code>`, with a current code from the authenticator app."},
 	"bootstrap-skipped": {CheckSuccess, "Skipped before the first contract",
-		"Skipped by the owner before the first contract. No canonical contract exists and nothing was assessed on this head: this is not a contract assessment.",
-		"Next: nothing is required. Once the first contract exists, later pull requests are assessed against it."},
+		"The owner chose to skip this check before the first contract exists. SuiteWard checked nothing on this commit, so this success is not a contract result.",
+		"Next: nothing to do. After the first contract exists, SuiteWard checks later pull requests against it."},
 	"unchanged": {CheckSuccess, "No protected change",
-		"The protected files of this head match the canonical contract.",
-		"Next: nothing is required."},
+		"This commit does not change the protected files. They match the approved contract.",
+		"Next: nothing to do."},
 	"ready": {CheckSuccess, "Ready for integration",
-		"The owner approved the exact revision of this contract change against the current canonical contract, and the integrity " +
-			"assessment of this head passed. It is ready for integration.",
-		"Next: integrate this pull request when you are ready."},
+		"The owner approved this exact contract change, and SuiteWard's integrity check of this commit passed. This pull request is ready to merge.",
+		"Next: merge this pull request when you are ready."},
 	"bootstrap-ready": {CheckSuccess, "Bootstrap ready for integration",
-		"The owner approved the exact revision of the first baseline proposed from this pull request, and SuiteWard assessed the integrity of this head. " +
-			"No canonical contract exists yet. SuiteWard will promote the first canonical version from the exact merge commit after the merge.",
-		"Next: integrate this pull request when you are ready. A later push that changes the protected files needs a new approval."},
+		"The owner approved the first contract that this pull request proposes, and SuiteWard checked this commit. No approved contract exists yet. " +
+			"After the merge, SuiteWard makes the first approved version from the merge commit.",
+		"Next: merge this pull request when you are ready. A later push that changes the protected files needs a new approval."},
 	"approval-missing": {CheckInProgress, "Awaiting owner approval",
-		"This head changes the protected contract and has no current approval from the owner for its exact revision.",
+		"This commit changes the protected contract, and the owner has not approved this exact revision of the change yet. This check waits until the owner approves.",
 		"To approve this exact revision, comment:"},
-	"not-current": {CheckInProgress, "Contract change is not current",
-		"The contract change for this head is not current against the canonical contract. SuiteWard evaluates it again on its next run.",
-		"Next: nothing is required. If this stays in progress, update the branch from its base so SuiteWard can assess the current contract."},
-	"assessment-pending": {CheckInProgress, "Assessment pending",
-		"SuiteWard has not finished assessing this head, for example because GitHub could not be read yet.",
-		"Next: nothing is required; SuiteWard tries again on its next run."},
-	"source-unavailable": {CheckInProgress, "Source unavailable",
-		"GitHub truncated the file tree of this head, so SuiteWard cannot read the protected files in full.",
-		"Next: SuiteWard cannot check this head until GitHub returns the full tree; reducing the number of files in the repository may help."},
+	"not-current": {CheckInProgress, "Contract change is out of date",
+		"The approved contract has changed since this contract change was made, so the change is out of date. SuiteWard checks it again on its next run.",
+		"Next: nothing to do. If this stays in progress, update the branch from its base so SuiteWard can check the current contract."},
+	"assessment-pending": {CheckInProgress, "Check not finished yet",
+		"SuiteWard has not finished checking this commit. For example, GitHub may not have answered yet. This is not a problem with your change.",
+		"Next: nothing to do. SuiteWard tries again on its next run."},
+	"source-unavailable": {CheckInProgress, "Files cannot be read in full",
+		"GitHub cut short the list of files in this commit, so SuiteWard cannot read all the protected files. SuiteWard cannot check this commit until GitHub gives the full list.",
+		"Next: if this lasts, reduce the number of files in the repository."},
 	"runner-uncovered": {CheckInProgress, "Runner files outside the protected scope",
-		"This pull request adds or changes runner files that the protected scope does not cover. A runner file can change how the protected tests run without touching any of them, " +
-			"so this head is not ready until the owner decides.",
-		"Next: protect the files by committing the suggested declaration, which adds their runner patterns, and approving the new revision, " +
-			"or ignore them by adding the paths to `exclude` and approving that revision. SuiteWard gives both declarations in a comment on this pull request."},
+		"This pull request adds or changes runner files, which control how tests run, and the protected scope does not cover them. " +
+			"A runner file can change how the protected tests run without touching any of them. This commit is not ready until the owner decides.",
+		"Next: choose one. To protect the files, commit the suggested declaration, which adds their runner patterns, and have the owner approve the new revision. " +
+			"To leave them out, add their paths to `exclude` and have the owner approve that revision. SuiteWard gives both declarations in a comment on this pull request."},
 	"fork-unsupported": {CheckInProgress, "Pull requests from forks are not supported",
-		"Pull requests from forks are not supported yet, so SuiteWard does not assess this head and never proposes a contract change for it.",
+		"SuiteWard does not support pull requests from forks yet, so it does not check this commit and never proposes a contract change from it.",
 		"Next: open the pull request from a branch of this repository."},
-	"invalid-source": {CheckFailure, "Invalid contract source",
-		"The contract declaration or the protected source of this head is invalid, for example an invalid `.suiteward.yml` " +
-			"or a symlink that the protected scope reaches. The canonical contract stays in force.",
-		"Next: fix `.suiteward.yml`, or remove the symlink or point it to a regular file, or accept the symlink by adding its exact anchored path to `exclude`, a scope reduction that the owner approves and that leaves nothing reached through it protected, and push."},
-	"integrity-failed": {CheckFailure, "Canonical contract failed its integrity check",
-		"SuiteWard's stored canonical contract failed its integrity verification, so SuiteWard cannot trust it and blocks every pull request of this repository until it is restored.",
-		"Next: the operator must restore the artifact store from a backup or re-bootstrap the repository. Pushing to this pull request does not help."},
+	"invalid-source": {CheckFailure, "Contract files are invalid",
+		"SuiteWard cannot use the contract declaration or the protected files of this commit. For example, `.suiteward.yml` may be invalid, " +
+			"or the protected scope may reach a symlink. The approved contract stays in force.",
+		"Next: fix `.suiteward.yml`, or remove the symlink, or point it to a regular file, and push. " +
+			"You can also add the exact path of the symlink, from the top of the repository, to `exclude`. The owner must approve that, and nothing reached through the symlink stays protected."},
+	"integrity-failed": {CheckFailure, "Approved contract failed its integrity check",
+		"SuiteWard's stored copy of the approved contract failed its integrity check, so SuiteWard cannot trust it. " +
+			"SuiteWard blocks every pull request of this repository until the copy is restored. Your change did not cause this.",
+		"Next: the person who runs SuiteWard must restore SuiteWard's stored files from a backup, or set the repository up again. Pushing to this pull request does not help."},
 	"owner-command-rejected": {CheckFailure, "Owner command rejected",
-		"The owner's latest command on this pull request was rejected; SuiteWard's reply to it says why.",
-		"Next: comment a corrected command with a new code, or push a new head."},
+		"SuiteWard rejected the owner's latest command on this pull request. SuiteWard's reply to that command says why.",
+		"Next: the owner comments the corrected command with a new code, or you push a new commit."},
 	// The reasons of the canonical gate under canonical: required (docs/contracts/runtime.md, "The canonical gate"). Their summaries state counts and no repository text.
-	"canonical-pending": {CheckInProgress, "Canonical run pending",
-		"The run of the approved tests on this head has not finished: it is waiting for an executor, or it is running. The check does not pass until the run ends.",
-		"Next: nothing is required; this check changes when the run ends."},
+	"canonical-pending": {CheckInProgress, "Approved tests pending",
+		"The approved tests have not finished on this commit. They are waiting for the test runner, or they are running. This check does not pass until they have run.",
+		"Next: nothing to do. This check changes when the run ends."},
 	"canonical-not-responding": {CheckInProgress, "Test runner not responding",
 		"The test runner has not answered for about half a minute, so the approved tests have not run on this commit. This is a problem only if it lasts. " +
 			"SuiteWard keeps trying, and the tests start when the test runner answers. This check does not pass until they have run.",
 		"Next: check that the test runner is running on the machine that runs SuiteWard. To let this commit pass without the approved tests, the owner comments:"},
-	"canonical-unavailable": {CheckInProgress, "Canonical run unavailable",
-		"SuiteWard could not run the approved tests on this head, so the run is unavailable and the check does not pass.",
-		"Next: push a new head to run the approved tests again. To let this head pass without that run, the owner comments:"},
-	"canonical-failing": {CheckFailure, "Canonical tests failing",
-		"At least one approved test fails, is missing or is flaky on this head.",
-		"Next: fix the code under test, or push a head on which the approved tests pass."},
+	"canonical-unavailable": {CheckInProgress, "Approved tests could not run",
+		"SuiteWard could not run the approved tests on this commit, so this check does not pass.",
+		"Next: push a new commit to run the approved tests again. To let this commit pass without the approved tests, the owner comments:"},
+	"canonical-failing": {CheckFailure, "Approved tests failing",
+		"At least one approved test fails, is missing or is flaky on this commit.",
+		"Next: fix the code and push a new commit on which the approved tests pass."},
 }
 
 // canonicalReasons are the reasons of the canonical gate. They, the counts of a run and the owner's unblock mark the summary of canonical: required.
 var canonicalReasons = []string{"canonical-pending", "canonical-not-responding", "canonical-unavailable", "canonical-failing"}
 
-// unblockedText is what the summary says of a head whose unavailable canonical run the owner unblocked.
-const unblockedText = "The owner unblocked this head: its canonical run was unavailable, so the approved tests did not run on it."
+// unblockedText is what the summary says of a commit whose unavailable canonical run the owner unblocked.
+const unblockedText = "The owner unblocked this commit. The approved tests could not run on it, so this check passes without them."
 
-// executionText states the counts of a complete canonical run, and only the counts: no test name, no path. A run with no declared test ran no test.
+// executionText states the counts of a complete canonical run in the words of the results comment, and only the counts: no test name, no path. A run with no declared test ran no test.
 func executionText(e CheckExecution) string {
-	ran := counted(e.Tests, "test ran", "tests ran")
-	line := "Canonical run on this head: " + ran + "."
-	if e.Tests > 0 {
-		line = fmt.Sprintf("Canonical run on this head: %s: %d passed, %d skipped, %d failed, %d missing, %d flaky.", ran, e.Passed, e.Skipped, e.Failed, e.Missing, e.Flaky)
-	}
-	line += fmt.Sprintf("\nExcluded tests (not run): %d.", e.Excluded)
-	if e.Excluded > 0 {
-		line += " Excluded tests are not covered."
-	}
-	return line
+	return canonicalText(CanonicalRun{Counts: execution.CanonicalCounts{Pass: e.Passed, Fail: e.Failed, Skipped: e.Skipped, Missing: e.Missing, Flaky: e.Flaky, Excluded: e.Excluded}})
 }
 
-// blockingEditText is what an approval that is missing says of a test that fails, is missing or is flaky on the head: the canonical gate does not hold this check, but the owner
+// blockingEditText is what an approval that is missing says of a test that fails, is missing or is flaky on the commit: the canonical gate does not hold this check, but the owner
 // should read the change before approving, because a change that edits a test can make it pass by checking less.
-const blockingEditText = "At least one approved test fails, is missing or is flaky on this head. If this change edits that test, read the change before you approve: an edited test can pass by checking less."
+const blockingEditText = "At least one approved test fails, is missing or is flaky on this commit. If this change edits that test, read the edit before you approve. A test that is edited can pass by checking less."
 
 // WeakenedSentence is what a text says of n approved tests that this change edits and that fail, are missing or are flaky in the version that was approved, and what to
 // do (docs/contracts/runtime.md, "The weakened signal"): an edited test can pass by checking less. It is stated for a count above 0 only.
@@ -194,7 +188,7 @@ func CheckSummary(c Check) (title, summary string) {
 		facts = append(facts, "- Proposal revision: "+ref)
 	}
 	if c.Version != 0 {
-		facts = append(facts, fmt.Sprintf("- Canonical version: V%d", c.Version))
+		facts = append(facts, fmt.Sprintf("- Approved version: V%d", c.Version))
 	}
 	facts = append(facts, tierLine(c.Tier))
 	if c.Changes != nil {
@@ -202,11 +196,11 @@ func CheckSummary(c Check) (title, summary string) {
 	}
 	text := reason.text
 	if c.Reason == "approval-missing" && c.Version == 0 { // no canonical: the head proposes the first contract, it changes none
-		text = "This pull request carries the proposed first contract " + ref + ", awaiting the owner's approval of that exact revision."
+		text = "This pull request proposes the first contract (" + ref + "). It waits for the owner to approve this exact revision."
 	}
 	parts := []string{text}
 	if len(c.Paths) > 0 {
-		parts = append(parts, listingAndMore("Runner files that this head adds or changes outside the protected scope", c.Paths, c.PathsTotal))
+		parts = append(parts, listingAndMore("Runner files that this commit adds or changes outside the protected scope", c.Paths, c.PathsTotal))
 	}
 	parts = append(parts, strings.Join(facts, "\n"))
 	if c.Changes != nil {
@@ -331,5 +325,5 @@ func checkCheckReference(c Check) error {
 
 var checkStateName = map[CheckState]string{CheckSuccess: "success", CheckInProgress: "in_progress", CheckFailure: "failure", CheckNeutral: "neutral"}
 
-// ExecutionText states the counts of a complete canonical run in the words of the Contract check summary, for the receipt page, which says the same.
+// ExecutionText states the counts of a complete canonical run in the words of the results comment, which the Contract check summary says too.
 func ExecutionText(e CheckExecution) string { return executionText(e) }

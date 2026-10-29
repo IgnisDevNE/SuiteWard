@@ -2,7 +2,6 @@ package installer
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,7 +16,10 @@ import (
 // ServiceAccount is the account the isolated stack runs as.
 const ServiceAccount = "suiteward"
 
-// hostProgram is where the install guide puts the program.
+// hostStepSums is the flag that every text names with the host step: the host step refuses to run without it.
+const hostStepSums = "--sha256sums <the release's SHA256SUMS file>"
+
+// hostProgram is where the install guide puts the program, which a text names where the path of the running program is not known.
 const hostProgram = "/usr/local/bin/suiteward"
 
 const (
@@ -60,7 +62,7 @@ func PrepareHost(ctx context.Context, r *Resolver, d Deps, out io.Writer) error 
 		return fmt.Errorf("could not find out which user is running the installer: %w", err)
 	}
 	if uid != "0" {
-		return errors.New("install host changes the system, so it must run as root. Run it with sudo, then run the next step as the service account. Nothing was changed")
+		return fmt.Errorf("install host changes the system, so it must run as root. Run it as root: `%s`. Then run the next step as the service account. Nothing was changed", d.suggestHostStep(hostStepSums))
 	}
 	if h.release, err = h.verifyRelease(ctx); err != nil {
 		return err

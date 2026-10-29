@@ -102,8 +102,12 @@ func (h *host) executorManager(ctx context.Context) error {
 }
 
 // managerWaitSeconds bounds the wait for the user manager of the executor. The bound is `timeout` inside the command: a deadline of ctx would end only
-// runuser, and the systemctl under it would keep the pipe of its output open, so the wait of the step would not end.
-const managerWaitSeconds = "60"
+// runuser, and the systemctl under it would keep the pipe of its output open, so the wait of the step would not end. timeoutStatus is the exit status
+// that `timeout` gives when it ended the command.
+const (
+	managerWaitSeconds = "60"
+	timeoutStatus      = 124
+)
 
 // awaitExecutorManager waits until the user manager of the executor answers on its bus, which a manager that was just started or restarted does not do
 // at once. `is-system-running --wait` holds until the manager has started. It exits non-zero for a degraded manager, which the install guide accepts
@@ -117,14 +121,19 @@ func (h *host) awaitExecutorManager(ctx context.Context, uid string) error {
 	if state == "running" || state == "degraded" {
 		return nil
 	}
-	said := "it said nothing"
-	if state != "" {
-		said = fmt.Sprintf("it says %q", state)
+	var exit interface{ ExitCode() int }
+	var why string
+	switch {
+	case errors.As(err, &exit) && exit.ExitCode() == timeoutStatus:
+		why = "did not answer within " + managerWaitSeconds + " seconds"
+	case state != "":
+		why = fmt.Sprintf("is not ready (it says %q)", state)
+	case err != nil:
+		why = "could not be asked: " + err.Error()
+	default:
+		why = "gave no answer"
 	}
-	if err != nil {
-		said += ": " + err.Error()
-	}
-	return fmt.Errorf("the user manager of %s is not ready after up to %s seconds (%s), so the test runner cannot be set up. To see why, run `journalctl -u user@%s.service -n 50 --no-pager`, then run this again", ExecutorAccount, managerWaitSeconds, said, uid)
+	return fmt.Errorf("the user manager of %s %s, so the test runner cannot be set up. To see why, run `journalctl -u user@%s.service -n 50 --no-pager`, then run this again", ExecutorAccount, why, uid)
 }
 
 // executor sets up the executor on the host: the rule that refuses it the metadata addresses first, then its token, its binary and its unit.
@@ -162,9 +171,14 @@ func executorBus(uid string) string { return "/run/user/" + uid + "/bus" }
 // asExecutor runs a command as the executor's account with the account's own user bus, as the install guide does when it opens a shell for the service
 // account (docs/install.md, section 10). It is never `--machine=<user>@.host`, which goes through machined: that opens a login session for the account,
 // and on EL9 with SELinux enforcing the session cannot set the context of a terminal that the installer does not have (its stdin is /dev/null), so the
-// command fails with "Remote peer disconnected" where the same command typed in a terminal works. `runuser` opens no session.
+// command fails with "Remote peer disconnected" where the same command typed in a terminal works. `runuser` opens no session. An error names what was
+// run as the account (argv): OSExec cuts the command line of its own error at 120 characters, and the prefix above takes most of them.
 func (h *host) asExecutor(ctx context.Context, uid string, argv ...string) (string, error) {
-	return h.run(ctx, "runuser", append([]string{"-u", ExecutorAccount, "--", "env", "XDG_RUNTIME_DIR=/run/user/" + uid, "DBUS_SESSION_BUS_ADDRESS=unix:path=" + executorBus(uid)}, argv...)...)
+	out, err := h.run(ctx, "runuser", append([]string{"-u", ExecutorAccount, "--", "env", "XDG_RUNTIME_DIR=/run/user/" + uid, "DBUS_SESSION_BUS_ADDRESS=unix:path=" + executorBus(uid)}, argv...)...)
+	if err != nil {
+		return out, fmt.Errorf("%s, as %s: %w", strings.Join(argv, " "), ExecutorAccount, err)
+	}
+	return out, nil
 }
 
 // runAsExecutor runs a command as the executor's account, through its own user manager: it comes with the account's HOME and XDG_RUNTIME_DIR, in the cgroup
@@ -179,10 +193,10 @@ func (h *host) runAsExecutor(ctx context.Context, uid string, argv ...string) (s
 // read that storage, which is why this step does it and the service account's doctor cannot. It runs at every host step: a new release names a new digest.
 func (h *host) executorImage(ctx context.Context, uid string) error {
 	if _, err := h.runAsExecutor(ctx, uid, "podman", "pull", goprofile.Image); err != nil {
-		return fmt.Errorf("could not download (pull) the image %s as %s: %w. To see why, run `journalctl _UID=%s -n 50 --no-pager`", goprofile.Image, ExecutorAccount, err, uid)
+		return fmt.Errorf("could not download the image of the sandboxes: %w. To see why, run `journalctl _UID=%s -n 50 --no-pager`", err, uid)
 	}
 	if _, err := h.runAsExecutor(ctx, uid, "podman", "image", "exists", goprofile.Image); err != nil { // a reference with a digest exists only when an image has that digest
-		return fmt.Errorf("after the download, the image %s is not in the storage of %s under that fingerprint (digest): %w", goprofile.Image, ExecutorAccount, err)
+		return fmt.Errorf("after the download, the image is not in the storage of %s under that fingerprint (digest): %w", ExecutorAccount, err)
 	}
 	h.check("The Go image of the sandboxes (where tests run) is stored for %s, under its fingerprint (digest).\n", ExecutorAccount)
 	return nil
@@ -429,7 +443,7 @@ func (h *host) executorUnit(ctx context.Context, uid string, port int, filesChan
 	}
 	for _, args := range steps {
 		if _, err := h.userctl(ctx, uid, args...); err != nil {
-			return fmt.Errorf("systemctl --user %s, as %s: %w", strings.Join(args, " "), ExecutorAccount, err)
+			return err
 		}
 	}
 	state, err = h.userctl(ctx, uid, "show", "--property=ActiveState", "--value", executorUnitName)

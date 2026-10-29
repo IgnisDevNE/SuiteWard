@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -199,7 +199,7 @@ func TestOSExecEndsWhenTheContextIsCancelledAndAChildOfTheCommandKeepsItsOutputO
 	old := execWaitDelay
 	execWaitDelay = 200 * time.Millisecond
 	t.Cleanup(func() { execWaitDelay = old })
-	name, args := helperCommand(t, "orphan")
+	name, args := holdingHelper(t, "orphan")
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	done := make(chan error, 1)
@@ -222,7 +222,7 @@ func TestOSExecSucceedsWhenTheCommandExitedWellAndAChildKeepsItsOutputOpen(t *te
 	old := execWaitDelay
 	execWaitDelay = 200 * time.Millisecond
 	t.Cleanup(func() { execWaitDelay = old })
-	name, args := helperCommand(t, "leaves-child")
+	name, args := holdingHelper(t, "leaves-child")
 	type result struct {
 		out []byte
 		err error
@@ -242,13 +242,41 @@ func TestOSExecSucceedsWhenTheCommandExitedWellAndAChildKeepsItsOutputOpen(t *te
 	}
 }
 
-// holdOutput starts a child of the helper that holds the helper's stdout and stderr, as the systemctl under runuser does.
+// holdOutput starts a child of the helper that holds the helper's stdout and stderr, as the systemctl under runuser does, and leaves its process id in
+// the file that SUITEWARD_TEST_PIDFILE names, for the test to end it.
 func holdOutput() {
-	child := exec.Command(os.Args[0], "--")
+	child := commandContext(context.Background(), os.Args[0], "--")
 	child.Env = append(os.Environ(), "SUITEWARD_TEST_HELPER=holdpipe")
 	child.Stdout, child.Stderr = os.Stdout, os.Stderr
 	if err := child.Start(); err != nil {
 		fmt.Fprint(os.Stderr, err)
 		os.Exit(99)
 	}
+	if err := os.WriteFile(filepath.Clean(os.Getenv("SUITEWARD_TEST_PIDFILE")), []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil { //nolint:gosec // a test helper writes the file its test names
+		fmt.Fprint(os.Stderr, err)
+		os.Exit(99)
+	}
+}
+
+// holdingHelper is helperCommand for a helper that leaves a child holding its output. The test ends that child when it is over: a process of the test
+// binary that outlives the test keeps the binary from being deleted on Windows, which fails the whole run.
+func holdingHelper(t *testing.T, mode string) (name string, args []string) {
+	t.Helper()
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	t.Setenv("SUITEWARD_TEST_PIDFILE", pidFile)
+	t.Cleanup(func() {
+		raw, err := os.ReadFile(filepath.Clean(pidFile))
+		if err != nil {
+			return // the helper never started its child
+		}
+		pid, err := strconv.Atoi(string(raw))
+		if err != nil {
+			return
+		}
+		if p, err := os.FindProcess(pid); err == nil {
+			_ = p.Kill()
+			_, _ = p.Wait()
+		}
+	})
+	return helperCommand(t, mode)
 }

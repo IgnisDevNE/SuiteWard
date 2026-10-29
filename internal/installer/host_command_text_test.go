@@ -2,6 +2,7 @@ package installer
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -118,4 +119,58 @@ func noBareSudoProgram(t *testing.T, text string) {
 	if strings.Contains(text, "sudo suiteward") {
 		t.Errorf("%q tells the administrator to run `sudo suiteward`: sudo does not find /usr/local/bin on EL9, so name the path (%s)", text, hostProgram)
 	}
+}
+
+// The texts of the install that the service account runs name the host step as the rest of its run does, by the path it runs from, and not by the
+// path of the guide where that is another file: a hint that names a program that is not there is the mistake of `sudo suiteward` again.
+func TestTheInstallsHostStepHintsNameTheProgramTheRunExecutesFrom(t *testing.T) {
+	d := Deps{GOOS: "linux", Executable: func() (string, error) { return "/usr/bin/suiteward", nil }}
+	const step = "sudo /usr/bin/suiteward install host --sha256sums"
+	answer := func(out string, err error) func(string, ...string) (string, error) {
+		return func(string, ...string) (string, error) { return out, err }
+	}
+	mustName := func(what, text string) {
+		t.Helper()
+		if !strings.Contains(text, step) {
+			t.Errorf("%s does not name %q: %s", what, step, text)
+		}
+	}
+
+	_, err := checkAccount(answer("0", nil), "/home/suiteward", d) // run by root
+	if err == nil {
+		t.Fatal("root was not refused")
+	}
+	mustName("the refusal of the wrong account", err.Error())
+	if !strings.Contains(err.Error(), "bus /usr/bin/suiteward install (") {
+		t.Errorf("the command of the service account does not name the same program: %v", err)
+	}
+	mustName("the manager that cannot be asked", checkUserManager(answer("", errInjected), d).Error())
+	mustName("the linger that is off", checkUserManager(func(name string, args ...string) (string, error) {
+		if name == "loginctl" {
+			return "no", nil
+		}
+		return "running", nil
+	}, d).Error())
+
+	var said strings.Builder
+	sayChanges(func(format string, args ...any) { _, _ = fmt.Fprintf(&said, format, args...) }, d, Settings{HTTPPort: 18081}, Settings{HTTPPort: 19081})
+	mustName("the change of the HTTP port", said.String())
+	if !strings.Contains(said.String(), "--http-port 19081") {
+		t.Errorf("the change of the HTTP port does not give the new port: %s", said.String())
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(executorHandoverFile(dir), []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = readExecutorSetup(d, dir)
+	if err == nil {
+		t.Fatal("a token that is too short was accepted")
+	}
+	mustName("the token that is too short", err.Error())
+	setup, err := readExecutorSetup(d, t.TempDir()) // no copy: the service runs without a test runner, and the note says how to make one
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustName("the note that the test runner is missing", noExecutorNote(setup.hostStep, "this install again"))
 }

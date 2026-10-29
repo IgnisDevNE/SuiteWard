@@ -25,7 +25,7 @@ func executorHandoverFile(configDir string) string {
 
 // readExecutorHandover reads the copy of the executor's token that the host step left. found is false when there is none, which is the state of
 // a host that was prepared by an earlier release. A copy that is too short is refused, naming the file and never the content.
-func readExecutorHandover(configDir string) (token []byte, found bool, err error) {
+func readExecutorHandover(configDir, hostStep string) (token []byte, found bool, err error) {
 	file := executorHandoverFile(configDir)
 	raw, err := os.ReadFile(filepath.Clean(file))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -36,7 +36,7 @@ func readExecutorHandover(configDir string) (token []byte, found bool, err error
 	}
 	token = bytes.TrimSpace(raw)
 	if len(token) < minExecutorTokenBytes {
-		return nil, false, fmt.Errorf("%s holds a token shorter than %d bytes, which the service refuses. An administrator removes %s and runs `sudo /usr/local/bin/suiteward install host --sha256sums <the release's SHA256SUMS file>` again, which makes a new one", file, minExecutorTokenBytes, executorAuthEtc)
+		return nil, false, fmt.Errorf("%s holds a token shorter than %d bytes, which the service refuses. An administrator removes %s and runs `%s` again, which makes a new one", file, minExecutorTokenBytes, executorAuthEtc, hostStep)
 	}
 	return token, true, nil
 }
@@ -70,9 +70,9 @@ func settleExecutorSecret(ctx context.Context, store SecretStore, token []byte, 
 
 // noExecutorNote is what an install or an upgrade says when the service runs without the executor's token. again is the command to run after the host
 // step: an upgrade cannot run again at the release that is installed, so it names the install.
-func noExecutorNote(again string) string {
+func noExecutorNote(hostStep, again string) string {
 	return "The host has no token for the test runner (the executor) for this account yet, so the service runs without one and cannot run the approved tests. " +
-		"An administrator makes the test runner and its token with `sudo /usr/local/bin/suiteward install host --sha256sums <the release's SHA256SUMS file>`; then run " + again + ".\n"
+		"An administrator makes the test runner and its token with `" + hostStep + "`; then run " + again + ".\n"
 }
 
 // executorHostNote is what an uninstall says of the executor: it is the administrator's, and the service account cannot reach it.
@@ -83,16 +83,19 @@ func executorHostNote() string {
 		ExecutorAccount, executorUnitName, executorUnitPath, executorLibDir, executorAuthEtc, executorRuleFile, executorBlockUnit)
 }
 
-// executorSetup is what the host step left for this account: the copy of the executor's token, when there is one.
+// executorSetup is what the host step left for this account: the copy of the executor's token, when there is one, and the command that makes it
+// (the host step, named as the rest of the run names it), which the texts about it give.
 type executorSetup struct {
-	token []byte
-	found bool
+	token    []byte
+	found    bool
+	hostStep string
 }
 
 // readExecutorSetup reads what the host step left, before anything is changed.
-func readExecutorSetup(configDir string) (executorSetup, error) {
-	token, found, err := readExecutorHandover(configDir)
-	return executorSetup{token: token, found: found}, err
+func readExecutorSetup(d Deps, configDir string) (executorSetup, error) {
+	hostStep := d.suggestHostStep(hostStepSums)
+	token, found, err := readExecutorHandover(configDir, hostStep)
+	return executorSetup{token: token, found: found, hostStep: hostStep}, err
 }
 
 // settle makes the service's executor token the host step's, and has the service unit mount it only when it exists (params.NoExecutor), saying so
@@ -105,7 +108,7 @@ func (e executorSetup) settle(ctx context.Context, store SecretStore, scr *ui.Sc
 	}
 	params.NoExecutor = !have
 	if !have {
-		scr.Warn("%s", noExecutorNote(again))
+		scr.Warn("%s", noExecutorNote(e.hostStep, again))
 	}
 	return secretChanged || written, nil
 }

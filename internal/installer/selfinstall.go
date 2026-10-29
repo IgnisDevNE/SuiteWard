@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -62,13 +63,26 @@ func (d Deps) suggest(sub string, args ...string) string {
 	return strings.Join(append(words, args...), " ")
 }
 
-// suggestHostStep is suggest for the host step, which an administrator runs through sudo. sudo looks a command up in its own secure_path, and on EL9 that
-// lacks /usr/local/bin, where the install guide puts the program, so the name the shell finds is "command not found" there: a program that suggest names
-// by that bare name is named by the path of the guide, and one that it names by its own path keeps it.
-func (d Deps) suggestHostStep(args ...string) string {
-	if cmp.Or(d.Command, selfName) == selfName {
-		d.Command = hostProgram
+// sudoProgram is how a command that an administrator runs through sudo (or a shell that sudo opens) names this program. sudo looks a command up in its
+// own secure_path, and on EL9 that lacks /usr/local/bin, so the name the shell finds is "command not found" there. A program that suggest names by its
+// own path keeps it. One that suggest names by its bare name is named by the path it runs from, which is a file that exists (the program may be in
+// /usr/bin, or in a folder of the service account), and only where that is not known, or this is not the server's system, by the path where the
+// install guide puts it. Executable is optional in a Deps (a command that copies the program refuses a Deps without it), so none is no answer, not an error.
+func (d Deps) sudoProgram() string {
+	if cmp.Or(d.Command, selfName) != selfName {
+		return d.Command
 	}
+	if d.GOOS == "linux" && d.Executable != nil {
+		if exe, err := d.Executable(); err == nil && path.IsAbs(exe) {
+			return quoteArg(exe)
+		}
+	}
+	return hostProgram
+}
+
+// suggestHostStep is suggest for the host step, which an administrator runs through sudo: the program is named as sudoProgram names it.
+func (d Deps) suggestHostStep(args ...string) string {
+	d.Command = d.sudoProgram()
 	return "sudo " + d.suggest("install host", args...)
 }
 

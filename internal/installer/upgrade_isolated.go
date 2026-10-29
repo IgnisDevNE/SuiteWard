@@ -70,7 +70,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	// change whether the service has GitHub.
 	params := UnitParamsFrom(s, digest)
 	params.NoGitHub = st.adopted.NoGitHub
-	executor, err := readExecutorSetup(host.configDir)
+	executor, err := readExecutorSetup(env.Deps, host.configDir)
 	if err != nil {
 		return err
 	}

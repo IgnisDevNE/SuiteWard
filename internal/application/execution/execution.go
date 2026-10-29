@@ -356,8 +356,9 @@ type Store interface {
 	RecordApproval(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, gate ApprovalGate) error
 	// RecordUnblock records the ledger entry of an unblock (unblocked) and one unblock row for each lifted job, with the
 	// acknowledgment when there is one, in one transaction. Each job must be of the pull and the head. The store locks the jobs in the
-	// order of their ids and compares each with what the caller observed: one whose state or lease id differs fails the call with
-	// ErrJobChanged and writes nothing. It then ends each open job (pending or leased) as unavailable for no-executor, as the sweep ends a
+	// order of their ids and compares each with what the caller observed: one whose state or lease id differs, or an open one that no
+	// longer waits for the runner (a lease request left it waiting on GitHub), fails the call with ErrJobChanged and writes nothing.
+	// It then ends each open job (pending or leased) as unavailable for no-executor, as the sweep ends a
 	// pending one, with finished_at and the decided_at of its row both at; a job that was unavailable already stays as it is. The store
 	// does not judge whether a runner responds: the caller passes only the jobs it may end. The same entry, jobs and time again is
 	// success; another entry, other jobs or another time for the comment is commands.ErrConflict.

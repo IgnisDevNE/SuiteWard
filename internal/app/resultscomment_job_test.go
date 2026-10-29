@@ -534,6 +534,26 @@ func TestChecksWriteTheRunnerBackCommentOnceForAnUnblockedHeadWhoseRunnerReturne
 	w.wantComments("runner-back:", key)
 }
 
+// The runner-back comment reads the job that each gate reads, not every job of the head. The owner unblocks the first canonical job before the approval; the approval then
+// governs a fresh job, which the runner that came back runs, so nothing is waiting to be run and the comment would be false.
+func TestChecksWriteNoRunnerBackCommentWhenTheApprovalCreatedAFreshJobThatTheRunnerRuns(t *testing.T) {
+	w := newExecWorld(t, gateDecl)
+	w.tree(cjHead2, execHeadFiles(gateDecl, "v2"))
+	w.sync(map[int]string{5: cjHead2})
+	w.mustCheck() // no runner is seen: the canonical job waits, and the approval is missing
+	first := w.onlyJob(5, cjHead2, execution.PlanCanonical)
+	w.unblock(5, 500, cjHead2, first) // ends it for no-executor, before the approval
+	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
+
+	w.execRun() // the runner is back: the approved version has a fresh job, which waits to be leased
+
+	jobs := w.headJobs(5, cjHead2, execution.PlanCanonical)
+	if len(jobs) != 2 || jobs[1].State != execution.StatePending {
+		t.Fatalf("canonical jobs %+v, want the unblocked first one and a fresh pending one under the revision", jobs)
+	}
+	w.wantComments("runner-back:")
+}
+
 func TestChecksWriteNoRunnerBackCommentForAHeadThatMovedOrAClosedPullRequest(t *testing.T) {
 	t.Run("a pull request that closed", func(t *testing.T) {
 		w, canonical, receipt := noExecutorWorld(t)

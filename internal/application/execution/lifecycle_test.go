@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 func TestAJobWaitsForTheRunnerWhenItIsLeasedOrPendingForAnyReasonButGitHub(t *testing.T) {
@@ -53,6 +54,27 @@ func TestAJobWasEndedByAnUnblockWhenItsEndIsTheTimeOfItsRow(t *testing.T) {
 	} {
 		if got := c.job.EndedBy(c.unblocks); got != c.want {
 			t.Errorf("%s: EndedBy = %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+// The checks, the unblock and the comments of a head read one rule for "waits for the runner" (docs/contracts/runtime.md, "Not responding"): the rule of the domain.
+// Whatever state and reason a job has, the application job answers as the domain job does; a cancelled job is no part of a set and waits for nothing.
+func TestTheApplicationJobAndTheDomainJobAgreeOnWaitingForTheRunner(t *testing.T) {
+	states := []execution.State{execution.StatePending, execution.StateLeased, execution.StateComplete, execution.StateUnavailable, execution.StateCancelled}
+	reasons := []execution.Reason{"", execution.ReasonExecutorError, execution.ReasonSandboxUnavailable, execution.ReasonArchiveUnavailable, execution.ReasonLeaseExpired,
+		execution.ReasonTimeout, execution.ReasonGitHubUnavailable, execution.ReasonNoExecutor, execution.ReasonFetchFailed, execution.ReasonInstallFailed,
+		execution.ReasonResourceLimit, execution.ReasonToolchainMismatch, execution.ReasonSourceMismatch, execution.ReasonTooLarge, execution.ReasonProfileUnsupported,
+		execution.ReasonNotConfigured, execution.ReasonNoMergeBase, execution.ReasonHeadMoved, execution.ReasonClosed, execution.ReasonObsolete}
+	for _, state := range states {
+		for _, reason := range reasons {
+			want := false
+			if inSet, err := domain.ParseJobState(string(state)); err == nil {
+				want = domain.Job{ID: 1, State: inSet, Reason: string(reason)}.WaitsForRunner()
+			}
+			if got := (execution.Job{ID: 1, State: state, Reason: reason}).WaitsForRunner(); got != want {
+				t.Errorf("a %s job with the reason %q: WaitsForRunner = %v, the domain rule says %v", state, reason, got, want)
+			}
 		}
 	}
 }

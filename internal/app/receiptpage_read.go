@@ -296,16 +296,12 @@ func (p *receiptPages) weakened(ctx context.Context, reader executionReader, rep
 	return set, nil
 }
 
-// weakenedSentence is the count sentence of the page's top, or nothing when no test is weakened.
+// weakenedSentence is the count sentence of the page's top, or nothing when no test is weakened: the sentence of the comments and the checks, and the line of the page that says the tables mark these tests.
 func weakenedSentence(n int) string {
-	const tail = " A test that is edited can pass by checking less. Read the edit before you approve. The tables below mark these tests."
-	switch n {
-	case 0:
+	if n == 0 {
 		return ""
-	case 1:
-		return "1 approved test that this change edits fails, is missing or is flaky on this commit, in the version that was approved." + tail
 	}
-	return strconv.Itoa(n) + " approved tests that this change edits fail, are missing or are flaky on this commit, in the version that was approved." + tail
+	return commandtext.WeakenedSentence(n) + " The tables below mark these tests."
 }
 
 // modeRow says whether the summary of mode is met and, when it is not, why, in words. A summary that no text can say is an impossible state, not a word to show.

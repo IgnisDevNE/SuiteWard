@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,11 +16,12 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 )
 
-// The receipt page (docs/contracts/runtime.md, "The receipt page"): GET /receipts/{owner}/{repo}/{pull} shows the execution results of the current head of a pull
-// request. It is rebuilt on every request from stored rows, with the rules of the change report page: only a loopback Host is answered, there is no authentication, the
-// same four headers are on every answer, and every string is escaped with its hidden characters written as escapes.
+// The pull request page (docs/contracts/runtime.md, "The pull request page"): GET /pulls/{owner}/{repo}/{pull} shows the situation and the execution results of the
+// current head of a pull request, and the change report of its current revision. It is rebuilt on every request from stored rows, with the rules of the change report
+// page: only a loopback Host is answered, there is no authentication, the same four headers are on every answer, and every string is escaped with its hidden characters
+// written as escapes. It replaced the receipt page of M2.1, whose route now answers 308 (receiptMoved); the types and the files keep the name of the receipt page.
 
-// receiptTimeout bounds a receipt request: the wait for its turn, the reads and the build. It is a real deadline, never a fake clock's, and below the 30 s the server
+// receiptTimeout bounds a request for the page: the wait for its turn, the reads and the build. It is a real deadline, never a fake clock's, and below the 30 s the server
 // gives a response.
 const receiptTimeout = 20 * time.Second
 
@@ -31,10 +33,28 @@ type receiptSource interface {
 	page(ctx context.Context, state owner.State, project owner.ProjectPolicy, pull int) ([]byte, error)
 }
 
-// receipt serves the receipt page of GET /receipts/{owner}/{repo}/{pull}.
-func (a *api) receipt(w http.ResponseWriter, r *http.Request) {
+// pullNumber is the pull request of the route: a positive integer written without a leading zero, as GitHub numbers it.
+func pullNumber(r *http.Request) (int, bool) {
 	number, err := strconv.Atoi(chi.URLParam(r, "pull"))
-	if err != nil || number < 1 || number > math.MaxInt32 || strconv.Itoa(number) != chi.URLParam(r, "pull") {
+	return number, err == nil && number >= 1 && number <= math.MaxInt32 && strconv.Itoa(number) == chi.URLParam(r, "pull")
+}
+
+// receiptMoved serves GET /receipts/{owner}/{repo}/{pull}, the route of the receipt page, which every revision comment posted before M2.1b links: it answers 308 with the
+// relative address of the pull request page, so that the loopback host stays. It checks only that the pull request is a number: the page decides what is known, so the
+// redirect reveals nothing. The Location is the escaped path of the request, which is never a raw character in a header.
+func (a *api) receiptMoved(w http.ResponseWriter, r *http.Request) {
+	if _, ok := pullNumber(r); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Location", "/pulls/"+strings.TrimPrefix(r.URL.EscapedPath(), "/receipts/"))
+	w.WriteHeader(http.StatusPermanentRedirect)
+}
+
+// pull serves the pull request page of GET /pulls/{owner}/{repo}/{pull}.
+func (a *api) pull(w http.ResponseWriter, r *http.Request) {
+	number, ok := pullNumber(r)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}

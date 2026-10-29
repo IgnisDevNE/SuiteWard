@@ -17,15 +17,16 @@ import (
 
 // reportSection is the change report of the revision. When the report cannot be built the section is one sentence and nothing else.
 type reportSection struct {
-	Show        bool
-	Reference   string // P<n>-R<m>
-	Sentence    string // why there is no report, empty when there is one
-	Facts       []string
-	Files       table
-	More        string
-	Full        pageLink // the report of the revision, with its hunks
-	Earlier     []pageLink
-	EarlierMore string
+	Show           bool
+	Reference      string // P<n>-R<m>
+	Sentence       string // why there is no report, empty when there is one
+	Facts          []string
+	Files          table
+	More           string
+	Full           pageLink // the report of the revision, with its hunks
+	Earlier        []pageLink
+	EarlierHeading string // a compiling stub: the commit that follows writes it
+	EarlierMore    string
 }
 
 // reportOf builds the section of the revision current of the proposal that the pull request carries, whose revisions are revisions, oldest first. Only the end of the

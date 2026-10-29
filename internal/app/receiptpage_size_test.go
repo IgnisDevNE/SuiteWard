@@ -57,7 +57,7 @@ func TestPullPageLinksTheFullReportAndTheReportOfEachEarlierRevisionNewestFirst(
 	page := w.text()
 	section := w.section(page, "Change report")
 	w.wantText(section, "P2-R3", `<a href="/reports/acme/widgets/P2-R3">`)
-	w.wantInOrder(section, "<h3>Earlier revisions of this proposal</h3>", `<a href="/reports/acme/widgets/P2-R2">P2-R2</a>`, `<a href="/reports/acme/widgets/P2-R1">P2-R1</a>`)
+	w.wantInOrder(section, "<h3>Earlier revisions of this proposal: 2</h3>", `<a href="/reports/acme/widgets/P2-R2">P2-R2</a>`, `<a href="/reports/acme/widgets/P2-R1">P2-R1</a>`)
 	if got := strings.Count(section, "/reports/acme/widgets/P2-R3"); got != 1 {
 		t.Errorf("the current revision is linked %d times, want once, as the full report", got)
 	}
@@ -94,7 +94,11 @@ func TestPullPageSaysInOneSentenceThatTheChangeReportCannotBeBuiltAndStillServes
 			w.server.reports = &fakeReports{err: tc.err}
 			page := w.text()
 			section := w.section(page, "Change report")
-			w.wantText(section, tc.sentence, `<a href="/reports/acme/widgets/P2-R1">`)
+			w.wantText(section, "<p>"+tc.sentence+"</p>")
+			w.wantNoText(section, "<a href", "<table>", "<ul>", "Earlier revisions") // the section is the one sentence: a link would answer 404 or 413
+			if got := strings.Count(section, "<p>"); got != 1 {
+				t.Errorf("the section has %d paragraphs, want the one sentence: %s", got, section)
+			}
 			w.wantNoText(page, "SECRET", "<tr><td>modified</td>")
 			w.wantText(page, "SuiteWard ran the tests for this commit.", pageRow("PASS", "TestC00", ".", "a_test.go", "", ""))
 		})
@@ -328,4 +332,43 @@ func (r reportsEndContext) turn(context.Context) (func(), error) { return func()
 
 func (r reportsEndContext) build(ctx context.Context, ref contract.ProposalReference) (revisionReport, error) {
 	return r.revisionReport(ctx, ref)
+}
+
+// A revision whose report cannot be built has no link: the full report would answer 404 or 413, and the earlier revisions are links of the same section.
+func TestPullPageLinksNoReportWhenTheReportOfTheRevisionCannotBeBuilt(t *testing.T) {
+	w := newPageWorld(t)
+	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
+	w.tree(cjHead3, execHeadFiles(receiptDecl, "v3"))
+	w.sync(map[int]string{5: cjHead3})
+	w.execRun()
+	w.server.reports = &fakeReports{err: errReportTooLarge}
+	section := w.section(w.text(), "Change report")
+	w.wantNoText(section, "<a href", "Earlier revisions")
+}
+
+// A list that shows no count in its heading cannot say "the count above includes them": the earlier revisions are counted in their heading, with those listed when some are not.
+func TestTheHeadingOfTheEarlierRevisionsCountsThemAndSaysHowManyAreListed(t *testing.T) {
+	revisions := make([]contract.ProposalReference, 62)
+	for i := range revisions {
+		revisions[i] = revisionRef("P2", fmt.Sprintf("R%d", i+1))
+	}
+	deps := pageDeps{reports: &fakeReports{report: revisionReport{Base: "V1", Report: smallReport(t)}}, logger: quietLogger()}
+	for name, tc := range map[string]struct {
+		current       int // the index of the current revision
+		heading, more string
+		listed        int
+	}{
+		"fifty or fewer":  {10, "Earlier revisions of this proposal: 10", "", 10},
+		"more than fifty": {61, "Earlier revisions of this proposal: 61 (50 listed)", "11 more are not shown here. The count above includes them.", 50},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := reportOf(t.Context(), deps, "acme/widgets", revisions[tc.current], revisions)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.EarlierHeading != tc.heading || got.EarlierMore != tc.more || len(got.Earlier) != tc.listed {
+				t.Errorf("heading %q, more %q, %d listed; want %q, %q, %d", got.EarlierHeading, got.EarlierMore, len(got.Earlier), tc.heading, tc.more, tc.listed)
+			}
+		})
+	}
 }

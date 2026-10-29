@@ -195,9 +195,9 @@ func TestPullPageSaysWhyARunDidNotRunWithTheSentenceOfItsCode(t *testing.T) {
 	w.check.executorConfigured = false
 	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
 	page := w.text()
-	sentence := "The tests did not run: No test runner is set up for this SuiteWard installation."
-	w.wantText(page, "Approved tests: "+sentence, "Tests this change adds or edits: "+sentence)
-	w.wantNoText(page, "installation..", "(executor-not-configured)")
+	sentence := " did not run. No test runner is set up for this SuiteWard installation."
+	w.wantText(page, "Approved tests"+sentence, "Tests this change adds or edits"+sentence)
+	w.wantNoText(page, "installation..", "(executor-not-configured)", "did not run: ")
 }
 
 func TestPullPageSaysWhichRunsTheOwnerUnblockedAndThatAJobThatTheCommandEndedHadWaited(t *testing.T) {
@@ -209,7 +209,7 @@ func TestPullPageSaysWhichRunsTheOwnerUnblockedAndThatAJobThatTheCommandEndedHad
 		w.unblock(5, 600, cjHead2, w.onlyJob(5, cjHead2, execution.PlanCanonical), w.onlyJob(5, cjHead2, execution.PlanReceipt))
 		page := w.text()
 		w.wantText(page, "The owner unblocked this commit, so its checks do not wait for the approved tests and the receipt.", stopped,
-			"Approved tests: The tests did not run: The test runner did not respond.")
+			"Approved tests did not run. The test runner did not respond.")
 		w.wantNoText(page, "The test runner is not responding. SuiteWard last heard")
 	})
 	t.Run("the owner unblocked a job that was unavailable already", func(t *testing.T) {
@@ -659,9 +659,9 @@ func TestPullPageListsWhatIsNotEvaluatedTheSubmodulesTheMarkersAndTheFilesThatDo
 		r.Unparsed = []string{"tests/broken_test.go"}
 	})
 	section := w.section(w.text(), "Tests this change adds or edits")
-	w.wantText(section, "<h3>Not evaluated: pattern not approved yet</h3>", "<li>e2e/x_test.go</li>", "<h3>Skipped submodules</h3>", "<li>vendor/sub</li>",
-		"<h3>Lines to look at</h3>", "<li>env-read: tests/a_test.go line 12</li>", "<li>testing-import: tests/b_test.go line 3</li>",
-		"<h3>Changed test files that cannot be read</h3>", "<li>tests/broken_test.go</li>")
+	w.wantText(section, "<h3>Files not evaluated because their pattern is not approved yet: 1</h3>", "<li>e2e/x_test.go</li>", "<h3>Skipped submodules: 1</h3>", "<li>vendor/sub</li>",
+		"<h3>Lines to look at: 2</h3>", "<li>env-read: tests/a_test.go line 12</li>", "<li>testing-import: tests/b_test.go line 3</li>",
+		"<h3>Changed test files that cannot be read: 1</h3>", "<li>tests/broken_test.go</li>")
 }
 
 // Everything that comes from the repository or from the test runner is shown escaped: the names of tests, packages and files, the paths of markers, submodules and files
@@ -703,4 +703,71 @@ func (w *pageWorld) failAttempt(job execution.Job) {
 	if outcome, err := w.jobs.Complete(w.t.Context(), job.ID, failed, w.clock, time.Hour); err != nil || outcome.State != execution.StatePending {
 		w.t.Fatalf("the failed attempt: %+v, %v", outcome, err)
 	}
+}
+
+// A job that waits on GitHub has not ended: the page says it waits, and never that SuiteWard could not read the commit for too long, which is what a job says that ended on
+// the bound.
+func TestPullPageSaysThatAJobThatWaitsOnGitHubWaitsAndOnlyAJobThatEndedOnTheBoundCouldNotReadForTooLong(t *testing.T) {
+	const waiting, ended = "SuiteWard is waiting for GitHub to answer.", "SuiteWard could not read this commit from GitHub for too long."
+	w := newPageWorld(t)
+	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
+	canonical := w.onlyJob(5, cjHead2, execution.PlanCanonical)
+	w.waitOnGitHub(canonical.ID)
+	page := w.text()
+	w.wantText(w.section(page, "How these results were made"), pageRow("State", "pending", "pending"), pageRow("Last reason", waiting, "-"))
+	w.wantNoText(page, "for too long", "did not run")
+
+	if _, err := w.jobs.GitHubFailure(t.Context(), canonical.ID, w.clock.Add(time.Hour), w.check.executor.GitHubWait); err != nil { // the first failure is older than the bound
+		t.Fatal(err)
+	}
+	page = w.text()
+	w.wantText(page, pageRow("Last reason", ended, "-"), "Approved tests did not run. "+ended)
+	w.wantNoText(page, waiting)
+}
+
+// unapprovedFiles cuts its list at 100 and stores no total, so a list of exactly 100 says that there are at least 100.
+func TestPullPageSaysThatAtLeastOneHundredFilesAreNotEvaluatedWhenTheListHoldsOneHundred(t *testing.T) {
+	const heading = "Files not evaluated because their pattern is not approved yet"
+	w := newPageWorld(t)
+	head := strings.Replace(execDeclaration("advisory", "advisory")+"# e2e\n", "include: [/tests/**]", "include: [/tests/**, /e2e/**]", 1)
+	files := execHeadFiles(head, "v2")
+	changed := []github.PullFile{{Path: "tests/a_test.go", Status: "modified"}}
+	for i := range 120 {
+		path := fmt.Sprintf("e2e/x%03d_test.go", i)
+		files[path] = "package e2e\n"
+		changed = append(changed, github.PullFile{Path: path, Status: "added"})
+	}
+	w.reader.files = map[int][]github.PullFile{5: changed}
+	w.execPullFive(files)
+	w.finish(w.onlyJob(5, cjHead2, execution.PlanCanonical), canonicalTests("pass"))
+	w.finish(w.onlyJob(5, cjHead2, execution.PlanReceipt), receiptTests("detects"))
+	page := w.text()
+	w.wantText(page, "<h3>"+heading+": at least 100 (100 listed)</h3>", heading+": at least 100.")
+	w.wantNoText(page, heading+": 100")
+}
+
+// pageStaleLevels is an execution store whose canonical job was created under another declaration: it says that the receipt is off.
+type pageStaleLevels struct{ execution.Store }
+
+func (s pageStaleLevels) HeadJobs(ctx context.Context, repositoryID int64, pull int, head string, plan execution.Plan) ([]execution.Job, error) {
+	jobs, err := s.Store.HeadJobs(ctx, repositoryID, pull, head, plan)
+	if plan == execution.PlanCanonical {
+		for i := range jobs {
+			jobs[i].CanonicalLevel, jobs[i].ReceiptLevel = domain.CanonicalLevelRequired, domain.ReceiptLevelOff
+		}
+	}
+	return jobs, err
+}
+
+// The level of each plan is that of its own job: an old canonical job that outlived a change of the declaration does not hide a receipt job that waits for the runner.
+func TestPullPageTakesTheLevelOfEachPlanFromItsOwnJob(t *testing.T) {
+	w := newPageWorld(t)
+	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
+	w.finish(w.onlyJob(5, cjHead2, execution.PlanCanonical), canonicalTests("pass")) // complete, and created under a declaration with the receipt off
+	w.pages.executions = pageStaleLevels{Store: w.jobs}
+	w.runnerSilentFor(45 * time.Second)
+	page := w.text()
+	w.wantText(page, "Tests this change adds or edits: The test runner is not responding. SuiteWard last heard from it about 45 seconds ago and keeps trying.",
+		"The tests of this commit are waiting for the test runner, which is not responding.")
+	w.wantNoText(page, "Approved tests: The test runner is not responding")
 }

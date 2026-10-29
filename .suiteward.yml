@@ -23,3 +23,5 @@ runner:
   - /codecov.yml
   - scripts/install.sh
   - deploy/smoke.sh
+execution:
+  profile: go

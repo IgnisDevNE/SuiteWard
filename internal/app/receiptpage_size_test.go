@@ -261,6 +261,10 @@ func TestPullPageNeverCutsAWeakenedRowOrAFlaggedRowBeforeAPassingOne(t *testing.
 	if shown >= execution.MaxTests {
 		t.Fatalf("the approved table shows all %d rows: the budget did not cut it", shown)
 	}
+	if len(canonical) > 3<<20 { // both passes of the cut ran here: the weakened rows first, then the others
+		t.Errorf("the approved groups take %d bytes, more than the 3 MiB of a table", len(canonical))
+	}
+	w.wantText(rawSection(t, raw, "Approved tests"), fmt.Sprintf("<p>%d more tests are not shown here. The counts above include them.</p>", execution.MaxTests-shown))
 	for i := 0; i < 3; i++ {
 		if !strings.Contains(canonical, last(i)+"</td>") {
 			t.Errorf("the weakened test %s sorts last and is not on the page", last(i))
@@ -275,6 +279,10 @@ func TestPullPageNeverCutsAWeakenedRowOrAFlaggedRowBeforeAPassingOne(t *testing.
 	if shown >= execution.MaxTests {
 		t.Fatalf("the table of the receipt shows all %d rows: the budget did not cut it", shown)
 	}
+	if len(receipt) > 3<<20 {
+		t.Errorf("the groups of the receipt take %d bytes, more than the 3 MiB of a table", len(receipt))
+	}
+	w.wantText(rawSection(t, raw, "Tests this change adds or edits"), fmt.Sprintf("<p>%d more tests are not shown here. The counts above include them.</p>", execution.MaxTests-shown))
 	w.wantInOrder(receipt, "<td>FAILS</td>", "<td>INERT</td>", "<td>DETECTS</td>") // the groups keep their order
 	if got := strings.Count(receipt, "<td>FAILS</td>"); got != 2 {
 		t.Errorf("%d FAILS rows, want both of them whatever the budget cut", got)

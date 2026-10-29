@@ -87,7 +87,7 @@ func TestReceiptCheckPublisherOnPostgreSQLPostsTheCurrentGenerationOnce(t *testi
 	if len(posted) != 2 || posted[1]["status"] != "completed" || posted[1]["conclusion"] != "neutral" || posted[1]["external_id"] != "suiteward:"+instance+":receipt-check:1001:7:3" {
 		t.Fatalf("after the superseded generation: %v", posted)
 	}
-	if summary, _ := posted[1]["output"].(map[string]any)["summary"].(string); !strings.Contains(summary, "no executor was seen in time") {
+	if summary, _ := posted[1]["output"].(map[string]any)["summary"].(string); !strings.Contains(summary, "The test runner did not respond.") {
 		t.Fatalf("summary %q", summary)
 	}
 	if got := scalar(t, databaseURL, "SELECT count(*)::text FROM outbox WHERE kind = 'github_receipt_check' AND state = 'delivered'"); got != "3" {

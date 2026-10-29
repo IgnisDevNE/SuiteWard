@@ -118,12 +118,12 @@ func TestChecksWriteTheCheckAgainWithTheCountsWhenTheCanonicalRunOfAHeadAwaiting
 				wantExecution(t, payload, 2, 1, 1, 0, 0, 0, 1) // an excluded test is not one that ran
 			}
 			summary := summaryOfPayload(t, payload)
-			for _, want := range []string{"Canonical run on this head:", "This check reports on the protected contract and on the run of its approved tests.", plainApprove} {
+			for _, want := range []string{"Approved tests: 2 tests ran.", "This check reports on the protected contract and on the run of its approved tests.", plainApprove} {
 				if !strings.Contains(summary, want) {
 					t.Errorf("summary lacks %q:\n%s", want, summary)
 				}
 			}
-			if blocking := strings.Contains(summary, "If this change edits that test, read the change before you approve"); blocking != tc.block {
+			if blocking := strings.Contains(summary, "If this change edits that test, read the edit before you approve"); blocking != tc.block {
 				t.Errorf("the sentence about a blocking test is present = %v, want %v:\n%s", blocking, tc.block, summary)
 			}
 

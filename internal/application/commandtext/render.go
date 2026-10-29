@@ -434,8 +434,8 @@ func BootstrapSummary(s Summary) string {
 const CoLocatedNotice = "SuiteWard runs on the same computer as your coding agent, so its protection is reduced. " +
 	"The agent can reach SuiteWard's credentials, its database and the secret behind your six-digit codes."
 
-// tierWords says where an installation of a tier runs, in the words of the installer; a value that is not a tier is an impossible state.
-func tierWords(t Tier) string {
+// TierWords says where an installation of a tier runs, in the words of the installer: the checks, the comments and the pull request page all use them. A value that is not a tier is an impossible state.
+func TierWords(t Tier) string {
 	switch t {
 	case Isolated:
 		return "on a separate server"
@@ -446,7 +446,7 @@ func tierWords(t Tier) string {
 }
 
 // tierLine is the fact that states where the installation runs.
-func tierLine(t Tier) string { return "- Installation type: " + tierWords(t) }
+func tierLine(t Tier) string { return "- Installation type: " + TierWords(t) }
 
 // listing shows at most maxListed items and says how many of the total it left
 // out; a total below the items is the number of items.

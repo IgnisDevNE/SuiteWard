@@ -184,15 +184,15 @@ func TestCheckPublisherPostsEveryState(t *testing.T) {
 	}{
 		{checks.Success, "unchanged", "", "No protected change", "completed", "success"},
 		{checks.Success, "ready", "P1-R2", "Ready for integration", "completed", "success"},
-		{checks.Failure, "invalid-source", "", "Invalid contract source", "completed", "failure"},
-		{checks.Failure, "integrity-failed", "P1-R2", "Canonical contract failed its integrity check", "completed", "failure"},
+		{checks.Failure, "invalid-source", "", "Contract files are invalid", "completed", "failure"},
+		{checks.Failure, "integrity-failed", "P1-R2", "Approved contract failed its integrity check", "completed", "failure"},
 		{checks.Failure, "owner-command-rejected", "P1-R2", "Owner command rejected", "completed", "failure"},
-		{checks.InProgress, "bootstrap-awaiting", "", "No canonical contract yet", "in_progress", ""},
+		{checks.InProgress, "bootstrap-awaiting", "", "No approved contract yet", "in_progress", ""},
 		{checks.Success, "bootstrap-skipped", "", "Skipped before the first contract", "completed", "success"},
 		{checks.InProgress, "approval-missing", "P1-R2", "Awaiting owner approval", "in_progress", ""},
-		{checks.InProgress, "not-current", "P1-R2", "Contract change is not current", "in_progress", ""},
-		{checks.InProgress, "assessment-pending", "", "Assessment pending", "in_progress", ""},
-		{checks.InProgress, "source-unavailable", "", "Source unavailable", "in_progress", ""},
+		{checks.InProgress, "not-current", "P1-R2", "Contract change is out of date", "in_progress", ""},
+		{checks.InProgress, "assessment-pending", "", "Check not finished yet", "in_progress", ""},
+		{checks.InProgress, "source-unavailable", "", "Files cannot be read in full", "in_progress", ""},
 		{checks.InProgress, "fork-unsupported", "", "Pull requests from forks are not supported", "in_progress", ""},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {

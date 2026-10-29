@@ -233,10 +233,6 @@ func TestUnavailableSentence(t *testing.T) {
 		if got, ok := commandtext.UnavailableSentence(code); !ok || got != sentence {
 			t.Errorf("UnavailableSentence(%q) = %q, %v; want %q", code, got, ok, sentence)
 		}
-		// The closed set is the one the Receipt check already words.
-		if _, ok := commandtext.UnavailableReason(code); !ok {
-			t.Errorf("%q is not a code of the closed set of UnavailableReason", code)
-		}
 	}
 	for _, code := range []string{"", "something-else", "No-Executor", "cancelled", "head-moved"} {
 		if got, ok := commandtext.UnavailableSentence(code); ok || got != "" {

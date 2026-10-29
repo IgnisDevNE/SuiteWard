@@ -172,7 +172,11 @@ func (p *receiptPages) read(ctx context.Context, state owner.State, project owne
 	}
 	pull := pulls[i]
 	tier, _ := effectiveTier(p.tier, state, true)
-	v := pullView{Pull: number, Repo: commandtext.Visible(project.Repo), Head: pull.HeadSHA, ShortHead: shortSHA(pull.HeadSHA), Base: pull.BaseSHA, Open: pull.NotOpenSince.IsZero(), Tier: tier}
+	installation := checkTiers[tier]
+	if installation == 0 {
+		return pullView{}, fmt.Errorf("the installation type %q is not one that SuiteWard knows", tier)
+	}
+	v := pullView{Pull: number, Repo: commandtext.Visible(project.Repo), Head: pull.HeadSHA, ShortHead: shortSHA(pull.HeadSHA), Base: pull.BaseSHA, Open: pull.NotOpenSince.IsZero(), Tier: commandtext.TierWords(installation)}
 	if tier == owner.TierCoLocated {
 		v.Notice = commandtext.CoLocatedNotice
 	}
@@ -391,7 +395,7 @@ func evidenceOf(canonical, receipt pageRun) (table, error) {
 		add("Failures", func(r pageRun) string { return strconv.Itoa(r.job.Failures) })
 	}
 	add("Last reason", func(r pageRun) string { return reasons[r.plan] })
-	add("Governing manifest", ran(func(r pageRun) string {
+	add("Approved file list (fingerprint)", ran(func(r pageRun) string {
 		return r.job.GoverningDigest.String() + " (source " + commandtext.Visible(string(r.job.GoverningSource)) + ")"
 	}))
 	add("Policy levels", ran(func(r pageRun) string {
@@ -399,10 +403,10 @@ func evidenceOf(canonical, receipt pageRun) (table, error) {
 	}))
 	add("Profile", ran(func(r pageRun) string { return commandtext.Visible(r.job.Profile) }))
 	add("Test runner version", ran(func(r pageRun) string { return commandtext.Visible(r.result.ExecutorVersion) }))
-	add("Test runner binary SHA-256", ran(func(r pageRun) string { return r.result.ExecutorSHA256.String() }))
+	add("Test runner program fingerprint (SHA-256)", ran(func(r pageRun) string { return r.result.ExecutorSHA256.String() }))
 	add("Container program", ran(func(r pageRun) string { return commandtext.Visible(r.result.Runtime) }))
 	add("Go toolchain", ran(func(r pageRun) string { return commandtext.Visible(r.result.Toolchain) }))
-	add("Image digest", ran(func(r pageRun) string {
+	add("Image fingerprint (digest)", ran(func(r pageRun) string {
 		if r.result.ImageDigest.IsZero() {
 			return ""
 		}
@@ -410,7 +414,7 @@ func evidenceOf(canonical, receipt pageRun) (table, error) {
 	}))
 	add("Started", ran(func(r pageRun) string { return r.result.StartedAt.UTC().Format("2006-01-02T15:04:05Z") }))
 	add("Ended", ran(func(r pageRun) string { return r.result.EndedAt.UTC().Format("2006-01-02T15:04:05Z") }))
-	add("Merge base", ran(func(r pageRun) string { return r.job.BaseSHA }))
+	add("Common ancestor commit (merge base)", ran(func(r pageRun) string { return r.job.BaseSHA }))
 	evidence, _, err := tableOf([]string{"What", canonicalLabel, receiptLabel}, rows, unbudgeted)
 	return evidence, err
 }

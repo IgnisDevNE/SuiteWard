@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
@@ -261,15 +262,16 @@ func TestOneReportIsBuiltAtATimeAndAWaitingBuildHonorsItsContext(t *testing.T) {
 		t.Fatalf("the first build ended without reading anything: %v", err)
 	}
 
-	waiting, cancel := context.WithCancel(context.Background())
+	// A real deadline, not a cancelled context: a store that checks its context first would refuse a cancelled one even with no gate.
+	waiting, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
 	second := make(chan error, 1)
 	go func() {
 		_, err := reports.revisionReport(waiting, revisionRef("P2", "R1"))
 		second <- err
 	}()
-	cancel()
-	if err := <-second; !errors.Is(err, context.Canceled) {
-		t.Fatalf("the waiting build = %v, want context.Canceled", err)
+	if err := <-second; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the waiting build = %v, want context.DeadlineExceeded", err)
 	}
 	close(release)
 	if err := <-first; err != nil {

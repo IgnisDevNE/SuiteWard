@@ -38,6 +38,9 @@ type Check struct {
 	// ApproveMode marks an approval-missing check whose approve names a mode: the repository requires a receipt (docs/contracts/runtime.md, "The revision comment"), as the
 	// comment of the revision shows. It is false for the first contract, which has no canonical and so no receipt policy.
 	ApproveMode bool
+	// Weakened is the number of approved tests that this change edits and that fail, are missing or are flaky in their approved version, which an approval-missing check states in place of
+	// the generic sentence (docs/contracts/runtime.md, "The weakened signal"). 0 is none, or none known.
+	Weakened int
 }
 
 // CheckExecution are the counts of a complete canonical run: the tests that ran, how many passed, were skipped, failed, were missing or flaky, and how many are
@@ -146,6 +149,28 @@ func executionText(e CheckExecution) string {
 // should read the change before approving, because a change that edits a test can make it pass by checking less.
 const blockingEditText = "At least one approved test fails, is missing or is flaky on this head. If this change edits that test, read the change before you approve: an edited test can pass by checking less."
 
+// WeakenedSentence is what a text says of n approved tests that this change edits and that fail, are missing or are flaky in the version that was approved, and what to
+// do (docs/contracts/runtime.md, "The weakened signal"): an edited test can pass by checking less. It is stated for a count above 0 only.
+func WeakenedSentence(n int) string {
+	if n < 1 {
+		panic(fmt.Sprintf("commandtext: no weakened test to state, a count of %d", n))
+	}
+	count := "1 approved test that this change edits fails, is missing or is flaky on this commit, in the version that was approved."
+	if n > 1 {
+		count = fmt.Sprintf("%d approved tests that this change edits fail, are missing or are flaky on this commit, in the version that was approved.", n)
+	}
+	return count + " A test that is edited can pass by checking less. Read the edit before you approve."
+}
+
+// blockingEditSentence is the sentence that follows the counts of an approval that is missing when a test blocks: the weakened count and what to do when the change edits an
+// approved test that fails in its approved version, and the generic sentence when none is known to be, which is still true.
+func blockingEditSentence(weakened int) string {
+	if weakened > 0 {
+		return WeakenedSentence(weakened)
+	}
+	return blockingEditText
+}
+
 // closingText ends a summary: the usual one reports on the protected contract only, and the one of canonical: required reports on the run of the approved tests too.
 func closingText(c Check) string {
 	if c.Execution != nil || c.Unblocked || slices.Contains(canonicalReasons, c.Reason) {
@@ -190,7 +215,7 @@ func CheckSummary(c Check) (title, summary string) {
 	if c.Execution != nil {
 		parts = append(parts, executionText(*c.Execution))
 		if c.Reason == "approval-missing" && c.Execution.Failed+c.Execution.Missing+c.Execution.Flaky > 0 {
-			parts = append(parts, blockingEditText)
+			parts = append(parts, blockingEditSentence(c.Weakened))
 		}
 	}
 	if c.Unblocked {
@@ -236,6 +261,10 @@ func checkRequired(c Check) error {
 		return errors.New("commandtext: a head with no canonical version has no canonical run to count")
 	case c.Unblocked && (!success || c.Execution != nil):
 		return fmt.Errorf("commandtext: reason %q does not fit an unblocked run, which is lifted only to a success and has no counts", c.Reason)
+	case c.Weakened < 0 || c.Weakened > blocking:
+		return fmt.Errorf("commandtext: %d weakened tests, which the %d blocking tests of the run do not show", c.Weakened, blocking)
+	case c.Weakened > 0 && c.Reason != "approval-missing":
+		return fmt.Errorf("commandtext: reason %q states no weakened test: only an approval that is missing does", c.Reason)
 	case success && blocking > 0:
 		return errors.New("commandtext: a success with a failing, missing or flaky test")
 	case c.Reason == "canonical-failing" && blocking == 0:

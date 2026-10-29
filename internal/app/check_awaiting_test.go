@@ -167,6 +167,7 @@ func TestChecksSendAgainTheCountsAndTheModeOfAMissingApprovalTheyRestore(t *test
 	w := newExecWorld(t, execDecl)
 	w.execPullFive(execHeadFiles(execDecl, "v2"))
 	w.finish(w.onlyJob(5, cjHead2, execution.PlanCanonical), canonicalTests("pass", "fail"))
+	w.finish(w.onlyJob(5, cjHead2, execution.PlanReceipt), receiptTests("detects")) // the counts wait for the receipt too
 	w.execRun()
 	w.want(5, checks.InProgress, "approval-missing", 2)
 	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New("github: 502") // the run waits: it cannot read the head, so it keeps the check it has
@@ -240,7 +241,9 @@ func TestChecksCountOnlyACompleteJobGovernedByTheManifestOfTheCanonical(t *testi
 		t.Run(tc.name, func(t *testing.T) {
 			s.suite = suiteView{manifest: tc.manifest}
 			d := &pullDecision{result: checks.Result{Reason: reasonApprovalMissing}}
-			var executed executionOutcome
+			// the head has no wanted run but the canonical one, which is final
+			executed := executionOutcome{set: domain.Set{CanonicalLevel: domain.CanonicalLevelRequired, ReceiptLevel: domain.ReceiptLevelOff, ReceiptDecided: true,
+				CanonicalJob: domain.Job{ID: job.ID, State: domain.JobComplete}}}
 
 			if err := w.check.approvalCounts(t.Context(), s, x, d, &executed); err != nil {
 				t.Fatal(err)

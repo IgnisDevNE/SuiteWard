@@ -21,6 +21,14 @@ type executionOutcome struct {
 	counts  *checkExecution
 	receipt receiptDecision
 	silent  bool
+
+	// What the comments of the head and the counts of an awaiting check read: the Set of the head (headSetOf; zero for a step that failed or a head that no run decides, which is
+	// never final), the revision of the head, whether the approve of its check names a mode, and the weakened count that the counts of an awaiting check state.
+	set         domain.Set
+	setErr      error // the read of the Set failed: no gate makes it, so it holds nothing, and the pass returns it once the check is published
+	reference   string
+	approveMode bool
+	weakened    int
 }
 
 // executionStep plans and creates the jobs of the head, lets the canonical job gate its Contract check and decides its Receipt check. A head that could not be
@@ -37,7 +45,13 @@ func (j *checksJob) executionStep(ctx context.Context, s *pullState, x *executio
 	}
 	outcome.receipt, err = j.receiptCheck(ctx, s, x, jobs, silent)
 	outcome.silent = silent
-	return outcome, err
+	if err != nil {
+		return outcome, err
+	}
+	base := ungated(d.result)
+	outcome.reference, outcome.approveMode = base.Reference, x.namesMode(base)
+	outcome.set, outcome.setErr = j.headSetOf(ctx, s, x, jobs, silent, d) // the Set reads what no gate reads: its failure never holds the check
+	return outcome, nil
 }
 
 // runnerNotResponding says that the job a gate reads waits for a runner that no request reached for NotRespondingAfter (docs/contracts/runtime.md, "Not responding"):

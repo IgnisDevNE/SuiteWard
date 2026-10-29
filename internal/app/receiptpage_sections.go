@@ -403,6 +403,9 @@ func testGroups(r pageRun, weak map[domain.TestID]bool) ([]group, string, error)
 		}
 		last := &states[len(states)-1]
 		last.rows = append(last.rows, row.cells)
+		if row.weakened { // the weakened rows come first in their group
+			last.weakened++
+		}
 	}
 	groups, hidden, err := groupsOf([]string{"State", "Test", "Package", "File", "Reason", "Note"}, states, testTableBudget)
 	return groups, rowsNotShown(hidden, "test", "tests"), err

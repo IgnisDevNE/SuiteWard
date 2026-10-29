@@ -82,40 +82,60 @@ type group struct {
 	Table   table
 }
 
-// stateTests are the rows of the tests of one state, in the order of their table, and the state in the words of the table of the tests by state.
+// stateTests are the rows of the tests of one state, in the order of their table, and the state in the words of the table of the tests by state. The first `weakened` rows
+// are the weakened ones.
 type stateTests struct {
-	state string
-	rows  [][]string
+	state    string
+	weakened int
+	rows     [][]string
 }
 
-// groupsOf writes the tests of a run as one group for each state, in the order given, within one budget for all of them. The groups and the rows are kept in order until the
-// budget is spent: the rows that did not fit, and every group after the one that ran out, are counted, never named, and a group with no row that fits is not written. The summary
-// counts every test of its state, shown or not, so that the counts of the page include the rows that a budget cut.
+// groupsOf writes the tests of a run as one group for each state, in the order given, within one budget for all of them. A weakened row is never left out before another row:
+// the weakened rows of every group, in the order of the groups, take the budget first (the first of them in a group also takes the bytes of the group), and the other rows follow
+// in the order of the groups until it is spent. The rows that did not fit are counted, never named, and a group with no row that fits is not written. Each group is written with
+// its rows in the order of its table, the weakened ones first. The summary counts every test of its state, shown or not, so that the counts of the page include the rows that a
+// budget cut.
 func groupsOf(head []string, states []stateTests, budget int) (kept []group, hidden int, err error) {
+	summaries := make([]string, len(states))
+	shown := make([]int, len(states)) // how many of the rows of each group are kept: always the first ones, as weakened rows come first and the others follow only when all of them are kept
 	room := budget
-	for i, s := range states {
-		summary := s.state + " (" + strconv.Itoa(len(s.rows)) + ")"
-		fixed, err := sizeOf("group", group{Summary: summary, Table: table{Head: head}})
-		if err != nil {
-			return nil, 0, err
-		}
-		shown, left, err := fit(len(s.rows), func(j int) (int, error) { return sizeOf("row", s.rows[j]) }, room-fixed)
-		if err != nil {
-			return nil, 0, err
-		}
-		if shown > 0 {
-			kept = append(kept, group{Summary: summary, Table: table{Head: head, Rows: s.rows[:shown]}})
-		}
-		if shown < len(s.rows) {
-			hidden = len(s.rows) - shown
-			for _, rest := range states[i+1:] {
-				hidden += len(rest.rows)
+walk:
+	for _, weakenedPass := range []bool{true, false} {
+		for i, s := range states {
+			from, to := s.weakened, len(s.rows)
+			if weakenedPass {
+				from, to = 0, s.weakened
 			}
-			return kept, hidden, nil
+			if from == to {
+				continue
+			}
+			summaries[i] = s.state + " (" + strconv.Itoa(len(s.rows)) + ")"
+			fixed := 0
+			if shown[i] == 0 {
+				if fixed, err = sizeOf("group", group{Summary: summaries[i], Table: table{Head: head}}); err != nil {
+					return nil, 0, err
+				}
+			}
+			n, left, err := fit(to-from, func(j int) (int, error) { return sizeOf("row", s.rows[from+j]) }, room-fixed)
+			if err != nil {
+				return nil, 0, err
+			}
+			if n > 0 {
+				shown[i] += n
+				room = left
+			}
+			if n < to-from {
+				break walk
+			}
 		}
-		room = left
 	}
-	return kept, 0, nil
+	for i, s := range states {
+		hidden += len(s.rows) - shown[i]
+		if shown[i] > 0 {
+			kept = append(kept, group{Summary: summaries[i], Table: table{Head: head, Rows: s.rows[:shown[i]]}})
+		}
+	}
+	return kept, hidden, nil
 }
 
 // textList is the entries of a list of text that fit its budget, and the number left out.

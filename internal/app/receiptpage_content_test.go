@@ -453,7 +453,7 @@ func weakenedWorld(t *testing.T) *pageWorld {
 }
 
 // The weakened rows come first inside their group: TestAlsoEdited (weakened) sorts after TestAdded by name, and comes before it. The groups keep their own order.
-func TestPullPageCountsTheWeakenedTestsAndMarksThemInBothTablesWithTheWeakenedRowsFirstInTheirGroup(t *testing.T) {
+func TestPullPageCountsTheWeakenedTestsAndMarksThemInBothTablesWithTheWeakenedRowsFirst(t *testing.T) {
 	w := weakenedWorld(t)
 	page := w.text()
 	w.wantText(page, weakenedTwo)

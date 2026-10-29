@@ -102,7 +102,7 @@ execution:
   profile: go
 ```
 
-Both levels then start at `advisory`: results are on a page on loopback (and, for the receipt of a revision, on the `SuiteWard / Receipt` check), and nothing is gated. Raise `canonical` or `receipt` to `required` only after you have read the [limits](install.md#limits-of-canonical-execution) and watched a few runs. When a run cannot be completed, `/suiteward unblock <code>` lifts that head.
+Both levels then start at `advisory`: when the runs of a head end, SuiteWard comments on the pull request with counts, the results are in tables on one page for each pull request, served on loopback (and, for the receipt of a revision, on the `SuiteWard / Receipt` check), and nothing is gated. Raise `canonical` or `receipt` to `required` only after you have read the [limits](install.md#limits-of-canonical-execution) and watched a few runs. When a run cannot be completed, or the test runner has not answered for about 30 seconds, `/suiteward unblock <code>` lifts that head, and the lift holds until the next push.
 
 ## Before you rely on it
 

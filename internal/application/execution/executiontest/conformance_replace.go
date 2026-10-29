@@ -118,19 +118,18 @@ func rpInvalid(e *env) {
 	otherRepository := spec
 	otherRepository.RepositoryID = 20
 	for name, n := range map[string]execution.NewJob{
-		"a job that does not exist":                replacing(spec, execution.Job{ID: 987654}, 0, time.Hour),
-		"a job of another head":                    replacing(spec, other, 0, time.Hour),
-		"a job of another pull request":            replacing(otherPull, old, 0, time.Hour),
-		"a job of another repository":              replacing(otherRepository, old, 0, time.Hour),
-		"a job of the other plan":                  replacing(receiptSpec(1), old, 0, time.Hour),
-		"a job of another governing manifest":      replacing(otherManifest, old, 0, time.Hour),
-		"a job of another declaration":             replacing(otherDeclaration, old, 0, time.Hour),
-		"a job that is pending":                    replacing(canonicalSpec(3), pending, 0, time.Hour),
-		"a job that was cancelled":                 replacing(canonicalSpec(4), cancelled, 0, time.Hour),
-		"a job that ended for no-merge-base":       replacing(receiptSpec(5), noMergeBase, 0, time.Hour),
-		"a negative job id":                        replacing(spec, execution.Job{ID: -1}, 0, time.Hour),
-		"no enrollment time":                       {Spec: spec, At: at(time.Hour), Replaces: old.ID},
-		"an enrollment time and no job to replace": {Spec: spec, At: at(time.Hour), UnblockedSince: at(0)},
+		"a job that does not exist":           replacing(spec, execution.Job{ID: 987654}, 0, time.Hour),
+		"a job of another head":               replacing(spec, other, 0, time.Hour),
+		"a job of another pull request":       replacing(otherPull, old, 0, time.Hour),
+		"a job of another repository":         replacing(otherRepository, old, 0, time.Hour),
+		"a job of the other plan":             replacing(receiptSpec(1), old, 0, time.Hour),
+		"a job of another governing manifest": replacing(otherManifest, old, 0, time.Hour),
+		"a job of another declaration":        replacing(otherDeclaration, old, 0, time.Hour),
+		"a job that is pending":               replacing(canonicalSpec(3), pending, 0, time.Hour),
+		"a job that was cancelled":            replacing(canonicalSpec(4), cancelled, 0, time.Hour),
+		"a job that ended for no-merge-base":  replacing(receiptSpec(5), noMergeBase, 0, time.Hour),
+		"a negative job id":                   replacing(spec, execution.Job{ID: -1}, 0, time.Hour),
+		"no enrollment time":                  {Spec: spec, At: at(time.Hour), Replaces: old.ID},
 	} {
 		e.t.Run(name, func(t *testing.T) {
 			sub := *e

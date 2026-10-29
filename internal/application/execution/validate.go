@@ -60,6 +60,10 @@ func (n NewJob) Validate() error {
 		return invalid("the creation time is required")
 	case n.Unavailable != "" && !n.Unavailable.createdFinal():
 		return invalid("a job is created unavailable only for no-merge-base, executor-not-configured or github-unavailable, not %q", n.Unavailable)
+	case n.Replaces < 0:
+		return invalid("the job to replace must not be negative")
+	case n.Replaces != 0 && n.UnblockedSince.IsZero():
+		return invalid("the enrollment time is required with the job to replace")
 	}
 	return n.validate(n.Unavailable != "")
 }

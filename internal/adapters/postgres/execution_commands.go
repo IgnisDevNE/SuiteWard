@@ -99,9 +99,9 @@ func (s executionStore) RecordApproval(ctx context.Context, e commands.Entry, ac
 	})
 }
 
-// RecordUnblock implements execution.Store in one transaction: it locks the jobs in id order, compares each with what the caller observed, ends the open ones
-// for no-executor, and writes the ledger entry, its acknowledgment and one unblock row for each lifted job. A command that already lifted jobs is found by its
-// rows, after the locks (a concurrent attempt of the same command waits for the first and finds them), and must lift the same jobs at the same time: it
+// RecordUnblock implements execution.Store in one transaction: it locks the jobs in id order, compares each with what the caller observed and looks for a replacement of
+// each (checkUnblockable), ends the open ones for no-executor, and writes the ledger entry, its acknowledgment and one unblock row for each lifted job. A command
+// that already lifted jobs is found by its rows, after the locks (a concurrent attempt of the same command waits for the first and finds them), and must lift the same jobs at the same time: it
 // is success, and the jobs are not looked at again, since they ended with it.
 func (s executionStore) RecordUnblock(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, headSHA string, jobs []execution.UnblockJob, at time.Time) error {
 	if err := e.Validate(); err != nil {
@@ -138,7 +138,7 @@ func (s executionStore) RecordUnblock(ctx context.Context, e commands.Entry, ack
 			_, err := recordEntry(ctx, q, e, pull, ack)
 			return err
 		}
-		if err := checkUnblockable(jobs, locked, e, headSHA); err != nil {
+		if err := checkUnblockable(ctx, q, jobs, locked, e, headSHA); err != nil {
 			return err
 		}
 		if _, err := recordEntry(ctx, q, e, pull, ack); err != nil {
@@ -194,8 +194,9 @@ func sameUnblock(rows []dbgen.ListExecutionUnblocksRow, jobs []execution.Unblock
 }
 
 // checkUnblockable is execution.ErrInvalidRequest unless every locked job is of the repository, the pull request and the head, and execution.ErrJobChanged
-// unless every one is still as the caller observed it.
-func checkUnblockable(jobs []execution.UnblockJob, locked []execution.Job, e commands.Entry, headSHA string) error {
+// unless every one is still as the caller observed it and no newer job has replaced it. The replacement is read after the locks: one that committed before the lock was
+// taken is seen, and one that comes later waits for the lock of the job it replaces (Enqueue).
+func checkUnblockable(ctx context.Context, q *dbgen.Queries, jobs []execution.UnblockJob, locked []execution.Job, e commands.Entry, headSHA string) error {
 	for _, job := range locked {
 		if job.RepositoryID != e.RepositoryID || job.PullNumber != e.PullNumber || job.HeadSHA != headSHA {
 			return fmt.Errorf("%w: job %d is not a job of this head and pull request", execution.ErrInvalidRequest, job.ID)
@@ -204,6 +205,13 @@ func checkUnblockable(jobs []execution.UnblockJob, locked []execution.Job, e com
 	for i, job := range locked {
 		if !job.Observed(jobs[i]) {
 			return fmt.Errorf("%w: job %d", execution.ErrJobChanged, job.ID)
+		}
+		head, err := headJobs(ctx, q, job.RepositoryID, job.PullNumber, job.HeadSHA, job.Plan)
+		if err != nil {
+			return err
+		}
+		if job.ReplacedBy(head) {
+			return fmt.Errorf("%w: job %d was replaced by a newer job", execution.ErrJobChanged, job.ID)
 		}
 	}
 	return nil

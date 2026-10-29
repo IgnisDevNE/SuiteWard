@@ -121,8 +121,8 @@ type NewJob struct {
 	Unavailable Reason
 	At          time.Time // the creation time; also the first time a lease may be granted and, when unavailable, the end
 
-	// Replaces is the id of the job that this one replaces (zero for none): the job that held the binding of Spec and ended unavailable for executor-not-configured or
-	// no-executor. UnblockedSince is the current enrollment's enrolled_at, from which an unblock of that job holds it (required with Replaces, and only then).
+	// Replaces is the id of the job that this one replaces, zero for none: the job that held the binding of Spec and ended unavailable for executor-not-configured or
+	// no-executor. UnblockedSince is the current enrollment's enrolled_at, from which an unblock of that job holds it (required with Replaces).
 	Replaces       int64
 	UnblockedSince time.Time
 }
@@ -307,7 +307,9 @@ type ApprovalGate struct {
 type Store interface {
 	// Enqueue creates the job, pending or already unavailable, and reports true. A current job with the same key (one that is not
 	// cancelled, and not unavailable for executor-not-configured or no-executor) is returned instead, with false, and nothing is
-	// written. A job that breaks a constraint is ErrInvalidRequest.
+	// written. A job that breaks a constraint is ErrInvalidRequest. A job that names the job it replaces (n.Replaces) is decided with that job locked, as RecordUnblock
+	// locks its jobs: the job must be of the binding of n and unavailable for executor-not-configured or no-executor (otherwise ErrInvalidRequest), and one that ended for
+	// no-executor and has an unblock row since n.UnblockedSince is returned instead of a new job, with false, and nothing is written (Job.HeldByUnblock).
 	Enqueue(ctx context.Context, n NewJob) (Job, bool, error)
 	// Lease grants the oldest ready job (by creation time, then id): pending with its not_before reached, or leased with an expired
 	// lease. An expired lease counts as a failure (lease-expired, or timeout past the deadline) first, and the call goes on to the
@@ -361,8 +363,9 @@ type Store interface {
 	RecordApproval(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, gate ApprovalGate) error
 	// RecordUnblock records the ledger entry of an unblock (unblocked) and one unblock row for each lifted job, with the
 	// acknowledgment when there is one, in one transaction. Each job must be of the pull and the head. The store locks the jobs in the
-	// order of their ids and compares each with what the caller observed: one whose state or lease id differs, or an open one that no
-	// longer waits for the runner (a lease request left it waiting on GitHub), fails the call with ErrJobChanged and writes nothing.
+	// order of their ids and compares each with what the caller observed: one whose state or lease id differs, an open one that no
+	// longer waits for the runner (a lease request left it waiting on GitHub), or one that a newer job replaced (Job.ReplacedBy), fails the call with ErrJobChanged and
+	// writes nothing.
 	// It then ends each open job (pending or leased) as unavailable for no-executor, as the sweep ends a
 	// pending one, with finished_at and the decided_at of its row both at; a job that was unavailable already stays as it is. The store
 	// does not judge whether a runner responds: the caller passes only the jobs it may end. The same entry, jobs and time again is

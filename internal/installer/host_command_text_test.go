@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -173,4 +174,43 @@ func TestTheInstallsHostStepHintsNameTheProgramTheRunExecutesFrom(t *testing.T) 
 		t.Fatal(err)
 	}
 	mustName("the note that the test runner is missing", noExecutorNote(setup.hostStep, "this install again"))
+}
+
+// A hand-made host adopted by an install, an upgrade, an enroll or an uninstall that has not been given the account's env file names the host step as
+// the rest of the run does, by the path the run executes from: the host may have no suiteward in /usr/local/bin.
+func TestAdoptionOfAHandMadeHostNamesTheProgramTheRunExecutesFrom(t *testing.T) {
+	home := t.TempDir()
+	p := isolatedParams()
+	p.EnvFile = "/etc/suiteward/github.env"
+	installedUnits(t, home, p)
+	d := Deps{GOOS: "linux", Executable: func() (string, error) { return "/usr/bin/suiteward", nil }}
+	_, err := adoptUnitsDir(d, unitDir(home), filepath.Join(home, ".config", "suiteward", "github.env"), true)
+	want := "`sudo /usr/bin/suiteward install host --sha256sums"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("the refusal must name %s, got %v", want, err)
+	}
+}
+
+// checkAccount's command for the service account is run by the administrator through sudo: a program inside a home directory (EL9 homes are 0700)
+// is not one the service account can run, which the host step's own text says (host.next).
+func TestTheWrongAccountRefusalSaysWhenTheProgramMustMoveToASharedPlace(t *testing.T) {
+	root := func(string, ...string) (string, error) { return "0", nil }
+	for name, c := range map[string]struct {
+		exe      string
+		wantNote bool
+	}{
+		"the program is in the home of the administrator": {"/home/admin/suiteward", true},
+		"the program is in root's home":                   {"/root/suiteward", true},
+		"the program is in a shared place":                {"/usr/local/bin/suiteward", false},
+		"the program is in /usr/bin":                      {"/usr/bin/suiteward", false},
+	} {
+		d := Deps{GOOS: "linux", Executable: func() (string, error) { return c.exe, nil }}
+		_, err := checkAccount(root, "/root", d)
+		if err == nil {
+			t.Fatalf("%s: root was not refused", name)
+		}
+		if got := strings.Contains(err.Error(), "copy it to a shared place such as /usr/local/bin first"); got != c.wantNote {
+			t.Errorf("%s: the note to copy the program is %v, want %v: %v", name, got, c.wantNote, err)
+		}
+	}
 }

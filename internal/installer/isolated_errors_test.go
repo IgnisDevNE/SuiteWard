@@ -238,7 +238,7 @@ func TestAdoptUnitsDirRefusesAUnitItCannotRead(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "suiteward.container"), 0o700); err != nil { // a directory where the unit file should be
 		t.Fatal(err)
 	}
-	if _, err := adoptUnitsDir(dir, filepath.Join(dir, "github.env"), false); err == nil || !strings.Contains(err.Error(), "read the installed unit suiteward.container") {
+	if _, err := adoptUnitsDir(Deps{}, dir, filepath.Join(dir, "github.env"), false); err == nil || !strings.Contains(err.Error(), "read the installed unit suiteward.container") {
 		t.Fatalf("adoptUnitsDir = %v", err)
 	}
 }

@@ -562,7 +562,7 @@ func checkUserManager(run func(string, ...string) (string, error), d Deps) error
 // that is reported; the installed ports and job timeout stand unless the run is given others (a flag or the answers file), which win,
 // and the change is said.
 func adoptInstalled(d Deps, s *Settings, unitsDir, homeEnvFile string, r *Resolver, neverStarted func() (bool, error), say func(string, ...any)) (string, installedStack, error) {
-	st, err := adoptUnitsDir(unitsDir, homeEnvFile, false)
+	st, err := adoptUnitsDir(d, unitsDir, homeEnvFile, false)
 	if err != nil {
 		return "", installedStack{}, err
 	}
@@ -640,7 +640,7 @@ type installedStack struct {
 // adoptUnitsDir reads the installed units and compares them with the units of this release. A difference it cannot carry is a
 // *DiffError. With refreshDB (an upgrade) a database unit on another PostgreSQL pin is not a difference. When the installed
 // units read an env file that is not the account's own, that file must already be copied to homeEnvFile.
-func adoptUnitsDir(unitsDir, homeEnvFile string, refreshDB bool) (installedStack, error) {
+func adoptUnitsDir(d Deps, unitsDir, homeEnvFile string, refreshDB bool) (installedStack, error) {
 	templates, err := embeddedUnits()
 	if err != nil {
 		return installedStack{}, err

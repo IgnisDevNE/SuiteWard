@@ -2,6 +2,7 @@ package commandtext
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
@@ -74,7 +75,7 @@ func gateText(a Ack) (reason string, next []string) {
 
 // modeNeeds is what the receipt must show for the summary of mode to be met (ADR 0028, section 6).
 func modeNeeds(mode execution.Mode) string {
-	const noBlock = ", and no test that fails, gives no result or gives different results when run again"
+	const noBlock = ", and no test that fails with the change, gives no result or gives different results when run again"
 	switch mode {
 	case execution.ModeFix:
 		return "at least one test that fails without the change and passes with it" + noBlock
@@ -90,6 +91,9 @@ func modeNeeds(mode execution.Mode) string {
 // A changed test file that cannot be read blocks every mode, so that is said when there are some.
 func countsText(a Ack) []string {
 	parts := receiptText(ReceiptRun{Counts: a.Counts, Markers: a.Markers})
+	for i := range parts { // the acknowledgment has no link, so it names the page
+		parts[i] = strings.ReplaceAll(parts[i], "listed on the page", "listed on the pull request page")
+	}
 	if a.Counts.Unparsed != 0 {
 		parts = append(parts, "Changed test files that cannot be read block every mode.")
 	}

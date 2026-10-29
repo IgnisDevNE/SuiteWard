@@ -65,7 +65,7 @@ func TestRevisionMessageKeepsWhatAReductionLowersWhenItsDetailIsDropped(t *testi
 		numbersSayDelete bool
 	}{
 		"only the policy": {execEntries(), nil, true, false, "**This revision lowers the test requirements.**", "reduces the protected scope", true},
-		"the scope alone": {asRules(list()), list(), false, true, "**This revision reduces the protected scope.**", "execution policy", false},
+		"the scope alone": {asRules(list()), list(), false, true, "**This revision reduces the protected scope.**", "test requirements", false},
 		"both":            {append(asRules(list()), execEntries()[0]), list(), true, true, "**This revision reduces the protected scope and lowers the test requirements.**", "", false},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -218,7 +218,7 @@ func scopeSuggestReply(n ScopeNotice) string {
 		parts = append(parts, "Nothing is protected until the first contract is approved and merged.",
 			"Once the file is committed on this branch, comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"))
 	case BaseDefaultBranch:
-		parts = append(parts, "Nothing is protected until the first contract is approved and merged.",
+		parts = append(parts, "Nothing is protected until the first contract is approved.",
 			"SuiteWard proposes the first contract from the default branch's `.suiteward.yml`, so put "+put+" there first: commit or merge it on the default branch. "+commitNote+" "+
 				"Then comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"))
 	}

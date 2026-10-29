@@ -158,12 +158,12 @@ func TestRevisionCommentOfAnOmittedReductionSaysWhatItLowers(t *testing.T) {
 	}
 
 	scopeOnly := revisionText(t, omitted(false, true))
-	if !strings.Contains(scopeOnly, "**This revision reduces the protected scope.**") || strings.Contains(scopeOnly, "execution policy") {
+	if !strings.Contains(scopeOnly, "**This revision reduces the protected scope.**") || strings.Contains(scopeOnly, "test requirements") {
 		t.Errorf("a revision that only reduces the scope speaks of the policy:\n%s", scopeOnly)
 	}
 
 	neither := revisionText(t, omitted(false, false)) // a message that was queued before the flags existed
-	if !strings.Contains(neither, "**This revision reduces the protected scope.**") || strings.Contains(neither, "execution policy") {
+	if !strings.Contains(neither, "**This revision reduces the protected scope.**") || strings.Contains(neither, "test requirements") {
 		t.Errorf("an omitted reduction with neither flag does not read as it did:\n%s", neither)
 	}
 }

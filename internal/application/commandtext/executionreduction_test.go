@@ -68,7 +68,7 @@ func TestRevisionCommentOfAScopeReductionThatAlsoLowersThePolicyStatesBoth(t *te
 // A reduction of the scope alone reads as it did before the policy was a rule.
 func TestRevisionCommentOfAScopeReductionHasNoExecutionHeading(t *testing.T) {
 	body := revisionText(t, reduced())
-	if strings.Contains(body, "Test requirements lowered") || strings.Contains(body, "execution policy") || !strings.Contains(body, "**This revision reduces the protected scope.**") {
+	if strings.Contains(body, "Test requirements lowered") || strings.Contains(body, "test requirements") || !strings.Contains(body, "**This revision reduces the protected scope.**") {
 		t.Errorf("a reduction of the scope speaks of the execution policy or lacks its own warning:\n%s", body)
 	}
 }

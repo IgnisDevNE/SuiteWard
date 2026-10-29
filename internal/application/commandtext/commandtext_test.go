@@ -480,13 +480,13 @@ func TestAcknowledge(t *testing.T) {
 			// True whether or not an approval was active, so it never says one was withdrawn.
 			"revoked after promotion",
 			commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Proposal: 7, Revision: 1, Source: source, Owner: owner},
-			[]string{"Your revoke command for P7-R1 (@octo-owner) was recorded, but it changes nothing.", "P7-R1 is already merged and is part of the approved version", "revoking cannot undo it", "open a new pull request that restores the earlier files", "its own approval"},
+			[]string{"Your revoke command for P7-R1 (@octo-owner) was recorded, but it changes nothing.", "P7-R1 is already the approved version, or part of it", "revoking cannot undo it", "open a new pull request with the protected files as they should be", "its own approval"},
 			[]string{"awaiting valid approval", "eligible", "no longer counts", "withdrawn", "Revocation recorded", "/suiteward"},
 		},
 		{
 			"approved after promotion",
 			commandtext.Ack{Outcome: commandtext.ApprovedAfterPromotion, Proposal: 7, Revision: 1, Source: source, Owner: owner},
-			[]string{"Approval recorded for P7-R1 by @octo-owner.", "P7-R1 is already merged and is part of the approved version", "so nothing changes", "There is nothing more to do", "open a new pull request that restores the earlier files"},
+			[]string{"Approval recorded for P7-R1 by @octo-owner.", "P7-R1 is already the approved version, or part of it", "so nothing changes", "There is nothing more to do", "open a new pull request with the protected files as they should be"},
 			[]string{"awaiting", "eligible", "withdraw", "/suiteward", "<code>"},
 		},
 		{

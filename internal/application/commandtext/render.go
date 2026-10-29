@@ -246,13 +246,13 @@ func consentAck(a Ack) string {
 		// Says nothing about an approval being withdrawn: the owner may have had none active.
 		return paragraphs(
 			"Your revoke command for "+ref+" ("+who+") was recorded, but it changes nothing.\n"+
-				ref+" is already merged and is part of the approved version, so revoking cannot undo it.",
+				ref+" is already the approved version, or part of it, so revoking cannot undo it.",
 			reverseText,
 		)
 	case ApprovedAfterPromotion:
 		return paragraphs(
 			"Approval recorded for "+ref+" by "+who+".\n"+
-				ref+" is already merged and is part of the approved version, so nothing changes. There is nothing more to do.",
+				ref+" is already the approved version, or part of it, so nothing changes. There is nothing more to do.",
 			reverseText,
 		)
 	case NoActiveApproval:
@@ -646,7 +646,7 @@ func HasMarker(body, instance, key string) bool {
 }
 
 // reverseText is how a merged contract change is reversed (ADR 0018): never by a revocation.
-const reverseText = "To reverse it, open a new pull request that restores the earlier files. It needs its own approval and becomes a new version. The history is kept."
+const reverseText = "To reverse it, open a new pull request with the protected files as they should be. It needs its own approval and becomes a new version. The history is kept."
 
 // Revision is what the comment of a new change-proposal revision states. Previous is the reference this revision
 // supersedes (an earlier revision of the same proposal), empty for the first. Each list shows at most 20 entries
@@ -972,7 +972,7 @@ var refusals = map[Outcome]refusalSet{
 	UnblockRefused: {"/suiteward unblock", map[Refusal]refusalText{
 		Fork:    {forkReason, "Open the pull request from a branch of this repository. " + codeUsedAgain, ""},
 		NotOpen: {notOpenReason, "Comment `/suiteward unblock <code>` on an open pull request. " + codeUsedAgain, ""},
-		NotUnavailable: {"none of the tests of this commit failed to run, so there is nothing to unblock",
+		NotUnavailable: {"no test of this commit is unable to run or waiting for a test runner that is not responding, so there is nothing to unblock",
 			"An unblock applies only to tests that could not run, or that wait for a test runner that is not responding. " +
 				"It does nothing for tests that have finished, whether they pass or fail, or that wait for GitHub or for a test runner that is responding. " + codeUsedAgain, ""},
 		// RunnerResponding is told in the contract's own words, not in the template of refused (see refusal): reason is the whole first paragraph.

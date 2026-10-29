@@ -68,13 +68,13 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"fix not met",
 			summaryNotMet(execution.ModeFix),
-			[]string{"was refused: the receipt of this commit does not meet the `fix` mode. " + codeUsed, "needs at least one test that fails without the change and passes with it, and no test that fails, gives no result or gives different results when run again", countsLine, "Lines to look at: 5. They are listed on the page.", "Tests that SuiteWard cannot run, so the receipt does not cover them: 4.", nextCode},
+			[]string{"was refused: the receipt of this commit does not meet the `fix` mode. " + codeUsed, "needs at least one test that fails without the change and passes with it, and no test that fails with the change, gives no result or gives different results when run again", countsLine, "Lines to look at: 5. They are listed on the pull request page.", "Tests that SuiteWard cannot run, so the receipt does not cover them: 4.", nextCode},
 			[]string{"unblock", "<fix|feature|refactor>"},
 		},
 		{
 			"feature not met",
 			summaryNotMet(execution.ModeFeature),
-			[]string{"does not meet the `feature` mode", "needs at least one test that passes with the change and either fails without it or needs new code, and no test that fails, gives no result or gives different results when run again", countsLine},
+			[]string{"does not meet the `feature` mode", "needs at least one test that passes with the change and either fails without it or needs new code, and no test that fails with the change, gives no result or gives different results when run again", countsLine},
 			[]string{"`fix`"},
 		},
 		{
@@ -134,7 +134,7 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"unblock refused where nothing is unavailable",
 			commandtext.Ack{Outcome: commandtext.UnblockRefused, Source: source, Owner: owner, Refusal: commandtext.NotUnavailable},
-			[]string{"`/suiteward unblock` was not processed: none of the tests of this commit failed to run, so there is nothing to unblock. Nothing changed.", notLifted, codeWasUsed, "next code"},
+			[]string{"`/suiteward unblock` was not processed: no test of this commit is unable to run or waiting for a test runner that is not responding, so there is nothing to unblock. Nothing changed.", notLifted, codeWasUsed, "next code"},
 			nil,
 		},
 	}
@@ -206,7 +206,7 @@ func TestAcknowledgeAnUnmetModeStatesEveryCount(t *testing.T) {
 		"Tests this change adds or edits: 81.\n- Fail before the change and pass now, so they show the change works: 12\n- Pass before and after, so they show nothing: 34\n" +
 			"- Use code that the old code lacks, so they could not run before the change: 5\n- Fail with this change: 6\n- Give no result: 7\n" +
 			"- Give different results when run again: 8\n- Skipped: 9",
-		"Lines to look at: 1. They are listed on the page.",
+		"Lines to look at: 1. They are listed on the pull request page.",
 		"Tests that SuiteWard cannot run, so the receipt does not cover them: 10.",
 	} {
 		if !strings.Contains(body, want) {

@@ -6,7 +6,7 @@ This is the short path for one owner. The **co-located** tier runs SuiteWard nex
 
 ## Co-located (your PC)
 
-On Windows and macOS, start the Podman machine first: `podman machine start` (`podman machine init` once before that). Windows is the path validated live (the installer with Podman, the test runner with Docker). On macOS, the installer ran on a real Mac with Podman, without GitHub (phase M1.15), and CI runs its tests on a macOS machine, but the test runner (the executor of step 2), the GitHub flow with its setup window and later releases have not been seen there yet; Linux is covered by tests only.
+On Windows and macOS, start the Podman machine first: `podman machine start` (`podman machine init` once before that). Windows is the path validated live (the installer with Podman, the test runner with Docker). On macOS, the installer ran on a real Mac with Podman, without GitHub (phase M1.15), and CI runs its tests on a macOS machine, but the test runner (the executor of step 2), the GitHub flow with its setup window and later releases have not been seen there yet. On Linux, a co-located install without GitHub ran on Ubuntu 24.04 in WSL with Podman 4.9.3, and its test runner ran as a user unit that the service saw; no job has run there yet, and nothing has run there with GitHub.
 
 **1. Get the installer, and verify it if you choose** ([section 4](install.md#4-get-and-verify-the-installer)). Verifying is optional but recommended: the binary is the trust root of the install, and the checks below prove that it is the one the release workflow signed.
 
@@ -65,18 +65,18 @@ Copy the binary to `/usr/local/bin/suiteward`, and keep the verified `SHA256SUMS
 **2. Prepare the host**, once, as the administrator ([step 10.2](install.md#10-running-on-a-separate-host-operators)):
 
 ```
-sudo suiteward install host --sha256sums <path to the verified SHA256SUMS>
+sudo /usr/local/bin/suiteward install host --sha256sums <path to the verified SHA256SUMS>
 ```
 
-It also makes the executor, under an account of its own, and pins its binary to the release's line in that file.
+It also makes the executor, under an account of its own, and pins its binary to the release's line in that file. Use the full path: `sudo` on AlmaLinux 9 does not search `/usr/local/bin`, and the shell that step 3 opens may not either.
 
 **3. Install the stack** in a shell as the account `suiteward` that [step 10.3](install.md#10-running-on-a-separate-host-operators) opens:
 
 ```
-suiteward install --tier isolated --github yes --manifest-port 8765
+/usr/local/bin/suiteward install --tier isolated --github yes --manifest-port 8765
 ```
 
-The binary carries its release's image digest, so no `--image` is needed. From your PC, forward the port the installer names and open `http://127.0.0.1:8765/` in your browser, with the same number on both sides of the forward ([step 10.4](install.md#10-running-on-a-separate-host-operators)). The installer walks through the App, the repositories and the test checks, and writes a ruleset file for each repository on the host: print it with `cat` in the session, save it on your PC and import it. It then runs setup on the terminal (turn off session recording first) and you run `suiteward doctor`. With an App you made by hand, give its values and key file instead.
+The binary carries its release's image digest, so no `--image` is needed. From your PC, forward the port the installer names and open `http://127.0.0.1:8765/` in your browser, with the same number on both sides of the forward ([step 10.4](install.md#10-running-on-a-separate-host-operators)). The installer walks through the App, the repositories and the test checks, and writes a ruleset file for each repository on the host: print it with `cat` in the session, save it on your PC and import it. It then runs setup on the terminal (turn off session recording first) and you run `/usr/local/bin/suiteward doctor`. With an App you made by hand, give its values and key file instead.
 
 ## The first contract ([section 8](install.md#8-first-use-bootstrap))
 
@@ -102,7 +102,7 @@ execution:
   profile: go
 ```
 
-Both levels then start at `advisory`: results are on a page on loopback (and, for the receipt of a revision, on the `SuiteWard / Receipt` check), and nothing is gated. Raise `canonical` or `receipt` to `required` only after you have read the [limits](install.md#limits-of-canonical-execution) and watched a few runs. When a run cannot be completed, `/suiteward unblock <code>` lifts that head.
+Both levels then start at `advisory`: when the runs of a head end, SuiteWard comments on the pull request with counts, the results are in tables on one page for each pull request, served on loopback (and, for the receipt of a revision, on the `SuiteWard / Receipt` check), and nothing is gated. Raise `canonical` or `receipt` to `required` only after you have read the [limits](install.md#limits-of-canonical-execution) and watched a few runs. When a run cannot be completed, or the test runner has not answered for about 30 seconds, `/suiteward unblock <code>` lifts that head. The runs it lifts are not run again, and the next push runs as usual.
 
 ## Before you rely on it
 

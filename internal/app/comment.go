@@ -586,8 +586,9 @@ func githubFailure(kind, key, step string, err error) error {
 }
 
 // keyParts is the number of ':' separated parts of the keys of each github_comment kind: three, but four for the scope notice, the scope
-// review, the invalid-source comment and the runner-uncovered comment, whose tail is <pull>:<digest>.
-var keyParts = map[string]int{ackKey: 3, bootstrapSummaryKey: 3, bootstrapPromotedKey: 3, bootstrapNoticeKey: 3, bootstrapCancelledKey: 3, mergeKey: 3, revisionKey: 3, scopeNoticeKey: 4, scopeReviewKey: 4, invalidSourceKey: 4, runnerUncoveredKey: 4}
+// review, the invalid-source comment and the runner-uncovered comment, whose tail is <pull>:<digest>, and five for the results and the not-responding comments, whose tail is
+// <pull>:<head>:<jobs>, and four for the runner-back comment, whose tail is <pull>:<head>.
+var keyParts = map[string]int{ackKey: 3, bootstrapSummaryKey: 3, bootstrapPromotedKey: 3, bootstrapNoticeKey: 3, bootstrapCancelledKey: 3, mergeKey: 3, revisionKey: 3, scopeNoticeKey: 4, scopeReviewKey: 4, invalidSourceKey: 4, runnerUncoveredKey: 4, resultsKey: 5, notRespondingKey: 5, runnerBackKey: 4}
 
 // splitKey parses <kind>:<repository id>:<tail> of a github_comment key.
 func splitKey(key string) (kind string, repositoryID int64, tail string, ok bool) {
@@ -635,6 +636,7 @@ var commentHandlers = map[string]func(p *commentPublisher, ctx context.Context, 
 	bootstrapNoticeKey: (*commentPublisher).notice, bootstrapCancelledKey: (*commentPublisher).cancelled, mergeKey: (*commentPublisher).merge,
 	revisionKey: (*commentPublisher).revision, scopeNoticeKey: (*commentPublisher).scopeNotice, invalidSourceKey: (*commentPublisher).invalidSource,
 	runnerUncoveredKey: (*commentPublisher).runnerUncovered,
+	resultsKey:         (*commentPublisher).results, notRespondingKey: (*commentPublisher).notResponding, runnerBackKey: (*commentPublisher).runnerBack,
 }
 
 // publish delivers one github_comment message: it renders the body from the payload and the facts it names, and

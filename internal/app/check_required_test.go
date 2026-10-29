@@ -18,7 +18,7 @@ import (
 func chkRequired(t *testing.T, state checks.State, reason string, counts *checkExecution, unblocked bool) (governance.OutboxMessage, error) {
 	t.Helper()
 	r := checks.Result{RepositoryID: cmtRepoID, PullNumber: cmtPull, HeadSHA: chkHead, State: state, Reason: reason, Reference: "P1-R2", Unblocked: unblocked}
-	return newCheckMessageOf(cmtRepo, r, owner.TierIsolated, "V2", 3, nil, 0, counts, false)
+	return newCheckMessageOf(cmtRepo, r, owner.TierIsolated, "V2", 3, nil, 0, counts, 0, false)
 }
 
 var (

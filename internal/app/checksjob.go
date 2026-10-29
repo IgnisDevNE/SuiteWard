@@ -335,13 +335,16 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
 		return "", err
 	}
-	if err := j.publishCheck(ctx, s, d.result, d.runners, executed.counts, x.namesMode(d.result)); err != nil {
+	if err := j.publishCheck(ctx, s, d.result, d.runners, executed.counts, executed.weakened, x.namesMode(d.result)); err != nil {
 		return "", err
 	}
 	if err := j.publishReceipt(ctx, s, executed.receipt); err != nil {
 		return "", err
 	}
 	if err := j.commentAfterCheck(ctx, s, d.result, d.runners); err != nil {
+		return "", err
+	}
+	if err := j.commentsOfHead(ctx, s, executed); err != nil {
 		return "", err
 	}
 	return d.problem, errors.Join(stepErr, countsErr)
@@ -356,10 +359,14 @@ func (x *executionRun) namesMode(r checks.Result) bool {
 
 // approvalCounts gives the check of a head whose approval is missing, under canonical: required, the counts of the complete canonical run of the head, and records the job it
 // counted in the decision (CountedJob). The run does not decide the check: the approval is what is missing, and the reason keeps its precedence. The owner reads the counts
-// before approving, because a head can fail the approved tests that its own change edits. A run that is pending, unavailable or not wanted adds nothing and counts no job.
+// before approving, because a head can fail the approved tests that its own change edits, and the weakened count says how many of them the change edits (docs/contracts/runtime.md,
+// "The weakened signal"). A run that is pending, unavailable or not wanted adds nothing and counts no job.
 // The ledger writes a check again when the counted job changes: the first message goes out while the run is pending and the reason does not change when it completes, so the
-// job that completes is what gives the check its counts. Only a complete job that the manifest of the canonical governs is counted, never a job of another version. What this
-// pass cannot read keeps the stored value of the same head, so a store that fails for a moment does not flip the check and write two messages. The failure of the read is
+// job that completes is what gives the check its counts. Only a complete job that the manifest of the canonical governs is counted, never a job of another version.
+// The counts wait for every wanted run of the head (the Set of the step is final), because the identity of the check has no field for the receipt job: a count that the receipt
+// gave afterwards would never reach it. Once a job is counted its counts stay: a fresh receipt job that replaces an unavailable one makes the set not final again and does not
+// rewrite the check. What this pass cannot read keeps the stored value of the same head, so a store that fails for a moment does not flip the check and write two messages;
+// that includes a pass whose step did not run (no Set), which keeps the counts that went out, without the weakened count that only a Set can give. The failure of the read is
 // returned, once the check is published.
 func (j *checksJob) approvalCounts(ctx context.Context, s *pullState, x *executionRun, d *pullDecision, executed *executionOutcome) error {
 	d.result.CountedJob = 0 // no reason but an approval that is missing counts a job, and no pass but this one sets it
@@ -384,11 +391,16 @@ func (j *checksJob) approvalCounts(ctx context.Context, s *pullState, x *executi
 	if err != nil {
 		return err
 	}
+	stated := d.result.CountedJob == job.ID // the counts of this job went out before: they stay
 	d.result.CountedJob = 0
-	if run.status == domain.RunComplete {
-		executed.counts, d.result.CountedJob = checkCountsOf(run.counts), job.ID
+	if run.status != domain.RunComplete || !(executed.set.Final() || stated) {
+		return nil
 	}
-	return nil
+	executed.counts, d.result.CountedJob = checkCountsOf(run.counts), job.ID
+	if executed.set.Final() {
+		executed.weakened, err = j.weakenedOf(ctx, executed.set)
+	}
+	return err
 }
 
 // restoreCounts gives a check that a wait restored the counts of the canonical run it was decided with. The stored result of the head goes out again when the ledger
@@ -544,7 +556,7 @@ func (j *checksJob) commentBeforeCheck(ctx context.Context, s *pullState, d pull
 }
 
 // publishCheck publishes every run, also an unchanged result, which lets the ledger resend a message that ended failed.
-func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result checks.Result, runners *runnerSet, counts *checkExecution, approveMode bool) error {
+func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result checks.Result, runners *runnerSet, counts *checkExecution, weakened int, approveMode bool) error {
 	_, _, err := j.ledger.Publish(ctx, result, j.now(), func(generation int64) (governance.OutboxMessage, error) {
 		if result.Reason == reasonRunnerUncovered { // applyRunnerBlock decided it from a runner set, so a republish has the files too
 			if runners == nil {
@@ -552,7 +564,7 @@ func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result check
 			}
 			return newCheckMessageWithPaths(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, runners.paths, len(runners.paths))
 		}
-		return newCheckMessageOf(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, nil, 0, counts, approveMode)
+		return newCheckMessageOf(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, nil, 0, counts, weakened, approveMode)
 	})
 	if err != nil {
 		return fmt.Errorf("publish the check: %w", err)

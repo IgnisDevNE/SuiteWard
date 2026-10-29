@@ -21,6 +21,13 @@ type executionOutcome struct {
 	counts  *checkExecution
 	receipt receiptDecision
 	silent  bool
+
+	// What the comments of the head and the counts of an awaiting check read: the Set of the head (headSetOf; zero for a step that failed or a head that no run decides, which is
+	// never final), the revision of the head, whether the approve of its check names a mode, and the weakened count that the counts of an awaiting check state.
+	set         domain.Set
+	reference   string
+	approveMode bool
+	weakened    int
 }
 
 // executionStep plans and creates the jobs of the head, lets the canonical job gate its Contract check and decides its Receipt check. A head that could not be
@@ -37,6 +44,12 @@ func (j *checksJob) executionStep(ctx context.Context, s *pullState, x *executio
 	}
 	outcome.receipt, err = j.receiptCheck(ctx, s, x, jobs, silent)
 	outcome.silent = silent
+	if err != nil {
+		return outcome, err
+	}
+	base := ungated(d.result)
+	outcome.reference, outcome.approveMode = base.Reference, x.namesMode(base)
+	outcome.set, err = j.headSetOf(ctx, s, x, jobs, silent, d)
 	return outcome, err
 }
 

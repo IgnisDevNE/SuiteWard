@@ -103,9 +103,12 @@ func (p resultsPayload) jobs() domain.JobPair {
 	return domain.JobPair{Canonical: p.CanonicalJob, Receipt: p.ReceiptJob}
 }
 
-func (p resultsPayload) key() string {
-	return fmt.Sprintf("%s:%d:%s", resultsKey, p.RepositoryID, jobsTail(p.commentTarget, p.Head, p.jobs()))
+// keyOfResults is the key of the results comment of the set of jobs of a head.
+func keyOfResults(target commentTarget, head string, pair domain.JobPair) string {
+	return fmt.Sprintf("%s:%d:%s", resultsKey, target.RepositoryID, jobsTail(target, head, pair))
 }
+
+func (p resultsPayload) key() string { return keyOfResults(p.commentTarget, p.Head, p.jobs()) }
 
 // validate reports why the payload does not hold together, without quoting it. The renderer checks the rest (the codes, the counts and the plans of the text).
 func (p resultsPayload) validate() error {

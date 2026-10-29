@@ -69,11 +69,11 @@ func TestPullPageTopStatesThePullRequestTheHeadTheBaseAndTheTier(t *testing.T) {
 	w := newPageWorld(t)
 	w.completed(canonicalTests("pass"), receiptTests("detects"))
 	page := w.text()
-	w.wantText(page, "Pull request: 5", "Repository: acme/widgets", "Commit: "+cjHead2[:7]+" (full SHA: "+cjHead2+")", "Base branch commit: "+bootHead, "Installation type: isolated (on a separate server)",
+	w.wantText(page, "Pull request: 5", "Repository: acme/widgets", "Commit: "+cjHead2[:7]+" (full SHA: "+cjHead2+")", "Base branch commit: "+bootHead, "Installation type: on a separate server",
 		"evidence reported by a test runner", "not a verdict")
 	w.wantNoText(page, "protection is reduced", "This pull request is not open")
 	w.serve("co-located") // the enrollment recorded isolated: the effective tier is co-located
-	w.wantText(w.text(), "Installation type: co-located (on this computer, next to your coding agent)", commandtext.CoLocatedNotice)
+	w.wantText(w.text(), "Installation type: on the same computer as your coding agent", commandtext.CoLocatedNotice)
 }
 
 func TestPullPageOfAClosedPullRequestShowsTheLastHeadRecorded(t *testing.T) {

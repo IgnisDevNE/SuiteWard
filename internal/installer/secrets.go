@@ -70,20 +70,19 @@ func (s podmanSecrets) Exists(ctx context.Context, name string) (bool, error) {
 	return s.p.Exists(ctx, kindSecret, name)
 }
 
-// Write passes the value on stdin exactly as it is (no trailing newline is added), never as an argument.
+// Write passes the value on stdin exactly as it is (no trailing newline is added), never as an argument. With replace, an
+// existing secret is replaced and a missing one is created: Podman 4.9 (Ubuntu 24.04 LTS) refuses `--replace` for a secret that
+// is not there yet, so the flag goes only to one that is.
 func (s podmanSecrets) Write(ctx context.Context, name string, value []byte, replace bool) error {
-	if _, err := lookupSecret(name); err != nil {
+	ok, err := s.Exists(ctx, name)
+	if err != nil {
 		return err
 	}
-	if !replace {
-		if ok, err := s.Exists(ctx, name); err != nil {
-			return err
-		} else if ok {
-			return fmt.Errorf("%w: %s", ErrSecretExists, name)
-		}
+	if ok && !replace {
+		return fmt.Errorf("%w: %s", ErrSecretExists, name)
 	}
 	args := []string{"secret", "create"}
-	if replace {
+	if ok {
 		args = append(args, "--replace")
 	}
 	if _, err := s.p.run(ctx, bytes.NewReader(value), append(args, name, "-")...); err != nil {

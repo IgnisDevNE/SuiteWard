@@ -472,6 +472,36 @@ func TestARefusalNeverNamesASettingsFileThatWasNotTyped(t *testing.T) {
 	}
 }
 
+// A second installation may use the per-user default token file, as long as it says so (instanceTokenFile accepts it with --token-file). The picker keeps that token file
+// for an installation that is not the default one, so that the command it picked does not refuse for a flag that nobody typed.
+func TestAChosenSecondInstallationKeepsTheDefaultTokenFileItUses(t *testing.T) {
+	useDefaultConfigDir(t)
+	d := choiceDeps(t) // one machine for the default token file, the picker and the command: each call of choiceDeps makes a new one
+	tokenFile, err := defaultTokenFile(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := colocatedSettings()
+	s.Connection, s.HTTPPort, s.MCPPort = "pm", 27081, 27091
+	other := colocatedSettings()
+	other.Connection, other.HTTPPort, other.MCPPort = "pm2", 28081, 28091
+	defaultSettingsOf(t, s)
+	second := settingsOf(t, other)
+	if err := recordInstallation(runtime.GOOS, second, tokenFile, other, "5e6f7a8b"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := plainResolver(t, nil, nil, second+"\n")
+	if err := r.chooseInstallation(d); err != nil {
+		t.Fatal(err)
+	}
+	if r.chosen["settings"] != second || r.chosen["token-file"] != tokenFile {
+		t.Errorf("chosen is %v, want the second installation's settings file and its token file %q", r.chosen, tokenFile)
+	}
+	if got, err := instanceTokenFile(r, Env{Deps: d}, installTarget{settingsPath: second}); err != nil || got != tokenFile {
+		t.Errorf("instanceTokenFile = %q, %v; want the token file %q: a flagless upgrade of the chosen installation must not refuse", got, err, tokenFile)
+	}
+}
+
 // Every command that works on an installation asks, and refuses where nobody can be asked, before it touches anything.
 func TestEveryCommandThatWorksOnAnInstallationRefusesSeveralWhereNobodyCanAsk(t *testing.T) {
 	for _, args := range [][]string{

@@ -126,7 +126,7 @@ func isolatedEnrollTarget(ctx context.Context, s Settings, env Env) (enrollTarge
 	if err != nil {
 		return enrollTarget{}, err
 	}
-	st, err := adoptUnitsDir(host.unitsDir, host.envPath, true)
+	st, err := adoptUnitsDir(host.d, host.unitsDir, host.envPath, true)
 	if err != nil {
 		return enrollTarget{}, err
 	}

@@ -661,7 +661,7 @@ func TestInstallIsolatedRefusesAnotherUserOrAnUnexpectedHome(t *testing.T) {
 		f := newIsoFake(t.TempDir())
 		mutate(f)
 		_, err := runIsolated(t, f, nil, "")
-		if err == nil || !strings.Contains(err.Error(), "sudo -u suiteward") {
+		if err == nil || !strings.Contains(err.Error(), "sudo -u suiteward") || !strings.Contains(err.Error(), "unix:path=/run/user/<uid>/bus /usr/local/bin/suiteward install") { // sudo gives env a PATH without /usr/local/bin
 			t.Fatalf("%s: the run must be refused with the command to use, got %v", name, err)
 		}
 		if f.has("podman") || f.has("secret create") || f.has("start") {

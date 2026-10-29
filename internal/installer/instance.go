@@ -114,7 +114,7 @@ func locateIsolated(ctx context.Context, r *Resolver, env Env, s Settings, haveS
 	if err != nil {
 		return instance{}, err
 	}
-	st, err := adoptUnitsDir(host.unitsDir, host.envPath, true)
+	st, err := adoptUnitsDir(host.d, host.unitsDir, host.envPath, true)
 	if err != nil {
 		return instance{}, err
 	}

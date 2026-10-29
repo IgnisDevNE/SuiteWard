@@ -31,7 +31,13 @@ func (d *doctor) out(ctx context.Context, name string, args ...string) (string, 
 // hostStep is the command that makes the executor on an isolated host, as the fix of most of its results names it. A fix wraps it in code
 // formatting, so that it can add a flag inside.
 func (d *doctor) hostStep() string {
-	return "sudo " + d.deps.suggest("install host", "--sha256sums <the release's SHA256SUMS file>")
+	return d.deps.suggestHostStep(hostStepSums)
+}
+
+// metadataFix is the fix of a metadata address that answers: the host step, which adds the rule that blocks it. It names the program as every other
+// host step of the run does (hostStep), so one doctor run names one program.
+func (d *doctor) metadataFix() string {
+	return "As the administrator, run `" + d.hostStep() + " --metadata-rule yes`: it adds a firewall rule that blocks 169.254.169.254 for the service account. Then run doctor again."
 }
 
 // checkExecutorIsolated runs the checks of the executor on an isolated host.

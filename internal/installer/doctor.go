@@ -135,7 +135,6 @@ const (
 	defaultMachine = "podman-machine-default"
 	machineUser    = "user" // the rootless user inside a Podman machine; ssh defaults to root, whose store is rootful
 	probeTimeout   = 5 * time.Second
-	metadataFix    = "As the administrator, run `sudo suiteward install host --sha256sums <the release's SHA256SUMS file> --metadata-rule yes`: it adds a firewall rule that blocks 169.254.169.254 for the service account. Then run doctor again."
 	// doctorBugFix is the fix of a result that reports a mistake of the installer itself.
 	doctorBugFix = "This is an error in the installer, not in your setup. Please report it."
 	// Connects to the instance metadata address from the database container, which sits on the service network. The probe
@@ -908,7 +907,7 @@ func (d *doctor) checkMetadata(ctx context.Context) {
 	case err != nil:
 		d.fail("metadata", "doctor could not run the cloud-metadata test inside "+ContainerDB+": "+err.Error(), "Start the database container, then run doctor again.")
 	case answer == "reachable":
-		d.fail("metadata", "the cloud provider's metadata address (169.254.169.254) answers from the service's network, so the service could read this server's cloud credentials", metadataFix)
+		d.fail("metadata", "the cloud provider's metadata address (169.254.169.254) answers from the service's network, so the service could read this server's cloud credentials", d.metadataFix())
 	case answer == "blocked":
 		d.pass("metadata", "169.254.169.254 (the cloud metadata address) is not reachable from the service's network")
 	case answer == "control-failed":

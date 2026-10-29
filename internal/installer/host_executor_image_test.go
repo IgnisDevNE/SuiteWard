@@ -15,17 +15,15 @@ func TestPrepareHostPullsTheGoImageIntoTheStorageOfTheExecutor(t *testing.T) {
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	pull := hostCallIndex(h, "systemd-run", "podman pull "+goprofile.Image)
-	exists := hostCallIndex(h, "systemd-run", "podman image exists "+goprofile.Image)
-	start := hostCallIndex(h, "systemctl", "enable --now suiteward-executor.service")
+	pull := hostCallIndex(h, "runuser", "podman pull "+goprofile.Image)
+	exists := hostCallIndex(h, "runuser", "podman image exists "+goprofile.Image)
+	start := hostCallIndex(h, "runuser", execUserctl+" enable --now suiteward-executor.service")
 	if pull < 0 || exists < 0 || start < 0 || pull >= exists || exists >= start {
 		t.Fatalf("want a pull, then the check of the image, then the start of the executor; got %d, %d, %d in %v", pull, exists, start, h.lines())
 	}
 	for _, c := range []call{h.calls[pull], h.calls[exists]} {
-		for _, want := range []string{execUserSystemd, "--wait"} {
-			if !strings.Contains(c.line(), want) {
-				t.Errorf("%s lacks %s: the account's own manager runs it, and the step waits for it", c.line(), want)
-			}
+		if !strings.HasPrefix(c.line(), execUserRun+" ") {
+			t.Errorf("%s does not run in the account's own manager and wait for it (%s)", c.line(), execUserRun)
 		}
 	}
 	if h.has("podman", "pull") {
@@ -39,7 +37,13 @@ func TestPrepareHostPullsTheGoImageAgainWhenItIsThereAlready(t *testing.T) {
 	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(h.callsTo("systemd-run")); n != 2 {
+	n := 0
+	for _, c := range h.callsTo("runuser") {
+		if strings.HasPrefix(c.line(), execUserRun+" ") {
+			n++
+		}
+	}
+	if n != 2 {
 		t.Errorf("want a pull and a check, got %d systemd-run calls: %v", n, h.lines())
 	}
 }
@@ -51,7 +55,7 @@ func TestPrepareHostStopsBeforeTheExecutorStartsWhenTheGoImageCannotBePulled(t *
 	if err == nil || !strings.Contains(err.Error(), "pull") || !strings.Contains(err.Error(), ExecutorAccount) {
 		t.Fatalf("want an error that names the pull and the account, got %v", err)
 	}
-	if h.has("systemctl", "enable --now suiteward-executor.service") {
+	if h.has("runuser", execUserctl+" enable --now suiteward-executor.service") {
 		t.Error("the executor was started without the image of its sandboxes")
 	}
 }
@@ -63,7 +67,7 @@ func TestPrepareHostStopsWhenThePulledGoImageIsNotThereUnderItsDigest(t *testing
 	if err == nil || !strings.Contains(err.Error(), "digest") {
 		t.Fatalf("want an error about the digest of the image, got %v", err)
 	}
-	if h.has("systemctl", "enable --now suiteward-executor.service") {
+	if h.has("runuser", execUserctl+" enable --now suiteward-executor.service") {
 		t.Error("the executor was started without the image of its sandboxes")
 	}
 }
@@ -99,7 +103,7 @@ func TestPrepareHostThatCannotPullStillRestartsTheExecutorOnTheNextRun(t *testin
 			if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
 				t.Fatal(err)
 			}
-			if !h.has("systemctl", execUserSystemd+" restart suiteward-executor.service") {
+			if !h.has("runuser", execUserctl+" restart suiteward-executor.service") {
 				t.Errorf("the executor still runs the old binary or token after the second run: %v", h.lines())
 			}
 		})

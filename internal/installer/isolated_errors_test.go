@@ -163,12 +163,12 @@ func TestCheckAccountNamesWhatIsWrong(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := checkAccount(answers(tc.over), tc.home); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, err := checkAccount(answers(tc.over), tc.home, Deps{}); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("checkAccount = %v, want an error containing %q", err, tc.want)
 			}
 		})
 	}
-	if got, err := checkAccount(answers(nil), home); err != nil || got != home {
+	if got, err := checkAccount(answers(nil), home, Deps{}); err != nil || got != home {
 		t.Errorf("checkAccount = %q, %v", got, err)
 	}
 }
@@ -214,19 +214,19 @@ func TestCheckUserManagerNamesWhatIsWrong(t *testing.T) {
 			return linger, nil
 		}
 	}
-	if err := checkUserManager(run("running", "yes", false)); err != nil {
+	if err := checkUserManager(run("running", "yes", false), Deps{}); err != nil {
 		t.Errorf("a ready manager: %v", err)
 	}
-	if err := checkUserManager(run("degraded", "yes", false)); err != nil {
+	if err := checkUserManager(run("degraded", "yes", false), Deps{}); err != nil {
 		t.Errorf("a degraded manager is accepted: %v", err)
 	}
-	if err := checkUserManager(run("stopping", "yes", false)); err == nil || !strings.Contains(err.Error(), `is "stopping"`) {
+	if err := checkUserManager(run("stopping", "yes", false), Deps{}); err == nil || !strings.Contains(err.Error(), `is "stopping"`) {
 		t.Errorf("a stopping manager: %v", err)
 	}
-	if err := checkUserManager(run("running", "yes", true)); err == nil || !strings.Contains(err.Error(), "find the account name") {
+	if err := checkUserManager(run("running", "yes", true), Deps{}); err == nil || !strings.Contains(err.Error(), "find the account name") {
 		t.Errorf("no account name: %v", err)
 	}
-	if err := checkUserManager(run("running", "no", false)); err == nil || !strings.Contains(err.Error(), "linger is not enabled") {
+	if err := checkUserManager(run("running", "no", false), Deps{}); err == nil || !strings.Contains(err.Error(), "linger is not enabled") {
 		t.Errorf("no linger: %v", err)
 	}
 }
@@ -238,7 +238,7 @@ func TestAdoptUnitsDirRefusesAUnitItCannotRead(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "suiteward.container"), 0o700); err != nil { // a directory where the unit file should be
 		t.Fatal(err)
 	}
-	if _, err := adoptUnitsDir(dir, filepath.Join(dir, "github.env"), false); err == nil || !strings.Contains(err.Error(), "read the installed unit suiteward.container") {
+	if _, err := adoptUnitsDir(Deps{}, dir, filepath.Join(dir, "github.env"), false); err == nil || !strings.Contains(err.Error(), "read the installed unit suiteward.container") {
 		t.Fatalf("adoptUnitsDir = %v", err)
 	}
 }

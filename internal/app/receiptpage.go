@@ -88,8 +88,10 @@ type receiptPages struct {
 	previews   previewReader
 	tier       string // the configured installation tier
 	gate       chan struct{}
+	limit      int              // the most bytes a page may hold, a field so that a test can lower it
+	now        func() time.Time // the clock of the page, which a test can set
 }
 
 func newReceiptPages(suites governance.UnitOfWork, contents governance.ContentReader, executions execution.Store, pulls pullLister, previews previewReader, tier string) *receiptPages {
-	return &receiptPages{suites: suites, contents: contents, executions: executions, pulls: pulls, previews: previews, tier: tier, gate: make(chan struct{}, 1)}
+	return &receiptPages{suites: suites, contents: contents, executions: executions, pulls: pulls, previews: previews, tier: tier, gate: make(chan struct{}, 1), limit: maxReportPage, now: time.Now}
 }

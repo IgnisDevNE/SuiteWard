@@ -62,7 +62,7 @@ func (p *receiptPages) page(ctx context.Context, state owner.State, project owne
 	if err != nil {
 		return nil, err
 	}
-	page := &cappedBuffer{room: maxReportPage}
+	page := &cappedBuffer{room: p.limit}
 	if err := receiptTemplate.Execute(page, data); err != nil {
 		return nil, err
 	}

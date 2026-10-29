@@ -436,7 +436,7 @@ func (j *checksJob) receiptJob(ctx context.Context, s *pullState, x *executionRu
 	if err := j.enqueue(ctx, spec, read.final, held.ID, s.enrollment.EnrolledAt); err != nil {
 		return true, err // the clock stays: no job was created
 	}
-	delete(j.mergeFailures, checkPull{s.p.RepositoryID, s.pull.Number}) // a job is created for the head, whatever it is, and that ends the clock of its failures
+	delete(j.mergeFailures, checkPull{s.p.RepositoryID, s.pull.Number}) // the head has its job now, whatever it is (the one just created, one that held the key, or the unblocked one that the store kept), and that ends the clock of its failures
 	return true, nil
 }
 

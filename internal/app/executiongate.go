@@ -71,19 +71,17 @@ func runnerNotResponding(job execution.Job, found, silent bool) bool {
 // The Set has the levels, whether the receipt applies and was decided, and the two jobs. The comment fills the rest of it (HeadReason, Earlier, the counts of the runs, Weakened)
 // and asks it for Unblock, Holds and Next, so that it never rebuilds the jobs. Two things are the caller's: the jobs carry Unblocked false (read the unblock rows of the head
 // and set it, or an unavailable job that the owner unblocked reads as lost), and a canonical job read here is in the Set and not in jobs.
-func (j *checksJob) headNotResponding(ctx context.Context, s *pullState, x *executionRun, jobs headJobs) (domain.Set, error) {
+func (j *checksJob) headNotResponding(ctx context.Context, s *pullState, x *executionRun, jobs headJobs) (set domain.Set, err error) {
 	if !x.known || !x.policy.wants() {
 		return domain.Set{}, nil
 	}
 	canonical, hasCanonical := jobs.canonical, jobs.hasCanonical
 	if x.policy.canonicalOn() && !jobs.canonicalPlanned {
-		var err error
 		if canonical, hasCanonical, err = j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical, artifact.Digest{}); err != nil {
 			return domain.Set{}, err
 		}
 	}
-	set := domain.Set{CanonicalLevel: x.policy.canonical, ReceiptLevel: x.policy.receipt, ReceiptApplies: jobs.receiptApplies, ReceiptDecided: jobs.receiptDecided}
-	var err error
+	set = domain.Set{CanonicalLevel: x.policy.canonical, ReceiptLevel: x.policy.receipt, ReceiptApplies: jobs.receiptApplies, ReceiptDecided: jobs.receiptDecided}
 	if set.CanonicalJob, err = planJob(canonical, hasCanonical); err != nil {
 		return domain.Set{}, err
 	}

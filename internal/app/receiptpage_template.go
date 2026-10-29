@@ -35,17 +35,17 @@ li { overflow-wrap: anywhere; }
 <header>
 <p class="brand">SuiteWard</p>
 <h1>Pull request {{.Pull}}</h1>
-<p>{{.Repo}}: the situation of this pull request and the results of its current head.</p>
+<p>{{.Repo}}: the situation of this pull request and the results for its latest commit.</p>
 </header>
 <main>
 <ul>
 <li>Pull request: {{.Pull}}</li>
 <li>Repository: {{.Repo}}</li>
-<li>Head: {{.ShortHead}} (full SHA: {{.Head}})</li>
-<li>Base branch head: {{.Base}}</li>
+<li>Commit: {{.ShortHead}} (full SHA: {{.Head}})</li>
+<li>Base branch commit: {{.Base}}</li>
 <li>Installation tier: {{.Tier}}</li>
 </ul>
-{{if not .Open}}<p>This pull request is not open: the results are those of the last head recorded for it.</p>
+{{if not .Open}}<p>This pull request is not open: the results are those of the last commit recorded for it.</p>
 {{end}}{{if .Situation}}<p class="lead">{{.Situation}}</p>
 {{end}}{{if .Weakened}}<p>{{.Weakened}}</p>
 {{end}}{{range .Empty}}<p>{{.}}</p>

@@ -438,12 +438,14 @@ func TestChecksWriteTheNotRespondingCommentOnceForEachSetOfWaitingJobs(t *testin
 
 	w.silentFor(30*time.Second - time.Millisecond)
 	w.mustCheck()
-	w.wantComments("not-responding:") // a moment short of 30 s
+	w.wantComments("not-responding:")                    // a moment short of 30 s
+	w.want(4, checks.InProgress, "canonical-pending", 1) // the check and the comment read the one silence of the pass
 
 	w.silentFor(30 * time.Second)
 	w.mustCheck()
 	w.wantComments("not-responding:", key)
 	wantPayload(t, w.commentPayload(key), map[string]any{"repositoryId": bootRepoID, "pull": 4, "head": bootHead, "tier": "isolated", "canonicalJob": job.ID, "receiptJob": 0, "unblock": true})
+	w.want(4, checks.InProgress, "canonical-not-responding", 2)
 
 	w.silentFor(40 * time.Second) // the same wait, a later pass
 	w.mustCheck()
@@ -581,4 +583,19 @@ func TestTheWeakenedCountOfASetRefusesAJobWithNoGoverningManifest(t *testing.T) 
 	if n, err := w.check.weakenedOf(t.Context(), set); !errors.Is(err, domain.ErrNoGoverningDigest) || n != 0 {
 		t.Errorf("weakenedOf = %d, %v; want 0 and ErrNoGoverningDigest", n, err)
 	}
+}
+
+// The Set of the comments has a read that no gate makes (the canonical job of a head that no run decides). A failure of it holds nothing: the check stays what the pass
+// decided it to be, and the run says that a read failed.
+func TestChecksKeepTheContractCheckWhenOnlyTheReadsOfTheCommentsFail(t *testing.T) {
+	w := newExecWorld(t, execDecl)
+	w.linkHead(cjHead2, "spec_link") // an invalid source: no run decides the head, so the Set reads its canonical job itself
+	w.sync(map[int]string{5: cjHead2})
+	w.check.executions = headJobsFail{w.jobs}
+
+	if err := w.runChecks(); err == nil {
+		t.Error("the run found nothing to say of a read that failed")
+	}
+
+	w.want(5, checks.Failure, "invalid-source", 1)
 }

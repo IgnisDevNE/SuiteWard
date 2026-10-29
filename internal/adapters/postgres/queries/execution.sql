@@ -115,6 +115,13 @@ SELECT EXISTS (
     WHERE u.job_id = sqlc.arg(job_id) AND c.created_at >= sqlc.arg(since)::timestamptz
 );
 
+-- The rows of the jobs of a head whose command entry was created at or after since, with the time they were decided, by job and then by time.
+-- name: ListHeadExecutionUnblocks :many
+SELECT u.job_id, u.decided_at FROM execution_unblocks u
+JOIN pr_commands c ON c.repository_id = u.repository_id AND c.comment_id = u.comment_id
+WHERE u.repository_id = sqlc.arg(repository_id) AND u.pull_number = sqlc.arg(pull_number) AND u.head_sha = sqlc.arg(head_sha) AND c.created_at >= sqlc.arg(since)::timestamptz
+ORDER BY u.job_id, u.decided_at, u.comment_id;
+
 -- Rows affected: 0 means the command already unblocked the job.
 -- name: InsertExecutionUnblock :execrows
 INSERT INTO execution_unblocks (repository_id, comment_id, job_id, pull_number, head_sha, decided_at)

@@ -3,6 +3,7 @@ package execution
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"slices"
 	"time"
 )
 
@@ -134,9 +135,14 @@ func (j Job) UnblockEnded(at time.Time) Job {
 // runner that took a pending job in between is a change.
 func (j Job) Observed(o UnblockJob) bool { return j.State == o.State && j.LeaseID == o.LeaseID }
 
-// EndedBy reports whether an unblock ended the job and not the sweep (docs/contracts/runtime.md, "The early unblock and its hold", "`ended` is derived, not stored").
+// EndedBy reports whether an unblock ended the job and not the sweep (docs/contracts/runtime.md, "The early unblock and its hold", "`ended` is derived, not stored"):
+// the job is unavailable for no-executor and its end is the decided_at of a row that names it. unblocks holds every row of the head, since a job that two commands
+// lifted has two rows and only the first can have ended it. The times are compared at the precision that is stored.
 func (j Job) EndedBy(unblocks []JobUnblock) bool {
-	return false
+	if j.State != StateUnavailable || j.Reason != ReasonNoExecutor {
+		return false
+	}
+	return slices.ContainsFunc(unblocks, func(u JobUnblock) bool { return u.JobID == j.ID && Stored(u.DecidedAt).Equal(Stored(j.FinishedAt)) })
 }
 
 // ended is the job after it became final.

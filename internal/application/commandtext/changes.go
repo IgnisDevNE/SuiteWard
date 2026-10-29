@@ -16,6 +16,10 @@ import (
 // (maxListed) and maxShown it keeps a comment far below GitHub's limit of 65536 characters.
 const maxNotShown = 10
 
+// linkNote is the note after a link to a page of this instance: the revision comment gives it after its link to the change report, and the comments of a head after theirs.
+const linkNote = "This link opens on the computer that runs SuiteWard. If SuiteWard runs on a separate server, forward that server's HTTP port to your computer first. " +
+	"To open the link in a new tab, Ctrl+click it (Cmd+click on a Mac, or middle-click)."
+
 // Changes is what a change report found, as the numbers and names a revision comment and a check summary state. It
 // says what was seen, never that it is right or wrong. Added, Modified and Removed count every changed file. Counted
 // is how many of them have line counts, and LinesAdded and LinesRemoved cover those files only. Top lists at most 20
@@ -199,14 +203,14 @@ func changesSection(r Revision) []string {
 		// The listings of a revision without numbers read as they did in M1.8, byte for byte, a reduction included.
 		parts := []string{listing("Protected files added", r.Added, r.AddedTotal), listing("Protected files modified", r.Modified, r.ModifiedTotal), listing("Protected files removed", r.Removed, r.RemovedTotal)}
 		if r.ChangesUnavailable {
-			parts = append(parts, "SuiteWard could not read the files of this revision to count the lines that changed, so the numbers are unknown.")
+			parts = append(parts, "SuiteWard could not read the files of this revision to count the changed lines, so it has no counts. The lists above still show the protected files that changed.")
 		}
 		return parts
 	}
 	c := *r.Changes
 	c.Reduced = r.Reduced && !r.lowersPolicyOnly() // a policy that only gets weaker removes nothing from the scope, so a removed file was deleted
 	parts := []string{
-		"**What changed in the protected files.** SuiteWard counts the changed lines and points out some of them as marker lines; it does not judge them.",
+		"**What changed in the protected files.** SuiteWard counts the changed lines. It also points out marker lines, which are lines to look at, such as a removed assertion or an added skip. It does not judge them.",
 		strings.Join(changeFacts(c, true), "\n"),
 	}
 	if len(c.Top) > 0 {
@@ -223,8 +227,7 @@ func changesSection(r Revision) []string {
 		parts = append(parts, "Some details of the full report were left out to keep it small.")
 	}
 	if r.ReportURL != "" {
-		parts = append(parts, "[Full change report]("+r.ReportURL+")",
-			"This link opens on the machine that runs this SuiteWard instance; on the isolated tier, through a port forward of the HTTP port. Ctrl+click (Cmd+click on a Mac, or middle-click) the link to open it in a new tab.")
+		parts = append(parts, "[Full change report]("+r.ReportURL+")", linkNote)
 	}
 	return parts
 }
@@ -320,17 +323,8 @@ func Visible(s string) string {
 	return b.String()
 }
 
-// receiptLinkPattern is the link to the receipt page of a pull request: a loopback address, as the settings allow, the repository and the number of the pull request. It is no
+// pullLinkPattern is the link to the page of a pull request: a loopback address, as the settings allow, the repository and the number of the pull request. It is no
 // report link: the two patterns are apart, so that a link of the one kind is never taken for the other.
-var receiptLinkPattern = regexp.MustCompile(`^http://(?:127\.0\.0\.1|localhost):[0-9]{1,5}/receipts/[A-Za-z0-9._%-]+/[A-Za-z0-9._%-]+/([1-9][0-9]*)$`)
-
-// ValidReceiptLink reports whether link is the link to the receipt page of pull request pull: a loopback address, as the settings allow, and the path /receipts/<owner>/<repo>/<pull>.
-func ValidReceiptLink(link string, pull int) bool {
-	return validPageLink(receiptLinkPattern, link, pull)
-}
-
-// pullLinkPattern is the link to the page of a pull request, which replaced the receipt page: the same address and the path /pulls/. It is apart from the other two patterns,
-// so that a link of one kind is never taken for another.
 var pullLinkPattern = regexp.MustCompile(`^http://(?:127\.0\.0\.1|localhost):[0-9]{1,5}/pulls/[A-Za-z0-9._%-]+/[A-Za-z0-9._%-]+/([1-9][0-9]*)$`)
 
 // ValidPullLink reports whether link is the link to the page of pull request pull: a loopback address, as the settings allow, and the path /pulls/<owner>/<repo>/<pull>.

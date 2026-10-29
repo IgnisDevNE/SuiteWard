@@ -133,29 +133,6 @@ func TestRevisionCommentRefusesAReceiptThatDoesNotFit(t *testing.T) {
 	}
 }
 
-func TestValidReceiptLinkAcceptsTheLoopbackReceiptPageOfThePullRequestAndNothingElse(t *testing.T) {
-	for _, tc := range []struct {
-		link string
-		pull int
-		want bool
-	}{
-		{receiptURL, 7, true},
-		{"http://localhost:8080/receipts/acme/widgets/7", 7, true},
-		{"http://127.0.0.1:1/receipts/a.b_c-d/w%20x/7", 7, true},
-		{"http://127.0.0.1:65535/receipts/acme/widgets/2147483647", 2147483647, true},
-		{receiptURL, 8, false},
-		{reportURL, 7, false},
-		{"http://127.0.0.1:8080/receipts/acme/widgets/7/", 7, false},
-		{"http://[::1]:8080/receipts/acme/widgets/7", 7, false}, // the settings allow 127.0.0.1 and localhost only
-		{"http://127.0.0.1:8080/receipts/acme/widgets/", 7, false},
-		{"", 7, false},
-	} {
-		if got := commandtext.ValidReceiptLink(tc.link, tc.pull); got != tc.want {
-			t.Errorf("ValidReceiptLink(%q, %d) = %v, want %v", tc.link, tc.pull, got, tc.want)
-		}
-	}
-}
-
 // A reduction whose detail was left out can no longer say what it lowers from its entries, so the revision says it.
 func TestRevisionCommentOfAnOmittedReductionSaysWhatItLowers(t *testing.T) {
 	omitted := func(policy, scope bool) commandtext.Revision {

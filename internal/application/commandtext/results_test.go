@@ -17,7 +17,7 @@ const (
 	resultsLink = "http://127.0.0.1:8080/pulls/acme/widgets/7"
 
 	// The link note of the revision comment, which the comments repeat after their link.
-	linkNote = "This link opens on the machine that runs this SuiteWard instance; on the isolated tier, through a port forward of the HTTP port. Ctrl+click (Cmd+click on a Mac, or middle-click) the link to open it in a new tab."
+	linkNote = "This link opens on the computer that runs SuiteWard. If SuiteWard runs on a separate server, forward that server's HTTP port to your computer first. To open the link in a new tab, Ctrl+click it (Cmd+click on a Mac, or middle-click)."
 
 	resultsEvidence = "These results are what the test runner saw. They are evidence, not a verdict."
 	unblockOffer    = "To go on without these tests, the owner can comment `/suiteward unblock <code>`. That lets this commit pass its checks without them. A new push runs them."

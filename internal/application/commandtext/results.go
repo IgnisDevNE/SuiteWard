@@ -60,9 +60,6 @@ type RunnerBack struct {
 }
 
 const (
-	// linkNote is the note that the revision comment gives after its link to the change report: the comments repeat it after theirs.
-	linkNote = "This link opens on the machine that runs this SuiteWard instance; on the isolated tier, through a port forward of the HTTP port. " +
-		"Ctrl+click (Cmd+click on a Mac, or middle-click) the link to open it in a new tab."
 	noLinkText = "SuiteWard has no web address set, so this comment has no link. The checks of this commit carry the counts."
 
 	resultsEvidence = "These results are what the test runner saw. They are evidence, not a verdict."

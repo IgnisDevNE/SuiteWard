@@ -40,6 +40,7 @@ type Results struct {
 	Unblocked, Ended   Plans
 	Next               execution.Next
 	ApproveMode        bool // the approve command names a mode
+	ApprovalMissing    bool // the reason of the head is that its approval is missing; the approve or its refusal is the next step then, and the unblock may be
 	PullURL            string
 }
 

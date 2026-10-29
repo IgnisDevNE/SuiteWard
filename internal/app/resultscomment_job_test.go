@@ -99,7 +99,7 @@ func TestChecksWriteOneResultsCommentWhenTheRunsOfAHeadAreFinalAndNoneWhileOneRu
 		"reference": "", "canonicalLevel": "required", "receiptLevel": "off", "weakened": 0, "next": "fix"})
 	wantPayload(t, payload["canonical"].(map[string]any), map[string]any{"status": "complete"})
 	wantRunCounts(t, payload["canonical"].(map[string]any), map[string]any{"tests": 2, "passed": 1, "skipped": 0, "failed": 1, "missing": 0, "flaky": 0, "excluded": 0})
-	wantAbsent(t, payload, "receipt", "unblocked", "ended", "approveMode")
+	wantAbsent(t, payload, "receipt", "unblocked", "ended", "approveMode", "approvalMissing")
 
 	w.execRun() // a pass that finds the same set writes nothing
 	w.execRun()
@@ -223,7 +223,7 @@ func TestChecksWriteTheResultsCommentOfAHeadWhoseApprovalIsMissing(t *testing.T)
 	key := resultsKeyOf(5, cjHead2, canonical.ID, receipt.ID)
 	w.wantComments("results:", key)
 	payload := w.commentPayload(key)
-	wantPayload(t, payload, map[string]any{"pull": 5, "reference": "P2-R1", "canonicalLevel": "required", "receiptLevel": "required", "weakened": 0, "next": "approve", "approveMode": true})
+	wantPayload(t, payload, map[string]any{"pull": 5, "reference": "P2-R1", "canonicalLevel": "required", "receiptLevel": "required", "weakened": 0, "next": "approve", "approveMode": true, "approvalMissing": true})
 	wantPayload(t, payload["receipt"].(map[string]any), map[string]any{"status": "complete"})
 	wantPayload(t, payload["receipt"].(map[string]any)["counts"].(map[string]any), map[string]any{"detects": 1, "inert": 1, "newApi": 0, "fails": 0, "missing": 0, "flaky": 0,
 		"skipped": 0, "excluded": 0, "markers": 0, "unparsed": 0})
@@ -239,7 +239,7 @@ func TestChecksNameTheApproveWithoutAModeWhenTheReceiptIsNotRequired(t *testing.
 	w.execRun()
 
 	payload := w.commentPayload(resultsKeyOf(5, cjHead2, canonical.ID, receipt.ID))
-	wantPayload(t, payload, map[string]any{"next": "approve"})
+	wantPayload(t, payload, map[string]any{"next": "approve", "approvalMissing": true})
 	wantAbsent(t, payload, "approveMode")
 }
 
@@ -251,7 +251,7 @@ func TestChecksNameABlockedApproveWhenTheRequiredReceiptMeetsNoKindOfChange(t *t
 	w.finish(receipt, receiptTests("skipped"))
 	w.execRun()
 
-	wantPayload(t, w.commentPayload(resultsKeyOf(5, cjHead2, canonical.ID, receipt.ID)), map[string]any{"next": "blocked"})
+	wantPayload(t, w.commentPayload(resultsKeyOf(5, cjHead2, canonical.ID, receipt.ID)), map[string]any{"next": "blocked", "approvalMissing": true})
 }
 
 // An approved test that the change edits and that fails in its approved version is weakened: the comment counts it, and so does the summary of the check.
@@ -266,7 +266,7 @@ func TestChecksCountTheWeakenedTestsInTheResultsCommentAndInTheAwaitingCheck(t *
 	w.execRun()
 
 	payload := w.commentPayload(resultsKeyOf(5, cjHead2, canonical.ID, receipt.ID))
-	wantPayload(t, payload, map[string]any{"weakened": 1})
+	wantPayload(t, payload, map[string]any{"weakened": 1, "approvalMissing": true})
 	check := w.lastCheckPayload(5)
 	wantPayload(t, check, map[string]any{"reason": "approval-missing", "weakened": 1})
 	wantExecution(t, check, 2, 1, 0, 1, 0, 0, 0)
@@ -360,8 +360,9 @@ func TestChecksWriteTheLaterResultsCommentOfAnApprovedHeadThatCorrectsAnEarlierO
 	w.execRun()
 
 	w.wantComments("results:", resultsKeyOf(5, cjHead2, first.ID, 0), resultsKeyOf(5, cjHead2, second.ID, 0))
-	wantPayload(t, w.commentPayload(resultsKeyOf(5, cjHead2, first.ID, 0)), map[string]any{"next": "approve"})
+	wantPayload(t, w.commentPayload(resultsKeyOf(5, cjHead2, first.ID, 0)), map[string]any{"next": "approve", "approvalMissing": true})
 	wantPayload(t, w.commentPayload(resultsKeyOf(5, cjHead2, second.ID, 0)), map[string]any{"next": "none"})
+	wantAbsent(t, w.commentPayload(resultsKeyOf(5, cjHead2, second.ID, 0)), "approvalMissing") // the approved head has no approval to wait for
 }
 
 // A head approved while its first run was pending has no earlier set, and its later set is always written.
@@ -417,7 +418,7 @@ func TestChecksWriteTheResultsCommentOfAnUnblockedHeadWithWhatTheCommandEnded(t 
 	key := resultsKeyOf(5, cjHead2, canonical.ID, receipt.ID)
 	w.wantComments("results:", key)
 	payload := w.commentPayload(key)
-	wantPayload(t, payload, map[string]any{"unblocked": "[canonical receipt]", "ended": "[canonical receipt]", "next": "approve"})
+	wantPayload(t, payload, map[string]any{"unblocked": "[canonical receipt]", "ended": "[canonical receipt]", "next": "approve", "approvalMissing": true})
 	wantPayload(t, payload["canonical"].(map[string]any), map[string]any{"status": "unavailable", "reason": "no-executor"})
 }
 
@@ -430,7 +431,20 @@ func TestChecksOfferTheUnblockInTheResultsCommentOfARunThatDidNotRunAndHoldsTheH
 	key := resultsKeyOf(4, bootHead, job.ID, 0)
 	w.wantComments("results:", key)
 	wantPayload(t, w.commentPayload(key), map[string]any{"next": "unblock"})
-	wantAbsent(t, w.commentPayload(key), "unblocked", "ended")
+	wantAbsent(t, w.commentPayload(key), "unblocked", "ended", "approvalMissing")
+}
+
+// Where an approval is missing and the receipt that is required did not run either, the unblock comes first, and the payload still says that the approval is missing, so that
+// the comment can say what an approval does to the approved tests that did not run.
+func TestChecksSayThatTheApprovalIsMissingWhereTheUnblockIsTheNextStep(t *testing.T) {
+	w := newExecWorld(t, execDecl)
+	w.check.executorConfigured = false // both jobs are created unavailable
+	w.execPullFive(execHeadFiles(execDecl, "v2"))
+	canonical, receipt := w.onlyJob(5, cjHead2, execution.PlanCanonical), w.onlyJob(5, cjHead2, execution.PlanReceipt)
+
+	payload := w.commentPayload(resultsKeyOf(5, cjHead2, canonical.ID, receipt.ID))
+
+	wantPayload(t, payload, map[string]any{"next": "unblock", "approvalMissing": true, "reference": "P2-R1"})
 }
 
 func TestChecksWriteTheNotRespondingCommentOnceForEachSetOfWaitingJobs(t *testing.T) {

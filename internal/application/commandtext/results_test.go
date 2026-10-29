@@ -318,17 +318,23 @@ func TestResultsCommentSaysWhatTheOwnerUnblockedAndHowToUnblock(t *testing.T) {
 			r.Canonical, r.Next = unavailableCanonical("no-executor"), execution.NextUnblock
 		}, unblockOffer},
 		"an approval is missing and the approved tests did not run": {func(r *commandtext.Results) {
-			r.Canonical, r.Next = unavailableCanonical("timeout"), execution.NextApprove
+			r.Canonical, r.Next, r.ApprovalMissing = unavailableCanonical("timeout"), execution.NextApprove, true
 		}, approval},
 		"an approval is missing and the approve is refused": {func(r *commandtext.Results) {
-			r.Canonical, r.Next = unavailableCanonical("timeout"), execution.NextBlocked
+			r.Canonical, r.Next, r.ApprovalMissing = unavailableCanonical("timeout"), execution.NextBlocked, true
 		}, approval},
+		"an approval is missing, nothing ran and the receipt holds the approve too": {func(r *commandtext.Results) {
+			r.Canonical, r.Receipt, r.Next, r.ApprovalMissing = unavailableCanonical("timeout"), unavailableReceipt("timeout"), execution.NextUnblock, true
+		}, unblockOffer + " " + approval},
+		"nothing ran and the head's approval is not missing": {func(r *commandtext.Results) {
+			r.Canonical, r.Receipt, r.Next = unavailableCanonical("timeout"), unavailableReceipt("timeout"), execution.NextUnblock
+		}, unblockOffer},
 		"the offer and the sentence about the approval": {func(r *commandtext.Results) {
-			r.Canonical, r.Unblocked, r.Ended, r.Next = unavailableCanonical("no-executor"), commandtext.Plans{Canonical: true}, commandtext.Plans{Canonical: true}, execution.NextApprove
+			r.Canonical, r.Unblocked, r.Ended, r.Next, r.ApprovalMissing = unavailableCanonical("no-executor"), commandtext.Plans{Canonical: true}, commandtext.Plans{Canonical: true}, execution.NextApprove, true
 		}, "The owner unblocked this commit, so its checks do not wait for the approved tests. SuiteWard had stopped waiting for the test runner, which was not responding. " + approval},
 		"nothing was unblocked, nothing is offered": {func(*commandtext.Results) {}, ""},
 		"an approved head under advisory canonical has no sentence about the approval": {func(r *commandtext.Results) {
-			r.Canonical, r.CanonicalLevel, r.Next = unavailableCanonical("timeout"), execution.CanonicalLevelAdvisory, execution.NextApprove
+			r.Canonical, r.CanonicalLevel, r.Next, r.ApprovalMissing = unavailableCanonical("timeout"), execution.CanonicalLevelAdvisory, execution.NextApprove, true
 		}, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -393,7 +399,9 @@ func TestResultsCommentNamesTheNextStep(t *testing.T) {
 		"none":                {execution.NextNone, false, []string{"Nothing to do for now."}, []string{"/suiteward", "To fix this"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			body := resultsText(t, results(func(r *commandtext.Results) { r.Next, r.ApproveMode = tc.next, tc.approveMode }))
+			body := resultsText(t, results(func(r *commandtext.Results) {
+				r.Next, r.ApproveMode, r.ApprovalMissing = tc.next, tc.approveMode, tc.next == execution.NextApprove || tc.next == execution.NextBlocked
+			}))
 			for _, w := range tc.want {
 				if !strings.Contains(body, w) {
 					t.Errorf("the comment lacks %q:\n%s", w, body)
@@ -465,9 +473,15 @@ func TestResultsCommentRefusesWhatItCannotStateTruly(t *testing.T) {
 		"a negative count":                      func(r *commandtext.Results) { r.Canonical.Counts.Fail = -1 },
 		"a negative weakened count":             func(r *commandtext.Results) { r.Weakened = -1 },
 		"an unknown next step":                  func(r *commandtext.Results) { r.Next = 0 },
-		"an approve with no revision":           func(r *commandtext.Results) { r.Next, r.Proposal, r.Revision = execution.NextApprove, 0, 0 },
-		"half a reference":                      func(r *commandtext.Results) { r.Proposal, r.Revision = 3, 0 },
-		"an unblocked run that is complete":     func(r *commandtext.Results) { r.Unblocked = commandtext.Plans{Canonical: true} },
+		"an approve with no revision": func(r *commandtext.Results) {
+			r.Next, r.ApprovalMissing, r.Proposal, r.Revision = execution.NextApprove, true, 0, 0
+		},
+		"an approve for a head whose approval is not missing":        func(r *commandtext.Results) { r.Next = execution.NextApprove },
+		"a refused approve for a head whose approval is not missing": func(r *commandtext.Results) { r.Next = execution.NextBlocked },
+		"an approval that is missing, and nothing to do":             func(r *commandtext.Results) { r.ApprovalMissing, r.Next = true, execution.NextNone },
+		"an approval that is missing, and a fix to push":             func(r *commandtext.Results) { r.ApprovalMissing, r.Next = true, execution.NextFix },
+		"half a reference":                  func(r *commandtext.Results) { r.Proposal, r.Revision = 3, 0 },
+		"an unblocked run that is complete": func(r *commandtext.Results) { r.Unblocked = commandtext.Plans{Canonical: true} },
 		"an unblocked run that is not wanted": func(r *commandtext.Results) {
 			r.Receipt, r.ReceiptLevel, r.Unblocked = nil, execution.ReceiptLevelOff, commandtext.Plans{Receipt: true}
 		},
@@ -606,15 +620,20 @@ var resultsSituations = map[string]func(*commandtext.Results){
 	"ended": func(r *commandtext.Results) {
 		r.Canonical, r.Receipt, r.Unblocked, r.Ended = unavailableCanonical("no-executor"), unavailableReceipt("no-executor"), commandtext.Plans{Canonical: true, Receipt: true}, commandtext.Plans{Canonical: true, Receipt: true}
 	},
-	"approve":           func(r *commandtext.Results) { r.Next = execution.NextApprove },
-	"approve with mode": func(r *commandtext.Results) { r.Next, r.ApproveMode = execution.NextApprove, true },
+	"approve": func(r *commandtext.Results) { r.Next, r.ApprovalMissing = execution.NextApprove, true },
+	"approve with mode": func(r *commandtext.Results) {
+		r.Next, r.ApproveMode, r.ApprovalMissing = execution.NextApprove, true, true
+	},
 	"approve blocked": func(r *commandtext.Results) {
-		r.Receipt.Counts, r.Next = execution.ReceiptCounts{Skipped: 1}, execution.NextBlocked
+		r.Receipt.Counts, r.Next, r.ApprovalMissing = execution.ReceiptCounts{Skipped: 1}, execution.NextBlocked, true
 	},
 	"approve, approved tests not run": func(r *commandtext.Results) {
-		r.Canonical, r.Next = unavailableCanonical("timeout"), execution.NextApprove
+		r.Canonical, r.Next, r.ApprovalMissing = unavailableCanonical("timeout"), execution.NextApprove, true
 	},
-	"weakened": func(r *commandtext.Results) { r.Weakened, r.Next = 2, execution.NextApprove },
+	"approve, nothing ran and the receipt holds it too": func(r *commandtext.Results) {
+		r.Canonical, r.Receipt, r.Next, r.ApprovalMissing = unavailableCanonical("no-executor"), unavailableReceipt("no-executor"), execution.NextUnblock, true
+	},
+	"weakened": func(r *commandtext.Results) { r.Weakened, r.Next, r.ApprovalMissing = 2, execution.NextApprove, true },
 	"files that cannot be read and lines to look at": func(r *commandtext.Results) {
 		r.Receipt.Counts.Unparsed, r.Receipt.Markers, r.Next = 1, 3, execution.NextFix
 	},

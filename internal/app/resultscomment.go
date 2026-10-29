@@ -45,20 +45,21 @@ type resultsReceipt struct {
 // has the job 0 and no run. The verdict of a mode is not here: the renderer derives it from the counts, so a payload cannot state one that its counts do not give.
 type resultsPayload struct {
 	commentTarget
-	Head           string            `json:"head"`
-	Tier           string            `json:"tier"` // the effective tier: owner.TierIsolated or owner.TierCoLocated
-	CanonicalJob   int64             `json:"canonicalJob"`
-	ReceiptJob     int64             `json:"receiptJob"`
-	Reference      string            `json:"reference"` // P<n>-R<m>, empty for a head with no revision
-	CanonicalLevel string            `json:"canonicalLevel"`
-	ReceiptLevel   string            `json:"receiptLevel"`
-	Canonical      *resultsCanonical `json:"canonical,omitempty"`
-	Receipt        *resultsReceipt   `json:"receipt,omitempty"`
-	Weakened       int               `json:"weakened"`            // 0 when unknown
-	Unblocked      []string          `json:"unblocked,omitempty"` // the plans whose job has an unblock row, canonical first
-	Ended          []string          `json:"ended,omitempty"`     // those whose job the command ended: a subset of Unblocked
-	Next           string            `json:"next"`                // unblock, blocked, approve, fix or none
-	ApproveMode    bool              `json:"approveMode,omitempty"`
+	Head            string            `json:"head"`
+	Tier            string            `json:"tier"` // the effective tier: owner.TierIsolated or owner.TierCoLocated
+	CanonicalJob    int64             `json:"canonicalJob"`
+	ReceiptJob      int64             `json:"receiptJob"`
+	Reference       string            `json:"reference"` // P<n>-R<m>, empty for a head with no revision
+	CanonicalLevel  string            `json:"canonicalLevel"`
+	ReceiptLevel    string            `json:"receiptLevel"`
+	Canonical       *resultsCanonical `json:"canonical,omitempty"`
+	Receipt         *resultsReceipt   `json:"receipt,omitempty"`
+	Weakened        int               `json:"weakened"`            // 0 when unknown
+	Unblocked       []string          `json:"unblocked,omitempty"` // the plans whose job has an unblock row, canonical first
+	Ended           []string          `json:"ended,omitempty"`     // those whose job the command ended: a subset of Unblocked
+	Next            string            `json:"next"`                // unblock, blocked, approve, fix or none
+	ApproveMode     bool              `json:"approveMode,omitempty"`
+	ApprovalMissing bool              `json:"approvalMissing,omitempty"` // the reason of the head is that its approval is missing
 }
 
 // notRespondingPayload is the payload of not-responding:<repository id>:<pull>:<head sha>:<canonical job>-<receipt job>: the jobs that wait for the runner, and whether

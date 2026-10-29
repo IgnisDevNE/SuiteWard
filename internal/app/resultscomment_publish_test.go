@@ -116,7 +116,7 @@ func TestTheResultsCommentStatesAnUnavailableRunAndTheOffersOfItsPayload(t *test
 	key, payload := rcResults(func(p map[string]any) {
 		p["canonical"] = map[string]any{"status": "unavailable", "reason": "no-executor"}
 		p["unblocked"], p["ended"], p["next"] = []string{"canonical"}, []string{"canonical"}, "approve"
-		p["approveMode"] = true
+		p["approveMode"], p["approvalMissing"] = true, true
 	})
 	body := w.mustPost(key, payload)
 	for _, want := range []string{
@@ -128,6 +128,30 @@ func TestTheResultsCommentStatesAnUnavailableRunAndTheOffersOfItsPayload(t *test
 		if !strings.Contains(body, want) {
 			t.Errorf("the comment lacks %q:\n%s", want, body)
 		}
+	}
+}
+
+// Where the receipt holds the approve too the next step is the unblock, and the comment still says what an approval does to the approved tests that did not run.
+func TestTheResultsCommentSaysWhatAnApprovalDoesWhenTheUnblockIsTheNextStep(t *testing.T) {
+	for name, approvalMissing := range map[string]bool{"an approval is missing": true, "an approval is not missing": false} {
+		t.Run(name, func(t *testing.T) {
+			w := newCmtWorld(t)
+			key, payload := rcResults(func(p map[string]any) {
+				p["canonical"] = map[string]any{"status": "unavailable", "reason": "timeout"}
+				p["receipt"] = map[string]any{"status": "unavailable", "reason": "timeout"}
+				p["next"] = "unblock"
+				if approvalMissing {
+					p["approvalMissing"] = true
+				}
+			})
+			body := w.mustPost(key, payload)
+			if !strings.Contains(body, "/suiteward unblock <code>") {
+				t.Errorf("the comment does not offer the unblock:\n%s", body)
+			}
+			if got := strings.Contains(body, "After the owner approves this revision, SuiteWard runs the approved tests again"); got != approvalMissing {
+				t.Errorf("the sentence about the approval is present = %v, want %v:\n%s", got, approvalMissing, body)
+			}
+		})
 	}
 }
 
@@ -198,14 +222,19 @@ func TestTheResultsCommentRefusesAPayloadThatDoesNotMatchItsKeyOrItself(t *testi
 			counts["fails"] = -1
 			p["receipt"] = complete(counts)
 		}, nil},
-		"a count of another run in the receipt": {func(p map[string]any) { p["receipt"] = complete(rcCanonicalCounts) }, nil},
-		"a negative weakened count":             {func(p map[string]any) { p["weakened"] = -1 }, nil},
-		"an unknown next step":                  {func(p map[string]any) { p["next"] = "wait" }, nil},
-		"no next step":                          {func(p map[string]any) { delete(p, "next") }, nil},
-		"an approve with no reference":          {func(p map[string]any) { p["next"], p["reference"] = "approve", "" }, nil},
-		"a mode for a step that is no approve":  {func(p map[string]any) { p["approveMode"] = true }, nil},
-		"an unblocked run that is complete":     {func(p map[string]any) { p["unblocked"] = []string{"canonical"} }, nil},
-		"an unblocked plan that is no plan":     {func(p map[string]any) { p["unblocked"] = []string{"both"} }, nil},
+		"a count of another run in the receipt":                      {func(p map[string]any) { p["receipt"] = complete(rcCanonicalCounts) }, nil},
+		"a negative weakened count":                                  {func(p map[string]any) { p["weakened"] = -1 }, nil},
+		"an unknown next step":                                       {func(p map[string]any) { p["next"] = "wait" }, nil},
+		"no next step":                                               {func(p map[string]any) { delete(p, "next") }, nil},
+		"an approve with no reference":                               {func(p map[string]any) { p["next"], p["reference"], p["approvalMissing"] = "approve", "", true }, nil},
+		"an approve for a head whose approval is not missing":        {func(p map[string]any) { p["next"] = "approve" }, nil},
+		"a refused approve for a head whose approval is not missing": {func(p map[string]any) { p["next"] = "blocked" }, nil},
+		"an approval that is missing and nothing to do":              {func(p map[string]any) { p["approvalMissing"] = true }, nil},
+		"an approval that is missing and a fix to push":              {func(p map[string]any) { p["approvalMissing"], p["next"] = true, "fix" }, nil},
+		"an approval that is not a boolean":                          {func(p map[string]any) { p["approvalMissing"] = "yes" }, nil},
+		"a mode for a step that is no approve":                       {func(p map[string]any) { p["approveMode"] = true }, nil},
+		"an unblocked run that is complete":                          {func(p map[string]any) { p["unblocked"] = []string{"canonical"} }, nil},
+		"an unblocked plan that is no plan":                          {func(p map[string]any) { p["unblocked"] = []string{"both"} }, nil},
 		"an unblocked plan twice": {func(p map[string]any) {
 			p["canonical"] = map[string]any{"status": "unavailable", "reason": "timeout"}
 			p["unblocked"] = []string{"canonical", "canonical"}

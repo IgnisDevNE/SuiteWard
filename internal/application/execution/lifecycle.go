@@ -133,9 +133,12 @@ func (j Job) UnblockEnded(at time.Time) Job {
 	return j.ended(StateUnavailable, ReasonNoExecutor, Stored(at))
 }
 
-// Observed reports whether the job is as the caller of an unblock observed it: in that state and with that lease id. Every grant makes a new lease id, so a
-// runner that took a pending job in between is a change.
-func (j Job) Observed(o UnblockJob) bool { return j.State == o.State && j.LeaseID == o.LeaseID }
+// Observed reports whether the job is as the caller of an unblock observed it: in that state and with that lease id, and an open job still waiting for the test runner.
+// Every grant makes a new lease id, so a runner that took a pending job in between is a change; so is a lease request that found GitHub unreadable, which leaves the state
+// and the lease id and makes the job wait for GitHub, which the unblock does not end.
+func (j Job) Observed(o UnblockJob) bool {
+	return j.State == o.State && j.LeaseID == o.LeaseID && (j.State == StateUnavailable || j.WaitsForRunner())
+}
 
 // EndedBy reports whether an unblock ended the job and not the sweep (docs/contracts/runtime.md, "The early unblock and its hold", "`ended` is derived, not stored"):
 // the job is unavailable for no-executor and its end is the decided_at of a row that names it. unblocks holds every row of the head, since a job that two commands

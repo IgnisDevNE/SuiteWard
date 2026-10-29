@@ -42,7 +42,7 @@ func enrolledOwners(t *testing.T) *ownertest.Memory {
 	return owners
 }
 
-func reportAPI(t *testing.T, reports reportSource) (*api, *bytes.Buffer) {
+func reportAPI(t *testing.T, reports pageReports) (*api, *bytes.Buffer) {
 	t.Helper()
 	logs := &bytes.Buffer{}
 	return &api{owners: enrolledOwners(t), reports: reports, logger: slog.New(slog.NewTextHandler(logs, nil))}, logs
@@ -380,4 +380,10 @@ func TestTheReportRouteIsUnavailableWhenTheOwnerCannotBeRead(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), "hunter2") || !strings.Contains(logs.String(), "report failed") {
 		t.Fatalf("GET = %d %q, want 503 with no cause, and the cause in the log %q", response.Code, response.Body.String(), logs.String())
 	}
+}
+
+func (f *fakeReports) turn(context.Context) (func(), error) { return func() {}, nil }
+
+func (f *fakeReports) build(ctx context.Context, ref contract.ProposalReference) (revisionReport, error) {
+	return f.revisionReport(ctx, ref)
 }

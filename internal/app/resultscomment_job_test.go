@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // The checks job writes the comments of a head (docs/contracts/runtime.md, "The comments of a head"): the results comment once for each final set of runs, the
@@ -551,4 +553,32 @@ func TestChecksWriteTheCommentsOfEachOpenPullRequestOnItsOwn(t *testing.T) {
 	w.execRun()
 
 	w.wantComments("results:", resultsKeyOf(4, bootHead, four.ID, 0), resultsKeyOf(5, cjHead2, five.ID, 0))
+}
+
+// The earlier set of an approved head is written when it is final, whether or not the later set is: the run that the approval asked for may take a while, or never end.
+func TestChecksWriteTheEarlierResultsCommentOfAnApprovedHeadWhileItsLaterRunIsPending(t *testing.T) {
+	w := newExecWorld(t, gateDecl)
+	w.execPullFive(execHeadFiles(gateDecl, "v2"))
+	first := w.onlyJob(5, cjHead2, execution.PlanCanonical)
+	w.finish(first, canonicalTests("pass", "fail")) // complete, and no pass of the job has seen it
+	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
+
+	w.execRun() // the head is approved: the run of the approved version is pending
+
+	jobs := w.headJobs(5, cjHead2, execution.PlanCanonical)
+	if len(jobs) != 2 || jobs[1].State != execution.StatePending {
+		t.Fatalf("canonical jobs %+v, want the complete first one and a pending one under the revision", jobs)
+	}
+	w.wantComments("results:", resultsKeyOf(5, cjHead2, first.ID, 0))
+}
+
+// A complete run whose job has no governing manifest is a caller that did not fill it, and the weakened count says so: it never reads as 0.
+func TestTheWeakenedCountOfASetRefusesAJobWithNoGoverningManifest(t *testing.T) {
+	w := newExecWorld(t, execDecl)
+	set := domain.Set{CanonicalLevel: domain.CanonicalLevelRequired, ReceiptLevel: domain.ReceiptLevelRequired, ReceiptApplies: true, ReceiptDecided: true,
+		CanonicalJob: domain.Job{ID: 1, State: domain.JobComplete}, ReceiptJob: domain.Job{ID: 2, State: domain.JobComplete}}
+
+	if n, err := w.check.weakenedOf(t.Context(), set); !errors.Is(err, domain.ErrNoGoverningDigest) || n != 0 {
+		t.Errorf("weakenedOf = %d, %v; want 0 and ErrNoGoverningDigest", n, err)
+	}
 }

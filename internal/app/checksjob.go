@@ -393,7 +393,7 @@ func (j *checksJob) approvalCounts(ctx context.Context, s *pullState, x *executi
 	}
 	stated := d.result.CountedJob == job.ID // the counts of this job went out before: they stay
 	d.result.CountedJob = 0
-	if run.status != domain.RunComplete || !(executed.set.Final() || stated) {
+	if run.status != domain.RunComplete || (!executed.set.Final() && !stated) {
 		return nil
 	}
 	executed.counts, d.result.CountedJob = checkCountsOf(run.counts), job.ID

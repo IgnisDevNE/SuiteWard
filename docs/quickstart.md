@@ -6,7 +6,7 @@ This is the short path for one owner. The **co-located** tier runs SuiteWard nex
 
 ## Co-located (your PC)
 
-On Windows and macOS, start the Podman machine first: `podman machine start` (`podman machine init` once before that). Windows is the path validated live (the installer with Podman, the test runner with Docker). On macOS, the installer ran on a real Mac with Podman, without GitHub (phase M1.15), and CI runs its tests on a macOS machine, but the test runner (the executor of step 2), the GitHub flow with its setup window and later releases have not been seen there yet; Linux is covered by tests only.
+On Windows and macOS, start the Podman machine first: `podman machine start` (`podman machine init` once before that). Windows is the path validated live (the installer with Podman, the test runner with Docker). On macOS, the installer ran on a real Mac with Podman, without GitHub (phase M1.15), and CI runs its tests on a macOS machine, but the test runner (the executor of step 2), the GitHub flow with its setup window and later releases have not been seen there yet. On Linux, a co-located install without GitHub ran on Ubuntu 24.04 in WSL with Podman 4.9.3, and its test runner ran as a user unit that the service saw; no job has run there yet, and nothing has run there with GitHub.
 
 **1. Get the installer, and verify it if you choose** ([section 4](install.md#4-get-and-verify-the-installer)). Verifying is optional but recommended: the binary is the trust root of the install, and the checks below prove that it is the one the release workflow signed.
 
@@ -102,7 +102,7 @@ execution:
   profile: go
 ```
 
-Both levels then start at `advisory`: when the runs of a head end, SuiteWard comments on the pull request with counts, the results are in tables on one page for each pull request, served on loopback (and, for the receipt of a revision, on the `SuiteWard / Receipt` check), and nothing is gated. Raise `canonical` or `receipt` to `required` only after you have read the [limits](install.md#limits-of-canonical-execution) and watched a few runs. When a run cannot be completed, or the test runner has not answered for about 30 seconds, `/suiteward unblock <code>` lifts that head, and the lift holds until the next push.
+Both levels then start at `advisory`: when the runs of a head end, SuiteWard comments on the pull request with counts, the results are in tables on one page for each pull request, served on loopback (and, for the receipt of a revision, on the `SuiteWard / Receipt` check), and nothing is gated. Raise `canonical` or `receipt` to `required` only after you have read the [limits](install.md#limits-of-canonical-execution) and watched a few runs. When a run cannot be completed, or the test runner has not answered for about 30 seconds, `/suiteward unblock <code>` lifts that head. The runs it lifts are not run again, and the next push runs as usual.
 
 ## Before you rely on it
 

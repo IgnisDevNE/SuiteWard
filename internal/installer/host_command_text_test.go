@@ -209,7 +209,7 @@ func TestTheWrongAccountRefusalSaysWhenTheProgramMustMoveToASharedPlace(t *testi
 		if err == nil {
 			t.Fatalf("%s: root was not refused", name)
 		}
-		if got := strings.Contains(err.Error(), "copy it to a shared place such as /usr/local/bin first"); got != c.wantNote {
+		if got := strings.Contains(err.Error(), "copy the program to a shared place such as /usr/local/bin first"); got != c.wantNote {
 			t.Errorf("%s: the note to copy the program is %v, want %v: %v", name, got, c.wantNote, err)
 		}
 	}

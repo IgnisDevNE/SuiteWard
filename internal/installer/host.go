@@ -22,6 +22,14 @@ const hostStepSums = "--sha256sums <the release's SHA256SUMS file>"
 // hostProgram is where the install guide puts the program, which a text names where the path of the running program is not known.
 const hostProgram = "/usr/local/bin/suiteward"
 
+// copyProgramAdvice is what a text says when the program is inside a home directory: EL9 homes are 0700, so no other account can run it.
+const copyProgramAdvice = "copy the program to a shared place such as /usr/local/bin first"
+
+// inHomeDirectory says that the path of a program is inside a home directory, where the service account cannot run it unless it is the account's own.
+func inHomeDirectory(exe string) bool {
+	return strings.HasPrefix(exe, "/root/") || strings.HasPrefix(exe, "/home/")
+}
+
 const (
 	metadataAddress = "169.254.169.254"
 	imdsUnit        = "suiteward-imds-block.service"
@@ -422,8 +430,8 @@ func (h *host) next(ctx context.Context) error {
 	h.say("  sudo -u %s -H env XDG_RUNTIME_DIR=/run/user/%s DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus %s\n\n", ServiceAccount, uid, uid, command)
 	h.say("The test runner (the executor) already runs as %s and waits for the service. It uses the HTTP port named in the service account's settings, else %d. If the service will use another HTTP port, run this step again with `--http-port <port>`. Keep one test runner for each container program: when it starts, it removes every %s container of its container program, so a second one would remove the first one's sandboxes.\n\n", ExecutorAccount, DefaultHTTPPort, sandboxNamePrefix)
 	h.say("The account must be able to run %s", exe)
-	if strings.HasPrefix(exe, "/root/") || strings.HasPrefix(exe, "/home/") {
-		h.say(": that path is inside a home directory, so copy the program to a shared place such as /usr/local/bin first")
+	if inHomeDirectory(exe) {
+		h.say(": that path is inside a home directory, so %s", copyProgramAdvice)
 	}
 	if carriesRelease {
 		h.say(".\n")

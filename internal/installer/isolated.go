@@ -490,7 +490,11 @@ func waitStable(ctx context.Context, env Env, scr *ui.Screen, httpPort int) erro
 // home directory in the passwd database: the installer writes under HOME and must not be steered by the environment. It
 // returns HOME.
 func checkAccount(run func(string, ...string) (string, error), home string, d Deps) (string, error) {
-	command := "sudo -u " + ServiceAccount + " -H env XDG_RUNTIME_DIR=/run/user/<uid of " + ServiceAccount + "> DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus " + d.sudoProgram() + " install (`" + d.suggestHostStep(hostStepSums) + "` prints it with the uid filled in)"
+	program := d.sudoProgram()
+	command := "sudo -u " + ServiceAccount + " -H env XDG_RUNTIME_DIR=/run/user/<uid of " + ServiceAccount + "> DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus " + program + " install (`" + d.suggestHostStep(hostStepSums) + "` prints it with the uid filled in)"
+	if inHomeDirectory(strings.Trim(program, "'")) { // sudoProgram quotes a path that needs it
+		command += "; a program inside a home directory is one that the service account cannot run, so " + copyProgramAdvice
+	}
 	if uid, err := run("id", "-u"); err != nil {
 		return "", fmt.Errorf("find out who is running the installer: %w", err)
 	} else if uid == "0" {
@@ -666,7 +670,7 @@ func adoptUnitsDir(d Deps, unitsDir, homeEnvFile string, refreshDB bool) (instal
 	if st.adopted.EnvFile != DefaultEnvFile {
 		st.oldEnv = st.adopted.EnvFile
 		if _, err := os.Stat(homeEnvFile); err != nil {
-			return installedStack{}, fmt.Errorf("the installed service reads its GitHub settings from %s, and %s does not exist yet, so nothing was changed: an administrator runs `%s`, which copies the file; then run this again", st.adopted.EnvFile, homeEnvFile, Deps{}.suggestHostStep(hostStepSums)) // no Deps here: a host installed by hand has the program where the guide puts it
+			return installedStack{}, fmt.Errorf("the installed service reads its GitHub settings from %s, and %s does not exist yet, so nothing was changed: an administrator runs `%s`, which copies the file; then run this again", st.adopted.EnvFile, homeEnvFile, d.suggestHostStep(hostStepSums))
 		}
 	}
 	return st, nil

@@ -38,6 +38,9 @@ type Check struct {
 	// ApproveMode marks an approval-missing check whose approve names a mode: the repository requires a receipt (docs/contracts/runtime.md, "The revision comment"), as the
 	// comment of the revision shows. It is false for the first contract, which has no canonical and so no receipt policy.
 	ApproveMode bool
+	// Weakened is the number of approved tests that this change edits and that fail, are missing or are flaky in their approved version, which an approval-missing check states in place of
+	// the generic sentence (docs/contracts/runtime.md, "The weakened signal"). 0 is none, or none known.
+	Weakened int
 }
 
 // CheckExecution are the counts of a complete canonical run: the tests that ran, how many passed, were skipped, failed, were missing or flaky, and how many are

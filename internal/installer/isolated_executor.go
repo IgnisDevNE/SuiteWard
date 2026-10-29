@@ -36,7 +36,7 @@ func readExecutorHandover(configDir string) (token []byte, found bool, err error
 	}
 	token = bytes.TrimSpace(raw)
 	if len(token) < minExecutorTokenBytes {
-		return nil, false, fmt.Errorf("%s holds a token shorter than %d bytes, which the service refuses. An administrator removes %s and runs `sudo suiteward install host --sha256sums <the release's SHA256SUMS file>` again, which makes a new one", file, minExecutorTokenBytes, executorAuthEtc)
+		return nil, false, fmt.Errorf("%s holds a token shorter than %d bytes, which the service refuses. An administrator removes %s and runs `sudo /usr/local/bin/suiteward install host --sha256sums <the release's SHA256SUMS file>` again, which makes a new one", file, minExecutorTokenBytes, executorAuthEtc)
 	}
 	return token, true, nil
 }
@@ -72,7 +72,7 @@ func settleExecutorSecret(ctx context.Context, store SecretStore, token []byte, 
 // step: an upgrade cannot run again at the release that is installed, so it names the install.
 func noExecutorNote(again string) string {
 	return "The host has no token for the test runner (the executor) for this account yet, so the service runs without one and cannot run the approved tests. " +
-		"An administrator makes the test runner and its token with `sudo suiteward install host --sha256sums <the release's SHA256SUMS file>`; then run " + again + ".\n"
+		"An administrator makes the test runner and its token with `sudo /usr/local/bin/suiteward install host --sha256sums <the release's SHA256SUMS file>`; then run " + again + ".\n"
 }
 
 // executorHostNote is what an uninstall says of the executor: it is the administrator's, and the service account cannot reach it.

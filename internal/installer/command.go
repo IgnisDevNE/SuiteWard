@@ -395,7 +395,7 @@ func Install(ctx context.Context, args []string, env Env) (err error) {
 	switch config.Tier(tier) {
 	case config.TierIsolated:
 		if _, given := r.given("sha256sums"); given {
-			return fmt.Errorf("%w: --sha256sums does not apply to the isolated install, and nothing was changed: the administrator's host step sets up the test runner and takes this flag instead (`sudo %s`)", ErrUsage, env.Deps.suggest("install host", "--sha256sums <the release's SHA256SUMS file>"))
+			return fmt.Errorf("%w: --sha256sums does not apply to the isolated install, and nothing was changed: the administrator's host step sets up the test runner and takes this flag instead (`%s`)", ErrUsage, env.Deps.suggestHostStep("--sha256sums <the release's SHA256SUMS file>"))
 		}
 		isolated := saved
 		isolated.Tier, isolated.Runtime = config.TierIsolated, RuntimePodman

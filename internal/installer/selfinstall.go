@@ -62,8 +62,13 @@ func (d Deps) suggest(sub string, args ...string) string {
 	return strings.Join(append(words, args...), " ")
 }
 
-// suggestHostStep is the host step as an administrator runs it, through sudo.
+// suggestHostStep is suggest for the host step, which an administrator runs through sudo. sudo looks a command up in its own secure_path, and on EL9 that
+// lacks /usr/local/bin, where the install guide puts the program, so the name the shell finds is "command not found" there: a program that suggest names
+// by that bare name is named by the path of the guide, and one that it names by its own path keeps it.
 func (d Deps) suggestHostStep(args ...string) string {
+	if cmp.Or(d.Command, selfName) == selfName {
+		d.Command = hostProgram
+	}
 	return "sudo " + d.suggest("install host", args...)
 }
 

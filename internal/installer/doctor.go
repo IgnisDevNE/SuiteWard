@@ -135,7 +135,7 @@ const (
 	defaultMachine = "podman-machine-default"
 	machineUser    = "user" // the rootless user inside a Podman machine; ssh defaults to root, whose store is rootful
 	probeTimeout   = 5 * time.Second
-	metadataFix    = "As the administrator, run `sudo suiteward install host --sha256sums <the release's SHA256SUMS file> --metadata-rule yes`: it adds a firewall rule that blocks 169.254.169.254 for the service account. Then run doctor again."
+	metadataFix    = "As the administrator, run `sudo /usr/local/bin/suiteward install host --sha256sums <the release's SHA256SUMS file> --metadata-rule yes`: it adds a firewall rule that blocks 169.254.169.254 for the service account. Then run doctor again."
 	// doctorBugFix is the fix of a result that reports a mistake of the installer itself.
 	doctorBugFix = "This is an error in the installer, not in your setup. Please report it."
 	// Connects to the instance metadata address from the database container, which sits on the service network. The probe

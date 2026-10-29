@@ -31,7 +31,7 @@ func (d *doctor) out(ctx context.Context, name string, args ...string) (string, 
 // hostStep is the command that makes the executor on an isolated host, as the fix of most of its results names it. A fix wraps it in code
 // formatting, so that it can add a flag inside.
 func (d *doctor) hostStep() string {
-	return "sudo " + d.deps.suggest("install host", "--sha256sums <the release's SHA256SUMS file>")
+	return d.deps.suggestHostStep("--sha256sums <the release's SHA256SUMS file>")
 }
 
 // checkExecutorIsolated runs the checks of the executor on an isolated host.

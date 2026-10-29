@@ -66,22 +66,7 @@ func sha256File(t *testing.T, path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// legacyAsModern answers the machined form of a command as the runuser form, which the RED commit needs so that only the tests that pin the new form fail.
-// The fix commit removes it.
-func legacyAsModern(c call) call {
-	const machine = "--user --machine=suiteward-exec@.host"
-	line := c.line()
-	switch {
-	case c.name == "systemd-run" && strings.HasPrefix(line, machine+" --wait --collect "):
-		return call{name: "runuser", args: strings.Fields(execUserRun + " " + strings.TrimPrefix(line, machine+" --wait --collect "))}
-	case c.name == "systemctl" && strings.HasPrefix(line, machine+" "):
-		return call{name: "runuser", args: strings.Fields(execUserctl + " " + strings.TrimPrefix(line, machine+" "))}
-	}
-	return c
-}
-
 func (h *hostFake) answerExecutor(c call) (out []byte, handled bool, err error) {
-	c = legacyAsModern(c)
 	line := c.line()
 	fail := errors.New(c.name + ": exit status 1")
 	switch {

@@ -7,7 +7,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 )
 
-// The host step reaches the executor's account the way the install guide's step 10.3 reaches the service account: `runuser` as that account, with its
+// The host step reaches the executor's account the way the install guide reaches the service account: `runuser` as that account, with its
 // own user bus. `systemd-run --machine=<user>@.host` goes through machined, which opens a login session for the account, and on EL9 with SELinux
 // enforcing that session cannot set the context of a missing terminal, so the step failed on a real host (A1) and never in the lab.
 

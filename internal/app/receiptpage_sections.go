@@ -38,11 +38,11 @@ type stateSection struct {
 }
 
 type testsSection struct {
-	Show  bool
-	Lead  string
-	Table table
-	More  string
-	Lists []listBlock
+	Show   bool
+	Lead   string
+	Groups []group // the table of the tests, one group for each state that has a test
+	More   string
+	Lists  []listBlock
 }
 
 type listBlock struct {
@@ -284,18 +284,21 @@ func statesOf(canonical pageRun, cc domain.CanonicalCounts, receipt pageRun, rc 
 	return s, nil
 }
 
-// testRow is a row of a table of tests, with what orders it: the weakened rows first, then the states by their rank, then the order the store gives (package and name).
+// testRow is a row of a table of tests, with what orders it: the states by their rank (the rows of a state are one group of the table), then the weakened rows, then the order the
+// store gives (package and name). The contract orders a group as the rows with a reason, then the rows with a note, then the others: the reason of a test depends on its state
+// alone, so within a group that is the weakened rows first.
 type testRow struct {
 	weakened bool
 	rank     int
 	cells    []string
 }
 
-// The order of the states in a table, the first being the one to read first: the flagged states by severity, then the skipped and excluded tests, then the passes.
+// The order of the states of a table, the first being the one to read first: the flagged states by severity, then the skipped and excluded tests, which checked nothing, then
+// the passes. For the receipt, INERT shows nothing about the change, so it comes before NEW API and DETECTS.
 var (
 	canonicalOrder = []domain.CanonicalState{domain.CanonicalFail, domain.CanonicalMissing, domain.CanonicalFlaky, domain.CanonicalSkipped, domain.CanonicalExcluded, domain.CanonicalPass}
-	receiptOrder   = []domain.ReceiptState{domain.ReceiptFails, domain.ReceiptMissing, domain.ReceiptFlaky, domain.ReceiptNewAPI, domain.ReceiptInert, domain.ReceiptSkipped,
-		domain.ReceiptExcluded, domain.ReceiptDetects}
+	receiptOrder   = []domain.ReceiptState{domain.ReceiptFails, domain.ReceiptMissing, domain.ReceiptFlaky, domain.ReceiptSkipped, domain.ReceiptExcluded, domain.ReceiptInert,
+		domain.ReceiptNewAPI, domain.ReceiptDetects}
 )
 
 // parseObservations reads the stored runs of a side; a run that is none is an impossible state.
@@ -373,29 +376,36 @@ func testRows(r pageRun, weak map[domain.TestID]bool) ([]testRow, error) {
 		rows[i] = row
 	}
 	slices.SortStableFunc(rows, func(a, b testRow) int {
+		if a.rank != b.rank {
+			return a.rank - b.rank
+		}
 		if a.weakened != b.weakened {
 			if a.weakened {
 				return -1
 			}
 			return 1
 		}
-		return a.rank - b.rank
+		return 0
 	})
 	return rows, nil
 }
 
-// testsTable is the table of the tests of a run within its budget, and the sentence of the rows that it left out.
-func testsTable(r pageRun, weak map[domain.TestID]bool) (table, string, error) {
+// testGroups is the table of the tests of a run as one group for each state that has a test, within one budget, and the sentence of the rows that it left out.
+func testGroups(r pageRun, weak map[domain.TestID]bool) ([]group, string, error) {
 	rows, err := testRows(r, weak)
 	if err != nil {
-		return table{}, "", err
+		return nil, "", err
 	}
-	cells := make([][]string, len(rows))
-	for i, row := range rows {
-		cells[i] = row.cells
+	var states []stateTests
+	for _, row := range rows {
+		if len(states) == 0 || states[len(states)-1].state != row.cells[0] {
+			states = append(states, stateTests{state: row.cells[0]})
+		}
+		last := &states[len(states)-1]
+		last.rows = append(last.rows, row.cells)
 	}
-	tests, hidden, err := tableOf([]string{"State", "Test", "Package", "File", "Reason", "Note"}, cells, testTableBudget)
-	return tests, rowsNotShown(hidden, "test", "tests"), err
+	groups, hidden, err := groupsOf([]string{"State", "Test", "Package", "File", "Reason", "Note"}, states, testTableBudget)
+	return groups, rowsNotShown(hidden, "test", "tests"), err
 }
 
 // canonicalSection is the approved tests: what ran, and the table of their tests. A run that did not complete has no table: its situation takes its place.
@@ -408,7 +418,7 @@ func canonicalSection(r pageRun, counts domain.CanonicalCounts, weak map[domain.
 	case r.complete():
 		var err error
 		s.Lead = ranText(counts.Pass + counts.Fail + counts.Skipped + counts.Missing + counts.Flaky)
-		s.Table, s.More, err = testsTable(r, weak)
+		s.Groups, s.More, err = testGroups(r, weak)
 		return s, err
 	case r.open():
 		s.Lead = "This run has not finished, so there are no results to show yet."
@@ -460,7 +470,7 @@ func receiptSection(r pageRun, counts domain.ReceiptCounts, weak map[domain.Test
 			namedList{countedHeading("Changed test files that cannot be read", len(r.result.Unparsed)), visibleAll(r.result.Unparsed)},
 			namedList{countedHeading("Lines to look at", len(markers)), markers})
 		var err error
-		if s.Table, s.More, err = testsTable(r, weak); err != nil {
+		if s.Groups, s.More, err = testGroups(r, weak); err != nil {
 			return testsSection{}, err
 		}
 	case r.open():

@@ -1,6 +1,9 @@
 package app
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // The tables and the lists of the pull request page, and the budgets that keep the page below its cap (docs/contracts/runtime.md, "The pull request page", "The size
 // rule"). The template writes every row and every entry, and a budget counts the bytes that the very same template block writes for one of them, after the escaping that
@@ -44,20 +47,20 @@ func sizeOf(name string, data any) (int, error) {
 	return int(n), nil
 }
 
-// fit says how many of count entries, written in order, fit room: entry i takes size(i) bytes and a line break. It asks the size of an entry only while the entries fit, so
-// that those left out are never written.
-func fit(count int, size func(i int) (int, error), room int) (shown int, err error) {
+// fit says how many of count entries, written in order, fit room, and how much room is left: entry i takes size(i) bytes and a line break. It asks the size of an entry only
+// while the entries fit, so that those left out are never written.
+func fit(count int, size func(i int) (int, error), room int) (shown, left int, err error) {
 	for ; shown < count; shown++ {
 		n, err := size(shown)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		if n+1 > room {
 			break
 		}
 		room -= n + 1
 	}
-	return shown, nil
+	return shown, room, nil
 }
 
 // tableOf is a table with a head and the rows that fit its budget, and the number of rows left out. The head and the tags count against the budget.
@@ -66,11 +69,53 @@ func tableOf(head []string, rows [][]string, budget int) (kept table, hidden int
 	if err != nil {
 		return table{}, 0, err
 	}
-	shown, err := fit(len(rows), func(i int) (int, error) { return sizeOf("row", rows[i]) }, budget-fixed)
+	shown, _, err := fit(len(rows), func(i int) (int, error) { return sizeOf("row", rows[i]) }, budget-fixed)
 	if err != nil {
 		return table{}, 0, err
 	}
 	return table{Head: head, Rows: rows[:shown]}, len(rows) - shown, nil
+}
+
+// group is the table of the tests of one state, folded under a summary that names the state and counts its tests.
+type group struct {
+	Summary string
+	Table   table
+}
+
+// stateTests are the rows of the tests of one state, in the order of their table, and the state in the words of the table of the tests by state.
+type stateTests struct {
+	state string
+	rows  [][]string
+}
+
+// groupsOf writes the tests of a run as one group for each state, in the order given, within one budget for all of them. The groups and the rows are kept in order until the
+// budget is spent: the rows that did not fit, and every group after the one that ran out, are counted, never named, and a group with no row that fits is not written. The summary
+// counts every test of its state, shown or not, so that the counts of the page include the rows that a budget cut.
+func groupsOf(head []string, states []stateTests, budget int) (kept []group, hidden int, err error) {
+	room := budget
+	for i, s := range states {
+		summary := s.state + " (" + strconv.Itoa(len(s.rows)) + ")"
+		fixed, err := sizeOf("group", group{Summary: summary, Table: table{Head: head}})
+		if err != nil {
+			return nil, 0, err
+		}
+		shown, left, err := fit(len(s.rows), func(j int) (int, error) { return sizeOf("row", s.rows[j]) }, room-fixed)
+		if err != nil {
+			return nil, 0, err
+		}
+		if shown > 0 {
+			kept = append(kept, group{Summary: summary, Table: table{Head: head, Rows: s.rows[:shown]}})
+		}
+		if shown < len(s.rows) {
+			hidden = len(s.rows) - shown
+			for _, rest := range states[i+1:] {
+				hidden += len(rest.rows)
+			}
+			return kept, hidden, nil
+		}
+		room = left
+	}
+	return kept, 0, nil
 }
 
 // textList is the entries of a list of text that fit its budget, and the number left out.
@@ -92,7 +137,7 @@ func fitList[T any](list, item string, entries []T, budget int) (kept []T, hidde
 	if err != nil {
 		return nil, 0, err
 	}
-	shown, err := fit(len(entries), func(i int) (int, error) { return sizeOf(item, entries[i]) }, budget-fixed)
+	shown, _, err := fit(len(entries), func(i int) (int, error) { return sizeOf(item, entries[i]) }, budget-fixed)
 	if err != nil {
 		return nil, 0, err
 	}

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/adapters/filesystem"
@@ -242,11 +243,11 @@ func (c *watchedContent) Size(ctx context.Context, d artifact.Digest) (int64, er
 func TestOneReportIsBuiltAtATimeAndAWaitingBuildHonorsItsContext(t *testing.T) {
 	w, _ := reportWorld(t)
 	entered, release := make(chan struct{}), make(chan struct{})
+	var held atomic.Bool
 	reports := newChangeReports(w.suites, &watchedContent{content: w.content, onRead: func() {
-		select {
-		case entered <- struct{}{}:
+		if held.CompareAndSwap(false, true) { // the first read waits until the test has seen it, however the goroutines are scheduled; later reads go on
+			entered <- struct{}{}
 			<-release
-		default:
 		}
 	}})
 	first := make(chan error, 1)

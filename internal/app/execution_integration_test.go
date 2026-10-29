@@ -149,8 +149,8 @@ func TestChecksJobOnPostgreSQLGatesTheContractCheckAndDecidesTheReceipt(t *testi
 	response := httptest.NewRecorder()
 	newRouter(pages).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/pulls/acme/widgets/5", nil))
 	page := html.UnescapeString(response.Body.String())
-	for _, want := range []string{"Head: " + cjHead2[:7] + " (full SHA: " + cjHead2 + ")", pageRow("State", "complete", "complete"), pageRow("DETECTS", "TestR00", ".", "a_test.go", "", ""), "<td>INERT</td><td>TestR01</td>",
-		pageRow("Test runner version", "0.4.0-test", "0.4.0-test"), pageRow("fix", "Met", "-"), "<td>refactor</td><td>Not met</td>", "No preview mode is recorded for this pull request.", "<h2>Change report</h2>"} {
+	for _, want := range []string{"Head: " + cjHead2[:7] + " (full SHA: " + cjHead2 + ")", pageRow("State", "pending", "complete"), pageRow("DETECTS", "TestR00", ".", "a_test.go", "", ""), "<td>INERT</td><td>TestR01</td>",
+		pageRow("Test runner version", "-", "0.4.0-test"), pageRow("fix", "Met", "-"), "<td>refactor</td><td>Not met</td>", "No preview mode is recorded for this pull request.", "<h2>Change report</h2>"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("the receipt page (status %d) lacks %q:\n%s", response.Code, want, page)
 		}

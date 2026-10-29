@@ -358,7 +358,8 @@ func (j *checksJob) holder(ctx context.Context, spec execution.Spec) (execution.
 // once an executor token is configured, or for no-executor once the last real executor request (a lease request, a heartbeat or a result post
 // that arrived: the startup clock is none) is later than its end ("Recovery"), and the owner did not unblock it: an unblock holds until the next push
 // (docs/contracts/runtime.md, "The early unblock and its hold"), whether it ended the job or lifted it after the wait. since is the current enrollment's
-// enrolled_at. Both times are compared at the precision that is stored, because a stored time has no monotonic reading.
+// enrolled_at. Both times are compared at the precision that is stored, because a stored time has no monotonic reading. The unblock row is read here before the
+// job is created, which spares the reads of GitHub of a receipt; an unblock that commits after the read is caught by the store when the job is created (enqueue).
 func (j *checksJob) replaceable(ctx context.Context, job execution.Job, since time.Time) (bool, error) {
 	if job.State != execution.StateUnavailable {
 		return false, nil
@@ -370,11 +371,11 @@ func (j *checksJob) replaceable(ctx context.Context, job execution.Job, since ti
 		if !j.liveness.HeardSince(job.FinishedAt) {
 			return false, nil
 		}
-		held, err := j.executions.Unblocked(ctx, job.ID, since)
+		unblocked, err := j.executions.Unblocked(ctx, job.ID, since)
 		if err != nil {
 			return false, fmt.Errorf("read the unblock of job %d: %w", job.ID, err)
 		}
-		return !held, nil
+		return !job.HeldByUnblock(unblocked), nil
 	}
 	return false, nil
 }
@@ -387,8 +388,11 @@ func (j *checksJob) unconfigured() execution.Reason {
 	return execution.ReasonNotConfigured
 }
 
-func (j *checksJob) enqueue(ctx context.Context, spec execution.Spec, final execution.Reason) error {
-	if _, _, err := j.executions.Enqueue(ctx, execution.NewJob{Spec: spec, Unavailable: final, At: j.now()}); err != nil {
+// enqueue creates the job of spec. replaces is the id of the job it replaces, 0 for none: the store then decides under that job's lock whether the owner's unblock of it
+// holds the replacement back (it returns the replaced job and creates nothing), which `replaceable` could only read before a concurrent unblock committed. since is the
+// current enrollment's enrolled_at.
+func (j *checksJob) enqueue(ctx context.Context, spec execution.Spec, final execution.Reason, replaces int64, since time.Time) error {
+	if _, _, err := j.executions.Enqueue(ctx, execution.NewJob{Spec: spec, Unavailable: final, At: j.now(), Replaces: replaces, UnblockedSince: since}); err != nil {
 		return fmt.Errorf("create the %s job of the head: %w", spec.Plan, err)
 	}
 	return nil
@@ -405,7 +409,7 @@ func (j *checksJob) canonicalJob(ctx context.Context, spec execution.Spec, since
 			return err
 		}
 	}
-	return j.enqueue(ctx, spec, j.unconfigured())
+	return j.enqueue(ctx, spec, j.unconfigured(), held.ID, since)
 }
 
 // receiptJob creates the receipt job of the head under spec unless one holds its binding. applies is false when the receipt does not apply to the revision.
@@ -429,7 +433,7 @@ func (j *checksJob) receiptJob(ctx context.Context, s *pullState, x *executionRu
 		return true, err
 	}
 	spec.UnapprovedPaths, spec.BaseSHA = read.unapproved, read.base
-	if err := j.enqueue(ctx, spec, read.final); err != nil {
+	if err := j.enqueue(ctx, spec, read.final, held.ID, s.enrollment.EnrolledAt); err != nil {
 		return true, err // the clock stays: no job was created
 	}
 	delete(j.mergeFailures, checkPull{s.p.RepositoryID, s.pull.Number}) // a job is created for the head, whatever it is, and that ends the clock of its failures

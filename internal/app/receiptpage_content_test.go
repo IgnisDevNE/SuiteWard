@@ -377,6 +377,8 @@ func TestPullPageSaysHowManyApprovedTestsRan(t *testing.T) {
 	}
 }
 
+// The groups of the receipt go from the state that shows the least to the one that shows the most: a skipped test checked nothing, so it comes before an excluded one, and an
+// inert test shows nothing about the change, so it comes before NEW API and DETECTS (the orchestrator's reading of "from fail to pass", in the contract).
 func TestPullPageListsTheTestsOfTheReceiptWithTheReasonOfEachFlaggedOneWorstFirst(t *testing.T) {
 	w := newPageWorld(t)
 	w.completed(canonicalTests("pass"), receiptTests("detects", "inert", "new_api", "fails", "missing", "flaky", "skipped", "excluded"))
@@ -385,10 +387,10 @@ func TestPullPageListsTheTestsOfTheReceiptWithTheReasonOfEachFlaggedOneWorstFirs
 		pageRow("FAILS", "TestR03", ".", "a_test.go", "The test failed or did not finish with this change.", ""),
 		pageRow("MISSING", "TestR04", ".", "a_test.go", noResultText, ""),
 		pageRow("FLAKY", "TestR05", ".", "a_test.go", "The result changed from run to run with this change: passed, failed, passed.", ""),
-		pageRow("NEW API", "TestR02", ".", "a_test.go", "The test passes with this change. The code before the change could not build it, because it uses something new.", ""),
-		pageRow("INERT", "TestR01", ".", "a_test.go", "The test passes with this change. On the code before the change it passed or skipped itself, so it does not show that the change does anything.", ""),
 		pageRow("SKIPPED", "TestR06", ".", "a_test.go", "", ""),
 		pageRow("EXCLUDED", "TestR07", ".", "a_test.go", buildRule, ""),
+		pageRow("INERT", "TestR01", ".", "a_test.go", "The test passes with this change. On the code before the change it passed or skipped itself, so it does not show that the change does anything.", ""),
+		pageRow("NEW API", "TestR02", ".", "a_test.go", "The test passes with this change. The code before the change could not build it, because it uses something new.", ""),
 		pageRow("DETECTS", "TestR00", ".", "a_test.go", "", ""))
 }
 
@@ -450,21 +452,22 @@ func weakenedWorld(t *testing.T) *pageWorld {
 	return w
 }
 
+// The weakened rows come first inside their group: TestAlsoEdited (weakened) sorts after TestAdded by name, and comes before it. The groups keep their own order.
 func TestPullPageCountsTheWeakenedTestsAndMarksThemInBothTablesWithTheWeakenedRowsFirst(t *testing.T) {
 	w := weakenedWorld(t)
 	page := w.text()
 	w.wantText(page, weakenedTwo)
 	w.wantInOrder(w.section(page, "Approved tests"),
-		pageRow("FAIL", "TestAlsoEdited", ".", "a_test.go", failedText, canonicalNote), // the weakened rows come first, whatever their state
-		pageRow("FLAKY", "TestEdited", ".", "a_test.go", "The result changed from run to run: passed, failed, passed.", canonicalNote),
+		pageRow("FAIL", "TestAlsoEdited", ".", "a_test.go", failedText, canonicalNote),
 		pageRow("FAIL", "TestAdded", ".", "a_test.go", failedText, ""),
 		pageRow("FAIL", "TestUntouched", ".", "a_test.go", failedText, ""),
+		pageRow("FLAKY", "TestEdited", ".", "a_test.go", "The result changed from run to run: passed, failed, passed.", canonicalNote),
 		pageRow("EXCLUDED", "TestExcluded", ".", "a_test.go", buildRule, ""),
 		pageRow("PASS", "TestPassing", ".", "a_test.go", "", ""))
 	w.wantInOrder(w.section(page, "Tests this change adds or edits"),
+		pageRow("EXCLUDED", "TestExcluded", ".", "a_test.go", buildRule, ""),
 		pageRow("DETECTS", "TestAlsoEdited", ".", "a_test.go", "", receiptNote),
 		pageRow("DETECTS", "TestEdited", ".", "a_test.go", "", receiptNote),
-		pageRow("EXCLUDED", "TestExcluded", ".", "a_test.go", buildRule, ""),
 		pageRow("DETECTS", "TestAdded", ".", "a_test.go", "", ""))
 	if got := strings.Count(page, "Weakened:"); got != 4 {
 		t.Errorf("%d markers on the page, want 2 in each table", got)

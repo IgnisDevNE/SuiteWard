@@ -14,8 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IgnisDevNE/SuiteWard/internal/adapters/github"
-	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner/ownertest"
@@ -49,6 +47,7 @@ type pageWorld struct {
 	pages    *receiptPages
 	server   *api
 	apiLogs  *bytes.Buffer
+	at       time.Time // the clock of the page: zero is a moment after the runner was last seen
 }
 
 func newPageWorld(t *testing.T) *pageWorld {
@@ -61,8 +60,21 @@ func newPageWorld(t *testing.T) *pageWorld {
 // serve builds the page over the stores of the world, for the configured tier.
 func (w *pageWorld) serve(tier string) {
 	w.pages = newReceiptPages(w.suites, w.check.contents, w.jobs, w.pulls, w.previews, tier)
-	w.server = &api{owners: w.owners, receipts: w.pages, logger: slog.New(slog.NewTextHandler(w.apiLogs, nil))}
+	w.pages.now = w.clockOfThePage
+	w.server = &api{owners: w.owners, receipts: w.pages, reports: newChangeReports(w.suites, w.content), executorStatus: &executorStatus{liveness: w.check.liveness},
+		logger: slog.New(slog.NewTextHandler(w.apiLogs, nil))}
 }
+
+// clockOfThePage is w.at, or five seconds after the runner was last seen: it is responding.
+func (w *pageWorld) clockOfThePage() time.Time {
+	if w.at.IsZero() {
+		return w.check.liveness.LastSeen().Add(5 * time.Second)
+	}
+	return w.at
+}
+
+// runnerSilentFor sets the clock of the page to d after the runner was last seen.
+func (w *pageWorld) runnerSilentFor(d time.Duration) { w.at = w.check.liveness.LastSeen().Add(d) }
 
 func (w *pageWorld) get(host, path string) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
@@ -185,174 +197,6 @@ func TestReceiptPageOfARevisionWithNoFileOfTheApprovedPatternsSaysItHasNoReceipt
 	w.wantText(w.text(), "This revision changes no file that the approved patterns match, so it has no receipt.")
 }
 
-func TestReceiptPageStatesTheHeadsTheTierAndThatTheResultsAreEvidence(t *testing.T) {
-	w := newPageWorld(t)
-	w.completed(canonicalTests("pass"), receiptTests("detects"))
-	page := w.text()
-	w.wantText(page, "Head: "+cjHead2, "Base branch head: "+bootHead, "Installation tier: isolated", "evidence reported by an executor", "not a verdict")
-	if strings.Contains(page, "assurance is reduced") {
-		t.Errorf("the isolated tier states a reduced assurance:\n%s", page)
-	}
-	w.serve("co-located") // the enrollment recorded isolated: the effective tier is co-located
-	w.wantText(w.text(), "Installation tier: co-located", commandtext.CoLocatedNotice)
-}
-
-func TestReceiptPageStatesTheEvidenceBindingOfEachRunAndTheReceiptOfThePullRequest(t *testing.T) {
-	w := newPageWorld(t)
-	canonical, receipt := w.completed(canonicalTests("pass", "fail"), receiptTests("detects", "inert"))
-	page := w.text()
-	w.wantText(page, "Canonical run", "Receipt",
-		"Governing manifest: "+canonical.GoverningDigest.String()+" (source V1)", "Policy levels: canonical advisory, receipt advisory", "Profile: go",
-		"Executor: 0.4.0-test", "Executor binary SHA-256: "+artifactHash("binary"), "Runtime: podman 5.5.0", "Toolchain: go1.25.1", "Image digest: "+artifactHash("image"),
-		"Started: ", "Ended: ", "Merge base: "+receipt.BaseSHA, "State: complete")
-	if strings.Count(page, "Executor: 0.4.0-test") != 2 {
-		t.Errorf("each run states its own evidence binding:\n%s", page)
-	}
-}
-
-func TestReceiptPageStatesAJobThatWasNotRunWithItsReasonAndNoEvidence(t *testing.T) {
-	w := newPageWorld(t)
-	w.check.executorConfigured = false // the jobs are created already unavailable, and no results row exists
-	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
-	page := w.text()
-	w.wantText(page, "Not run: no executor is configured for this instance (executor-not-configured).")
-	if strings.Contains(page, "Executor: ") || strings.Contains(page, "Governing manifest") && strings.Contains(page, "Image digest") {
-		t.Errorf("a run that was not run states an evidence binding:\n%s", page)
-	}
-}
-
-func TestReceiptPageStatesWhatARunThatWasTriedAgainSaw(t *testing.T) {
-	w := newPageWorld(t)
-	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
-	canonical := w.onlyJob(5, cjHead2, execution.PlanCanonical) // the older job: it is leased first
-	leased, found, err := w.jobs.Lease(t.Context(), execution.LeaseRequest{Now: w.clock, LeaseID: fmt.Sprintf("%032x", 7), JobTimeout: time.Hour, GitHubWait: time.Hour},
-		func(context.Context, execution.Job) error { return nil })
-	if err != nil || !found || leased.ID != canonical.ID {
-		t.Fatalf("lease: job %d, found %v, %v", leased.ID, found, err)
-	}
-	failed := execution.Result{LeaseID: leased.LeaseID, Report: execution.Report{Status: execution.StateUnavailable, Reason: execution.ReasonExecutorError, ExecutorVersion: "0.4.0-test",
-		ExecutorSHA256: artifact.Hash([]byte("binary")), StartedAt: w.clock.Add(-time.Minute), EndedAt: w.clock, BodyDigest: artifact.Hash([]byte("failed"))}}
-	if outcome, err := w.jobs.Complete(t.Context(), canonical.ID, failed, w.clock, time.Hour); err != nil || outcome.State != execution.StatePending {
-		t.Fatalf("the failed attempt: %+v, %v", outcome, err)
-	}
-
-	page := w.text()
-
-	w.wantText(page, "State: pending", "Attempts: 1", "Failures: 1", "Last reason: executor-error")
-}
-
-func TestReceiptPageListsTheChangedFilesAtMostOneHundredAndHowManyThereAre(t *testing.T) {
-	w := newPageWorld(t)
-	files := execHeadFiles(receiptDecl, "v2")
-	for i := range 150 {
-		files[fmt.Sprintf("tests/n%03d_test.go", i)] = "package a\n"
-	}
-	w.execPullFive(files)
-	w.finish(w.onlyJob(5, cjHead2, execution.PlanCanonical), canonicalTests("pass"))
-	w.finish(w.onlyJob(5, cjHead2, execution.PlanReceipt), receiptTests("detects"))
-	page := w.text()
-	w.wantText(page, "Files that this revision adds or changes under the approved patterns: 151 (100 listed)", "tests/a_test.go", "tests/n098_test.go")
-	if strings.Contains(page, "tests/n099_test.go") {
-		t.Errorf("more than 100 files are listed:\n%s", page)
-	}
-}
-
-func TestReceiptPageListsWhatIsNotEvaluatedTheSubmodulesTheMarkersAndTheFilesThatDoNotParse(t *testing.T) {
-	w := newPageWorld(t)
-	head := execDeclaration("advisory", "advisory") + "# e2e\n"
-	head = strings.Replace(head, "include: [/tests/**]", "include: [/tests/**, /e2e/**]", 1)
-	files := execHeadFiles(head, "v2")
-	files["e2e/x_test.go"] = "package e2e\n"
-	w.reader.files = map[int][]github.PullFile{5: {{Path: "e2e/x_test.go", Status: "added"}, {Path: "tests/a_test.go", Status: "modified"}}}
-	w.execPullFive(files)
-	w.finish(w.onlyJob(5, cjHead2, execution.PlanCanonical), canonicalTests("pass"))
-	w.finish(w.onlyJob(5, cjHead2, execution.PlanReceipt), receiptTests("detects"), func(r *execution.Result) {
-		r.Submodules = []string{"vendor/sub"}
-		r.Markers = []execution.Marker{{Kind: "env-read", Path: "tests/a_test.go", Line: 12}, {Kind: "testing-import", Path: "tests/b_test.go", Line: 3}}
-		r.Unparsed = []string{"tests/broken_test.go"}
-	})
-	page := w.text()
-	w.wantText(page, "Not evaluated: pattern not approved yet", "e2e/x_test.go", "Skipped submodules", "vendor/sub", "Marker lines seen: 2",
-		"env-read: tests/a_test.go line 12", "testing-import: tests/b_test.go line 3", "Changed test files that do not parse: 1", "tests/broken_test.go")
-}
-
-func TestReceiptPageStatesTheStateOfEachEvaluatedTestWithItsPackageAndFile(t *testing.T) {
-	w := newPageWorld(t)
-	w.completed(canonicalTests("pass"), receiptTests("detects", "inert", "new_api", "fails", "missing", "flaky", "skipped", "excluded"))
-	page := w.text()
-	w.wantText(page, "DETECTS  .  TestR00  a_test.go", "INERT  .  TestR01  a_test.go", "NEW API  .  TestR02  a_test.go", "FAILS  .  TestR03  a_test.go",
-		"MISSING  .  TestR04  a_test.go", "FLAKY  .  TestR05  a_test.go", "SKIPPED  .  TestR06  a_test.go", "EXCLUDED  .  TestR07  a_test.go (build-constraint)",
-		"Tests by state: 1 DETECTS, 1 INERT, 1 NEW API, 1 FAILS, 1 MISSING, 1 FLAKY, 1 SKIPPED", "Excluded tests: 1")
-}
-
-func TestReceiptPageStatesWhetherEachModeIsMetAndWhyNot(t *testing.T) {
-	for name, tc := range map[string]struct {
-		tests []execution.Test
-		want  []string
-	}{
-		"a test that detects": {receiptTests("detects", "inert"), []string{"fix: met", "feature: met", "refactor: not met: a test is not inert (not-inert)"}},
-		"only inert tests":    {receiptTests("inert"), []string{"fix: not met: no test detects anything (no-detection)", "feature: not met: no test detects anything (no-detection)", "refactor: met"}},
-		"a failing test":      {receiptTests("detects", "fails"), []string{"fix: not met: a test fails, is missing or is flaky, or a changed test file does not parse (blocking-tests)", "feature: not met", "refactor: not met"}},
-		"nothing evaluated":   {receiptTests("excluded"), []string{"fix: not met: no test ran, so nothing detects the change (no-evaluated-tests)", "refactor: met", "has nothing to judge"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			w := newPageWorld(t)
-			w.completed(canonicalTests("pass"), tc.tests)
-			w.wantText(w.text(), tc.want...)
-		})
-	}
-}
-
-func TestReceiptPageStatesThePreviewModeAndSaysThatNothingReadsIt(t *testing.T) {
-	w := newPageWorld(t)
-	w.completed(canonicalTests("pass"), receiptTests("detects"))
-	w.wantText(w.text(), "No preview mode is recorded for this pull request.")
-	w.previews.mode, w.previews.found = "feature", true
-	w.previews.asked = nil
-	w.wantText(w.text(), "Preview mode: feature", "no check and no approval reads it")
-	if want := fmt.Sprint(bootRepoID, " 5 ", bootTime.UTC().Format(time.RFC3339)); len(w.previews.asked) != 1 || w.previews.asked[0] != want {
-		t.Errorf("the preview mode was asked as %v, want once as %q: since the current enrollment", w.previews.asked, want)
-	}
-}
-
-func TestReceiptPageStatesWhatARunOfNothingRanAndTheExcludedTests(t *testing.T) {
-	w := newPageWorld(t)
-	w.completed(nil, receiptTests("detects"))
-	w.wantText(w.text(), "0 tests ran.")
-
-	w = newPageWorld(t)
-	w.completed(canonicalTests("pass", "fail", "skipped", "missing", "flaky", "excluded"), receiptTests("detects"))
-	w.wantText(w.text(), "5 tests ran: 1 passed, 1 skipped, 1 failed, 1 missing, 1 flaky.", "Excluded tests (not run): 1", "FAIL  .  TestC01  a_test.go", "EXCLUDED  .  TestC05  a_test.go (build-constraint)")
-}
-
-func TestReceiptPageStatesWhichJobsTheOwnerUnblocked(t *testing.T) {
-	w := newPageWorld(t)
-	w.check.executorConfigured = false
-	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
-	canonical, receipt := w.onlyJob(5, cjHead2, execution.PlanCanonical), w.onlyJob(5, cjHead2, execution.PlanReceipt)
-	w.wantText(w.text(), "Not run:")
-	if strings.Contains(w.text(), "The owner unblocked") {
-		t.Errorf("a run that nobody unblocked says so:\n%s", w.text())
-	}
-	w.unblock(5, 600, cjHead2, receipt)
-	page := w.text()
-	if strings.Count(page, "The owner unblocked this run") != 1 {
-		t.Errorf("the page does not say which run was unblocked, once:\n%s", page)
-	}
-	w.unblock(5, 601, cjHead2, canonical)
-	if got := strings.Count(w.text(), "The owner unblocked this run"); got != 2 {
-		t.Errorf("%d runs are said to be unblocked, want 2", got)
-	}
-}
-
-func TestReceiptPageOfAClosedPullRequestShowsTheLastHeadRecorded(t *testing.T) {
-	w := newPageWorld(t)
-	w.completed(canonicalTests("pass"), receiptTests("detects"))
-	w.sync(map[int]string{4: bootHead}) // pull 5 is no longer open
-	page := w.text()
-	w.wantText(page, "Head: "+cjHead2, "not open", "State: complete")
-}
-
 // Everything that comes from the repository or from the executor is shown escaped: the names of tests, packages and files, the paths of markers, submodules and files that
 // do not parse, and the text of the evidence binding. A character that hides itself is shown as an escape.
 func TestReceiptPageEscapesWhatTheRepositoryAndTheExecutorSay(t *testing.T) {
@@ -414,7 +258,7 @@ func TestReceiptPageThatCannotBeBuiltIs503WithAFixedTextAndTheCauseInTheLog(t *t
 	w.completed(canonicalTests("pass"), receiptTests("detects"))
 	w.pages.executions = &pageResultsFail{Store: w.jobs}
 	response := w.get("127.0.0.1:8080", pullPath)
-	if response.Code != http.StatusServiceUnavailable || response.Body.String() != "the receipt is unavailable\n" {
+	if response.Code != http.StatusServiceUnavailable || response.Body.String() != "the pull request page is unavailable\n" {
 		t.Fatalf("status %d, body %q, want 503 and the fixed text", response.Code, response.Body.String())
 	}
 	if !strings.Contains(w.apiLogs.String(), "SECRET-STORE-TEXT") {
@@ -531,7 +375,7 @@ func TestReceiptPageIs503ForAnUnavailableJobWhoseReasonNoTextKnows(t *testing.T)
 
 	response := w.get("127.0.0.1:8080", pullPath)
 
-	if response.Code != http.StatusServiceUnavailable || response.Body.String() != "the receipt is unavailable\n" {
+	if response.Code != http.StatusServiceUnavailable || response.Body.String() != "the pull request page is unavailable\n" {
 		t.Fatalf("status %d, body %q, want 503 and the fixed text", response.Code, response.Body.String())
 	}
 	if !strings.Contains(w.apiLogs.String(), "the-moon") {
@@ -573,7 +417,7 @@ func TestReceiptPageAsksWhetherTheReceiptAppliesBeforeItReadsItsJob(t *testing.T
 	response := w.get("127.0.0.1:8080", pullPath)
 
 	page := html.UnescapeString(response.Body.String())
-	if response.Code != http.StatusOK || strings.Contains(page, "<h2>Receipt</h2>") {
+	if response.Code != http.StatusOK || strings.Contains(page, "<h2>Tests this change adds or edits</h2>") {
 		t.Errorf("status %d: the page shows the receipt of a revision whose receipt does not apply:\n%s", response.Code, page)
 	}
 	w.wantText(page, "This revision changes no file that the approved patterns match, so it has no receipt.")

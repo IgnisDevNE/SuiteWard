@@ -354,3 +354,8 @@ func visibleAll(paths []string) []string {
 	}
 	return lines
 }
+
+// modeRow says whether the summary of mode is met and, when it is not, why, in words.
+func modeRow(mode domain.Mode, summary domain.ModeSummary) (met bool, why string, err error) {
+	return false, "", nil // a stub: the next commit says it
+}

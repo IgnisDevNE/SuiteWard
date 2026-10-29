@@ -111,7 +111,7 @@ func everyBody(t *testing.T) map[string]string {
 			add("revision with a "+level+" receipt "+tier, func() string { r := receiptRevision(t, level); r.Tier = value; return commandtext.RevisionComment(r) })
 			add("revision with a "+level+" receipt and no link "+tier, func() string {
 				r := receiptRevision(t, level)
-				r.Tier, r.ReceiptURL = value, ""
+				r.Tier, r.PullURL = value, ""
 				return commandtext.RevisionComment(r)
 			})
 		}

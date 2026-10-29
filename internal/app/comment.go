@@ -1161,7 +1161,7 @@ func (p *commentPublisher) revision(ctx context.Context, key, tail string, paylo
 	}
 	if plain.Receipt != "" && p.reportBase != "" { // a link that the renderer refuses drops the link and never the line
 		if link := receiptPageURL(p.reportBase, r.Repo, r.Pull); commandtext.ValidReceiptLink(link, r.Pull) {
-			plain.ReceiptURL = link
+			plain.PullURL = link
 		} else {
 			p.logger.WarnContext(ctx, "github_comment: the receipt line is posted without its link, which the renderer refuses", "key", key)
 		}

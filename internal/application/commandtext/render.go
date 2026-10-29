@@ -679,11 +679,11 @@ type Revision struct {
 	ChangesUnavailable                      bool
 	ReportURL                               string
 	// Receipt is the effective receipt level (advisory, before-approval or required) of a revision whose receipt applies, and empty for one with none: the comment then
-	// has the fixed receipt line. ReceiptURL, set only with Receipt, is the link to the receipt page of pull request Pull, which names the line's results; without it the
+	// has the fixed receipt line. PullURL, set only with Receipt, is the link to the receipt page of pull request Pull, which names the line's results; without it the
 	// line sends the reader to the SuiteWard / Receipt check.
-	Receipt    string
-	ReceiptURL string
-	Pull       int
+	Receipt string
+	PullURL string
+	Pull    int
 	// LowersPolicy and ReducesScope say what a reduction whose detail was left out (ReducedOmitted) does, which its entries can no longer say: it lowers the execution
 	// policy, reduces the protected scope, or both. Neither set is a reduction of the scope. They are set only with ReducedOmitted.
 	LowersPolicy, ReducesScope bool
@@ -722,8 +722,8 @@ var receiptLevels = []string{"advisory", "before-approval", "required"}
 // receiptLine is the fixed line about the receipt (docs/contracts/runtime.md, "The revision comment"): what the receipt is, where its results are and where its counts are.
 func receiptLine(r Revision) string {
 	results := "Results: see the `SuiteWard / Receipt` check."
-	if r.ReceiptURL != "" {
-		results = "Results: [Receipt page](" + r.ReceiptURL + ")."
+	if r.PullURL != "" {
+		results = "Results: [Receipt page](" + r.PullURL + ")."
 	}
 	return "Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. " +
 		"It is evidence, not a verdict. " + results + " The `SuiteWard / Receipt` check carries the counts."
@@ -779,7 +779,7 @@ func validateReceipt(r Revision) error {
 		return errors.New("commandtext: what a reduction lowers is stated only for one whose detail was left out: otherwise its entries say it")
 	case r.Receipt != "" && !slices.Contains(receiptLevels, r.Receipt):
 		return fmt.Errorf("commandtext: receipt level %q is none of %q", r.Receipt, receiptLevels)
-	case r.ReceiptURL != "" && (r.Receipt == "" || !ValidReceiptLink(r.ReceiptURL, r.Pull)):
+	case r.PullURL != "" && (r.Receipt == "" || !ValidReceiptLink(r.PullURL, r.Pull)):
 		return errors.New("commandtext: the receipt link is not the link of the loopback receipt page of this pull request, or the revision has no receipt")
 	}
 	return nil

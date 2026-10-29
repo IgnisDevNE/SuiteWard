@@ -7,6 +7,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
@@ -36,15 +37,51 @@ func (j *checksJob) executionStep(ctx context.Context, s *pullState, x *executio
 }
 
 // runnerNotResponding says that the job a gate reads waits for a runner that no request reached for NotRespondingAfter (docs/contracts/runtime.md, "Not responding"):
-// the job is leased, or pending for a reason other than GitHub, and the runner is silent. A plan with no job yet waits for nothing. Each check reads its own job.
+// the job is leased, or pending for a reason other than GitHub (Job.WaitsForRunner, the rule of the domain), and the runner is silent. A plan with no job yet waits for
+// nothing. Each check reads its own job, so a head-level reading (headNotResponding) never changes what a check says.
 func (j *checksJob) runnerNotResponding(job execution.Job, found bool) bool {
 	return found && job.WaitsForRunner() && j.liveness.Silent(j.now())
 }
 
-// headNotResponding says that a head reads "not responding": the runner is silent and at least one wanted job of the head waits for it. The wanted jobs are the canonical
-// job when the canonical level is not off and the receipt job when the receipt applies, as the gates read them. The comment of the head reads this.
+// headNotResponding says whether a head reads "not responding" and which of its wanted jobs wait for the runner, 0 for none (docs/contracts/runtime.md, "Not responding",
+// "Definitions"). It is domain.Set.NotResponding, the rule that the comment of the head and the page read, so the wanted jobs are the contract's: the canonical job when the
+// canonical level is not off, whatever the pass decided of the head, and the receipt job when the receipt level is not off and the pass found that the receipt applies. A head
+// whose check another rule decided has no canonical job planned and none read, but the job that is still open waits, so it is read here. A policy that was not read, or that
+// names no execution, wants nothing. The gates do not call this: each check reads its own job (runnerNotResponding). Waiting.Unblock is not told here, since it depends on the
+// reason of the head, which only a full Set holds: a caller that offers the unblock fills the Set and asks it.
 func (j *checksJob) headNotResponding(ctx context.Context, s *pullState, x *executionRun, jobs headJobs) (domain.JobPair, bool, error) {
-	return domain.JobPair{}, false, nil
+	if !x.known || !x.policy.wants() {
+		return domain.JobPair{}, false, nil
+	}
+	canonical, hasCanonical := jobs.canonical, jobs.hasCanonical
+	if x.policy.canonicalOn() && !jobs.canonicalPlanned {
+		var err error
+		if canonical, hasCanonical, err = j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical, artifact.Digest{}); err != nil {
+			return domain.JobPair{}, false, err
+		}
+	}
+	set := domain.Set{CanonicalLevel: x.policy.canonical, ReceiptLevel: x.policy.receipt, ReceiptApplies: jobs.receiptApplies}
+	var err error
+	if set.CanonicalJob, err = planJob(canonical, hasCanonical); err != nil {
+		return domain.JobPair{}, false, err
+	}
+	if set.ReceiptJob, err = planJob(jobs.receipt, jobs.hasReceipt); err != nil {
+		return domain.JobPair{}, false, err
+	}
+	waiting, reading := set.NotResponding(j.liveness.Silent(j.now()))
+	return waiting.Jobs, reading, nil
+}
+
+// planJob is the job of a plan as a set holds it: the zero job for a plan with none. A cancelled job is an error: the gates never return one.
+func planJob(job execution.Job, found bool) (domain.Job, error) {
+	if !found {
+		return domain.Job{}, nil
+	}
+	inSet, ok := job.InSet(false)
+	if !ok {
+		return domain.Job{}, fmt.Errorf("read the %s job %d: it is %s: only a job that is not cancelled is read", job.Plan, job.ID, job.State)
+	}
+	return inSet, nil
 }
 
 // ungated is the check as it was decided before the canonical gate held it back: a stored check with a gate reason is the success it replaced, unchanged for

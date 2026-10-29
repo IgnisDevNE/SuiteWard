@@ -271,13 +271,22 @@ func (j Job) Swept(p ExpireParams) (next Job, changed, serviceRow bool) {
 	return next, changed, false
 }
 
-// WaitsForRunner reports whether the job waits for the test runner: it is leased, or pending for a reason other than a failing GitHub read
-// (a job that waits on GitHub waits for GitHub, and has its own bound).
-func (j Job) WaitsForRunner() bool {
-	return j.State == StateLeased || (j.State == StatePending && j.Reason != ReasonGitHubUnavailable)
+// setStates are the states of a job that is part of a set of the comments of a head. A cancelled job is not one: its binding is no longer wanted.
+var setStates = map[State]domain.JobState{StatePending: domain.JobPending, StateLeased: domain.JobLeased, StateComplete: domain.JobComplete, StateUnavailable: domain.JobUnavailable}
+
+// InSet is the job as the rules of the comments of a head read it (docs/contracts/runtime.md, "The comments of a head"); unblocked says that an unblock row since the
+// current enrollment names it. ok is false for a cancelled job, which is not part of a set.
+func (j Job) InSet(unblocked bool) (job domain.Job, ok bool) {
+	state, ok := setStates[j.State]
+	if !ok {
+		return domain.Job{}, false
+	}
+	return domain.Job{ID: j.ID, State: state, Reason: string(j.Reason), Governing: j.GoverningDigest, Unblocked: unblocked}, true
 }
 
-// InSet is the job as the rules of the comments of a head read it; unblocked says that an unblock row since the current enrollment names it.
-func (j Job) InSet(unblocked bool) (domain.Job, bool) {
-	return domain.Job{}, false
+// WaitsForRunner reports whether the job waits for the test runner (docs/contracts/runtime.md, "Not responding"). It is the rule of the domain job, which the comments
+// of a head read, so that a check and a comment never disagree; a cancelled job is part of no set and waits for nothing.
+func (j Job) WaitsForRunner() bool {
+	inSet, ok := j.InSet(false)
+	return ok && inSet.WaitsForRunner()
 }

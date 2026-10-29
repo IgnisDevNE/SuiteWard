@@ -365,7 +365,7 @@ func (x *executionRun) namesMode(r checks.Result) bool {
 // gave afterwards would never reach it. Once a job is counted its counts stay: a fresh receipt job that replaces an unavailable one makes the set not final again and does not
 // rewrite the check. What this pass cannot read keeps the stored value of the same head, so a store that fails for a moment does not flip the check and write two messages;
 // that includes a pass whose step did not run (no Set), which keeps the counts that went out, without the weakened count that only a Set can give. The failure of the read is
-// returned, once the check is published.
+// returned, once the check is published. The weakened count is part of what the counts say: a pass that cannot read it counts nothing and keeps the stored job.
 func (j *checksJob) approvalCounts(ctx context.Context, s *pullState, x *executionRun, d *pullDecision, executed *executionOutcome) error {
 	d.result.CountedJob = 0 // no reason but an approval that is missing counts a job, and no pass but this one sets it
 	if d.result.Reason != reasonApprovalMissing {
@@ -389,16 +389,21 @@ func (j *checksJob) approvalCounts(ctx context.Context, s *pullState, x *executi
 	if err != nil {
 		return err
 	}
-	stated := d.result.CountedJob == job.ID // the counts of this job went out before: they stay
+	kept := d.result.CountedJob
+	stated := kept == job.ID // the counts of this job went out before: they stay
 	d.result.CountedJob = 0
 	if run.status != domain.RunComplete || (!executed.set.Final() && !stated) {
 		return nil
 	}
-	executed.counts, d.result.CountedJob = checkCountsOf(run.counts), job.ID
+	weakened := 0
 	if executed.set.Final() {
-		executed.weakened, err = j.weakenedOf(ctx, executed.set)
+		if weakened, err = j.weakenedOf(ctx, executed.set); err != nil {
+			d.result.CountedJob = kept // a weakened count that cannot be read is not 0: the job stays as it was, so that the next pass counts it again, with the count
+			return err
+		}
 	}
-	return err
+	executed.counts, executed.weakened, d.result.CountedJob = checkCountsOf(run.counts), weakened, job.ID
+	return nil
 }
 
 // restoreCounts gives a check that a wait restored the counts of the canonical run it was decided with. The stored result of the head goes out again when the ledger

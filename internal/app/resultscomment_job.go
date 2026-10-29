@@ -163,8 +163,11 @@ func (j *checksJob) resultsComments(ctx context.Context, s *pullState, executed 
 // earlierSet is the set of an approved head that came before the approval: the canonical job that the canonical's manifest governed, taken with the receipt job of the later
 // set. ok is false for a head that is not approved and for one with no such job (its first job was cancelled while it waited). A cancelled job is part of no set.
 func (j *checksJob) earlierSet(ctx context.Context, s *pullState, later domain.Set) (earlier domain.Set, ok bool, err error) {
-	if later.CanonicalLevel == 0 || later.CanonicalLevel == domain.CanonicalLevelOff || later.CanonicalJob.ID == 0 || later.CanonicalJob.Governing == s.suite.manifest {
-		return domain.Set{}, false, nil // no policy read, no canonical run, or a head that is not approved (its job runs the canonical's manifest): nothing to look for
+	if later.CanonicalLevel == 0 || later.CanonicalLevel == domain.CanonicalLevelOff || later.CanonicalJob.ID == 0 {
+		return domain.Set{}, false, nil // no policy read, or no canonical run
+	}
+	if governing := later.CanonicalJob.Governing; !governing.IsZero() && governing == s.suite.manifest {
+		return domain.Set{}, false, nil // a head that is not approved: its job runs the canonical's manifest, so it needs no read. A missing digest is the domain's to refuse
 	}
 	stored, err := j.executions.HeadJobs(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical)
 	if err != nil {

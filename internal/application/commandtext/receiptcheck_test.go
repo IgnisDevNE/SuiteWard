@@ -214,7 +214,7 @@ func TestReceiptCheckSummaryOfAnUnavailableReceiptSaysWhyInTheWordsOfTheContract
 		c := receiptOf("receipt-not-run")
 		c.Unavailable = code
 		_, summary := receiptText(t, c)
-		if !strings.Contains(summary, "SuiteWard could not run the receipt of this commit.\n\n"+sentence+"\n\n- State: `neutral`") {
+		if !strings.Contains(summary, "SuiteWard could not run the receipt of this commit.\n\n"+sentence+"\n\n"+receiptNotRunNext+receiptNotRunUnblock+"\n\n- State: `neutral`") {
 			t.Errorf("%s: summary lacks %q after the text of the reason:\n%s", code, sentence, summary)
 		}
 		if strings.Contains(summary, code) {
@@ -223,11 +223,16 @@ func TestReceiptCheckSummaryOfAnUnavailableReceiptSaysWhyInTheWordsOfTheContract
 	}
 }
 
+const (
+	receiptNotRunNext    = "This check does not fail the pull request. A new push runs the receipt again."
+	receiptNotRunUnblock = " Where the receipt is required, the owner can unblock this commit. The comment on the pull request gives the command."
+)
+
 func TestReceiptCheckSummaryOfAnUnblockedHeadSaysThatTheTestsDidNotRun(t *testing.T) {
 	c := receiptOf("receipt-not-run")
 	c.Unblocked = true
 	_, summary := receiptText(t, c)
-	if !strings.Contains(summary, receiptUnblockedText) || !strings.Contains(summary, "- State: `neutral`") {
+	if !strings.Contains(summary, receiptUnblockedText) || !strings.Contains(summary, "- State: `neutral`") || !strings.Contains(summary, receiptNotRunNext+"\n\n") || strings.Contains(summary, "can unblock") {
 		t.Errorf("summary:\n%s", summary)
 	}
 }

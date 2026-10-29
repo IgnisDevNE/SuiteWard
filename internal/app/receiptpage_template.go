@@ -43,7 +43,7 @@ li { overflow-wrap: anywhere; }
 <li>Repository: {{.Repo}}</li>
 <li>Commit: {{.ShortHead}} (full SHA: {{.Head}})</li>
 <li>Base branch commit: {{.Base}}</li>
-<li>Installation tier: {{.Tier}}</li>
+<li>Installation type: {{.Tier}}</li>
 </ul>
 {{if not .Open}}<p>This pull request is not open: the results are those of the last commit recorded for it.</p>
 {{end}}{{if .Situation}}<p class="lead">{{.Situation}}</p>

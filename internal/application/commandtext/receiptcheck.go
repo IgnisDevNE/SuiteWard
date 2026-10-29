@@ -55,6 +55,10 @@ const (
 	receiptUnblockedSentence = "The owner unblocked this commit. Its receipt could not run, so the tests of this change did not run."
 	// receiptUnblockOffer ends the text of receipt-not-responding where the receipt gate would refuse an approve.
 	receiptUnblockOffer = "To approve without the receipt, the owner can comment `/suiteward unblock <code>`."
+	// receiptNotRunNext is what a receipt that was not run says to do: the neutral check does not fail the pull request, and a new push runs the receipt again. Where the receipt is
+	// required the approve is refused until the owner unblocks the commit, which the comment of the pull request gives the command for; an unblocked commit does not say it again.
+	receiptNotRunNext    = "This check does not fail the pull request. A new push runs the receipt again."
+	receiptNotRunUnblock = " Where the receipt is required, the owner can unblock this commit. The comment on the pull request gives the command."
 	// emptyReceiptText is the text of receipt-complete when no test was evaluated: "SuiteWard ran the tests" would say something the run did not do.
 	emptyReceiptText = "The receipt of this commit is empty, so there is nothing to judge."
 )
@@ -74,7 +78,11 @@ func ReceiptCheckSummary(c ReceiptCheck) (title, summary string) {
 	}
 	parts := []string{text}
 	if c.Unavailable != "" {
-		parts = append(parts, unavailableSentences[c.Unavailable])
+		next := receiptNotRunNext
+		if !c.Unblocked {
+			next += receiptNotRunUnblock
+		}
+		parts = append(parts, unavailableSentences[c.Unavailable], next)
 	}
 	facts := []string{"- State: `" + checkStateName[c.State] + "`"}
 	if c.Proposal != 0 {

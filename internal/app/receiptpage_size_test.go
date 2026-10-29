@@ -323,3 +323,9 @@ func TestAPageIsBuiltUnderACapOfTwelveMebibytesAboveTheNineOfItsBudgets(t *testi
 		t.Errorf("a page is built under a limit of %d bytes, want 12 MiB", got)
 	}
 }
+
+func (r reportsEndContext) turn(context.Context) (func(), error) { return func() {}, nil }
+
+func (r reportsEndContext) build(ctx context.Context, ref contract.ProposalReference) (revisionReport, error) {
+	return r.revisionReport(ctx, ref)
+}

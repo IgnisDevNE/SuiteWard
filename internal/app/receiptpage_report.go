@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html/template"
 	"slices"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
@@ -14,7 +13,7 @@ import (
 
 // The change report of the current revision on the pull request page (docs/contracts/runtime.md, "The pull request page", item 8): the summary lines and a table of the
 // changed files with no hunk, a link to the full report of the revision, which keeps the hunks, and a link to the report of each earlier revision of the proposal. The
-// report is built here once, by the reports of the process, which build one at a time and bound what they read.
+// report is built here once, in the turn that the page holds, by the reports of the process, which bound what they read.
 
 // reportSection is the change report of the revision. When the report cannot be built the section is one sentence and nothing else.
 type reportSection struct {
@@ -22,10 +21,10 @@ type reportSection struct {
 	Reference   string // P<n>-R<m>
 	Sentence    string // why there is no report, empty when there is one
 	Facts       []string
-	Files       template.HTML
+	Files       table
 	More        string
 	Full        pageLink // the report of the revision, with its hunks
-	Earlier     template.HTML
+	Earlier     []pageLink
 	EarlierMore string
 }
 
@@ -35,7 +34,7 @@ type reportSection struct {
 func reportOf(ctx context.Context, deps pageDeps, repo string, current contract.ProposalReference, revisions []contract.ProposalReference) (reportSection, error) {
 	reference := referenceText(current)
 	s := reportSection{Show: true, Reference: reference, Full: pageLink{Href: reportHref(repo, reference), Text: "The full change report of " + reference + ", with the changed lines"}}
-	built, err := deps.reports.revisionReport(ctx, current)
+	built, err := deps.reports.build(ctx, current)
 	if cause := ctx.Err(); cause != nil {
 		return reportSection{}, cause
 	}
@@ -70,7 +69,7 @@ func reportOf(ctx context.Context, deps pageDeps, repo string, current contract.
 	}
 	over := max(len(earlier)-maxEarlierLinks, 0)
 	var hidden int
-	if s.Earlier, hidden, err = listOf(linkTemplate, earlier[:len(earlier)-over], listBudget); err != nil {
+	if s.Earlier, hidden, err = linkList(earlier[:len(earlier)-over], listBudget); err != nil {
 		return reportSection{}, err
 	}
 	s.EarlierMore = entriesNotShown(hidden + over)

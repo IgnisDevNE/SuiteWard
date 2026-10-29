@@ -1,15 +1,11 @@
 package app
 
-import (
-	"fmt"
-	"html/template"
-	"strings"
-)
+import "fmt"
 
 // The tables and the lists of the pull request page, and the budgets that keep the page below its cap (docs/contracts/runtime.md, "The pull request page", "The size
-// rule"). A row or an entry is written by html/template into a buffer first, so that its size is the number of bytes the page holds, after the escaping that the
-// template does; rows are written in order until the budget of the table or the list is spent, and the rest are counted, never named. Only what html/template wrote is
-// ever made template.HTML, so the escaping holds whatever the budget cuts.
+// rule"). The template writes every row and every entry, and a budget counts the bytes that the very same template block writes for one of them, after the escaping that
+// html/template does: rows are kept in order until the budget of the table or the list is spent, and the rest are counted, never named. No string is ever made markup
+// by hand, so the escaping holds whatever the budget cuts.
 
 // The budgets of the page, in escaped bytes. They add up to 9 MiB with the 2 MiB of the fixed part; the cap is above them, so that no page that a correct build produces
 // reaches it.
@@ -22,71 +18,85 @@ const (
 	maxEarlierLinks = 50        // the earlier revisions that the page links, the newest first
 )
 
-var (
-	rowTemplate  = template.Must(template.New("row").Parse(`<tr>{{range .}}<td>{{.}}</td>{{end}}</tr>`))
-	headTemplate = template.Must(template.New("head").Parse(`<tr>{{range .}}<th>{{.}}</th>{{end}}</tr>`))
-	itemTemplate = template.Must(template.New("item").Parse(`<li>{{.}}</li>`))
-	linkTemplate = template.Must(template.New("link").Parse(`<li><a href="{{.Href}}">{{.Text}}</a></li>`))
-)
-
-// markup is what a template writes for data.
-func markup(t *template.Template, data any) (string, error) {
-	var b strings.Builder
-	if err := t.Execute(&b, data); err != nil {
-		return "", err
-	}
-	return b.String(), nil
-}
-
-// fit writes entry after entry, each followed by a line break, until the next one would pass room; it returns what it wrote and how many entries it did not write. The
-// entries are produced one at a time, so that those that do not fit are never rendered.
-func fit(count int, entry func(i int) (string, error), room int) (written string, hidden int, err error) {
-	var b strings.Builder
-	shown := 0
-	for ; shown < count; shown++ {
-		text, err := entry(shown)
-		if err != nil {
-			return "", 0, err
-		}
-		if len(text)+1 > room {
-			break
-		}
-		room -= len(text) + 1
-		b.WriteString(text)
-		b.WriteByte('\n')
-	}
-	return b.String(), count - shown, nil
-}
-
-// tableOf is a table with a head and the rows that fit its budget, and the number of rows left out. The head and the tags count against the budget.
-func tableOf(head []string, rows [][]string, budget int) (table template.HTML, hidden int, err error) {
-	top, err := markup(headTemplate, head)
-	if err != nil {
-		return "", 0, err
-	}
-	opening, closing := "<table>\n<thead>\n"+top+"\n</thead>\n<tbody>\n", "</tbody>\n</table>\n"
-	body, hidden, err := fit(len(rows), func(i int) (string, error) { return markup(rowTemplate, rows[i]) }, budget-len(opening)-len(closing))
-	if err != nil {
-		return "", 0, err
-	}
-	return template.HTML(opening + body + closing), hidden, nil
+// table is a head and the rows of a table that fit its budget. The zero table is no table.
+type table struct {
+	Head []string
+	Rows [][]string
 }
 
 // pageLink is a link of a list: where it goes, and what it says.
 type pageLink struct{ Href, Text string }
 
-// listOf is a list of the entries that fit its budget, each written by item (itemTemplate for text, linkTemplate for pageLink), and the number of entries left out. A list
-// with no entry is no markup.
-func listOf[T any](item *template.Template, entries []T, budget int) (list template.HTML, hidden int, err error) {
-	if len(entries) == 0 {
-		return "", 0, nil
+// counter counts the bytes written to it.
+type counter int
+
+func (c *counter) Write(p []byte) (int, error) {
+	*c += counter(len(p))
+	return len(p), nil
+}
+
+// sizeOf is the number of bytes that the block of the page template called name writes for data.
+func sizeOf(name string, data any) (int, error) {
+	var n counter
+	if err := pullTemplate.ExecuteTemplate(&n, name, data); err != nil {
+		return 0, err
 	}
-	opening, closing := "<ul>\n", "</ul>\n"
-	body, hidden, err := fit(len(entries), func(i int) (string, error) { return markup(item, entries[i]) }, budget-len(opening)-len(closing))
+	return int(n), nil
+}
+
+// fit says how many of count entries, written in order, fit room: entry i takes size(i) bytes and a line break. It asks the size of an entry only while the entries fit, so
+// that those left out are never written.
+func fit(count int, size func(i int) (int, error), room int) (shown int, err error) {
+	for ; shown < count; shown++ {
+		n, err := size(shown)
+		if err != nil {
+			return 0, err
+		}
+		if n+1 > room {
+			break
+		}
+		room -= n + 1
+	}
+	return shown, nil
+}
+
+// tableOf is a table with a head and the rows that fit its budget, and the number of rows left out. The head and the tags count against the budget.
+func tableOf(head []string, rows [][]string, budget int) (kept table, hidden int, err error) {
+	fixed, err := sizeOf("table", table{Head: head})
 	if err != nil {
-		return "", 0, err
+		return table{}, 0, err
 	}
-	return template.HTML(opening + body + closing), hidden, nil
+	shown, err := fit(len(rows), func(i int) (int, error) { return sizeOf("row", rows[i]) }, budget-fixed)
+	if err != nil {
+		return table{}, 0, err
+	}
+	return table{Head: head, Rows: rows[:shown]}, len(rows) - shown, nil
+}
+
+// textList is the entries of a list of text that fit its budget, and the number left out.
+func textList(entries []string, budget int) (kept []string, hidden int, err error) {
+	return fitList("list", "item", entries, budget)
+}
+
+// linkList is the links of a list that fit its budget, and the number left out.
+func linkList(links []pageLink, budget int) (kept []pageLink, hidden int, err error) {
+	return fitList("links", "link", links, budget)
+}
+
+// fitList keeps the entries of the list block (whose entries are the item block) that fit the budget. A list with no entry is written as nothing by the page.
+func fitList[T any](list, item string, entries []T, budget int) (kept []T, hidden int, err error) {
+	if len(entries) == 0 {
+		return nil, 0, nil
+	}
+	fixed, err := sizeOf(list, []T(nil))
+	if err != nil {
+		return nil, 0, err
+	}
+	shown, err := fit(len(entries), func(i int) (int, error) { return sizeOf(item, entries[i]) }, budget-fixed)
+	if err != nil {
+		return nil, 0, err
+	}
+	return entries[:shown], len(entries) - shown, nil
 }
 
 // rowsNotShown says how many rows a budget left out, or nothing when it left none out. one and many name the rows, which the counts above include.

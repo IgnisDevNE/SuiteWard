@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"html/template"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,7 +15,7 @@ import (
 // What the pull request page says (docs/contracts/runtime.md, "The pull request page"): the situation of the head and of each run, the tests by state, and the tests of
 // each run. The words of a test come from the tables of commandtext: the page states no sentence of a test that they do not.
 
-// pullView is what the page shows. Its tables and lists are written, within their budgets, by html/template (receiptpage_tables.go), and are the only template.HTML.
+// pullView is what the page shows. Its tables and lists hold only the rows and the entries that fit their budgets (receiptpage_tables.go).
 type pullView struct {
 	Pull                              int
 	Repo, Head, ShortHead, Base, Tier string
@@ -28,32 +27,32 @@ type pullView struct {
 	States                            stateSection
 	Approved, Receipt                 testsSection
 	Kinds                             kindsSection
-	Evidence                          template.HTML
+	Evidence                          table
 	Report                            reportSection
 }
 
 type stateSection struct {
 	Show      bool
-	Table     template.HTML
+	Table     table
 	Sentences []string
 }
 
 type testsSection struct {
 	Show  bool
 	Lead  string
-	Table template.HTML
+	Table table
 	More  string
 	Lists []listBlock
 }
 
 type listBlock struct {
 	Heading string
-	Items   template.HTML
+	Items   []string
 	More    string
 }
 
 type kindsSection struct {
-	Table   template.HTML // nothing when there is no receipt to judge
+	Table   table // the zero table when there is no receipt to judge
 	Preview string
 }
 
@@ -259,11 +258,11 @@ func statesOf(canonical pageRun, cc domain.CanonicalCounts, receipt pageRun, rc 
 		}
 		rows = append(rows, cells)
 	}
-	table, _, err := tableOf([]string{"State", "What it means", canonicalLabel, "This change's tests"}, rows, unbudgeted)
+	states, _, err := tableOf([]string{"State", "What it means", canonicalLabel, "This change's tests"}, rows, unbudgeted)
 	if err != nil {
 		return stateSection{}, err
 	}
-	s := stateSection{Show: true, Table: table}
+	s := stateSection{Show: true, Table: states}
 	const below = " They are listed below, under the tests of this change."
 	if cc.Excluded > 0 {
 		s.Sentences = append(s.Sentences, "Approved tests that SuiteWard cannot run, so they are not covered: "+strconv.Itoa(cc.Excluded)+".")
@@ -384,17 +383,17 @@ func testRows(r pageRun, weak map[domain.TestID]bool) ([]testRow, error) {
 }
 
 // testsTable is the table of the tests of a run within its budget, and the sentence of the rows that it left out.
-func testsTable(r pageRun, weak map[domain.TestID]bool) (template.HTML, string, error) {
+func testsTable(r pageRun, weak map[domain.TestID]bool) (table, string, error) {
 	rows, err := testRows(r, weak)
 	if err != nil {
-		return "", "", err
+		return table{}, "", err
 	}
 	cells := make([][]string, len(rows))
 	for i, row := range rows {
 		cells[i] = row.cells
 	}
-	table, hidden, err := tableOf([]string{"State", "Test", "Package", "File", "Reason", "Note"}, cells, testTableBudget)
-	return table, rowsNotShown(hidden, "test", "tests"), err
+	tests, hidden, err := tableOf([]string{"State", "Test", "Package", "File", "Reason", "Note"}, cells, testTableBudget)
+	return tests, rowsNotShown(hidden, "test", "tests"), err
 }
 
 // canonicalSection is the approved tests: what ran, and the table of their tests. A run that did not complete has no table: its situation takes its place.
@@ -466,7 +465,7 @@ func receiptSection(r pageRun, counts domain.ReceiptCounts, weak map[domain.Test
 		if i > 0 && len(l.entries) == 0 { // the files that the receipt covers are always counted, even when none: the other lists only when they have entries
 			continue
 		}
-		items, hidden, err := listOf(itemTemplate, l.entries, listBudget)
+		items, hidden, err := textList(l.entries, listBudget)
 		if err != nil {
 			return testsSection{}, err
 		}

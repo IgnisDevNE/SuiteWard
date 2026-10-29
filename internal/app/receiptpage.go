@@ -96,19 +96,18 @@ type previewReader interface {
 	PreviewMode(ctx context.Context, repositoryID int64, pull int, since time.Time) (string, bool, error)
 }
 
-// receiptPages builds the pull request page. One page is built at a time in the process, because a page of two runs of 10,000 tests holds its rows and its markup.
+// receiptPages builds the pull request page. One page is built at a time in the process, in the turn of the reports (pageReports), because a page of two runs of 10,000 tests holds its rows and its markup.
 type receiptPages struct {
 	suites     governance.UnitOfWork
 	contents   governance.ContentReader
 	executions execution.Store
 	pulls      pullLister
 	previews   previewReader
-	tier       string // the configured installation tier
-	gate       chan struct{}
+	tier       string           // the configured installation tier
 	limit      int              // the most bytes a page may hold, a field so that a test can lower it
 	now        func() time.Time // the clock of the page, which a test can set
 }
 
 func newReceiptPages(suites governance.UnitOfWork, contents governance.ContentReader, executions execution.Store, pulls pullLister, previews previewReader, tier string) *receiptPages {
-	return &receiptPages{suites: suites, contents: contents, executions: executions, pulls: pulls, previews: previews, tier: tier, gate: make(chan struct{}, 1), limit: maxPullPage, now: time.Now}
+	return &receiptPages{suites: suites, contents: contents, executions: executions, pulls: pulls, previews: previews, tier: tier, limit: maxPullPage, now: time.Now}
 }

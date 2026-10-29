@@ -72,7 +72,7 @@ type api struct {
 	github         *githubStatus   // nil when the GitHub settings are not set
 	executorStatus *executorStatus // the execution block of /status: serve always sets it
 	executor       http.Handler    // the executor API under /executor/v1; nil without EXECUTOR_TOKEN: not served
-	reports        reportSource    // rebuilds the change report of a revision for the report page
+	reports        pageReports     // rebuilds the change report of a revision for the report page and the page of a pull request
 	receipts       receiptSource   // builds the page of a pull request
 	stopping       atomic.Bool     // set when shutdown begins: readiness turns 503 first
 }

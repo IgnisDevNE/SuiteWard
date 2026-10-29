@@ -83,7 +83,7 @@ func ResultsComment(r Results) string {
 		parts = append(parts, canonicalText(*r.Canonical))
 	}
 	if r.Receipt != nil {
-		parts = append(parts, receiptText(*r.Receipt)...)
+		parts = append(parts, receiptText(*r.Receipt, "the page")...)
 		parts = append(parts, kindsText(r)...)
 	}
 	if r.Weakened > 0 {
@@ -190,8 +190,9 @@ func canonicalText(run CanonicalRun) string {
 	return text
 }
 
-// receiptText states the tests that the change adds or edits, by state, then the files that cannot be read and the lines to look at, or why the run did not happen.
-func receiptText(run ReceiptRun) []string {
+// receiptText states the tests that the change adds or edits, by state, then the files that cannot be read and the lines to look at, or why the run did not happen. page
+// names where the lines are listed: the text of a comment that links it says "the page", and one that has no link names the pull request page.
+func receiptText(run ReceiptRun, page string) []string {
 	if run.Unavailable != "" {
 		return []string{"Tests this change adds or edits: not run. " + unavailableSentences[run.Unavailable]}
 	}
@@ -214,7 +215,7 @@ func receiptText(run ReceiptRun) []string {
 		notes = append(notes, fmt.Sprintf("Changed test files that cannot be read: %d.", c.Unparsed))
 	}
 	if run.Markers > 0 {
-		notes = append(notes, fmt.Sprintf("Lines to look at: %d. They are listed on the page.", run.Markers))
+		notes = append(notes, fmt.Sprintf("Lines to look at: %d. They are listed on %s.", run.Markers, page))
 	}
 	if len(notes) > 0 {
 		parts = append(parts, strings.Join(notes, " "))

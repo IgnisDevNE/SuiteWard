@@ -1,11 +1,12 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
@@ -17,125 +18,223 @@ import (
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
-// What the receipt page reads. The job of each plan is the one a gate reads, through the execution reader; the rows and the evidence of a job are read here, for display
-// only. Every string that the repository or an executor chose goes through commandtext.Visible before it reaches the document.
+// What the pull request page reads. The job of each plan is the one a gate reads, through the execution reader; the rows and the evidence of a job are read here, for
+// display only. Every string that the repository or a test runner chose goes through commandtext.Visible before it reaches the document, and html/template escapes what
+// is left.
 
-// pageRun is one run of the page: a title, the facts of its state and its evidence binding, notes, the counts it states, the mode summaries and the lists it shows.
+// pageDeps is what the handler gives the page beside its stores: the reports of the process, the one record of when the test runner was last seen, and the logger.
+type pageDeps struct {
+	reports  pageReports
+	liveness *execution.Liveness
+	logger   *slog.Logger
+}
+
+// pageRun is one run of the head as the page reads it: its job, its state, its evidence, what the owner did to it and, for a complete run, its tests.
 type pageRun struct {
-	Title  string
-	Facts  []string
-	Notes  []string
-	Counts []string
-	Modes  []string
-	Lists  []pageList
+	plan      execution.Plan
+	label     string // how the page names the run
+	job       execution.Job
+	found     bool
+	status    domain.RunStatus
+	result    execution.StoredResult
+	ran       bool             // a test runner's result is stored: the run has an evidence binding
+	unblocked bool             // an unblock row since the enrollment names the job
+	ended     bool             // the command that unblocked it ended the job
+	tests     []execution.Test // of a complete run
 }
 
-// pageList is a heading and the lines under it, one for each row, shown as they are.
-type pageList struct {
-	Heading string
-	Lines   []string
-}
+const (
+	canonicalLabel = "Approved tests"
+	receiptLabel   = "Tests this change adds or edits"
+)
 
-// receiptPageData is what the page states of one pull request.
-type receiptPageData struct {
-	Repo    string
-	Pull    int
-	Head    string
-	Base    string
-	Open    bool
-	Tier    string
-	Notice  string   // the sentence of the reduced assurance of the co-located tier, empty on the isolated one
-	Preview string   // what the page says of the preview mode
-	Empty   []string // the sentences of a pull request with no results
-	Runs    []pageRun
-}
-
-// page builds the page of a pull request of project, waiting for its turn until ctx ends. A page over its limit is errPageTooLarge, and nothing of it is cut.
-func (p *receiptPages) page(ctx context.Context, state owner.State, project owner.ProjectPolicy, number int) ([]byte, error) {
-	select {
-	case p.gate <- struct{}{}:
-		defer func() { <-p.gate }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
+// readRun reads the run of the job that gateJob found for the plan, if it found one: the job is never read twice.
+func (p *receiptPages) readRun(ctx context.Context, reader executionReader, plan execution.Plan, job execution.Job, found bool, unblocks []execution.JobUnblock) (pageRun, error) {
+	status, _, err := reader.runOf(job, found)
+	if err != nil {
+		return pageRun{}, err
 	}
-	data, err := p.read(ctx, state, project, number)
+	run := pageRun{plan: plan, label: canonicalLabel, job: job, found: found, status: status}
+	if plan == execution.PlanReceipt {
+		run.label = receiptLabel
+	}
+	if !found {
+		return run, nil
+	}
+	run.unblocked = slices.ContainsFunc(unblocks, func(u execution.JobUnblock) bool { return u.JobID == job.ID })
+	run.ended = job.EndedBy(unblocks)
+	result, stored, err := p.executions.Result(ctx, job.ID)
+	if err != nil {
+		return pageRun{}, fmt.Errorf("read the result of job %d: %w", job.ID, err)
+	}
+	run.result, run.ran = result, stored && result.Origin == execution.OriginExecutor
+	if status == domain.RunComplete {
+		if run.tests, err = p.executions.Tests(ctx, job.ID); err != nil {
+			return pageRun{}, fmt.Errorf("read the tests of job %d: %w", job.ID, err)
+		}
+	}
+	return run, nil
+}
+
+// complete says that the run has its results.
+func (r pageRun) complete() bool { return r.found && r.status == domain.RunComplete }
+
+// open says that the run has not ended: its job is pending or leased.
+func (r pageRun) open() bool { return r.found && r.status == domain.RunPending }
+
+// page builds the page of a pull request of project, waiting for its turn until ctx ends: the turn of the reports of the process, which the report pages and the builds of
+// a revision comment or a check summary wait for too, so that a page of two runs of 10,000 tests and a report of 32 MiB are never built at the same time. A page over its
+// limit is errPageTooLarge, and nothing of it is cut.
+func (p *receiptPages) page(ctx context.Context, state owner.State, project owner.ProjectPolicy, number int, deps pageDeps) ([]byte, error) {
+	release, err := deps.reports.turn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	page := &cappedBuffer{room: maxReportPage}
-	if err := receiptTemplate.Execute(page, data); err != nil {
+	defer release()
+	view, err := p.read(ctx, state, project, number, deps)
+	if err != nil {
+		return nil, err
+	}
+	page := &cappedBuffer{room: p.limit}
+	if err := pullTemplate.Execute(page, view); err != nil {
 		return nil, err
 	}
 	return page.Bytes(), nil
 }
 
-// read reads what the page states of the pull request: its head as the synchronization last observed it (the last one recorded, for a pull request that is not open),
-// the revision it carries, the job of each plan for that head and the preview mode.
-func (p *receiptPages) read(ctx context.Context, state owner.State, project owner.ProjectPolicy, number int) (receiptPageData, error) {
-	pulls, err := p.pulls.Pulls(ctx, project.Repo)
-	if err != nil {
-		return receiptPageData{}, fmt.Errorf("read the observed pull requests: %w", err)
-	}
-	i := slices.IndexFunc(pulls, func(s githubsync.PullState) bool { return s.Number == number })
-	if i < 0 {
-		return receiptPageData{}, errReceiptNotFound
-	}
-	pull := pulls[i]
-	tier, _ := effectiveTier(p.tier, state, true)
-	data := receiptPageData{Repo: commandtext.Visible(project.Repo), Pull: number, Head: pull.HeadSHA, Base: pull.BaseSHA, Open: pull.NotOpenSince.IsZero(), Tier: tier}
-	if tier == owner.TierCoLocated {
-		data.Notice = commandtext.CoLocatedNotice
-	}
+// headRuns is what the page reads of the head of a pull request: the revision that it carries and the run of each plan.
+type headRuns struct {
+	revised            bool
+	expected           bool                         // the revision expects a canonical version: it is not a baseline
+	revisions          []contract.ProposalReference // every revision of the proposal that the pull request carries, oldest first
+	current            contract.ProposalReference
+	applies            bool // the receipt applies to the revision
+	canonical, receipt pageRun
+}
+
+// readHead reads the revision that the pull request carries and the job of each plan for the head: the ones a gate reads, and the unblocks of the head.
+func (p *receiptPages) readHead(ctx context.Context, state owner.State, project owner.ProjectPolicy, number int, head string) (headRuns, error) {
 	reader := executionReader{executions: p.executions, contents: p.contents, suites: p.suites, report: wrapRead}
-	view, err := reader.receiptView(ctx, project.RepositoryID, carrierProposal(project.RepositoryID, number))
+	var h headRuns
+	carrier := carrierProposal(project.RepositoryID, number)
+	view, err := reader.receiptView(ctx, project.RepositoryID, func(ctx context.Context, tx governance.Tx) (contract.Proposal, bool, error) {
+		proposal, found, err := carrier(ctx, tx)
+		if err == nil && found {
+			h.current = proposal.Current().Binding().Reference()
+			for _, revision := range proposal.Revisions() {
+				h.revisions = append(h.revisions, revision.Binding().Reference())
+			}
+		}
+		return proposal, found, err
+	})
 	if err != nil {
-		return receiptPageData{}, err
+		return headRuns{}, err
 	}
-	canonical, hasCanonical, err := reader.gateJob(ctx, project.RepositoryID, number, pull.HeadSHA, execution.PlanCanonical, artifact.Digest{})
+	h.revised, h.expected = view.revised, !view.expected.IsZero()
+	canonicalJob, hasCanonical, err := reader.gateJob(ctx, project.RepositoryID, number, head, execution.PlanCanonical, artifact.Digest{})
 	if err != nil {
-		return receiptPageData{}, err
+		return headRuns{}, err
 	}
 	// The gates ask whether the receipt applies before they read its job, and so does the page: a revision that expects no canonical, a baseline, has no receipt.
 	applies, governing, err := reader.receiptApplies(ctx, view)
 	if err != nil {
-		return receiptPageData{}, err
+		return headRuns{}, err
 	}
-	var receipt execution.Job
+	h.applies = applies
+	var receiptJob execution.Job
 	var hasReceipt bool
 	if applies {
-		if receipt, hasReceipt, err = reader.gateJob(ctx, project.RepositoryID, number, pull.HeadSHA, execution.PlanReceipt, governing); err != nil {
-			return receiptPageData{}, err
+		if receiptJob, hasReceipt, err = reader.gateJob(ctx, project.RepositoryID, number, head, execution.PlanReceipt, governing); err != nil {
+			return headRuns{}, err
 		}
 	}
-	if !hasCanonical && !hasReceipt {
-		data.Empty = append(data.Empty, "No execution results for this pull request yet.")
+	unblocks, err := p.executions.HeadUnblocks(ctx, project.RepositoryID, number, head, state.EnrolledAt)
+	if err != nil {
+		return headRuns{}, fmt.Errorf("read the unblocks of the head: %w", err)
 	}
-	if view.revised && !view.expected.IsZero() && !applies {
-		data.Empty = append(data.Empty, "This revision changes no file that the approved patterns match, so it has no receipt.")
+	if h.canonical, err = p.readRun(ctx, reader, execution.PlanCanonical, canonicalJob, hasCanonical, unblocks); err != nil {
+		return headRuns{}, err
 	}
-	if hasCanonical {
-		run, err := p.canonicalRun(ctx, reader, state, canonical)
-		if err != nil {
-			return receiptPageData{}, err
-		}
-		data.Runs = append(data.Runs, run)
+	h.receipt, err = p.readRun(ctx, reader, execution.PlanReceipt, receiptJob, hasReceipt, unblocks)
+	return h, err
+}
+
+// read reads what the page states of the pull request: its head as the synchronization last observed it (the last one recorded, for a pull request that is not open),
+// the revision it carries, the job of each plan for that head, the unblocks, the silence of the test runner and the preview mode.
+func (p *receiptPages) read(ctx context.Context, state owner.State, project owner.ProjectPolicy, number int, deps pageDeps) (pullView, error) {
+	pulls, err := p.pulls.Pulls(ctx, project.Repo)
+	if err != nil {
+		return pullView{}, fmt.Errorf("read the observed pull requests: %w", err)
 	}
-	if hasReceipt {
-		run, err := p.receiptRun(ctx, reader, state, receipt)
-		if err != nil {
-			return receiptPageData{}, err
-		}
-		data.Runs = append(data.Runs, run)
+	i := slices.IndexFunc(pulls, func(s githubsync.PullState) bool { return s.Number == number })
+	if i < 0 {
+		return pullView{}, errReceiptNotFound
 	}
+	pull := pulls[i]
+	tier, _ := effectiveTier(p.tier, state, true)
+	installation := checkTiers[tier]
+	if installation == 0 {
+		return pullView{}, fmt.Errorf("the installation type %q is not one that SuiteWard knows", tier)
+	}
+	v := pullView{Pull: number, Repo: commandtext.Visible(project.Repo), Head: pull.HeadSHA, ShortHead: shortSHA(pull.HeadSHA), Base: pull.BaseSHA, Open: pull.NotOpenSince.IsZero(), Tier: commandtext.TierWords(installation)}
+	if tier == owner.TierCoLocated {
+		v.Notice = commandtext.CoLocatedNotice
+	}
+	h, err := p.readHead(ctx, state, project, number, pull.HeadSHA)
+	if err != nil {
+		return pullView{}, err
+	}
+	if !h.canonical.found && !h.receipt.found {
+		v.Empty = append(v.Empty, "No execution results for this pull request yet.")
+	}
+	if h.revised && h.expected && !h.applies {
+		v.Empty = append(v.Empty, "This revision changes no file that the approved patterns match, so it has no receipt.")
+	}
+	if err := p.situate(&v, []pageRun{h.canonical, h.receipt}, h.applies, deps, v.Open); err != nil {
+		return pullView{}, err
+	}
+	reader := executionReader{executions: p.executions, contents: p.contents, suites: p.suites, report: wrapRead}
+	weak, err := p.weakened(ctx, reader, project.RepositoryID, number, pull.HeadSHA, h.canonical, h.receipt)
+	if err != nil {
+		return pullView{}, err
+	}
+	v.Weakened = weakenedSentence(len(weak))
+	if err := p.tables(&v, h.canonical, h.receipt, weak); err != nil {
+		return pullView{}, err
+	}
+	if v.Kinds, err = kindsOf(h.receipt); err != nil {
+		return pullView{}, err
+	}
+	if v.Kinds.Preview, err = p.previewOf(ctx, state, project, number); err != nil {
+		return pullView{}, err
+	}
+	if v.Evidence, err = evidenceOf(h.canonical, h.receipt); err != nil {
+		return pullView{}, err
+	}
+	if h.revised {
+		v.Report, err = reportOf(ctx, deps, project.Repo, h.current, h.revisions)
+	}
+	return v, err
+}
+
+// previewOf says what the page states of the preview mode of the pull request.
+func (p *receiptPages) previewOf(ctx context.Context, state owner.State, project owner.ProjectPolicy, number int) (string, error) {
 	mode, found, err := p.previews.PreviewMode(ctx, project.RepositoryID, number, state.EnrolledAt)
 	if err != nil {
-		return receiptPageData{}, fmt.Errorf("read the preview mode: %w", err)
+		return "", fmt.Errorf("read the preview mode: %w", err)
 	}
-	data.Preview = "No preview mode is recorded for this pull request."
-	if found {
-		data.Preview = "Preview mode: " + commandtext.Visible(mode) + ". It is a preview: no check and no approval reads it."
+	if !found {
+		return "No preview mode is recorded for this pull request.", nil
 	}
-	return data, nil
+	return "Preview mode: " + commandtext.Visible(mode) + ". It is a preview: no check and no approval reads it.", nil
+}
+
+// shortSHA is the first seven characters of a commit.
+func shortSHA(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
 }
 
 // carrierProposal finds the change proposal that pull request number of the repository carries.
@@ -150,207 +249,202 @@ func carrierProposal(repositoryID int64, number int) func(context.Context, gover
 	}
 }
 
-// canonicalRun is the canonical run of the head: the state of each declared test, "0 tests ran" when none is declared, and the excluded tests with their reasons.
-func (p *receiptPages) canonicalRun(ctx context.Context, reader executionReader, state owner.State, job execution.Job) (pageRun, error) {
-	run, err := reader.canonical(ctx, job, true)
+// weakened is the set of the weakened tests of the head: the tests that the receipt marks changed whose state in the canonical run is FAIL, MISSING or FLAKY. The
+// canonical run it reads is the canonical job of the head that the receipt job's manifest governs, which is not the job the gates read once the head is approved (that one
+// runs the revision's manifest), so the signal does not change when the owner approves. The set is empty, and reads as none, when either run is not complete.
+func (p *receiptPages) weakened(ctx context.Context, reader executionReader, repositoryID int64, number int, head string, canonical, receipt pageRun) (map[domain.TestID]bool, error) {
+	if !receipt.complete() {
+		return map[domain.TestID]bool{}, nil
+	}
+	if receipt.job.GoverningDigest.IsZero() { // every job has a governing manifest: a job without one is a row that nothing filled
+		return nil, fmt.Errorf("%w: the receipt job %d", domain.ErrNoGoverningDigest, receipt.job.ID)
+	}
+	job, found, err := reader.gateJob(ctx, repositoryID, number, head, execution.PlanCanonical, receipt.job.GoverningDigest)
 	if err != nil {
-		return pageRun{}, err
+		return nil, err
 	}
-	out, _, err := p.runOf(ctx, state, job, "Canonical run")
-	if err != nil || run.status != domain.RunComplete {
-		return out, err
+	if !found {
+		return map[domain.TestID]bool{}, nil
 	}
-	c := run.counts
-	out.Counts = strings.Split(commandtext.ExecutionText(commandtext.CheckExecution(*checkCountsOf(c))), "\n")
-	tests, err := p.executions.Tests(ctx, job.ID)
-	if err != nil {
-		return pageRun{}, fmt.Errorf("read the tests of job %d: %w", job.ID, err)
-	}
-	out.Lists = append(out.Lists, pageList{Heading: "Declared tests", Lines: testLines(tests)})
-	return out, nil
-}
-
-// receiptRun is the receipt of the head: the files of the revision that it evaluates, the paths that it does not, the state of each test, the counts, the markers and
-// the mode summaries.
-func (p *receiptPages) receiptRun(ctx context.Context, reader executionReader, state owner.State, job execution.Job) (pageRun, error) {
-	run, err := reader.receipt(ctx, job, true)
-	if err != nil {
-		return pageRun{}, err
-	}
-	out, result, err := p.runOf(ctx, state, job, "Receipt")
-	if err != nil {
-		return pageRun{}, err
-	}
-	listed := fmt.Sprintf("Files that this revision adds or changes under the approved patterns: %d", job.ChangedTotal)
-	if job.ChangedTotal > len(job.ChangedPaths) {
-		listed += fmt.Sprintf(" (%d listed)", len(job.ChangedPaths))
-	}
-	out.Lists = append(out.Lists, pageList{Heading: listed, Lines: visibleAll(job.ChangedPaths)})
-	if len(job.UnapprovedPaths) > 0 {
-		out.Lists = append(out.Lists, pageList{Heading: "Not evaluated: pattern not approved yet", Lines: visibleAll(job.UnapprovedPaths)})
-	}
-	if run.status != domain.RunComplete {
-		return out, nil
-	}
-	out.Counts = commandtext.ReceiptFacts(run.counts, run.markers)
-	if out.Modes, err = modeLines(run.counts); err != nil {
-		return pageRun{}, err
-	}
-	if run.counts.Empty() {
-		out.Notes = append(out.Notes, "This receipt has nothing to judge, so an approve needs no mode.")
-	}
-	if len(result.Submodules) > 0 {
-		out.Lists = append(out.Lists, pageList{Heading: "Skipped submodules", Lines: visibleAll(result.Submodules)})
-	}
-	if len(result.Unparsed) > 0 {
-		out.Lists = append(out.Lists, pageList{Heading: "Changed test files that do not parse", Lines: visibleAll(result.Unparsed)})
-	}
-	if len(result.Markers) > 0 {
-		lines := make([]string, len(result.Markers))
-		for i, m := range result.Markers {
-			lines[i] = fmt.Sprintf("%s: %s line %d", commandtext.Visible(m.Kind), commandtext.Visible(m.Path), m.Line)
-		}
-		out.Lists = append(out.Lists, pageList{Heading: "Marker lines", Lines: lines})
-	}
-	tests, err := p.executions.Tests(ctx, job.ID)
-	if err != nil {
-		return pageRun{}, fmt.Errorf("read the tests of job %d: %w", job.ID, err)
-	}
-	out.Lists = append(out.Lists, pageList{Heading: "Evaluated tests", Lines: testLines(tests)})
-	return out, nil
-}
-
-// runOf states what every run has: its state, the attempts that were made, what ended it, the evidence binding of an executor's result, and the owner's unblock. A job
-// that has no result of an executor (it ended on the GitHub bound, or was created already final) has no evidence binding: it was not run.
-func (p *receiptPages) runOf(ctx context.Context, state owner.State, job execution.Job, title string) (pageRun, execution.StoredResult, error) {
-	result, stored, err := p.executions.Result(ctx, job.ID)
-	if err != nil {
-		return pageRun{}, execution.StoredResult{}, fmt.Errorf("read the result of job %d: %w", job.ID, err)
-	}
-	unblocked, err := p.executions.Unblocked(ctx, job.ID, state.EnrolledAt)
-	if err != nil {
-		return pageRun{}, execution.StoredResult{}, fmt.Errorf("read the unblock of job %d: %w", job.ID, err)
-	}
-	run := pageRun{Title: title, Facts: []string{"State: " + stateOf(job)}}
-	if job.Attempts > 1 || job.Failures > 0 {
-		run.Facts = append(run.Facts, "Attempts: "+strconv.Itoa(job.Attempts), "Failures: "+strconv.Itoa(job.Failures))
-		if job.Reason != "" {
-			run.Facts = append(run.Facts, "Last reason: "+commandtext.Visible(string(job.Reason)))
+	approved := canonical
+	if !canonical.found || canonical.job.ID != job.ID {
+		if approved, err = p.readRun(ctx, reader, execution.PlanCanonical, job, true, nil); err != nil {
+			return nil, err
 		}
 	}
-	ran := stored && result.Origin == execution.OriginExecutor
-	if ran {
-		run.Facts = append(run.Facts, evidenceLines(job, result)...)
+	receiptTests := make([]domain.ReceiptTest, len(receipt.tests))
+	for i, t := range receipt.tests {
+		receiptTests[i] = domain.ReceiptTest{Package: t.Package, Name: t.Name, Changed: t.Kind == execution.KindChanged}
 	}
-	if job.State == execution.StateUnavailable {
-		note, err := unavailableNote(job.Reason, ran)
-		if err != nil {
-			return pageRun{}, execution.StoredResult{}, err
+	canonicalTests := make([]domain.CanonicalTest, len(approved.tests))
+	for i, t := range approved.tests {
+		state, known := canonicalStates[t.State]
+		if !known {
+			return nil, fmt.Errorf("job %d stores the test state %q, which is no state of its plan", approved.job.ID, t.State)
 		}
-		run.Notes = append(run.Notes, note)
+		canonicalTests[i] = domain.CanonicalTest{Package: t.Package, Name: t.Name, State: state}
 	}
-	if unblocked {
-		run.Notes = append(run.Notes, "The owner unblocked this run: it was unavailable, so the tests did not run.")
+	tests, _, err := domain.Weakened(domain.WeakenedRun{Status: receipt.status, Governing: receipt.job.GoverningDigest}, // a set that is not known is empty: it reads as none
+		domain.WeakenedRun{Status: approved.status, Governing: approved.job.GoverningDigest}, receiptTests, canonicalTests)
+	if err != nil {
+		return nil, err
 	}
-	return run, result, nil
+	set := make(map[domain.TestID]bool, len(tests))
+	for _, t := range tests {
+		set[t] = true
+	}
+	return set, nil
 }
 
-// stateOf is the state of a run: a job that is pending or leased is pending, as in the status of ADR 0028.
-func stateOf(job execution.Job) string {
-	if job.State == execution.StateLeased {
-		return string(execution.StatePending)
+// weakenedSentence is the count sentence of the page's top, or nothing when no test is weakened: the sentence of the comments and the checks, and the line of the page that says the tables mark these tests.
+func weakenedSentence(n int) string {
+	if n == 0 {
+		return ""
 	}
-	return string(job.State)
+	return commandtext.WeakenedSentence(n) + " The tables below mark these tests."
 }
 
-// unavailableNote says why a run is unavailable, in words and by its code: "Not run" for a job that no executor ran.
-func unavailableNote(reason execution.Reason, ran bool) (string, error) {
-	lead := "Not run: "
-	if ran {
-		lead = "Unavailable: "
+// modeRow says whether the summary of mode is met and, when it is not, why, in words. A summary that no text can say is an impossible state, not a word to show.
+func modeRow(mode domain.Mode, summary domain.ModeSummary) (met bool, why string, err error) {
+	switch summary.Verdict {
+	case domain.VerdictMet:
+		return true, "", nil
+	case domain.VerdictNotMet:
+		sentence, known := commandtext.ModeNotMetSentence(mode, summary.Reason)
+		if !known { // a reason of the domain that the page has no words for
+			return false, "", fmt.Errorf("the summary of the %s mode is not met for the reason %q, which no text knows", mode, summary.Reason)
+		}
+		return false, sentence, nil
 	}
-	words, known := commandtext.UnavailableReason(string(reason))
-	if !known { // the store keeps only the reasons of the closed set: another is an impossible state, not a word to show
-		return "", fmt.Errorf("a job is unavailable for the reason %q, which no text knows", reason)
-	}
-	return lead + words + " (" + string(reason) + ").", nil
+	return false, "", fmt.Errorf("the summary of the %s mode has the verdict %d, which no mode summary has", mode, summary.Verdict)
 }
 
-// evidenceLines are the evidence binding of a run: the manifest that governed it and where it came from, the levels of the policy, the profile, the executor and its
-// binary, the runtime, the toolchain, the image and the times. What an executor said is shown escaped.
-func evidenceLines(job execution.Job, r execution.StoredResult) []string {
-	lines := []string{
-		"Governing manifest: " + job.GoverningDigest.String() + " (source " + commandtext.Visible(string(job.GoverningSource)) + ")",
-		"Policy levels: canonical " + job.CanonicalLevel.String() + ", receipt " + job.ReceiptLevel.String(),
-		"Profile: " + commandtext.Visible(job.Profile),
-		"Executor: " + commandtext.Visible(r.ExecutorVersion),
-		"Executor binary SHA-256: " + r.ExecutorSHA256.String(),
+// kindsOf is the table of the kinds of change that the receipt meets, or nothing to judge for a receipt that is not complete or has nothing in it.
+func kindsOf(receipt pageRun) (kindsSection, error) {
+	if !receipt.complete() {
+		return kindsSection{}, nil
 	}
-	if r.Runtime != "" {
-		lines = append(lines, "Runtime: "+commandtext.Visible(r.Runtime))
+	counts, err := receiptCounts(receipt)
+	if err != nil || counts.Empty() {
+		return kindsSection{}, err
 	}
-	if r.Toolchain != "" {
-		lines = append(lines, "Toolchain: "+commandtext.Visible(r.Toolchain))
-	}
-	if !r.ImageDigest.IsZero() {
-		lines = append(lines, "Image digest: "+r.ImageDigest.String())
-	}
-	lines = append(lines, "Started: "+r.StartedAt.UTC().Format("2006-01-02T15:04:05Z"), "Ended: "+r.EndedAt.UTC().Format("2006-01-02T15:04:05Z"))
-	if job.BaseSHA != "" {
-		lines = append(lines, "Merge base: "+job.BaseSHA)
-	}
-	return lines
-}
-
-// modeLines say, for each of the three modes, whether the summary of the receipt meets it and, when it does not, why.
-func modeLines(counts domain.ReceiptCounts) ([]string, error) {
-	var lines []string
+	var rows [][]string
 	for _, mode := range []domain.Mode{domain.ModeFix, domain.ModeFeature, domain.ModeRefactor} {
 		summary, err := counts.Summarize(mode)
 		if err != nil { // the three modes are modes
-			return nil, err
+			return kindsSection{}, err
 		}
-		line, err := modeLine(mode, summary)
+		met, why, err := modeRow(mode, summary)
 		if err != nil {
-			return nil, err
+			return kindsSection{}, err
 		}
-		lines = append(lines, line)
+		row := []string{mode.String(), "Not met", why}
+		if met {
+			row[1], row[2] = "Met", "-"
+		}
+		rows = append(rows, row)
 	}
-	return lines, nil
+	kinds, _, err := tableOf([]string{"Kind", "Met", "Why"}, rows, unbudgeted)
+	return kindsSection{Table: kinds}, err
 }
 
-// modeLine says whether one summary is met and, when it is not, why.
-func modeLine(mode domain.Mode, summary domain.ModeSummary) (string, error) {
-	switch summary.Verdict {
-	case domain.VerdictMet:
-		return mode.String() + ": met", nil
-	case domain.VerdictNotMet:
-		words, known := commandtext.ModeReason(summary.Reason)
-		if !known { // a reason of the domain that the page has no words for: an impossible state, not a word to show
-			return "", fmt.Errorf("the summary of the %s mode is not met for the reason %q, which no text knows", mode, summary.Reason)
-		}
-		return mode.String() + ": not met: " + words + " (" + string(summary.Reason) + ")", nil
+// evidenceOf is the table of the evidence binding of each run: what each was made of, the governing manifest and its source, the policy levels, the profile, the test
+// runner and its binary, the container program, the image digest, the times, and what a run that was tried again saw. A row that no run has a value for is not written.
+func evidenceOf(canonical, receipt pageRun) (table, error) {
+	runs := []pageRun{canonical, receipt}
+	if !canonical.found && !receipt.found {
+		return table{}, nil
 	}
-	return "", fmt.Errorf("the summary of the %s mode has the verdict %d, which no mode summary has", mode, summary.Verdict)
-}
-
-// testLines show each test as its state, its package, its name and its file, and for an excluded one its reason.
-func testLines(tests []execution.Test) []string {
-	lines := make([]string, len(tests))
-	for i, t := range tests {
-		lines[i] = strings.ToUpper(strings.ReplaceAll(t.State, "_", " ")) + "  " + commandtext.Visible(t.Package) + "  " + commandtext.Visible(t.Name) + "  " + commandtext.Visible(t.File)
-		if t.ExcludedReason != "" {
-			lines[i] += " (" + commandtext.Visible(t.ExcludedReason) + ")"
+	reasons := map[execution.Plan]string{} // the reason of each run in words: a code that no sentence says is an impossible state
+	for _, r := range runs {
+		var err error
+		if reasons[r.plan], err = reasonWords(r); err != nil {
+			return table{}, err
 		}
 	}
-	return lines
+	var rows [][]string
+	add := func(label string, value func(r pageRun) string) { // an empty value is none: a run that has none shows a dash
+		cells, present := []string{label}, false
+		for _, r := range runs {
+			text := ""
+			if r.found {
+				text = value(r)
+			}
+			present = present || text != ""
+			cells = append(cells, cmp.Or(text, "-"))
+		}
+		if present {
+			rows = append(rows, cells)
+		}
+	}
+	ran := func(value func(r pageRun) string) func(r pageRun) string { // a run that was not run has no evidence binding
+		return func(r pageRun) string {
+			if !r.ran {
+				return ""
+			}
+			return value(r)
+		}
+	}
+	add("State", stateOf)
+	if slices.ContainsFunc(runs, func(r pageRun) bool { return r.found && (r.job.Attempts > 1 || r.job.Failures > 0) }) {
+		add("Attempts", func(r pageRun) string { return strconv.Itoa(r.job.Attempts) })
+		add("Failures", func(r pageRun) string { return strconv.Itoa(r.job.Failures) })
+	}
+	add("Last reason", func(r pageRun) string { return reasons[r.plan] })
+	add("Approved file list (fingerprint)", ran(func(r pageRun) string {
+		return r.job.GoverningDigest.String() + " (source " + commandtext.Visible(string(r.job.GoverningSource)) + ")"
+	}))
+	add("Policy levels", ran(func(r pageRun) string {
+		return "canonical " + r.job.CanonicalLevel.String() + ", receipt " + r.job.ReceiptLevel.String()
+	}))
+	add("Profile", ran(func(r pageRun) string { return commandtext.Visible(r.job.Profile) }))
+	add("Test runner version", ran(func(r pageRun) string { return commandtext.Visible(r.result.ExecutorVersion) }))
+	add("Test runner program fingerprint (SHA-256)", ran(func(r pageRun) string { return r.result.ExecutorSHA256.String() }))
+	add("Container program", ran(func(r pageRun) string { return commandtext.Visible(r.result.Runtime) }))
+	add("Go toolchain", ran(func(r pageRun) string { return commandtext.Visible(r.result.Toolchain) }))
+	add("Image fingerprint (digest)", ran(func(r pageRun) string {
+		if r.result.ImageDigest.IsZero() {
+			return ""
+		}
+		return r.result.ImageDigest.String()
+	}))
+	add("Started", ran(func(r pageRun) string { return r.result.StartedAt.UTC().Format("2006-01-02T15:04:05Z") }))
+	add("Ended", ran(func(r pageRun) string { return r.result.EndedAt.UTC().Format("2006-01-02T15:04:05Z") }))
+	add("Common ancestor commit (merge base)", ran(func(r pageRun) string { return r.job.BaseSHA }))
+	evidence, _, err := tableOf([]string{"What", canonicalLabel, receiptLabel}, rows, unbudgeted)
+	return evidence, err
 }
 
-// visibleAll shows each path with its hidden characters written as escapes.
-func visibleAll(paths []string) []string {
-	lines := make([]string, len(paths))
-	for i, path := range paths {
-		lines[i] = commandtext.Visible(path)
+// stateOf is the state of a run as the evidence table says it: a job that is pending or leased is pending, as in the status of ADR 0028, and an unavailable job that no
+// test runner ran was not run.
+func stateOf(r pageRun) string {
+	switch {
+	case r.job.State == execution.StateLeased:
+		return string(execution.StatePending)
+	case r.job.State == execution.StateUnavailable && !r.ran:
+		return "not run"
 	}
-	return lines
+	return string(r.job.State)
+}
+
+// githubWaitWords is what a job says that waits on GitHub: it has not ended, and has not run either.
+const githubWaitWords = "SuiteWard is waiting for GitHub to answer."
+
+// reasonWords says in words what a run last saw, or nothing: why an unavailable job ended; that a job which has not ended waits on GitHub (which ends nothing: its own bound
+// does, and only then is the job unavailable for github-unavailable); and why the last attempt of a job that was tried again failed. A job that has not ended and has failed no
+// attempt has nothing to say. A code that no sentence says is an impossible state, not a word to show.
+func reasonWords(r pageRun) (string, error) {
+	switch {
+	case !r.found || r.job.Reason == "":
+		return "", nil
+	case r.job.State != execution.StateUnavailable && r.job.Reason == execution.ReasonGitHubUnavailable:
+		return githubWaitWords, nil
+	case r.job.State != execution.StateUnavailable && r.job.Failures == 0:
+		return "", nil
+	}
+	sentence, known := commandtext.UnavailableSentence(string(r.job.Reason))
+	if !known {
+		return "", fmt.Errorf("job %d has the reason %q, which no text knows", r.job.ID, r.job.Reason)
+	}
+	return sentence, nil
 }

@@ -148,8 +148,9 @@ func lockJob(ctx context.Context, q *dbgen.Queries, id int64) (execution.Job, er
 	return jobFromRow(row)
 }
 
-// Enqueue implements execution.Store. A concurrent Enqueue of the same key waits on the insert and then finds the job; the key can be
-// freed between the two statements (the job that held it was cancelled), so the pair is tried again.
+// Enqueue implements execution.Store. A job that names the job it replaces is created in one transaction that first locks that job, as RecordUnblock locks its jobs, and
+// reads the unblock rows after the lock: an unblock that committed first is seen and holds the replacement back, and one that comes after waits for the lock and then finds
+// the replacement (checkUnblockable).
 func (s executionStore) Enqueue(ctx context.Context, n execution.NewJob) (execution.Job, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return execution.Job{}, false, err
@@ -162,7 +163,44 @@ func (s executionStore) Enqueue(ctx context.Context, n execution.NewJob) (execut
 	if err != nil {
 		return execution.Job{}, false, err
 	}
-	q := dbgen.New(s.pool)
+	if n.Replaces == 0 {
+		return insertJob(ctx, dbgen.New(s.pool), job, params)
+	}
+	var result execution.Job
+	var created bool
+	err = inTx(ctx, s.pool, "job replacement", func(transaction pgx.Tx) error {
+		q := dbgen.New(transaction)
+		old, err := lockJob(ctx, q, n.Replaces)
+		if errors.Is(err, execution.ErrNotFound) {
+			return fmt.Errorf("%w: job %d does not exist", execution.ErrInvalidRequest, n.Replaces)
+		}
+		if err != nil {
+			return err
+		}
+		unblocked, err := q.ExecutionJobUnblocked(ctx, dbgen.ExecutionJobUnblockedParams{JobID: old.ID, Since: timestamp(n.UnblockedSince)})
+		if err != nil {
+			return fmt.Errorf("read whether job %d was unblocked: %w", old.ID, err)
+		}
+		held, err := n.CheckReplaces(old, unblocked)
+		if err != nil {
+			return err
+		}
+		if held {
+			result, created = old, false
+			return nil
+		}
+		result, created, err = insertJob(ctx, q, job, params)
+		return err
+	})
+	if err != nil {
+		return execution.Job{}, false, err
+	}
+	return result, created, nil
+}
+
+// insertJob writes the job, or reads the current job of its key when one holds it, and reports whether it wrote. A concurrent insert of the same key waits on the insert
+// and then finds the job; the key can be freed between the two statements (the job that held it was cancelled), so the pair is tried again.
+func insertJob(ctx context.Context, q *dbgen.Queries, job execution.Job, params dbgen.InsertExecutionJobParams) (execution.Job, bool, error) {
 	for range 3 {
 		row, err := q.InsertExecutionJob(ctx, params)
 		if err == nil {
@@ -495,11 +533,16 @@ func (s executionStore) HeadJobs(ctx context.Context, repositoryID int64, pull i
 	if err := execution.ValidatePull(repositoryID, pull); err != nil {
 		return nil, err
 	}
+	return headJobs(ctx, dbgen.New(s.pool), repositoryID, pull, headSHA, plan)
+}
+
+// headJobs reads the jobs of a head and plan, oldest first, with q: the pool, or the transaction of a call that holds locks.
+func headJobs(ctx context.Context, q *dbgen.Queries, repositoryID int64, pull int, headSHA string, plan execution.Plan) ([]execution.Job, error) {
 	number, err := int32Of(pull)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := dbgen.New(s.pool).HeadExecutionJobs(ctx, dbgen.HeadExecutionJobsParams{RepositoryID: repositoryID, PullNumber: number, HeadSha: headSHA, Plan: string(plan)})
+	rows, err := q.HeadExecutionJobs(ctx, dbgen.HeadExecutionJobsParams{RepositoryID: repositoryID, PullNumber: number, HeadSha: headSHA, Plan: string(plan)})
 	if err != nil {
 		return nil, fmt.Errorf("read the jobs of a head: %w", err)
 	}

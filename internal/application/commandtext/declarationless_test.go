@@ -25,7 +25,7 @@ func TestScopeNoticeWithoutADeclarationOffersThePatternsAlone(t *testing.T) {
 	body := noticeText(t, n)
 	for _, w := range []string{
 		"```\ninternal/x/x_test.go\ne2e/testdata/a.json\n```", "Patterns missing from the `include` list", "```\n*_test.go\n**/testdata/**\n```",
-		"Patterns missing from the `runner` list", "```\nconftest.py\n```", "creates a protected change",
+		"Patterns missing from the `runner` list", "```\nconftest.py\n```", "changes the protected files",
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)

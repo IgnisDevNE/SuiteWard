@@ -60,6 +60,10 @@ func (n NewJob) Validate() error {
 		return invalid("the creation time is required")
 	case n.Unavailable != "" && !n.Unavailable.createdFinal():
 		return invalid("a job is created unavailable only for no-merge-base, executor-not-configured or github-unavailable, not %q", n.Unavailable)
+	case n.Replaces < 0:
+		return invalid("the job to replace must not be negative")
+	case n.Replaces != 0 && n.UnblockedSince.IsZero():
+		return invalid("the enrollment time is required with the job to replace")
 	}
 	return n.validate(n.Unavailable != "")
 }
@@ -369,23 +373,31 @@ func (r ReceiptCheck) Validate() error {
 	return nil
 }
 
-// ValidateUnblock reports why the entry, the head and the jobs cannot be recorded as an unblock, as ErrInvalidRequest. That each job
-// exists, is unavailable and is of the head and the pull request is for the store to check.
-func ValidateUnblock(e commands.Entry, headSHA string, jobIDs []int64) error {
+// ValidateUnblock reports why the entry, the head, the jobs and the time cannot be recorded as an unblock, as ErrInvalidRequest. The state of a job is
+// one that an unblock lifts or ends (unavailable, pending or leased), with a lease id that is empty or well formed. That each job exists, is as observed
+// and is of the head and the pull request is for the store to check.
+func ValidateUnblock(e commands.Entry, headSHA string, jobs []UnblockJob, at time.Time) error {
 	switch {
 	case e.Disposition != commands.Unblocked:
 		return invalid("the jobs of an unblock are recorded with the disposition %q, not %q", commands.Unblocked, e.Disposition)
 	case !headPattern.MatchString(headSHA):
 		return invalid("the head must be 40 lowercase hexadecimal digits")
-	case len(jobIDs) == 0:
+	case len(jobs) == 0:
 		return invalid("an unblock lifts at least one job")
+	case at.IsZero():
+		return invalid("the time of the unblock is required")
 	}
-	seen := make(map[int64]bool, len(jobIDs))
-	for _, id := range jobIDs {
-		if id <= 0 || seen[id] {
+	seen := make(map[int64]bool, len(jobs))
+	for _, job := range jobs {
+		switch {
+		case job.ID <= 0 || seen[job.ID]:
 			return invalid("the lifted jobs are distinct and positive")
+		case job.State != StateUnavailable && job.State != StatePending && job.State != StateLeased:
+			return invalid("job %d is observed as %q; an unblock lifts a job that is unavailable, pending or leased", job.ID, job.State)
+		case job.LeaseID != "" && !leasePattern.MatchString(job.LeaseID):
+			return invalid("job %d is observed with a lease id that is not 32 lower-case hexadecimal digits", job.ID)
 		}
-		seen[id] = true
+		seen[job.ID] = true
 	}
 	return nil
 }

@@ -118,12 +118,12 @@ func TestChecksWriteTheCheckAgainWithTheCountsWhenTheCanonicalRunOfAHeadAwaiting
 				wantExecution(t, payload, 2, 1, 1, 0, 0, 0, 1) // an excluded test is not one that ran
 			}
 			summary := summaryOfPayload(t, payload)
-			for _, want := range []string{"Canonical run on this head:", "This check reports on the protected contract and on the run of its approved tests.", plainApprove} {
+			for _, want := range []string{"Approved tests: 2 tests ran.", "This check reports on the protected contract and on the run of its approved tests.", plainApprove} {
 				if !strings.Contains(summary, want) {
 					t.Errorf("summary lacks %q:\n%s", want, summary)
 				}
 			}
-			if blocking := strings.Contains(summary, "If this change edits that test, read the change before you approve"); blocking != tc.block {
+			if blocking := strings.Contains(summary, "If this change edits that test, read the edit before you approve"); blocking != tc.block {
 				t.Errorf("the sentence about a blocking test is present = %v, want %v:\n%s", blocking, tc.block, summary)
 			}
 
@@ -167,6 +167,7 @@ func TestChecksSendAgainTheCountsAndTheModeOfAMissingApprovalTheyRestore(t *test
 	w := newExecWorld(t, execDecl)
 	w.execPullFive(execHeadFiles(execDecl, "v2"))
 	w.finish(w.onlyJob(5, cjHead2, execution.PlanCanonical), canonicalTests("pass", "fail"))
+	w.finish(w.onlyJob(5, cjHead2, execution.PlanReceipt), receiptTests("detects")) // the counts wait for the receipt too
 	w.execRun()
 	w.want(5, checks.InProgress, "approval-missing", 2)
 	w.reader.repos[bootRepo].treeErr[cjHead2] = errors.New("github: 502") // the run waits: it cannot read the head, so it keeps the check it has
@@ -240,7 +241,9 @@ func TestChecksCountOnlyACompleteJobGovernedByTheManifestOfTheCanonical(t *testi
 		t.Run(tc.name, func(t *testing.T) {
 			s.suite = suiteView{manifest: tc.manifest}
 			d := &pullDecision{result: checks.Result{Reason: reasonApprovalMissing}}
-			var executed executionOutcome
+			// the head has no wanted run but the canonical one, which is final
+			executed := executionOutcome{set: domain.Set{CanonicalLevel: domain.CanonicalLevelRequired, ReceiptLevel: domain.ReceiptLevelOff, ReceiptDecided: true,
+				CanonicalJob: domain.Job{ID: job.ID, State: domain.JobComplete}}}
 
 			if err := w.check.approvalCounts(t.Context(), s, x, d, &executed); err != nil {
 				t.Fatal(err)

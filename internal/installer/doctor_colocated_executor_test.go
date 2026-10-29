@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
 )
 
 // What `suiteward doctor` says of the executor on the co-located tier: the files an install leaves beside the token copies, which doctor finds from
@@ -52,10 +54,14 @@ func coloExecFilesOf(t *testing.T, f *fakeEngine) coloExecFiles {
 }
 
 // healthyColocatedExecutor points the per-user directories at one of the test, puts down what an install of the executor leaves there, and has
-// the fake operating system say that the executor is registered and runs.
-func healthyColocatedExecutor(t *testing.T, f *fakeEngine) {
+// the fake operating system say that the executor is registered and runs. folder, when it is not empty, is a subfolder of that directory that the
+// executor's files go in.
+func healthyColocatedExecutor(t *testing.T, f *fakeEngine, folder string) {
 	t.Helper()
-	dir := shortDir(t)
+	dir := filepath.Join(shortDir(t), folder)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	for _, key := range []string{"APPDATA", "XDG_CONFIG_HOME", "HOME"} {
 		t.Setenv(key, dir)
 	}
@@ -139,6 +145,78 @@ func TestDoctorColocatedWindowsTaskOfAnEarlierBuildIsADifferenceThatAnUpgradeFix
 		t.Errorf("the fix %q must name the upgrade", res["executor.lifecycle"].Fix)
 	}
 	wantOK(t, res, "executor.running")
+}
+
+// A test runner that an earlier build made in a folder with a percent sign is checked like any other: the refusal is for setting up a new one, and
+// its message (use another folder) is wrong for a test runner that is there.
+func TestDoctorChecksAnExistingWindowsExecutorInAFolderWithAPercentSign(t *testing.T) {
+	f, s := colocated{goos: "windows", folder: "50%off"}.build(t)
+	code, res, _ := runDoctor(t, f, s)
+	if code != 0 {
+		t.Errorf("exit %d, results %+v", code, res)
+	}
+	wantOK(t, res, "executor.token", "executor.binary", "executor.lifecycle", "executor.running")
+}
+
+// With none registered there, the install would refuse the folder too: doctor says why, once, and checks no other row of the test runner, because
+// the fix of each would be an install that cannot work.
+func TestDoctorSaysThatNoWindowsExecutorCanBeSetUpInAFolderWithAPercentSign(t *testing.T) {
+	notRegistered := rule{match: "/Query /TN", err: errors.New("error: the system cannot find the file specified")}
+	f, s := colocated{goos: "windows", folder: "50%off", over: []rule{notRegistered}}.build(t)
+	code, res, names := runDoctor(t, f, s)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	wantFail(t, res, "executor.lifecycle", "percent sign")
+	for _, name := range names {
+		if strings.HasPrefix(name, "executor.") && name != "executor.lifecycle" {
+			t.Errorf("%s is checked beside a folder that no install accepts: %+v", name, res[name])
+		}
+	}
+}
+
+// The test runner that is registered may be another instance's: it holds the one place of the computer, but this instance's folder is one that no
+// install accepts, so removing the other instance would free a place that this instance's install refuses. Doctor says why no install can set one up,
+// once, and does not send the person to remove another instance for nothing.
+func TestDoctorDoesNotAskToRemoveAnotherInstanceWhenThisFolderHasAPercentSign(t *testing.T) {
+	f, s := colocated{goos: "windows", folder: "50%off"}.build(t)
+	files := coloExecFilesOf(t, f)
+	removeFile(t, filepath.Join(files.dir, executorWrapperName)) // a registered task whose two files this instance did not make is another instance's
+	removeFile(t, filepath.Join(files.dir, "task.xml"))
+	code, res, names := runDoctor(t, f, s)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	wantFail(t, res, "executor.lifecycle", "percent sign")
+	if fix := res["executor.lifecycle"].Fix; strings.Contains(fix, "another instance") || strings.Contains(fix, "uninstall") {
+		t.Errorf("the fix %q sends the person to remove another instance, and the install that follows is refused", fix)
+	}
+	for _, name := range names {
+		if strings.HasPrefix(name, "executor.") && name != "executor.lifecycle" {
+			t.Errorf("%s is checked beside a folder that no install accepts: %+v", name, res[name])
+		}
+	}
+}
+
+// An install would refuse the folder of such a test runner too, so the fix of a row that an install fixes elsewhere ("install --upgrade") cannot be
+// the install: the way out is to remove the test runner, which the uninstall does, and set up another in a folder without a percent sign.
+func TestDoctorSendsATestRunnerInAFolderWithAPercentSignThroughAnUninstall(t *testing.T) {
+	f, s := colocated{goos: "windows", folder: "50%off"}.build(t)
+	files := coloExecFilesOf(t, f)
+	writeFile(t, files.binary, "the previous release")
+	sum := sha256.Sum256([]byte("the previous release"))
+	writeFile(t, files.pin, hex.EncodeToString(sum[:])+"  suiteward-executor.exe\n")
+	removeFile(t, files.token) // an install makes the token copy again whatever becomes of the test runner, so that row keeps the install as its fix
+	_, res, _ := runDoctor(t, f, s)
+	wantFail(t, res, "executor.binary", "different version")
+	fix := res["executor.binary"].Fix
+	if !strings.Contains(fix, "suiteward uninstall") || !strings.Contains(fix, "percent sign") || strings.Contains(fix, "--upgrade") {
+		t.Errorf("the fix is %q, want the uninstall and a folder without a percent sign, and no upgrade that the install would refuse", fix)
+	}
+	wantFail(t, res, "executor.token", files.token)
+	if fix := res["executor.token"].Fix; !strings.Contains(fix, "install --upgrade") || strings.Contains(fix, "uninstall") {
+		t.Errorf("the fix of the token row is %q, want the install", fix)
+	}
 }
 
 func removeFile(t *testing.T, path string) {
@@ -257,5 +335,71 @@ func TestDoctorColocatedLoopbackOfAPodmanMachineThatDoesNotAnswerFromThisCompute
 				t.Errorf("the fix must name the machine: %q", got.Fix)
 			}
 		})
+	}
+}
+
+// In a folder that an install refuses, an install does not set up the test runner, so no fix promises that it does: the rows that an install still
+// makes right (the token copy, the Go image, the service's token) say what to run and no more, and a test runner that runs but is not seen by the
+// service has no install to fix it, so its fix is the way out of the folder.
+func TestDoctorPromisesNoTestRunnerFromAnInstallInAFolderWithAPercentSign(t *testing.T) {
+	const percent = "50%off"
+	noToken := okStatus[:len(okStatus)-1] + `,"execution":{"enabled":false,"jobs":{"pending":0},"lastSeenAt":"2026-10-27T00:00:00Z"}}`
+	for name, c := range map[string]struct {
+		with colocated
+		edit func(t *testing.T, files coloExecFiles)
+		row  string
+		want string // what the fix says
+	}{
+		"no token copy":      {colocated{goos: "windows", folder: percent}, func(t *testing.T, files coloExecFiles) { removeFile(t, files.token) }, "executor.token", "install"},
+		"no Go image":        {colocated{goos: "windows", folder: percent, over: []rule{{match: "image inspect " + goprofile.Image, err: errors.New("no such image")}}}, nil, "executor.image", "install"},
+		"the service has no": {colocated{goos: "windows", folder: percent, status: noToken}, nil, "executor.running", "install --upgrade"},
+		"not seen":           {colocated{goos: "windows", folder: percent, status: coloStatus(10 * time.Minute)}, nil, "executor.running", "suiteward uninstall"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, s := c.with.build(t)
+			if c.edit != nil {
+				c.edit(t, coloExecFilesOf(t, f))
+			}
+			_, res, _ := runDoctor(t, f, s)
+			fix := res[c.row].Fix
+			if res[c.row].OK || !strings.Contains(fix, c.want) || strings.Contains(fix, "sets up the test runner") || strings.Contains(fix, "same token and port") {
+				t.Errorf("%s: %+v, want a failure whose fix says %q and does not promise that an install sets up the test runner", c.row, res[c.row], c.want)
+			}
+		})
+	}
+}
+
+// The way out of a refused folder names the install with a place to fill in. The old token file is the one with the percent sign: repeated, as the
+// other hints repeat the flags of the instance, it would be refused again as printed. The uninstall keeps it, because that is what it removes.
+func TestTheWayOutOfAFolderWithAPercentSignDoesNotRepeatTheTokenFileThatIsRefused(t *testing.T) {
+	f, s := colocated{goos: "windows", folder: "50%off"}.build(t)
+	files := coloExecFilesOf(t, f)
+	writeFile(t, files.binary, "the previous release")
+	sum := sha256.Sum256([]byte("the previous release"))
+	writeFile(t, files.pin, hex.EncodeToString(sum[:])+"  suiteward-executor.exe\n")
+	settings, tokenFile := savedAt(t, s), coloTokenFile(t, f)
+	fix := doctorMain(t, f, "--settings", settings, "--token-file", tokenFile)["executor.binary"].Fix
+	uninstall := "`suiteward uninstall --settings " + quoteArg(settings) + " --token-file " + quoteArg(tokenFile) + "`"
+	_, after, _ := strings.Cut(fix, "then run `")
+	install, _, _ := strings.Cut(after, "`")
+	if want := "suiteward install --settings " + quoteArg(settings) + " --token-file <a file in a folder without a percent sign>"; install != want || !strings.Contains(fix, uninstall) {
+		t.Errorf("the fix is %q, want the uninstall %s and then the install %q", fix, uninstall, want)
+	}
+}
+
+// The way out says plainly what the uninstall removes (this instance's containers as well as its test runner, with the data kept) and that the new
+// install makes a new access token file, which the coding agent's client has to be pointed at.
+func TestTheWayOutOfAFolderWithAPercentSignSaysWhatTheUninstallRemovesAndWhatTheClientNeeds(t *testing.T) {
+	f, s := colocated{goos: "windows", folder: "50%off"}.build(t)
+	files := coloExecFilesOf(t, f)
+	writeFile(t, files.binary, "the previous release")
+	sum := sha256.Sum256([]byte("the previous release"))
+	writeFile(t, files.pin, hex.EncodeToString(sum[:])+"  suiteward-executor.exe\n")
+	_, res, _ := runDoctor(t, f, s)
+	fix := res["executor.binary"].Fix
+	for _, want := range []string{"removes this instance's containers and its test runner", "your data stays", "new access token file", "point your coding agent's client at it"} {
+		if !strings.Contains(fix, want) {
+			t.Errorf("the fix lacks %q:\n%s", want, fix)
+		}
 	}
 }

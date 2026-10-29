@@ -70,6 +70,9 @@ type doctorResult struct {
 	Detail  string `json:"detail"`
 	Fix     string `json:"fix"`
 	Warning bool   `json:"warning,omitempty"` // a passing result that needs a look; it does not change the exit code
+	// Commands are the subcommands of this program that Fix of a row of the service names by its bare name: `suiteward check --json` says which,
+	// because the service cannot know the flags of the instance (see commands). An older service sends none.
+	Commands []string `json:"commands,omitempty"`
 }
 
 // needsALook says that a result is not a plain pass: a failure, or a pass that doctor warns about.
@@ -132,7 +135,6 @@ const (
 	defaultMachine = "podman-machine-default"
 	machineUser    = "user" // the rootless user inside a Podman machine; ssh defaults to root, whose store is rootful
 	probeTimeout   = 5 * time.Second
-	metadataFix    = "As the administrator, run `sudo suiteward install host --sha256sums <the release's SHA256SUMS file> --metadata-rule yes`: it adds a firewall rule that blocks 169.254.169.254 for the service account. Then run doctor again."
 	// doctorBugFix is the fix of a result that reports a mistake of the installer itself.
 	doctorBugFix = "This is an error in the installer, not in your setup. Please report it."
 	// Connects to the instance metadata address from the database container, which sits on the service network. The probe
@@ -185,6 +187,7 @@ type doctor struct {
 	raw           map[string][]byte
 	units         map[string]map[string]string // isolated: `systemctl show` of each unit
 	results       []doctorResult
+	refusedFolder error // co-located Windows: why an install would refuse the folder of the test runner (refuseNew), when it would
 }
 
 func (d *doctor) pass(name, detail string) {
@@ -904,7 +907,7 @@ func (d *doctor) checkMetadata(ctx context.Context) {
 	case err != nil:
 		d.fail("metadata", "doctor could not run the cloud-metadata test inside "+ContainerDB+": "+err.Error(), "Start the database container, then run doctor again.")
 	case answer == "reachable":
-		d.fail("metadata", "the cloud provider's metadata address (169.254.169.254) answers from the service's network, so the service could read this server's cloud credentials", metadataFix)
+		d.fail("metadata", "the cloud provider's metadata address (169.254.169.254) answers from the service's network, so the service could read this server's cloud credentials", d.metadataFix())
 	case answer == "blocked":
 		d.pass("metadata", "169.254.169.254 (the cloud metadata address) is not reachable from the service's network")
 	case answer == "control-failed":
@@ -930,7 +933,10 @@ func (d *doctor) checkInstance(ctx context.Context) {
 	failed := slices.ContainsFunc(list, func(r doctorResult) bool { return !r.OK })
 	switch {
 	case jerr == nil && (err == nil || failed):
-		d.results = append(d.results, list...)
+		for _, r := range list {
+			r.Fix = d.deps.writeCommands(r.Fix, r.Commands)
+			d.results = append(d.results, r)
+		}
 	case err != nil:
 		d.fail("instance.check", "the checks inside the service container (`suiteward check --json` in "+ContainerServe+") failed before they gave any result: "+err.Error(),
 			d.readFix())

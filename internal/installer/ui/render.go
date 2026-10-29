@@ -590,10 +590,11 @@ func (s *Screen) spinRow(width int) row {
 	return b.row()
 }
 
-// keyRows are the rows of a summary that a window too small for all of it keeps: what runs, where it answers, and what doctor found.
+// keyRows are the rows of a summary that a window too small for all of it keeps: what runs, where it answers, what doctor found, and what the
+// installation gives up (the security limit of an installation on this computer, which is a disclosure).
 // shortcut: the keys are the names the installer gives its rows, spelled here because Summary takes rows and warnings and nothing about
 // them. Upgrade when a summary needs to say which of its rows matter.
-var keyRows = []string{"Installation type", "Instance ID", "Status", "Doctor"}
+var keyRows = []string{"Installation type", "Security limit", "Instance ID", "Status", "Doctor"}
 
 // summaryRows is the key/value rows, then the warnings after a blank line. A row and a warning are trimmed whole (fitBody): the warnings
 // first, from the end, then the rows that are not key rows.

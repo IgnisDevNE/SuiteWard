@@ -56,8 +56,11 @@ func Enroll(ctx context.Context, args []string, env Env) (err error) {
 	if err != nil {
 		return err
 	}
+	if err := r.chooseInstallation(env.Deps); err != nil {
+		return err
+	}
 	env.Deps.instance = r.instance()
-	settingsPath, defaultPath, err := settingsPathFrom(flags)
+	settingsPath, defaultPath, err := settingsPathFrom(r)
 	if err != nil {
 		return err
 	}
@@ -123,7 +126,7 @@ func isolatedEnrollTarget(ctx context.Context, s Settings, env Env) (enrollTarge
 	if err != nil {
 		return enrollTarget{}, err
 	}
-	st, err := adoptUnitsDir(host.unitsDir, host.envPath, true)
+	st, err := adoptUnitsDir(host.d, host.unitsDir, host.envPath, true)
 	if err != nil {
 		return enrollTarget{}, err
 	}

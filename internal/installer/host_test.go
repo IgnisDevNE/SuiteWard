@@ -45,6 +45,8 @@ type hostFake struct {
 	imagePulled       bool              // the Go image is in the executor's rootless storage
 	pullFails         bool              // podman pull as the executor fails
 	pullLeavesNothing bool              // podman pull succeeds but the image is not there after it
+	managerState      string            // what `is-system-running --wait` prints for the executor's manager (it exits non-zero for anything but running)
+	managerStuck      bool              // the manager never answers, so the `timeout` around the wait ends it
 }
 
 func newHostFake() *hostFake {
@@ -52,9 +54,9 @@ func newHostFake() *hostFake {
 		goos: "linux", euid: "0", podman: "podman version 5.8.2", changelog: "* Mon - Resolves CVE-2026-57231\n", account: true,
 		subuid: "suiteward:100000:65536\nsuiteward-exec:165536:65536\n", subgid: "suiteward:100000:65536\nsuiteward-exec:165536:65536\n",
 		nftOutput:   "table inet suiteward_imds { chain output { meta skuid suiteward ip daddr 169.254.169.254 reject } }",
-		paths:       map[string]bool{"/etc/suiteward/github.env": true},
+		paths:       map[string]bool{"/etc/suiteward/github.env": true, execBus: true},
 		symlinks:    map[string]bool{},
-		execAccount: true, files: map[string]string{}, hashes: map[string]string{}, controllers: "cpu cpuset io memory pids", afterRestart: "cpu cpuset io memory pids", execUnitState: "active",
+		execAccount: true, files: map[string]string{}, hashes: map[string]string{}, controllers: "cpu cpuset io memory pids", afterRestart: "cpu cpuset io memory pids", execUnitState: "active", managerState: "running",
 	}
 }
 
@@ -568,7 +570,8 @@ func TestPrepareHostPrintsTheNextCommandAndNeverRunsTheServiceStep(t *testing.T)
 		}
 	}
 	for _, c := range h.calls {
-		if c.name == "sudo" || c.name == "su" || c.name == "runuser" {
+		// runuser is the executor's account's alone (host_executor.go): never the service account's.
+		if c.name == "sudo" || c.name == "su" || c.name == "runuser" && !strings.HasPrefix(c.line(), "-u "+ExecutorAccount+" ") {
 			t.Fatalf("the service step must never run from the host step: %v", c)
 		}
 	}

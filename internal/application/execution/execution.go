@@ -32,6 +32,9 @@ var (
 	ErrGitHubUnavailable = errors.New("execution: GitHub could not be read for the job")
 	// ErrTooLarge is what a Prepare function returns for a job whose commit is too large to lease: the job is unavailable for too-large.
 	ErrTooLarge = errors.New("execution: the job is too large to lease")
+	// ErrJobChanged marks an unblock that names a job whose state or lease id is no longer what the caller observed (it completed, was cancelled, or an
+	// executor leased it in between): nothing is written, and the caller reads the head again.
+	ErrJobChanged = errors.New("execution: the job changed since it was observed")
 )
 
 // The durations of the job lifecycle (docs/contracts/runtime.md, "Job lifecycle"; A0's numbers).
@@ -117,6 +120,11 @@ type NewJob struct {
 	Spec
 	Unavailable Reason
 	At          time.Time // the creation time; also the first time a lease may be granted and, when unavailable, the end
+
+	// Replaces is the id of the job that this one replaces, zero for none: the job that held the binding of Spec and ended unavailable for executor-not-configured or
+	// no-executor. UnblockedSince is the current enrollment's enrolled_at, from which an unblock of that job holds it (required with Replaces).
+	Replaces       int64
+	UnblockedSince time.Time
 }
 
 // Job is a stored job. A zero time is an absent one.
@@ -247,6 +255,20 @@ type Outcome struct {
 	Replayed bool
 }
 
+// UnblockJob is a job that an unblock lifts, with what the caller observed of it: its state (unavailable, pending or leased) and its lease id, empty for a job
+// that was never leased. The store ends an open job only if it is still as observed.
+type UnblockJob struct {
+	ID      int64
+	State   State
+	LeaseID string
+}
+
+// JobUnblock is one unblock row: the job it names and the time its command decided it (docs/contracts/persistence.md, "Table execution_unblocks").
+type JobUnblock struct {
+	JobID     int64
+	DecidedAt time.Time
+}
+
 // RunState is the state of the receipt at an approve.
 type RunState string
 
@@ -285,7 +307,9 @@ type ApprovalGate struct {
 type Store interface {
 	// Enqueue creates the job, pending or already unavailable, and reports true. A current job with the same key (one that is not
 	// cancelled, and not unavailable for executor-not-configured or no-executor) is returned instead, with false, and nothing is
-	// written. A job that breaks a constraint is ErrInvalidRequest.
+	// written. A job that breaks a constraint is ErrInvalidRequest. A job that names the job it replaces (n.Replaces) is decided with that job locked, as RecordUnblock
+	// locks its jobs: the job must be of the binding of n and unavailable for executor-not-configured or no-executor (otherwise ErrInvalidRequest), and one that ended for
+	// no-executor and has an unblock row since n.UnblockedSince is returned instead of a new job, with false, and nothing is written (Job.HeldByUnblock).
 	Enqueue(ctx context.Context, n NewJob) (Job, bool, error)
 	// Lease grants the oldest ready job (by creation time, then id): pending with its not_before reached, or leased with an expired
 	// lease. An expired lease counts as a failure (lease-expired, or timeout past the deadline) first, and the call goes on to the
@@ -330,14 +354,23 @@ type Store interface {
 	// Unblocked reports whether a row names the job and its command entry was created at or after since (the current enrollment's
 	// enrolled_at). The row binds to the job and not to the head.
 	Unblocked(ctx context.Context, jobID int64, since time.Time) (bool, error)
+	// HeadUnblocks reads the unblock rows of the jobs of a head whose command entry was created at or after since (the current enrollment's
+	// enrolled_at), by job id and then decided_at: a job that two commands unblocked has two rows. Job.EndedBy reads them.
+	HeadUnblocks(ctx context.Context, repositoryID int64, pull int, headSHA string, since time.Time) ([]JobUnblock, error)
 	// RecordApproval records the ledger entry of an approve that reached the receipt gate (processed or receipt-refused) and its
 	// gate record, with the acknowledgment when there is one, in one transaction. The same entry and gate again is success; another
 	// entry or gate for the comment is commands.ErrConflict.
 	RecordApproval(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, gate ApprovalGate) error
 	// RecordUnblock records the ledger entry of an unblock (unblocked) and one unblock row for each lifted job, with the
-	// acknowledgment when there is one, in one transaction. Each job must be unavailable and of the pull and the head. The same
-	// entry and jobs again is success; another entry or other jobs for the comment is commands.ErrConflict.
-	RecordUnblock(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, headSHA string, jobIDs []int64) error
+	// acknowledgment when there is one, in one transaction. Each job must be of the pull and the head. The store locks the jobs in the
+	// order of their ids and compares each with what the caller observed: one whose state or lease id differs, an open one that no
+	// longer waits for the runner (a lease request left it waiting on GitHub), or one that a newer job replaced (Job.ReplacedBy), fails the call with ErrJobChanged and
+	// writes nothing.
+	// It then ends each open job (pending or leased) as unavailable for no-executor, as the sweep ends a
+	// pending one, with finished_at and the decided_at of its row both at; a job that was unavailable already stays as it is. The store
+	// does not judge whether a runner responds: the caller passes only the jobs it may end. The same entry, jobs and time again is
+	// success; another entry, other jobs or another time for the comment is commands.ErrConflict.
+	RecordUnblock(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, headSHA string, jobs []UnblockJob, at time.Time) error
 }
 
 // CheckState is the state published for the Receipt check of a head.
@@ -357,7 +390,7 @@ type ReceiptCheck struct {
 	PullNumber   int
 	HeadSHA      string
 	State        CheckState
-	Reason       string // receipt-running, receipt-failing, receipt-complete or receipt-not-run
+	Reason       string // receipt-running, receipt-not-responding, receipt-failing, receipt-complete or receipt-not-run
 	Reference    string // "P<n>-R<m>" or empty
 	JobID        int64  // the receipt job that the state shows, 0 for none
 	Unblocked    bool   // the owner unblocked the head's receipt job and it is unavailable

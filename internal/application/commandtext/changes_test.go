@@ -46,13 +46,13 @@ func revisionWith(t *testing.T, tier commandtext.Tier, changes ...report.FileCha
 }
 
 const smallChangeComment = "**SuiteWard contract change P7-R3**\n\n" +
-	"This pull request changes the protected files against the canonical contract V4. SuiteWard proposes the change as P7-R3 for the owner's approval.\n\n" +
-	"- Base canonical version: V4\n- Installation tier: `isolated`\n\n" +
-	"**What changed in the protected files.** SuiteWard counts the changed lines and points out some of them as marker lines; it does not judge them.\n\n" +
-	"- Files: 1 added, 1 modified, 0 removed\n- Lines: +5/−1 (counted in 2 of 2 files)\n- Marker lines seen: 1 removed assertion line, 1 added skip line\n\n" +
+	"This pull request changes the protected files, compared with V4, the approved version of the contract. SuiteWard proposes the change as P7-R3 for the owner's approval.\n\n" +
+	"- Approved version: V4\n- Installation type: on a separate server\n\n" +
+	"**What changed in the protected files.** SuiteWard counts the changed lines. It also points out marker lines, which are lines to look at, such as a removed assertion or an added skip. It does not judge them.\n\n" +
+	"- Files: 1 added, 1 modified, 0 removed\n- Lines: 5 added, 1 removed (counted in 2 of 2 files)\n- Marker lines seen: 1 removed assertion line, 1 added skip line\n\n" +
 	"Changed files, most changed lines first:\n\n```\n+2/−1  modified  tests/a_test.go\n+3/−0  added     tests/new_test.go\n```\n\n" +
 	"[Full change report](" + reportURL + ")\n\n" +
-	"This link opens on the machine that runs this SuiteWard instance; on the isolated tier, through a port forward of the HTTP port. Ctrl+click (Cmd+click on a Mac, or middle-click) the link to open it in a new tab.\n\n" +
+	"This link opens on the computer that runs SuiteWard. If SuiteWard runs on a separate server, forward that server's HTTP port to your computer first. To open the link in a new tab, Ctrl+click it (Cmd+click on a Mac, or middle-click).\n\n" +
 	"This comment is a record, not an approval. To approve this exact revision, comment:\n\n" +
 	"```\n/suiteward approve P7-R3 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\n" +
 	"This supersedes `P7-R2`.\n"
@@ -85,7 +85,7 @@ func TestRevisionCommentNamesTheFilesItCouldNotCompareLineByLine(t *testing.T) {
 	body := revisionText(t, revisionWith(t, commandtext.Isolated, changes...))
 	for _, w := range []string{
 		"- Files: 1 added, 3 modified, 0 removed\n",
-		"- Lines: +11001/−1 (counted in 2 of 4 files)\n",
+		"- Lines: 11001 added, 1 removed (counted in 2 of 4 files)\n",
 		"- Not shown line by line: 3 files (listed below)\n",
 		"Files without a line-by-line diff:\n\n```\n",
 		"binary file           assets/logo.bin\n",
@@ -131,10 +131,10 @@ func TestRevisionCommentWithoutAReportURLHasNoLink(t *testing.T) {
 	r := revisionWith(t, commandtext.Isolated, smallChange()...)
 	r.ReportURL = ""
 	body := revisionText(t, r)
-	if strings.Contains(body, "http") || strings.Contains(body, "port forward") || strings.Contains(body, "new tab") || strings.Contains(body, "Full change report") {
+	if strings.Contains(body, "http") || strings.Contains(body, "forward that server") || strings.Contains(body, "new tab") || strings.Contains(body, "Full change report") {
 		t.Errorf("body has a link without a URL:\n%s", body)
 	}
-	if !strings.Contains(body, "- Lines: +5/−1 (counted in 2 of 2 files)\n") {
+	if !strings.Contains(body, "- Lines: 5 added, 1 removed (counted in 2 of 2 files)\n") {
 		t.Errorf("body lacks the numbers:\n%s", body)
 	}
 }
@@ -143,7 +143,7 @@ func TestRevisionCommentThatCouldNotReadTheFilesListsThePathsAndSaysSo(t *testin
 	r := revision(commandtext.Isolated)
 	r.ChangesUnavailable = true
 	body := revisionText(t, r)
-	for _, w := range []string{"tests/new_test.go", "tests/a.go\ntests/b.go", "SuiteWard could not read the files of this revision to count the lines that changed, so the numbers are unknown.", "/suiteward approve P7-R3 <code>"} {
+	for _, w := range []string{"tests/new_test.go", "tests/a.go\ntests/b.go", "SuiteWard could not read the files of this revision to count the changed lines, so it has no counts. The lists above still show the protected files that changed.", "/suiteward approve P7-R3 <code>"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
 		}
@@ -158,7 +158,7 @@ func TestRevisionCommentKeepsTheReductionWarningAndTheCoLocatedNotice(t *testing
 	r := revisionWith(t, commandtext.CoLocated, smallChange()...)
 	r.Reduced, r.ReducedRules, r.ReducedPaths, r.ReducedPathsTotal = true, []string{"rule /tests/**"}, []string{"tests/b_test.go"}, 1
 	body := revisionText(t, r)
-	for _, w := range []string{"**This revision reduces the protected scope.**", "tests/b_test.go", "assurance is reduced", "- Lines: +5/−1", "[Full change report]", "/suiteward approve P7-R3 <code>"} {
+	for _, w := range []string{"**This revision reduces the protected scope.**", "tests/b_test.go", "protection is reduced", "- Lines: 5 added, 1 removed", "[Full change report]", "/suiteward approve P7-R3 <code>"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
 		}
@@ -325,7 +325,7 @@ func TestCheckSummaryStatesTheNumbersWithoutALink(t *testing.T) {
 	changes := summaryOf(t, smallChange()...)
 	c.Changes = &changes
 	_, summary := checkText(t, c)
-	for _, w := range []string{"- Files: 1 added, 1 modified, 0 removed\n", "- Lines: +5/−1 (counted in 2 of 2 files)\n", "- Marker lines seen: 1 removed assertion line, 1 added skip line\n"} {
+	for _, w := range []string{"- Files: 1 added, 1 modified, 0 removed\n", "- Lines: 5 added, 1 removed (counted in 2 of 2 files)\n", "- Marker lines seen: 1 removed assertion line, 1 added skip line\n"} {
 		if !strings.Contains(summary, w) {
 			t.Errorf("summary lacks %q:\n%s", w, summary)
 		}

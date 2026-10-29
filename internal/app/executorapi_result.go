@@ -73,12 +73,18 @@ type (
 	}
 )
 
-// result stores what an executor reports about a leased job, or queues the job again.
+// result stores what an executor reports about a leased job, or queues the job again. It is the executor being seen, whatever it answers: when the
+// post arrives, when its body has been read and when it is answered, because the heartbeats stop before the first post and the body of a large
+// result or a slow store would otherwise leave the service without a request for as long as it takes (docs/contracts/runtime.md, "The executor is
+// seen, not asked").
 func (h *executorAPI) result(w http.ResponseWriter, r *http.Request) {
+	h.liveness.Saw(h.now())
+	defer func() { h.liveness.Saw(h.now()) }()
 	raw, ok := h.resultBytes(w, r)
 	if !ok {
 		return
 	}
+	h.liveness.Saw(h.now())
 	id, ok := jobID(r)
 	if !ok {
 		h.fail(w, http.StatusNotFound, "not-found")

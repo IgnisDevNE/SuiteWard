@@ -64,9 +64,9 @@ func TestRevisionMessageKeepsWhatAReductionLowersWhenItsDetailIsDropped(t *testi
 		lead, unwanted   string
 		numbersSayDelete bool
 	}{
-		"only the policy": {execEntries(), nil, true, false, "**This revision lowers the execution policy.**", "reduces the protected scope", true},
-		"the scope alone": {asRules(list()), list(), false, true, "**This revision reduces the protected scope.**", "execution policy", false},
-		"both":            {append(asRules(list()), execEntries()[0]), list(), true, true, "**This revision reduces the protected scope and lowers the execution policy.**", "", false},
+		"only the policy": {execEntries(), nil, true, false, "**This revision lowers the test requirements.**", "reduces the protected scope", true},
+		"the scope alone": {asRules(list()), list(), false, true, "**This revision reduces the protected scope.**", "test requirements", false},
+		"both":            {append(asRules(list()), execEntries()[0]), list(), true, true, "**This revision reduces the protected scope and lowers the test requirements.**", "", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			notice := cmtNotice()
@@ -85,7 +85,7 @@ func TestRevisionMessageKeepsWhatAReductionLowersWhenItsDetailIsDropped(t *testi
 			w := newCmtWorld(t)
 			w.mustDeliver(message)
 			body := w.writer.posts()[0].body
-			for _, want := range []string{tc.lead, "omitted", "/suiteward approve P2-R2 <code>"} {
+			for _, want := range []string{tc.lead, "left out", "/suiteward approve P2-R2 <code>"} {
 				if !strings.Contains(body, want) {
 					t.Errorf("comment lacks %q:\n%s", want, body)
 				}
@@ -123,15 +123,15 @@ func receiptPayload(t *testing.T, edit func(*revisionPayload)) json.RawMessage {
 	return cmtMust(json.Marshal(payload))
 }
 
-func TestRevisionCommentPostsTheReceiptLineWithTheLinkOfTheReceiptPage(t *testing.T) {
+func TestRevisionCommentPostsTheReceiptLineWithTheLinkOfThePullRequestPage(t *testing.T) {
 	w := newCmtWorld(t)
 	w.pub.reportBase = "http://127.0.0.1:8080"
 	w.mustDeliver(receiptMessage(t, "required"))
 	body := w.writer.posts()[0].body
 	for _, want := range []string{
-		"Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. It is evidence, not a verdict. " +
-			"Results: [Receipt page](http://127.0.0.1:8080/receipts/acme/widgets/7). The `SuiteWard / Receipt` check carries the counts.",
-		"Approving needs a mode and a receipt that meets it:", "```\n/suiteward approve P2-R2 <fix|feature|refactor> <code>\n```",
+		"Receipt: SuiteWard runs the tests this revision adds or changes, on this commit and on the code before the change, and shows what it saw. It is evidence, not a verdict. " +
+			"Results: [Pull request page](http://127.0.0.1:8080/pulls/acme/widgets/7). The `SuiteWard / Receipt` check carries the counts.",
+		"To approve, name a mode (the kind of change) that the receipt meets, and comment:", "```\n/suiteward approve P2-R2 <fix|feature|refactor> <code>\n```",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("comment lacks %q:\n%s", want, body)
@@ -143,7 +143,7 @@ func TestRevisionCommentPostsTheReceiptLineWithoutALinkWhenTheInstanceHasNoRepor
 	w := newCmtWorld(t)
 	w.mustDeliver(receiptMessage(t, "advisory"))
 	body := w.writer.posts()[0].body
-	if !strings.Contains(body, "Results: see the `SuiteWard / Receipt` check. The `SuiteWard / Receipt` check carries the counts.") || strings.Contains(body, "/receipts/") ||
+	if !strings.Contains(body, "Results: see the `SuiteWard / Receipt` check. The `SuiteWard / Receipt` check carries the counts.") || strings.Contains(body, "/receipts/") || strings.Contains(body, "/pulls/") ||
 		!strings.Contains(body, "```\n/suiteward approve P2-R2 <code>\n```") {
 		t.Errorf("comment:\n%s", body)
 	}
@@ -156,7 +156,7 @@ func TestRevisionCommentKeepsTheReceiptLineWhenItsLinkIsRefused(t *testing.T) {
 		w.pub.reportBase = base
 		w.mustDeliver(receiptMessage(t, "before-approval"))
 		body := w.writer.posts()[0].body
-		if !strings.Contains(body, "Results: see the `SuiteWard / Receipt` check.") || !strings.Contains(body, "Approving waits until the receipt is complete.") || strings.Contains(body, "/receipts/") {
+		if !strings.Contains(body, "Results: see the `SuiteWard / Receipt` check.") || !strings.Contains(body, "Approving waits until the receipt is complete.") || strings.Contains(body, "/receipts/") || strings.Contains(body, "/pulls/") {
 			t.Errorf("base %q: the line was lost or kept a refused link:\n%s", base, body)
 		}
 		if !strings.Contains(w.logs.String(), "receipt line") {
@@ -165,14 +165,14 @@ func TestRevisionCommentKeepsTheReceiptLineWhenItsLinkIsRefused(t *testing.T) {
 	}
 }
 
-// The link of the receipt and the link of the change report are independent: the one that cannot be rendered is the one that goes.
+// The link of the pull request page and the link of the change report are independent: the one that cannot be rendered is the one that goes.
 func TestRevisionCommentKeepsTheChangeReportLinkNextToTheReceiptLink(t *testing.T) {
 	w := newCmtWorld(t)
 	w.pub.reportBase = cmtReportBase
 	w.reports.report, w.reports.err = revisionReport{Base: "V1", Report: smallReport(t)}, nil
 	w.mustDeliver(receiptMessage(t, "advisory"))
 	body := w.writer.posts()[0].body
-	if !strings.Contains(body, "[Full change report]("+cmtReportBase+"/reports/acme/widgets/P2-R2)") || !strings.Contains(body, "Results: [Receipt page]("+cmtReportBase+"/receipts/acme/widgets/7).") {
+	if !strings.Contains(body, "[Full change report]("+cmtReportBase+"/reports/acme/widgets/P2-R2)") || !strings.Contains(body, "Results: [Pull request page]("+cmtReportBase+"/pulls/acme/widgets/7).") {
 		t.Errorf("comment lacks one of the two links:\n%s", body)
 	}
 	if strings.Index(body, "[Full change report]") > strings.Index(body, "Receipt:") || strings.Index(body, "Receipt:") > strings.Index(body, "/suiteward approve") {

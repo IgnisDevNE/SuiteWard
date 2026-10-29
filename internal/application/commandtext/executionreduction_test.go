@@ -26,8 +26,8 @@ const (
 func TestRevisionCommentOfALoweredExecutionPolicyListsTheLevels(t *testing.T) {
 	body := revisionText(t, executionOnly(t, lowerCanonical, lowerReceipt))
 
-	warning := strings.Index(body, "**This revision lowers the execution policy.** Review it carefully before approving.")
-	levels := strings.Index(body, "Execution policy lowered:\n\n```\ncanonical: required -> advisory\nreceipt: advisory -> off\n```")
+	warning := strings.Index(body, "**This revision lowers the test requirements.** Review it carefully before approving.")
+	levels := strings.Index(body, "Test requirements lowered:\n\n```\napproved tests: required -> advisory\nreceipt: advisory -> off\n```")
 	record := strings.Index(body, "This comment is a record")
 	if warning < 0 || levels <= warning || record <= levels {
 		t.Errorf("the levels are not between the warning and the record (%d, %d, %d):\n%s", warning, levels, record, body)
@@ -42,7 +42,7 @@ func TestRevisionCommentOfALoweredExecutionPolicyListsTheLevels(t *testing.T) {
 
 func TestRevisionCommentOfOneLoweredLevelListsOnlyThatLevel(t *testing.T) {
 	body := revisionText(t, executionOnly(t, lowerReceipt))
-	if !strings.Contains(body, "Execution policy lowered:\n\n```\nreceipt: advisory -> off\n```") || strings.Contains(body, "canonical:") {
+	if !strings.Contains(body, "Test requirements lowered:\n\n```\nreceipt: advisory -> off\n```") || strings.Contains(body, "approved tests:") {
 		t.Errorf("body does not list the one level that got weaker:\n%s", body)
 	}
 }
@@ -54,11 +54,11 @@ func TestRevisionCommentOfAScopeReductionThatAlsoLowersThePolicyStatesBoth(t *te
 
 	body := revisionText(t, r)
 
-	lead := strings.Index(body, "**This revision reduces the protected scope and lowers the execution policy.** Review it carefully before approving.")
+	lead := strings.Index(body, "**This revision reduces the protected scope and lowers the test requirements.** Review it carefully before approving.")
 	rules := strings.Index(body, "Rules removed from the scope:\n\n```\ninternal/**\n!keep/**\n```")
 	excludes := strings.Index(body, "Excludes added:\n\n```\ntests/b_test.go\n```")
 	paths := strings.Index(body, "```\ninternal/a_test.go\ninternal/b_test.go\n```")
-	levels := strings.Index(body, "Execution policy lowered:\n\n```\ncanonical: required -> advisory\n```")
+	levels := strings.Index(body, "Test requirements lowered:\n\n```\napproved tests: required -> advisory\n```")
 	record := strings.Index(body, "This comment is a record")
 	if lead < 0 || rules <= lead || excludes <= rules || paths <= excludes || levels <= paths || record <= levels {
 		t.Errorf("the warning, the lists and the record are out of order (%d, %d, %d, %d, %d, %d):\n%s", lead, rules, excludes, paths, levels, record, body)
@@ -68,7 +68,7 @@ func TestRevisionCommentOfAScopeReductionThatAlsoLowersThePolicyStatesBoth(t *te
 // A reduction of the scope alone reads as it did before the policy was a rule.
 func TestRevisionCommentOfAScopeReductionHasNoExecutionHeading(t *testing.T) {
 	body := revisionText(t, reduced())
-	if strings.Contains(body, "Execution policy lowered") || strings.Contains(body, "execution policy") || !strings.Contains(body, "**This revision reduces the protected scope.**") {
+	if strings.Contains(body, "Test requirements lowered") || strings.Contains(body, "test requirements") || !strings.Contains(body, "**This revision reduces the protected scope.**") {
 		t.Errorf("a reduction of the scope speaks of the execution policy or lacks its own warning:\n%s", body)
 	}
 }
@@ -81,7 +81,7 @@ func TestRevisionCommentThatOnlyLowersThePolicyWordsARemovalAsAnotherChange(t *t
 
 	body := revisionText(t, r)
 
-	for _, want := range []string{"- Files: 1 added, 0 modified, 2 removed\n", "- Marker lines seen: 1 removed test file\n", "**This revision lowers the execution policy.**"} {
+	for _, want := range []string{"- Files: 1 added, 0 modified, 2 removed\n", "- Marker lines seen: 1 removed test file\n", "**This revision lowers the test requirements.**"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body lacks %q:\n%s", want, body)
 		}

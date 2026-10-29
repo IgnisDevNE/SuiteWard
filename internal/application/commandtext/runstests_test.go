@@ -80,6 +80,12 @@ func everyBody(t *testing.T) map[string]string {
 				return s
 			})
 		}
+		add("receipt not responding, with the unblock offer "+tier, func() string {
+			c := receiptOf("receipt-not-responding")
+			c.Tier, c.OffersUnblock = value, true
+			_, s := commandtext.ReceiptCheckSummary(c)
+			return s
+		})
 		add("receipt not run, unblocked "+tier, func() string {
 			c := receiptOf("receipt-not-run")
 			c.Tier, c.Unblocked = value, true
@@ -92,6 +98,9 @@ func everyBody(t *testing.T) map[string]string {
 			_, s := commandtext.ReceiptCheckSummary(c)
 			return s
 		})
+		for name, edit := range resultsSituations {
+			add("results "+name+" "+tier, func() string { r := results(edit); r.Tier = value; return commandtext.ResultsComment(r) })
+		}
 		add("revision "+tier, func() string { return commandtext.RevisionComment(revision(value)) })
 		add("revision that reduces the scope "+tier, func() string {
 			r := revision(value)
@@ -102,7 +111,7 @@ func everyBody(t *testing.T) map[string]string {
 			add("revision with a "+level+" receipt "+tier, func() string { r := receiptRevision(t, level); r.Tier = value; return commandtext.RevisionComment(r) })
 			add("revision with a "+level+" receipt and no link "+tier, func() string {
 				r := receiptRevision(t, level)
-				r.Tier, r.ReceiptURL = value, ""
+				r.Tier, r.PullURL = value, ""
 				return commandtext.RevisionComment(r)
 			})
 		}
@@ -122,6 +131,20 @@ func everyBody(t *testing.T) map[string]string {
 		}
 	}
 	add("bootstrap notice", commandtext.BootstrapNotice)
+	for name, unblock := range map[string]bool{"with the unblock offer": true, "without the unblock offer": false} {
+		add("not responding "+name, func() string {
+			return commandtext.NotRespondingComment(commandtext.NotResponding{Head: resultsHead, Pull: 7, Unblock: unblock, PullURL: resultsLink})
+		})
+	}
+	add("not responding with no base address", func() string {
+		return commandtext.NotRespondingComment(commandtext.NotResponding{Head: resultsHead, Pull: 7})
+	})
+	add("runner back", func() string {
+		return commandtext.RunnerBackComment(commandtext.RunnerBack{Head: resultsHead, Pull: 7, PullURL: resultsLink})
+	})
+	add("runner back with no base address", func() string {
+		return commandtext.RunnerBackComment(commandtext.RunnerBack{Head: resultsHead, Pull: 7})
+	})
 	add("bootstrap cancelled", func() string { return commandtext.BootstrapCancelled(1, 2) })
 	add("declaration suggestion", func() string { return commandtext.SuggestDeclaration(declarationMissing("*_test.go")) })
 	add("scope notice", func() string { return commandtext.ScopeNoticeComment(notice()) })
@@ -185,7 +208,7 @@ func addAcks(t *testing.T, add func(name string, f func() string)) {
 	}
 	// Every refusal that an outcome takes, whatever the set is: ValidateAck says which fit.
 	for _, o := range []commandtext.Outcome{commandtext.ProposeRefused, commandtext.SkipRefused, commandtext.SuggestRefused, commandtext.ModeRefused, commandtext.UnblockRefused} {
-		for refusal := commandtext.CanonicalPresent; refusal <= commandtext.NotUnavailable; refusal++ {
+		for refusal := commandtext.CanonicalPresent; refusal <= commandtext.RunnerResponding; refusal++ {
 			if commandtext.ValidateAck(commandtext.Ack{Outcome: o, Refusal: refusal, Source: source, Owner: owner}) == nil {
 				ack(fmt.Sprintf("refused %d %d", o, refusal), commandtext.Ack{Outcome: o, Refusal: refusal})
 			}
@@ -201,6 +224,7 @@ func addAcks(t *testing.T, add func(name string, f func() string)) {
 	}
 	for _, plans := range []commandtext.Plans{{Canonical: true}, {Receipt: true}, {Canonical: true, Receipt: true}} {
 		ack("unblocked "+boolName(plans.Canonical)+boolName(plans.Receipt), commandtext.Ack{Outcome: commandtext.Unblocked, Plans: plans})
+		ack("unblocked and ended "+boolName(plans.Canonical)+boolName(plans.Receipt), commandtext.Ack{Outcome: commandtext.Unblocked, Plans: plans, Ended: plans})
 	}
 }
 

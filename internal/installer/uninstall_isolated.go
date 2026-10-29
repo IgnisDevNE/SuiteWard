@@ -22,7 +22,7 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, env Env
 	if err != nil {
 		return err
 	}
-	st, err := adoptUnitsDir(host.unitsDir, host.envPath, true)
+	st, err := adoptUnitsDir(host.d, host.unitsDir, host.envPath, true)
 	if err != nil {
 		return err
 	}
@@ -61,6 +61,7 @@ func uninstallIsolated(ctx context.Context, saved Settings, r *Resolver, env Env
 		if err := purgeState(ctx, host.rt, []string{host.envPath}, host.settingsPath); err != nil {
 			return err
 		}
+		unlistInstallation(r.screen, d, host.settingsPath)
 		if err := os.Remove(executorHandoverFile(host.configDir)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("remove %s: %w", executorHandoverFile(host.configDir), err)
 		}

@@ -78,6 +78,9 @@ const (
 	ReasonCanonicalPending     Reason = "canonical-pending"
 	ReasonCanonicalUnavailable Reason = "canonical-unavailable"
 	ReasonCanonicalFailing     Reason = "canonical-failing"
+	// ReasonCanonicalNotResponding replaces ReasonCanonicalPending while the job waits for a runner that has not been heard from for NotRespondingAfter. The
+	// domain's CheckGate does not return it: it knows no clock, and the checks job reads the silence.
+	ReasonCanonicalNotResponding Reason = "canonical-not-responding"
 )
 
 // Verdict is the outcome of a mode summary.

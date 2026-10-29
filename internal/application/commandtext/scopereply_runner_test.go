@@ -19,7 +19,7 @@ func runnerOnlyReply(base commandtext.ScopeBase) commandtext.ScopeNotice {
 func TestScopeReplyForRunnerNamesAloneHasNoPathsAndExplainsWhyTheNamesMatter(t *testing.T) {
 	for _, base := range []commandtext.ScopeBase{commandtext.BasePull, commandtext.BaseDefaultBranch, commandtext.BaseContract} {
 		body := noticeText(t, runnerOnlyReply(base))
-		for _, w := range []string{"`/suiteward suggest`", "Nothing changed", "```\nconftest.py\n```", "```\n" + string(reply(base).Declaration) + "```", "before a file of that name exists", "can change how the tests run"} {
+		for _, w := range []string{"`/suiteward suggest`", "Nothing changed", "```\nconftest.py\n```", "```\n" + string(reply(base).Declaration) + "```", "even before a file with that name exists", "can change how the tests run"} {
 			if !strings.Contains(body, w) {
 				t.Errorf("base %d: body lacks %q:\n%s", base, w, body)
 			}
@@ -34,12 +34,12 @@ func TestScopeReplyForRunnerNamesAloneHasNoPathsAndExplainsWhyTheNamesMatter(t *
 }
 
 func TestScopeReplyExplainsRunnerNamesWheneverItListsThem(t *testing.T) {
-	if body := noticeText(t, reply(commandtext.BasePull)); !strings.Contains(body, "before a file of that name exists") {
+	if body := noticeText(t, reply(commandtext.BasePull)); !strings.Contains(body, "even before a file with that name exists") {
 		t.Errorf("body does not explain the runner names:\n%s", body)
 	}
 	n := reply(commandtext.BasePull)
 	n.AddRunner = nil
-	if body := noticeText(t, n); strings.Contains(body, "before a file of that name exists") {
+	if body := noticeText(t, n); strings.Contains(body, "even before a file with that name exists") {
 		t.Errorf("body explains runner names it does not list:\n%s", body)
 	}
 }
@@ -62,7 +62,7 @@ func TestSuggestRefusedForAnInvalidFileNamesTheFileWithoutQuotingIt(t *testing.T
 	}
 	for base, file := range map[commandtext.ScopeBase]string{commandtext.BasePull: "this pull request's `.suiteward.yml`", commandtext.BaseDefaultBranch: "the default branch's `.suiteward.yml`"} {
 		body := ack(base)
-		for _, w := range []string{"`/suiteward suggest` was not processed: " + file + " is not a valid declaration", "Nothing changed.", "comment `/suiteward suggest` again"} {
+		for _, w := range []string{"`/suiteward suggest` was not processed: " + file + " is not valid", "Nothing changed.", "comment `/suiteward suggest` again"} {
 			if !strings.Contains(body, w) {
 				t.Errorf("base %d: body lacks %q:\n%s", base, w, body)
 			}

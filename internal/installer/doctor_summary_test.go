@@ -230,7 +230,7 @@ func TestTheDoctorRowOfAHealthyInstanceHasNoWarningsAndNothingToCheckAgain(t *te
 func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 	f, s := colocated{checkOut: instanceChecks}.build(t)
 	// The settings and the ruleset files are named relative to a folder the test works in: a path under the temp folder wraps at 80 columns when
-	// that folder is long, and the page would lose the first warning for the length of the path and not for the number of rows.
+	// that folder is long, and the page would lose a warning for the length of the path and not for the number of rows.
 	t.Chdir(t.TempDir())
 	const path = "settings.yaml"
 	if err := SaveSettings(path, s); err != nil {
@@ -247,7 +247,7 @@ func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 		rows.add(kv[0], kv[1])
 	}
 	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}}
-	rows.warn(reducedAssuranceNotice) // commonSummary adds it before the checks run, so it is the first warning of a real summary
+	rows.add(securityLimitKey, reducedAssuranceNotice) // commonSummary adds it before the checks run
 	rows.addDoctor(context.Background(), env, path, coloTokenFile(t, f), env.Deps.suggest("doctor"))
 
 	c := sizedConsole{termConsole: newTermConsole(&bytes.Buffer{}), w: 80, h: 24}
@@ -263,8 +263,8 @@ func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 	}
 	out := c.out.String()
 	page := pageText(t, out[:strings.LastIndex(out, leaveAlt)], 80, 24)
-	// The notice of the reduced assurance is the first warning of a real summary, and on a page this full it takes the room of the checks'
-	// warnings: the Doctor row says how many failed, and the scrollback that Close leaves holds every one of them.
+	// The notice of the reduced assurance is a key row of a real summary, and on a page this full it stays while the checks'
+	// warnings go (the Doctor row says how many failed, and the scrollback that Close leaves holds every one of them).
 	for _, want := range []string{"Installation type co-located", "Instance ID 1a2b3c4d", "Status http://127.0.0.1:47081/status", "Doctor ", "failures", "Check again", reducedAssuranceKey} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the summary page lacks %q at 80x24:\n%s", want, page)

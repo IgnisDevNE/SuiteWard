@@ -65,8 +65,8 @@ func (h *host) delegation(ctx context.Context) error {
 	return nil
 }
 
-// executorManager starts the user manager of the executor and checks that it has the controllers. A manager that was already up without cpu
-// (the drop-in is newer than it) is restarted: it holds no container of the stack. The manager of the service account never is.
+// executorManager starts the user manager of the executor, checks that it has the controllers and waits until it answers. A manager that was
+// already up without cpu (the drop-in is newer than it) is restarted: it holds no container of the stack. The manager of the service account never is.
 func (h *host) executorManager(ctx context.Context) error {
 	uid, err := h.run(ctx, "id", "-u", ExecutorAccount)
 	if err != nil {
@@ -98,7 +98,42 @@ func (h *host) executorManager(ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("the user manager of %s has no cpu controller, even after a restart. The test runner limits the CPU of each sandbox, which needs cgroup v2 with cpu delegated. Check %s and `cat /sys/fs/cgroup/cgroup.controllers`", ExecutorAccount, executorDropIn)
 	}
-	return nil
+	return h.awaitExecutorManager(ctx, uid)
+}
+
+// managerWaitSeconds bounds the wait for the user manager of the executor. The bound is `timeout` inside the command: a deadline of ctx would end only
+// runuser, and the systemctl under it would keep the pipe of its output open, so the wait of the step would not end. timeoutStatus is the exit status
+// that `timeout` gives when it ended the command.
+const (
+	managerWaitSeconds = "60"
+	timeoutStatus      = 124
+)
+
+// awaitExecutorManager waits until the user manager of the executor answers on its bus, which a manager that was just started or restarted does not do
+// at once. `is-system-running --wait` holds until the manager has started. It exits non-zero for a degraded manager, which the install guide accepts
+// (checkUserManager does too), so what it prints is read and not its exit status.
+func (h *host) awaitExecutorManager(ctx context.Context, uid string) error {
+	bus := executorBus(uid)
+	if !h.exists(ctx, bus) {
+		return fmt.Errorf("the user manager of %s is not running: its bus %s does not exist, so the test runner cannot be set up. Start it with `systemctl start user@%s.service`, then run this again", ExecutorAccount, bus, uid)
+	}
+	state, err := h.asExecutor(ctx, uid, "timeout", managerWaitSeconds, "systemctl", "--user", "is-system-running", "--wait")
+	if state == "running" || state == "degraded" {
+		return nil
+	}
+	var exit interface{ ExitCode() int }
+	var why string
+	switch {
+	case errors.As(err, &exit) && exit.ExitCode() == timeoutStatus:
+		why = "did not answer within " + managerWaitSeconds + " seconds"
+	case state != "":
+		why = fmt.Sprintf("is not ready (it says %q)", state)
+	case err != nil:
+		why = "could not be asked: " + err.Error()
+	default:
+		why = "gave no answer"
+	}
+	return fmt.Errorf("the user manager of %s %s, so the test runner cannot be set up. To see why, run `journalctl -u user@%s.service -n 50 --no-pager`, then run this again", ExecutorAccount, why, uid)
 }
 
 // executor sets up the executor on the host: the rule that refuses it the metadata addresses first, then its token, its binary and its unit.
@@ -127,25 +162,46 @@ func (h *host) executor(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return h.executorUnit(ctx, port, replaced || tokenMade)
+	return h.executorUnit(ctx, uid, port, replaced || tokenMade)
+}
+
+// executorPath is the search path of the commands that run as the executor's account: systemctl, systemd-run, timeout and podman are in /usr/bin on the hosts of the guide.
+const executorPath = "/usr/sbin:/usr/bin"
+
+// executorBus is the user bus of the executor's account (uid is its user id), where its user manager answers.
+func executorBus(uid string) string { return "/run/user/" + uid + "/bus" }
+
+// asExecutor runs a command as the executor's account with the account's own user bus, as the install guide does when it opens a shell for the service
+// account (docs/install.md, section 10). It is never `--machine=<user>@.host`, which goes through machined: that opens a login session for the account,
+// and on EL9 with SELinux enforcing the session cannot set the context of a terminal that the installer does not have (its stdin is /dev/null), so the
+// command fails with "Remote peer disconnected" where the same command typed in a terminal works. `runuser` opens no session. The command gets an empty environment
+// but for a path, the runtime directory and the bus (`env -i`): a process of the account reads the environment of the client it runs from, and root's holds what the
+// installer was started with. The commands need nothing else: systemd-run looks the program up in that path, and the state that `is-system-running` prints is not
+// translated. An error names what was run as the account (argv): OSExec cuts the command line of its own error at 120 characters, and the prefix above takes most of them.
+func (h *host) asExecutor(ctx context.Context, uid string, argv ...string) (string, error) {
+	out, err := h.run(ctx, "runuser", append([]string{"-u", ExecutorAccount, "--", "env", "-i", "PATH=" + executorPath, "XDG_RUNTIME_DIR=/run/user/" + uid, "DBUS_SESSION_BUS_ADDRESS=unix:path=" + executorBus(uid)}, argv...)...)
+	if err != nil {
+		return out, fmt.Errorf("%s, as %s: %w", strings.Join(argv, " "), ExecutorAccount, err)
+	}
+	return out, nil
 }
 
 // runAsExecutor runs a command as the executor's account, through its own user manager: it comes with the account's HOME and XDG_RUNTIME_DIR, in the cgroup
-// the drop-in delegates, which `runuser` from root's session does not give. --wait is for the end of the command and carries its exit status. The
+// the drop-in delegates, which `runuser` alone from root's session does not give. --wait is for the end of the command and carries its exit status. The
 // transient unit has a name that systemd picks: a fixed one would collide with a unit that a run cut short left, or that was not collected yet.
-func (h *host) runAsExecutor(ctx context.Context, argv ...string) (string, error) {
-	return h.run(ctx, "systemd-run", append([]string{"--user", "--machine=" + ExecutorAccount + "@.host", "--wait", "--collect"}, argv...)...)
+func (h *host) runAsExecutor(ctx context.Context, uid string, argv ...string) (string, error) {
+	return h.asExecutor(ctx, uid, append([]string{"systemd-run", "--user", "--wait", "--collect"}, argv...)...)
 }
 
 // executorImage pulls the Go image of the sandboxes into the rootless storage of the executor's account and checks that it is there under its
 // digest. The executor starts every sandbox with --pull=never, so an account without the image ends every job as unavailable; no other account can
 // read that storage, which is why this step does it and the service account's doctor cannot. It runs at every host step: a new release names a new digest.
 func (h *host) executorImage(ctx context.Context, uid string) error {
-	if _, err := h.runAsExecutor(ctx, "podman", "pull", goprofile.Image); err != nil {
-		return fmt.Errorf("could not download (pull) the image %s as %s: %w. To see why, run `journalctl _UID=%s -n 50 --no-pager`", goprofile.Image, ExecutorAccount, err, uid)
+	if _, err := h.runAsExecutor(ctx, uid, "podman", "pull", goprofile.Image); err != nil {
+		return fmt.Errorf("could not download the image of the sandboxes: %w. To see why, run `journalctl _UID=%s -n 50 --no-pager`", err, uid)
 	}
-	if _, err := h.runAsExecutor(ctx, "podman", "image", "exists", goprofile.Image); err != nil { // a reference with a digest exists only when an image has that digest
-		return fmt.Errorf("after the download, the image %s is not in the storage of %s under that fingerprint (digest): %w", goprofile.Image, ExecutorAccount, err)
+	if _, err := h.runAsExecutor(ctx, uid, "podman", "image", "exists", goprofile.Image); err != nil { // a reference with a digest exists only when an image has that digest
+		return fmt.Errorf("after the download, the image is not in the storage of %s under that fingerprint (digest): %w", ExecutorAccount, err)
 	}
 	h.check("The Go image of the sandboxes (where tests run) is stored for %s, under its fingerprint (digest).\n", ExecutorAccount)
 	return nil
@@ -261,10 +317,17 @@ func (h *host) installedHash(ctx context.Context, file string) string {
 type releaseProgram struct{ exe, sum, pin string }
 
 // verifyRelease requires the release's SHA256SUMS (--sha256sums) and checks, before the step changes anything, that it lists this program exactly once
-// as a Linux binary: the executor's pin is the signed release's line, not only the hash of the program that happened to be copied. A missing flag is
-// a mistake of the command line (ErrUsage).
+// as a Linux binary: the executor's pin is the signed release's line, not only the hash of the program that happened to be copied. A terminal is asked
+// for the file; where nobody can be asked, a missing flag is a mistake of the command line (ErrUsage).
 func (h *host) verifyRelease(ctx context.Context) (releaseProgram, error) {
 	sumsFile, ok := h.r.given("sha256sums")
+	if !ok && h.r.asks("sha256sums") {
+		var err error
+		if sumsFile, err = h.r.Value("sha256sums", "Where is the release's SHA256SUMS file?", ""); err != nil {
+			return releaseProgram{}, err
+		}
+		ok = true
+	}
 	if ok && strings.TrimSpace(sumsFile) == "" {
 		return releaseProgram{}, fmt.Errorf("%w: install host needs the SHA256SUMS file of the release this program was downloaded from, but `--sha256sums` is empty (an unset variable?)", ErrUsage)
 	}
@@ -354,16 +417,16 @@ func (h *host) executorPort(ctx context.Context) (int, error) {
 	return DefaultHTTPPort, nil
 }
 
-// userctl runs systemctl against the user manager of the executor, as root: --machine=<user>@.host is how another account's manager is
-// reached. Never --global, which would enable the unit for every account.
-func (h *host) userctl(ctx context.Context, args ...string) (string, error) {
-	return h.run(ctx, "systemctl", append([]string{"--user", "--machine=" + ExecutorAccount + "@.host"}, args...)...)
+// userctl runs systemctl against the user manager of the executor, as its account (asExecutor). Never --global, which would enable the unit for every
+// account.
+func (h *host) userctl(ctx context.Context, uid string, args ...string) (string, error) {
+	return h.asExecutor(ctx, uid, append([]string{"systemctl", "--user"}, args...)...)
 }
 
 // executorUnit writes the unit to the directory that every user manager reads (it is root's, so the executor cannot change it; ConditionUser
 // keeps the other accounts from running it), enables it for the executor's manager only and checks that it is active. A running executor
 // that has other files than the ones just installed (filesChanged: its binary or its token) is restarted: `enable --now` does not restart a unit that is running.
-func (h *host) executorUnit(ctx context.Context, port int, filesChanged bool) error {
+func (h *host) executorUnit(ctx context.Context, uid string, port int, filesChanged bool) error {
 	unit, err := RenderExecutorUnit(port)
 	if err != nil {
 		return err
@@ -378,19 +441,18 @@ func (h *host) executorUnit(ctx context.Context, port int, filesChanged bool) er
 			return err
 		}
 	}
-	state, _ := h.userctl(ctx, "show", "--property=ActiveState", "--value", executorUnitName) // an error here is a unit that is not there yet
+	state, _ := h.userctl(ctx, uid, "show", "--property=ActiveState", "--value", executorUnitName) // an error here is a unit that is not there yet
 	steps := [][]string{{"daemon-reload"}, {"enable", "--now", executorUnitName}}
 	if state == "active" && (unitChanged || filesChanged) {
 		steps = append(steps, []string{"restart", executorUnitName})
 	}
 	for _, args := range steps {
-		if _, err := h.userctl(ctx, args...); err != nil {
-			return fmt.Errorf("systemctl --user --machine=%s@.host %s: %w", ExecutorAccount, strings.Join(args, " "), err)
+		if _, err := h.userctl(ctx, uid, args...); err != nil {
+			return err
 		}
 	}
-	state, err = h.userctl(ctx, "show", "--property=ActiveState", "--value", executorUnitName)
+	state, err = h.userctl(ctx, uid, "show", "--property=ActiveState", "--value", executorUnitName)
 	if err != nil || state != "active" {
-		uid, _ := h.run(ctx, "id", "-u", ExecutorAccount)
 		return fmt.Errorf("%s is %q after the start, but it should be \"active\". To see why, run `journalctl _SYSTEMD_USER_UNIT=%s _UID=%s -n 50 --no-pager`", executorUnitName, state, executorUnitName, uid)
 	}
 	h.check("The test runner runs as the unit %s of the account %s, pointed at http://127.0.0.1:%d.\n", executorUnitName, ExecutorAccount, port)

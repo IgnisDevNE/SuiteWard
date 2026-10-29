@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -53,6 +54,11 @@ func OSDeps() Deps {
 	return Deps{Exec: OSExec, Interactive: OSInteractive, GOOS: runtime.GOOS, Getenv: os.Getenv, UserSID: osUserSID, Executable: os.Executable}
 }
 
+// execWaitDelay bounds how long OSExec waits for a command's output after the command is over: after its context ended, or after it exited and left a
+// child that still holds the pipes. Without it cmd.Run waits for that child. A command run as another account through runuser has one: cancelling the
+// context kills runuser, and the systemctl or systemd-run under it keeps the pipes open until it ends by itself. A variable so that a test shortens it.
+var execWaitDelay = 5 * time.Second
+
 // OSExec runs name with args. When name is an absolute path its directory is put first on the child's PATH, because
 // Docker Desktop's credential helper sits next to its CLI. A podman call that selects a connection with --connection also
 // drops CONTAINER_HOST from the child's environment, so the caller's own host setting cannot override the selection.
@@ -60,9 +66,14 @@ func OSExec(ctx context.Context, name string, args []string, stdin io.Reader) ([
 	cmd := commandContext(ctx, name, args...)
 	cmd.Env = childEnv(os.Environ(), name, args)
 	cmd.Stdin = stdin
+	cmd.WaitDelay = execWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil // the command exited with status 0 and left a child that still holds the pipes: what it printed so far is its answer
+	}
+	if err != nil {
 		// The output is returned beside the error (a failing check prints its report on stdout) but is not in the error: a
 		// command may print a secret. A caller that wants a tail of it asks for it (stdoutTail). Every caller reads the error first.
 		return stdout.Bytes(), fmt.Errorf("%s: %w: %s", describe(name, args), err, strings.TrimSpace(stderr.String()))

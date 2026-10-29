@@ -16,7 +16,7 @@ func TestCheckSummaryOfRunnerUncoveredListsTheFilesAndBothWaysOut(t *testing.T) 
 	if title != "Runner files outside the protected scope" {
 		t.Errorf("title %q", title)
 	}
-	for _, w := range []string{"```\njest.config.js\npkg/conftest.py\n```", "and 23 more", "can change how the protected tests run", "committing the suggested declaration", "adding the paths to `exclude`", "approving", "- State: `in_progress`"} {
+	for _, w := range []string{"```\njest.config.js\npkg/conftest.py\n```", "and 23 more", "can change how the protected tests run", "commit the suggested declaration", "add their paths to `exclude`", "approve", "which control how tests run", "- State: `in_progress`"} {
 		if !strings.Contains(summary, w) {
 			t.Errorf("summary lacks %q:\n%s", w, summary)
 		}

@@ -124,6 +124,7 @@ func TestDoctorIsolatedExecutorFailures(t *testing.T) {
 			if !strings.Contains(res[c.check].Fix, c.fix) {
 				t.Errorf("fix %q does not mention %q", res[c.check].Fix, c.fix)
 			}
+			noBareSudoProgram(t, res[c.check].Fix)
 			if fix := res[c.check].Fix; strings.Contains(fix, "install host") && !strings.Contains(fix, "--sha256sums") {
 				t.Errorf("fix %q sends the administrator to a host step that refuses to run without --sha256sums", fix)
 			}
@@ -152,6 +153,7 @@ func TestDoctorIsolatedExecutorBinaryThatTheReleaseSumsDoNotListFails(t *testing
 		t.Errorf("exit %d, want 1: %+v", code, res)
 	}
 	wantFail(t, res, "executor.binary", "SHA256SUMS")
+	noBareSudoProgram(t, res["executor.binary"].Fix)
 	if fix := res["executor.binary"].Fix; !strings.Contains(fix, "install host") || !strings.Contains(fix, "--sha256sums") {
 		t.Errorf("the fix %q must name the host step with --sha256sums", fix)
 	}

@@ -43,7 +43,7 @@ func (p receiptCheckPayload) check(key string) (commandtext.ReceiptCheck, error)
 	case state == 0 || tier == 0:
 		return commandtext.ReceiptCheck{}, keyError(receiptCheckKind, key, "the state or the tier is unknown")
 	}
-	c := commandtext.ReceiptCheck{State: state, Reason: p.Reason, Tier: tier, Unavailable: p.Unavailable, Unblocked: p.Unblocked, Markers: p.Counts.Markers,
+	c := commandtext.ReceiptCheck{State: state, Reason: p.Reason, Tier: tier, Unavailable: p.Unavailable, Unblocked: p.Unblocked, OffersUnblock: p.OffersUnblock, Markers: p.Counts.Markers,
 		Counts: domain.ReceiptCounts{Detects: p.Counts.Detects, Inert: p.Counts.Inert, NewAPI: p.Counts.NewAPI, Fails: p.Counts.Fails, Missing: p.Counts.Missing, Flaky: p.Counts.Flaky,
 			Skipped: p.Counts.Skipped, Excluded: p.Counts.Excluded, Unparsed: p.Counts.Unparsed}}
 	if p.Reference != "" {

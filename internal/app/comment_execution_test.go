@@ -173,3 +173,64 @@ func TestCommentPublisherRefusesTheCountsOfAnUnmetModeThatLackAKey(t *testing.T)
 		})
 	}
 }
+
+// An unblock that ended an open job carries the plans it ended, and an unblock that a runner that responds refused carries its reason.
+func TestCommentPublisherRendersAnUnblockThatEndedAJobAndOneThatTheRunnerRefused(t *testing.T) {
+	base := commandtext.Ack{Owner: cmtOwner, Source: cmtComment}
+	for _, tc := range []struct {
+		name    string
+		payload map[string]any
+		want    commandtext.Ack
+	}{
+		{"the receipt ended", map[string]any{"disposition": "unblocked", "plans": []string{"canonical", "receipt"}, "ended": []string{"receipt"}},
+			func() commandtext.Ack {
+				a := base
+				a.Outcome, a.Plans, a.Ended = commandtext.Unblocked, commandtext.Plans{Canonical: true, Receipt: true}, commandtext.Plans{Receipt: true}
+				return a
+			}()},
+		{"both ended", map[string]any{"disposition": "unblocked", "plans": []string{"canonical", "receipt"}, "ended": []string{"canonical", "receipt"}},
+			func() commandtext.Ack {
+				a := base
+				a.Outcome, a.Plans, a.Ended = commandtext.Unblocked, commandtext.Plans{Canonical: true, Receipt: true}, commandtext.Plans{Canonical: true, Receipt: true}
+				return a
+			}()},
+		{"a runner that responds", map[string]any{"disposition": "unblock-refused", "reason": "runner-responding"},
+			func() commandtext.Ack {
+				a := base
+				a.Outcome, a.Refusal = commandtext.UnblockRefused, commandtext.RunnerResponding
+				return a
+			}()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newCmtWorld(t)
+			message := executionAck(t, tc.payload)
+
+			w.mustDeliver(message)
+
+			w.wantPost(message.Key, commandtext.Acknowledge(tc.want))
+		})
+	}
+}
+
+func TestCommentPublisherRefusesEndedPlansThatDoNotFitTheAcknowledgment(t *testing.T) {
+	for name, payload := range map[string]map[string]any{
+		"an ended plan that was not lifted":  {"disposition": "unblocked", "plans": []string{"canonical"}, "ended": []string{"receipt"}},
+		"an unknown ended plan":              {"disposition": "unblocked", "plans": []string{"canonical"}, "ended": []string{"everything"}},
+		"an ended plan listed twice":         {"disposition": "unblocked", "plans": []string{"receipt"}, "ended": []string{"receipt", "receipt"}},
+		"ended plans on a refusal":           {"disposition": "unblock-refused", "reason": "runner-responding", "ended": []string{"receipt"}},
+		"ended plans on a mode that was set": {"disposition": "mode-set", "mode": "fix", "ended": []string{"receipt"}},
+		"ended plans on a processed one":     {"project": "p", "suite": "default", "operation": "op", "ended": []string{"receipt"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCmtWorld(t)
+			message := executionAck(t, payload)
+
+			if err := w.deliver(message); err == nil {
+				t.Fatalf("publish accepted the payload %s", message.Payload)
+			}
+			if posts := w.writer.posts(); len(posts) != 0 {
+				t.Fatalf("posted %d comments for a payload that does not fit", len(posts))
+			}
+		})
+	}
+}

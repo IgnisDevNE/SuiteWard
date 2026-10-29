@@ -92,11 +92,11 @@ func TestReceiptCheckPublisherPostsEveryState(t *testing.T) {
 		status, conclusion string
 		phrase             string
 	}{
-		{execution.CheckInProgress, receiptRunning, "Receipt pending", "in_progress", "", "it is waiting for an executor, or it is running"},
-		{execution.CheckFailure, receiptFailing, "Receipt: failing or missing tests", "completed", "failure", "- Changed test files that do not parse: 7"},
-		{execution.CheckSuccess, receiptComplete, "Receipt ready", "completed", "success", "- Tests by state: 3 DETECTS, 2 INERT, 1 NEW API, 0 FAILS, 0 MISSING, 6 FLAKY, 4 SKIPPED"},
-		{execution.CheckNeutral, receiptNotRun, "Receipt unavailable", "completed", "neutral", "no executor was seen in time"},
-		{execution.CheckNeutral, receiptNotApplicable, "No receipt for this revision", "completed", "neutral", "has no receipt now"},
+		{execution.CheckInProgress, receiptRunning, "Receipt pending", "in_progress", "", "The tests are waiting for the test runner, or they are running"},
+		{execution.CheckFailure, receiptFailing, "Receipt: failing or missing tests", "completed", "failure", "Changed test files that cannot be read: 7."},
+		{execution.CheckSuccess, receiptComplete, "Receipt ready", "completed", "success", "- Pass before and after, so they show nothing: 2"},
+		{execution.CheckNeutral, receiptNotRun, "Receipt unavailable", "completed", "neutral", "The test runner did not respond."},
+		{execution.CheckNeutral, receiptNotApplicable, "No receipt for this revision", "completed", "neutral", "This commit has no receipt."},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
 			w := newRcpWorld()
@@ -116,8 +116,8 @@ func TestReceiptCheckPublisherPostsEveryState(t *testing.T) {
 				t.Fatalf("posted %+v", p)
 			}
 			// A withdrawn receipt observed nothing, so its summary does not call the results evidence.
-			evidence := strings.Contains(p.Summary, "Observed by this instance's executor. Evidence, not a verdict.")
-			if p.Title != tc.title || !strings.Contains(p.Summary, tc.phrase) || !strings.Contains(p.Summary, "`isolated`") || evidence != (tc.reason != receiptNotApplicable) {
+			evidence := strings.Contains(p.Summary, "What the test runner saw is evidence, not a verdict.")
+			if p.Title != tc.title || !strings.Contains(p.Summary, tc.phrase) || !strings.Contains(p.Summary, "on a separate server") || evidence != (tc.reason != receiptNotApplicable) {
 				t.Fatalf("title %q, summary %q", p.Title, p.Summary)
 			}
 			if got := w.runner.listed; len(got) != 1 || got[0] != fmt.Sprintf("%s %s SuiteWard / Receipt %d", cmtRepo, chkHead, chkAppID) {
@@ -139,7 +139,7 @@ func TestReceiptCheckPublisherMarksTheOwnersUnblockOfAReceiptThatDidNotRun(t *te
 		t.Fatalf("%d posts, want 1", len(posts))
 	}
 	p := posts[0]
-	if p.Conclusion != "neutral" || !strings.Contains(p.Summary, "The owner unblocked this head: its receipt was unavailable, so the tests did not run.") {
+	if p.Conclusion != "neutral" || !strings.Contains(p.Summary, "The owner unblocked this commit. Its receipt could not run, so the tests of this change did not run.") {
 		t.Fatalf("posted %+v", p)
 	}
 }
@@ -449,6 +449,33 @@ func TestNewReceiptCheckMessageRefusesWhatTheRendererRefuses(t *testing.T) {
 			edit(&d)
 			if m, err := newReceiptCheckMessage(cmtRepo, d, owner.TierIsolated, 3); err == nil {
 				t.Fatalf("built %s", m.Payload)
+			}
+		})
+	}
+}
+
+// A receipt that waits for a runner that does not respond: the decision says whether the receipt gate would refuse an approve, and the summary offers the unblock then
+// and only then.
+func TestReceiptCheckPublisherPostsTheSummaryOfARunnerThatDoesNotRespond(t *testing.T) {
+	for _, offers := range []bool{true, false} {
+		t.Run(fmt.Sprintf("offers the unblock %v", offers), func(t *testing.T) {
+			d := rcpDecision(execution.CheckInProgress, "receipt-not-responding")
+			d.offersUnblock = offers
+			w := newRcpWorld()
+			if err := w.deliver(rcpMessage(t, d)); err != nil {
+				t.Fatal(err)
+			}
+			posts := w.runner.posts()
+			if len(posts) != 1 || posts[0].Name != "SuiteWard / Receipt" || posts[0].Status != "in_progress" || posts[0].Title != "Receipt waiting: test runner not responding" {
+				t.Fatalf("posted %+v", posts)
+			}
+			for _, phrase := range []string{"has not answered for about half a minute", "What the test runner saw is evidence, not a verdict.", "on a separate server"} {
+				if !strings.Contains(posts[0].Summary, phrase) {
+					t.Errorf("the summary lacks %q:\n%s", phrase, posts[0].Summary)
+				}
+			}
+			if offered := strings.Contains(posts[0].Summary, "/suiteward unblock <code>"); offered != offers {
+				t.Errorf("the summary offers the unblock = %v, want %v:\n%s", offered, offers, posts[0].Summary)
 			}
 		})
 	}

@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -179,13 +180,13 @@ func newReportView(repo, reference string, built revisionReport) reportView {
 		file := fileView{Status: string(f.Status), Path: commandtext.Visible(f.Path), Counts: "no line count", Notes: fileNotes(f)}
 		crlf := usesCRLF(f)
 		if crlf {
-			file.Notes = append(file.Notes, "This file uses CRLF line endings.")
+			file.Notes = append(file.Notes, "This file uses Windows line endings (CRLF). They are not shown on each line.")
 		}
 		if f.CountsKnown {
 			file.Counts = fmt.Sprintf("+%d/−%d", f.LinesAdded, f.LinesRemoved)
 		}
 		for _, m := range f.Markers {
-			file.Markers = append(file.Markers, markerView{Kind: string(m.Kind), Line: m.Line, Text: commandtext.Visible(m.Text)})
+			file.Markers = append(file.Markers, markerView{Kind: markerLabel(string(m.Kind)), Line: m.Line, Text: commandtext.Visible(m.Text)})
 		}
 		for _, h := range f.Hunks {
 			hunk := hunkView{Header: fmt.Sprintf("@@ -%d,%d +%d,%d @@", h.OldStart, h.OldLines, h.NewStart, h.NewLines)}
@@ -225,6 +226,27 @@ func usesCRLF(f report.File) bool {
 
 var lineClasses = map[report.LineKind]string{report.LineContext: "ctx", report.LineAdded: "add", report.LineRemoved: "del"}
 
+// markerLabels are the words of the kind of a marker line (a marker line is a line to look at, never a verdict), for the two pages that list them: the report page, for the
+// lines of a diff, and the pull request page, for the lines of the non-test files that the test runner reports. The kinds of the two sets do not overlap.
+var markerLabels = map[string]string{
+	string(report.MarkRemovedAssertion): "Removed assertion line",
+	string(report.MarkAddedSkip):        "Added skip line",
+	string(report.MarkFocus):            "Added focus line",
+	string(report.MarkDeletedTest):      "Removed test declaration",
+	string(report.MarkTestFileRemoved):  "Removed test file",
+
+	"testing-import":   "Imports the testing package",
+	"testing-testing":  "Asks whether tests are running",
+	"flag-lookup-test": "Looks up a test flag",
+	"exit-in-init":     "Ends the program early, at start-up or with syscall.Exit",
+	"test-file-read":   "Names a test file",
+	"env-read":         "Reads the TESTING or CI setting",
+	"forged-event":     "Holds text that imitates test output",
+}
+
+// markerLabel is the label of a kind, or the kind itself when it has none, so that a kind that a later release adds is shown and never left out.
+func markerLabel(k string) string { return cmp.Or(markerLabels[k], k) }
+
 // fileNotes say why a file has no line-by-line diff, or only part of one.
 func fileNotes(f report.File) []string {
 	var notes []string
@@ -236,13 +258,13 @@ func fileNotes(f report.File) []string {
 	case report.LimitEditDistance:
 		notes = append(notes, "Too different to compare line by line: the two versions differ by more than 1000 lines.")
 	case report.LimitBudget:
-		notes = append(notes, "Not compared: the comparison work of this report ran out before this file.")
+		notes = append(notes, "Not compared: the report had used up its limit on comparison work before this file.")
 	}
 	if f.Truncated {
-		notes = append(notes, "The diff of this file was left out to keep the report within its size budget; the line counts are exact.")
+		notes = append(notes, "The changed lines of this file are not shown, to keep the report small. The line counts are exact.")
 	}
 	if f.MarkersTruncated {
-		notes = append(notes, "Some marker lines of this file are not listed; the totals above count them all.")
+		notes = append(notes, "Some marker lines of this file are not listed. The totals above count them all.")
 	}
 	return notes
 }
@@ -297,7 +319,7 @@ pre .cut { display: inline; padding: 0; }
 <header>
 <p class="brand">SuiteWard</p>
 <h1>Change report {{.Reference}}</h1>
-<p>{{.Repo}}: the protected files of this revision against the canonical contract {{.Base}}.</p>
+<p>{{.Repo}}: what this revision changes in the protected files, compared with the approved contract {{.Base}}.</p>
 </header>
 <main>
 <h2>Summary</h2>
@@ -305,7 +327,7 @@ pre .cut { display: inline; padding: 0; }
 {{range .Facts}}<li>{{.}}</li>
 {{end}}</ul>
 <p class="note">SuiteWard counts the changed lines and points out some of them as marker lines. A marker line is a line to look at, not a verdict, and this page is not an approval.</p>
-{{if .Truncated}}<p class="note">Some details of this report were left out to keep it within its size budget.</p>
+{{if .Truncated}}<p class="note">Some details of this report were left out to keep it small.</p>
 {{end}}<h2>Files</h2>
 {{range .Files}}<details class="file" open>
 <summary><span class="status {{.Status}}">{{.Status}}</span> <span class="counts">{{.Counts}}</span> <span class="path">{{.Path}}</span></summary>
@@ -318,3 +340,23 @@ pre .cut { display: inline; padding: 0; }
 </body>
 </html>
 `))
+
+// fileRowCells are the cells of a changed file in the table of a report without its hunks: the status, the path and the lines, which are +N/−M, or why there are none.
+func fileRowCells(f report.File) []string {
+	lines := "no line count"
+	switch {
+	case f.CountsKnown:
+		lines = fmt.Sprintf("+%d/−%d", f.LinesAdded, f.LinesRemoved)
+	case len(fileNotes(f)) > 0:
+		lines = strings.Join(fileNotes(f), " ")
+	}
+	return []string{string(f.Status), commandtext.Visible(f.Path), lines}
+}
+
+// pageReports is what the page of a pull request reads of the reports of the process: the report of a revision, which a report page builds in its own turn, and that turn,
+// with a build that needs it held. The page of a pull request holds the turn for the whole of its build, so that it and a report page are never built together.
+type pageReports interface {
+	reportSource
+	turn(ctx context.Context) (release func(), err error)
+	build(ctx context.Context, ref contract.ProposalReference) (revisionReport, error)
+}

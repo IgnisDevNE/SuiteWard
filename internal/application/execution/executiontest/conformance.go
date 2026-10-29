@@ -21,7 +21,7 @@ import (
 
 // Env is what the conformance suite needs: the stores under test, the command ledger that Store writes its entries in, the keys of
 // the committed outbox messages (the Receipt check messages and the acknowledgments), a way to end a pending message as failed at a
-// given time, and the stored approval receipt and unblock rows of a comment.
+// given time, and the stored approval receipt and unblock rows of a comment, and when a row was decided.
 type Env struct {
 	Store       execution.Store
 	Receipts    execution.ReceiptLedger
@@ -30,6 +30,8 @@ type Env struct {
 	FailMessage func(ctx context.Context, key string, finishedAt time.Time) error
 	Gate        func(ctx context.Context, repositoryID, commentID int64) (execution.ApprovalGate, bool, error)
 	Unblocks    func(ctx context.Context, repositoryID, commentID int64) ([]int64, error) // sorted job ids
+	// UnblockDecided is the decided_at of the unblock row of a comment and a job.
+	UnblockDecided func(ctx context.Context, repositoryID, commentID, jobID int64) (time.Time, bool, error)
 }
 
 // The numbers of the job lifecycle, written out so that the suite pins the contract and not the constants of the package.
@@ -269,6 +271,14 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		{"concurrent Publish of the Receipt check writes one message for one generation", rcConcurrent},
 		{"an invalid Receipt check is not recorded and a failing message rolls it back", rcInvalid},
 		{"an unblock is written with its ledger entry or not at all, and binds to the job", ubUnblock},
+		{"an unblock ends the open jobs it lifts for no-executor at its time, and the old lease is refused", ubEnds},
+		{"an unblock of a job that is no longer as observed ends nothing and writes nothing", ubChanged},
+		{"an unblock waits for a lease that holds a job, and a pending job is never both leased and ended", ubLeaseRace},
+		{"the unblock rows of a head are read with their times since the enrollment, and the job that a command ended is told by them", ubHeadUnblocks},
+		{"a job that the owner unblocked is not replaced, and the store returns it and writes nothing", rpHeld},
+		{"a replacement names a job it replaces, and refuses one it cannot", rpInvalid},
+		{"the unblock of a job that was replaced fails as changed and writes nothing", rpUnblockAfter},
+		{"an unblock and the replacement of the same job never both take effect", rpRace},
 		{"an approval receipt is written with its ledger entry or not at all", apApproval},
 		{"a canceled context writes nothing", jbCanceled},
 	}

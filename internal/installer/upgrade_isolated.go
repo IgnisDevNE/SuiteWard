@@ -35,7 +35,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	if err != nil {
 		return err
 	}
-	st, err := adoptUnitsDir(host.unitsDir, host.envPath, true)
+	st, err := adoptUnitsDir(host.d, host.unitsDir, host.envPath, true)
 	if err != nil {
 		return err
 	}
@@ -70,12 +70,13 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	// change whether the service has GitHub.
 	params := UnitParamsFrom(s, digest)
 	params.NoGitHub = st.adopted.NoGitHub
-	executor, err := readExecutorSetup(host.configDir)
+	executor, err := readExecutorSetup(env.Deps, host.configDir)
 	if err != nil {
 		return err
 	}
 	plan := upgradePlan{oldImage: st.adopted.Image, newImage: image, oldDB: st.adopted.DBImage, newDB: postgres}
 	if _, statErr := os.Stat(host.settingsPath); plan.current() && statErr == nil {
+		listInstallation(scr, env.Deps, host.settingsPath, "", s, "") // no settings are saved here, and an installation that was made before the list joins now
 		return upgradeCurrent(ctx, env, scr, host, executor, st.adopted.NoExecutor, image, s.HTTPPort)
 	}
 	// The key is settled before anything starts, a service that is down included: a key that is refused never leaves one started.
@@ -83,9 +84,10 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	if err != nil {
 		return err
 	}
-	status := func(ctx context.Context) ([]byte, error) {
+	var instanceID string // what /status shows, kept from the reads below: the service is replaced
+	status := noteInstance(&instanceID, func(ctx context.Context) ([]byte, error) {
 		return env.httpGet()(ctx, "http://127.0.0.1:"+strconv.Itoa(s.HTTPPort)+"/status")
-	}
+	})
 	start := func(ctx context.Context) error {
 		_, err := userSystemctl(d)(ctx, "start", "suiteward.service")
 		return err
@@ -129,6 +131,7 @@ func upgradeIsolated(ctx context.Context, saved Settings, r *Resolver, env Env) 
 	if err := SaveSettings(host.settingsPath, s); err != nil {
 		return withBackup(env.Deps, migratingError{err}, dir, host.unitsDir)
 	}
+	listInstallation(scr, env.Deps, host.settingsPath, "", s, instanceID)
 	upgraded(scr, image, dir, goBackIsolated(env.Deps, dir, host.unitsDir), env.Deps.suggest("doctor"))
 	sayOldEnvFile(out, host.envPath, st.oldEnv, false)
 	return showSummary(scr, func() []ui.KV {

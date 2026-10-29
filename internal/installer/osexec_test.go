@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -38,6 +39,19 @@ func TestMain(m *testing.M) {
 	case "fail":
 		fmt.Fprint(os.Stderr, "something went wrong")
 		os.Exit(3)
+	// The two stand-ins for runuser and the systemctl under it: the command starts a child that keeps its output open (as systemctl does when runuser
+	// is killed) and then waits to be killed.
+	case "orphan":
+		holdOutput()
+		time.Sleep(10 * time.Second) // killed by the test long before; it ends by itself if it is not
+		os.Exit(1)
+	case "leaves-child": // exits well and leaves a child that still holds its output
+		holdOutput()
+		fmt.Print("done")
+		os.Exit(0)
+	case "holdpipe": // ends by itself soon, so that a child that no test tracks is gone long before the package ends, and the tests give up before it ends
+		time.Sleep(6 * time.Second)
+		os.Exit(0)
 	case "record": // stdout: each argument after "--" on a line of its own, after "arg="; the exit code is SUITEWARD_TEST_EXIT
 		args := os.Args
 		for i, a := range args {
@@ -67,7 +81,22 @@ func TestMain(m *testing.M) {
 	}
 	// No test opens a window of its own: the window is for the real machine, where it would start a real terminal.
 	setupMachine = machine{goos: "linux", getenv: func(string) string { return "" }}
-	os.Exit(m.Run())
+	// An install writes the list of installations beside the default settings file, and a command that is given no flag reads the default one:
+	// no test may reach the configuration folder of whoever runs it. A test that needs a folder of its own calls useDefaultConfigDir.
+	configDir, err := os.MkdirTemp("", "suiteward-config-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "make the test configuration folder:", err)
+		os.Exit(1)
+	}
+	for _, key := range []string{"APPDATA", "XDG_CONFIG_HOME", "HOME"} {
+		if err := os.Setenv(key, configDir); err != nil {
+			fmt.Fprintln(os.Stderr, "point the test configuration folder:", err)
+			os.Exit(1)
+		}
+	}
+	code := m.Run()
+	_ = os.RemoveAll(configDir)
+	os.Exit(code)
 }
 
 func helperCommand(t *testing.T, mode string) (name string, args []string) {
@@ -162,4 +191,114 @@ func TestOSExecErrorCarriesStderrOnly(t *testing.T) {
 	if strings.Contains(err.Error(), "migration 21 failed") || strings.Contains(err.Error(), "log log") {
 		t.Fatalf("the error repeats the standard output: %v", err)
 	}
+}
+
+// giveUp is how long a test waits for OSExec after the event that should end it. It is shorter than the time a holdpipe child lives (6 seconds), so
+// that a call that is not bounded fails the test instead of ending when the child does.
+const giveUp = 4 * time.Second
+
+// A cancelled command whose child keeps the output pipe open (runuser killed, systemctl under it still running) must not hold OSExec: without a bound
+// on the wait for the pipes, cmd.Run waits for the child, and the step that cancelled it waits with it. The test cancels once the child is started and
+// its process id is known, so that the child is always the one the test ends.
+func TestOSExecEndsWhenTheContextIsCancelledAndAChildOfTheCommandKeepsItsOutputOpen(t *testing.T) {
+	old := execWaitDelay
+	execWaitDelay = 200 * time.Millisecond
+	t.Cleanup(func() { execWaitDelay = old })
+	name, args, pidFile := holdingHelper(t, "orphan")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := OSExec(ctx, name, args, nil)
+		done <- err
+	}()
+	for start := time.Now(); !childStarted(pidFile); time.Sleep(10 * time.Millisecond) {
+		if time.Since(start) > giveUp {
+			t.Fatal("the helper did not start its child")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a command that was cancelled reported success")
+		}
+	case <-time.After(giveUp):
+		t.Fatal("OSExec did not return after the context ended: a child of the command holds its output open and nothing bounds the wait")
+	}
+}
+
+// A command that exited with status 0 and left a child holding its output has succeeded: the bound on the wait must not turn that into a failure.
+func TestOSExecSucceedsWhenTheCommandExitedWellAndAChildKeepsItsOutputOpen(t *testing.T) {
+	old := execWaitDelay
+	execWaitDelay = 200 * time.Millisecond
+	t.Cleanup(func() { execWaitDelay = old })
+	name, args, _ := holdingHelper(t, "leaves-child")
+	type result struct {
+		out []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := OSExec(context.Background(), name, args, nil)
+		done <- result{out, err}
+	}()
+	select {
+	case got := <-done:
+		if got.err != nil || string(got.out) != "done" {
+			t.Errorf("a command that exited with status 0 must succeed with its output, got %q and %v", got.out, got.err)
+		}
+	case <-time.After(giveUp):
+		t.Fatal("OSExec did not return: a child of the command holds its output open and nothing bounds the wait")
+	}
+}
+
+// childStarted says that the helper left the process id of its child in the file.
+func childStarted(pidFile string) bool {
+	raw, err := os.ReadFile(filepath.Clean(pidFile))
+	if err != nil {
+		return false
+	}
+	_, err = strconv.Atoi(string(raw))
+	return err == nil
+}
+
+// holdOutput starts a child of the helper that holds the helper's stdout and stderr, as the systemctl under runuser does, and leaves its process id in
+// the file that SUITEWARD_TEST_PIDFILE names, for the test to end it.
+func holdOutput() {
+	child := commandContext(context.Background(), os.Args[0], "--")
+	child.Env = append(os.Environ(), "SUITEWARD_TEST_HELPER=holdpipe")
+	child.Stdout, child.Stderr = os.Stdout, os.Stderr
+	if err := child.Start(); err != nil {
+		fmt.Fprint(os.Stderr, err)
+		os.Exit(99)
+	}
+	if err := os.WriteFile(filepath.Clean(os.Getenv("SUITEWARD_TEST_PIDFILE")), []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil { //nolint:gosec // a test helper writes the file its test names
+		fmt.Fprint(os.Stderr, err)
+		os.Exit(99)
+	}
+}
+
+// holdingHelper is helperCommand for a helper that leaves a child holding its output. The test ends that child when it is over: a process of the test
+// binary that outlives the test keeps the binary from being deleted on Windows, which fails the whole run.
+func holdingHelper(t *testing.T, mode string) (name string, args []string, pidFile string) {
+	t.Helper()
+	pidFile = filepath.Join(t.TempDir(), "child.pid")
+	t.Setenv("SUITEWARD_TEST_PIDFILE", pidFile)
+	t.Cleanup(func() {
+		raw, err := os.ReadFile(filepath.Clean(pidFile))
+		if err != nil {
+			return // the helper never started its child
+		}
+		pid, err := strconv.Atoi(string(raw))
+		if err != nil {
+			return
+		}
+		if p, err := os.FindProcess(pid); err == nil {
+			_ = p.Kill()
+			_, _ = p.Wait()
+		}
+	})
+	name, args = helperCommand(t, mode)
+	return name, args, pidFile
 }

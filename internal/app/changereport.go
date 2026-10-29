@@ -55,17 +55,31 @@ type revisionReport struct {
 	Report report.Report
 }
 
-// revisionReport builds the report of the revision at ref: the manifest of the revision against the manifest of the canonical it expected,
-// and the bytes of the files that differ. It waits for its turn until ctx ends. A revision it cannot find, one without a base canonical (a
-// baseline) and one whose manifest was never stored are governance.ErrNotFound. A file that is not in the store is an error that wraps
-// fs.ErrNotExist, and a revision over the byte budget is errReportTooLarge.
-func (c *changeReports) revisionReport(ctx context.Context, ref contract.ProposalReference) (revisionReport, error) {
+// turn waits for the one turn of the process, until ctx ends, and returns what gives it back. The pages of a pull request, the report pages, the revision comments and the
+// check summaries all build one at a time: a build holds the bytes of the files that differ, and a page holds its rows.
+func (c *changeReports) turn(ctx context.Context) (release func(), err error) {
 	select {
 	case c.gate <- struct{}{}:
-		defer func() { <-c.gate }()
+		return func() { <-c.gate }, nil
 	case <-ctx.Done():
-		return revisionReport{}, ctx.Err()
+		return nil, ctx.Err()
 	}
+}
+
+// revisionReport builds the report of the revision at ref in its turn (see build).
+func (c *changeReports) revisionReport(ctx context.Context, ref contract.ProposalReference) (revisionReport, error) {
+	release, err := c.turn(ctx)
+	if err != nil {
+		return revisionReport{}, err
+	}
+	defer release()
+	return c.build(ctx, ref)
+}
+
+// build builds the report of the revision at ref: the manifest of the revision against the manifest of the canonical it expected, and the bytes of the files that differ. The
+// caller holds the turn. A revision it cannot find, one without a base canonical (a baseline) and one whose manifest was never stored are governance.ErrNotFound. A file that
+// is not in the store is an error that wraps fs.ErrNotExist, and a revision over the byte budget is errReportTooLarge.
+func (c *changeReports) build(ctx context.Context, ref contract.ProposalReference) (revisionReport, error) {
 	version, base, digest, err := c.bindingOf(ctx, ref)
 	if err != nil {
 		return revisionReport{}, err
@@ -223,13 +237,18 @@ func summarize(ctx context.Context, reports reportSource, logger *slog.Logger, w
 	return commandtext.ChangesOf(built.Report), true, nil
 }
 
+// reportHref is the path of the report of a revision of repo (owner/name) on the instance, which the page of a pull request links without the address of the instance.
+func reportHref(repo, reference string) string {
+	owner, name, _ := strings.Cut(repo, "/")
+	return "/reports/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/" + reference
+}
+
 // reportURL is the link to the report of a revision of repo (owner/name) on the instance at base, or "" without a base.
 func reportURL(base, repo, reference string) string {
 	if base == "" {
 		return ""
 	}
-	owner, name, _ := strings.Cut(repo, "/")
-	return base + "/reports/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/" + reference
+	return base + reportHref(repo, reference)
 }
 
 // storeManifest keeps the canonical encoding of m in the content store, under the digest of m. It is idempotent, like every Put.

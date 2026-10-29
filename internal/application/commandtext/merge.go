@@ -39,29 +39,29 @@ type blockedReason struct {
 }
 
 var blockedReasons = map[string]blockedReason{
-	"unapproved-change": {text: "This pull request changed the protected files, but SuiteWard never saw a contract change proposal for it, so no owner approval exists for what was merged."},
-	"invalid-source": {text: "The protected source or the declaration (`.suiteward.yml`) of the merge commit is invalid, for example an invalid declaration or " +
-		"a symlink that the protected scope reaches and whose target is not a regular file of the tree, so SuiteWard cannot read its protected files."},
-	"assessment-conflict":       {text: "SuiteWard already holds a different integrity assessment for this commit, so it cannot assess this merge again."},
-	"approval-missing":          {text: "The owner's approval of this exact revision was not current when the pull request was merged."},
+	"unapproved-change": {text: "This pull request changed the protected files, but SuiteWard never saw a proposal for the change, so the owner never approved what was merged."},
+	"invalid-source": {text: "SuiteWard cannot read the protected files of the merge commit. The `.suiteward.yml` file may be invalid, or a protected path may be " +
+		"a symbolic link whose target is not a regular file in the repository."},
+	"assessment-conflict":       {text: "SuiteWard already holds a different recorded check of this commit, so it cannot check this merge again."},
+	"approval-missing":          {text: "The owner's approval of this exact revision was not valid when the pull request was merged."},
 	"differs-from-approved":     {text: "The protected files at the merge commit differ from the exact revision the owner approved."},
-	"not-current":               {text: "The approved revision was no longer the current revision of this contract change when it was merged."},
-	"canonical-changed":         {text: "The canonical contract changed after the owner approved this revision, so the approval no longer applies to what was merged."},
-	"policy-changed":            {text: "The owner's policy changed after the approval, so the approval no longer applies to what was merged."},
-	"integrity-not-passed":      {text: "The integrity assessment of the merge commit did not pass."},
-	"integration-mismatch":      {text: "The integration of this merge does not match the approved change."},
+	"not-current":               {text: "The approved revision was no longer the latest revision of this change when it was merged."},
+	"canonical-changed":         {text: "The approved version of the contract changed after the owner approved this revision, so the approval no longer applies to what was merged."},
+	"policy-changed":            {text: "The approval rules changed after the owner approved, so the approval no longer applies to what was merged."},
+	"integrity-not-passed":      {text: "The check of the protected files at the merge commit did not pass."},
+	"integration-mismatch":      {text: "What was merged does not match the change the owner approved."},
 	"correction-context-reused": {text: "This restoration of an earlier version was already used for another correction, so it cannot be used again."},
-	"fork-unsupported":          {text: "Pull requests from forks are not supported yet, so SuiteWard never promotes a contract change merged from one."},
+	"fork-unsupported":          {text: "SuiteWard does not support pull requests from forks yet, so it never makes a new approved version from a merge that came from one."},
 	"shared-merge-commit": {text: "SuiteWard cannot tell which pull request the merge commit belongs to, because another merged pull request has the same merge commit. " +
 		"An outcome already recorded for the other pull request stands."},
-	"integration-unreadable": {text: "SuiteWard could not read the merge commit from GitHub within 30 minutes of seeing the pull request leave the open list, " +
+	"integration-unreadable": {text: "SuiteWard could not read the merge commit from GitHub within 30 minutes of seeing the pull request stop being open, " +
 		"or GitHub reported no merge commit for it."},
-	"integrity-failed": {text: "SuiteWard's stored canonical contract failed its integrity verification, so SuiteWard refuses to promote anything on top of it.",
-		next: "Next: the operator must restore the artifact store from a backup or re-bootstrap the repository. A pull request cannot fix this."},
+	"integrity-failed": {text: "The approved contract that SuiteWard stored failed its integrity check, so SuiteWard refuses to build a new version on top of it.",
+		next: "What to do: the person who runs SuiteWard must restore its artifact store from a backup, or set up the repository again. A pull request cannot fix this."},
 }
 
 // MergeComment renders the outcome comment of a merged pull request: for a promotion or a correction the new
-// version and the merge commit, for a blocked merge that the canonical stays in force, why, and the recovery. It
+// version and the merge commit, for a blocked merge that the approved version stays in force, why, and the recovery. It
 // never says that tests ran. The values come from storage, so one that does not fit is an impossible state and panics.
 func MergeComment(m Merge) string {
 	reason, err := validateMerge(m)
@@ -128,20 +128,20 @@ func mergeLead(m Merge, reason blockedReason) (lead, body string) {
 	version := "V" + strconv.Itoa(m.Version)
 	switch m.Kind {
 	case MergePromoted:
-		lead = "**SuiteWard promoted the canonical contract to " + version + "**"
-		body = "This merge integrated the contract change the owner approved, and SuiteWard promoted " + version + " from the merge commit."
+		lead = "**" + version + " is now the approved version of the contract**"
+		body = "This pull request was merged with the contract change the owner approved. SuiteWard made " + version + " the approved version, from the merge commit."
 		if m.Version == 1 { // only a bootstrap promotes V1
-			body = "This merge integrated the bootstrap baseline the owner approved, and SuiteWard promoted " + version + " from the merge commit. " +
-				"This is the first canonical version."
+			body = "This pull request was merged with the first contract that the owner approved. SuiteWard made " + version + " the approved version, from the merge commit. " +
+				"This is the first approved version."
 		}
 	case MergeCorrected:
-		lead = "**SuiteWard promoted the canonical contract to " + version + " as a correction**"
-		body = "This merge restored the protected files of an earlier version, and SuiteWard promoted " + version + " as a correction of V" + strconv.Itoa(m.Corrects) +
+		lead = "**" + version + " is now the approved version of the contract, as a correction**"
+		body = "This pull request was merged and it restored the protected files of an earlier version. SuiteWard made " + version + " the approved version, as a correction of V" + strconv.Itoa(m.Corrects) +
 			". The history is kept."
 	default:
-		lead = "**SuiteWard did not promote this merge: the canonical contract stays at " + version + "**"
+		lead = "**This merge is not a new approved version: the approved contract stays at " + version + "**"
 		if m.noCanonical() {
-			lead = "**SuiteWard did not promote this merge: SuiteWard has no canonical contract yet**"
+			lead = "**This merge is not a new approved version: SuiteWard has no approved contract yet**"
 		}
 		body = reason.text
 	}
@@ -151,10 +151,10 @@ func mergeLead(m Merge, reason blockedReason) (lead, body string) {
 // mergeRecovery is the paragraph that says how to recover from a blocked merge.
 func mergeRecovery(m Merge, reason blockedReason) string {
 	if m.noCanonical() {
-		return "To recover, the default branch now holds the merged files: the owner comments `/suiteward propose` on an open pull request to propose the default branch's contract. " +
-			"Approve that proposal to make it the first canonical version."
+		return "To recover: the default branch now holds the merged files, so the owner comments `/suiteward propose` on an open pull request to propose them as the first contract. " +
+			"Approving that proposal makes it the first approved version."
 	}
-	recovery := "open a new pull request that restores the protected files of V" + strconv.Itoa(m.Version) + ", or one that carries the integrated files for a new exact approval. There is no reset command."
+	recovery := "open a new pull request that restores the protected files of V" + strconv.Itoa(m.Version) + ", or one that carries the merged files for a new exact approval. There is no reset command."
 	if reason.next != "" {
 		return reason.next + " After that, to recover, " + recovery
 	}

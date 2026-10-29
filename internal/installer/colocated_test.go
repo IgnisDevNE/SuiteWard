@@ -60,7 +60,6 @@ func newHarness(t *testing.T, goos string) *harness {
 	h.f.fail("image inspect", errors.New("no such image")) // pulled unless a test says the image is here
 	if goos == "windows" {
 		h.f.fail("/Query /TN", errors.New("schtasks: the system cannot find the file specified")) // no task of the executor yet: a test that has one says so first
-		h.f.idleListing = true                                                                    // a first install lists once
 	}
 	h.f.on("info --format {{.Host.Security.Rootless}}", "true\n")
 	h.f.on("--format {{json .State}} suiteward-db", `{"Status":"running","Health":{"Status":"healthy"}}`)
@@ -74,7 +73,6 @@ func dockerHarness(t *testing.T, goos string) *harness {
 	h.f.fail("image inspect", errors.New("no such image"))
 	if goos == "windows" {
 		h.f.fail("/Query /TN", errors.New("schtasks: the system cannot find the file specified"))
-		h.f.idleListing = true // a first install lists once
 	}
 	h.f.on("version --format", dockerDesktopServer).on("info --format", `["name=seccomp,profile=builtin"]`)
 	h.f.on("--format {{json .State}} suiteward-db", `{"Status":"running","Health":{"Status":"healthy"}}`)
@@ -322,7 +320,7 @@ func TestInstallPodmanBringsTheStackUpInOrder(t *testing.T) {
 		"run --detach --replace --name suiteward-db ",
 		"--format {{json .State}} suiteward-db",
 		"exec -i suiteward-db psql", "exec -i suiteward-db psql",
-		"secret create --replace suiteward-database-url -",
+		"secret create suiteward-database-url -",
 		"run --rm --replace --name suiteward-migrate ",
 		"run --detach --replace --name suiteward --network",
 	)
@@ -359,6 +357,21 @@ func TestInstallPodmanBringsTheStackUpInOrder(t *testing.T) {
 	if !strings.Contains(h.out.String(), "GitHub is not set up yet") {
 		t.Errorf("the next steps do not say that setup needs GitHub:\n%s", h.out.String())
 	}
+}
+
+// Ubuntu 24.04 LTS packages Podman 4.9, which refuses `secret create --replace` for a secret that does not exist yet. A first install must
+// still finish there: the application URL, the one secret this install writes with a replace, is created without the flag.
+func TestInstallPodmanFinishesOnPodman49WhichRefusesReplaceForANewSecret(t *testing.T) {
+	h := newHarness(t, "linux")
+	h.f.fail("secret create --replace", errPodman49Replace)
+	if err := h.podman(); err != nil {
+		t.Fatalf("a first install on Podman 4.9: %v\n%s", err, h.out.String())
+	}
+	h.assertOrder("exec -i suiteward-db psql", "secret create suiteward-database-url -", "run --rm --replace --name suiteward-migrate ", "run --detach --replace --name suiteward --network")
+	if app := h.secretWrites(SecretDatabaseURL); len(app) != 1 || !strings.HasPrefix(app[0], "postgres://suiteward_app:") {
+		t.Errorf("the application URL was not written once: %q", app)
+	}
+	h.assertNoLeak()
 }
 
 func TestInstallTheOwnerURLUsesTheOwnerPasswordAndTheAppURLTheRolePassword(t *testing.T) {

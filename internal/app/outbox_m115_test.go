@@ -43,7 +43,7 @@ func TestTheRevisionCommentsOfTheM115BinaryStillRender(t *testing.T) {
 	w.mustDeliver(governance.OutboxMessage{Key: cmtRevisionKey, Kind: githubCommentKind, Payload: []byte(row)})
 
 	posts := w.writer.posts()
-	if len(posts) != 1 || !strings.Contains(posts[0].body, "**This revision reduces the protected scope.**") || strings.Contains(posts[0].body, "execution policy") {
+	if len(posts) != 1 || !strings.Contains(posts[0].body, "**This revision reduces the protected scope.**") || strings.Contains(posts[0].body, "test requirements") {
 		t.Fatalf("posted %+v, want the one comment that says the revision reduces the protected scope", posts)
 	}
 }

@@ -75,10 +75,12 @@ type manifestFile struct {
 }
 
 // lease grants at most one job. The tree entries of each commit are read while the store holds the job (the prepare hook), so that a read
-// that fails or a job that is too large never costs an attempt. It is the executor being seen, whatever it answers.
+// that fails or a job that is too large never costs an attempt. It is the executor being seen, whatever it answers: when the request arrives and
+// again when it is answered, since the tree reads of a job make a request last up to 20 s (docs/contracts/runtime.md, "The executor is seen, not asked").
 func (h *executorAPI) lease(w http.ResponseWriter, r *http.Request) {
 	now := h.now()
 	h.liveness.Saw(now)
+	defer func() { h.liveness.Saw(h.now()) }()
 	if !h.noLeaseBody(w, r) {
 		h.fail(w, http.StatusBadRequest, "invalid")
 		return

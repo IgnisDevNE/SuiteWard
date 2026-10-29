@@ -150,6 +150,7 @@ func utf16le(t *testing.T, raw []byte) string {
 
 func TestInstallStartsTheExecutorAsAScheduledTaskAtLogonOnWindows(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	if err := h.podman("--http-port", "18081", "--mcp-port", "18091"); err != nil {
 		t.Fatal(err)
 	}
@@ -214,6 +215,7 @@ func TestTheScheduledTaskOfTheExecutorRunsItsScriptThroughAHeadlessConsole(t *te
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := machineHarnessOn(t, "windows")
+			h.f.idleListing = true                             // a first install lists the programs that run once
 			h.dir = filepath.Join(h.dir, "Ana & Pedro (work)") // a folder name that cmd reads as an operator and a group
 			if err := os.MkdirAll(h.dir, 0o700); err != nil {
 				t.Fatal(err)
@@ -241,13 +243,21 @@ func TestTheScheduledTaskOfTheExecutorRunsItsScriptThroughAHeadlessConsole(t *te
 }
 
 // The wrapper is what brings the executor back (owner decision 18): Task Scheduler's RestartOnFailure does not restart an action that exited, so a
-// closed console, a crash or an exit starts the program again after about a minute. The pause is ping, which reads no console (timeout does).
+// closed console, a crash or an exit starts the program again after about 5 seconds (owner decision 4 of M2.1b: a head reads "test runner not
+// responding" after about 30 s, so a routine restart must not trip it). The pause is ping, which reads no console (timeout does): 6 echo requests
+// are 5 seconds apart. What a person reads in the script and in its log says "test runner".
 func TestTheWrapperOfTheWindowsTaskStartsTheExecutorAgainAfterAPause(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(h.readHome("executor/run.cmd")), "\r\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "rem ") && strings.Contains(strings.ToLower(line), "executor") {
+			t.Errorf("the comment of the wrapper says executor, not test runner: %s", line)
+		}
+	}
 	start := `"` + h.executorBinary() + `" execute >> "` + filepath.Join(h.executorDir(), "executor.log") + `" 2>&1`
 	at := func(from int, want string) int {
 		t.Helper()
@@ -261,7 +271,8 @@ func TestTheWrapperOfTheWindowsTaskStartsTheExecutorAgainAfterAPause(t *testing.
 	}
 	label := at(0, ":again")
 	run := at(label, start)
-	pause := at(run, `"%SystemRoot%\System32\ping.exe" -n 61 127.0.0.1 >nul`)
+	said := at(run, " The test runner stopped. It starts again in 5 seconds.") // the log is read by a person, through doctor's pointer
+	pause := at(said, `"%SystemRoot%\System32\ping.exe" -n 6 127.0.0.1 >nul`)
 	at(pause, "goto again")
 	if strings.Contains(strings.Join(lines, "\n"), "timeout") {
 		t.Error("the wrapper pauses with timeout, which reads the console")
@@ -270,6 +281,7 @@ func TestTheWrapperOfTheWindowsTaskStartsTheExecutorAgainAfterAPause(t *testing.
 
 func TestTheInstallSaysThatTheExecutorOfWindowsHasNoWindow(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -279,6 +291,9 @@ func TestTheInstallSaysThatTheExecutorOfWindowsHasNoWindow(t *testing.T) {
 	}
 	if strings.Contains(out, "console window") || strings.Contains(out, "Closing the window") {
 		t.Errorf("the output still says that a window shows and that closing it stops the executor:\n%s", out)
+	}
+	if !strings.Contains(out, "starts again after about 5 seconds") || strings.Contains(out, "after a minute") {
+		t.Errorf("the output must say that the test runner starts again after about 5 seconds, as the script makes it:\n%s", out)
 	}
 }
 
@@ -326,6 +341,7 @@ func TestInstallReplacesTheExecutorsProgramAndRestartsIt(t *testing.T) {
 
 func TestInstallStopsAScheduledTaskBeforeItReplacesTheProgramItHolds(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -350,6 +366,7 @@ func TestInstallStopsAScheduledTaskBeforeItReplacesTheProgramItHolds(t *testing.
 
 func TestInstallOnlyWarnsWhenTheExecutorCannotBeStarted(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	h.f.fail("/Create /TN", errors.New("schtasks: Access is denied"))
 	if err := h.podman(); err != nil {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
@@ -365,6 +382,7 @@ func TestInstallOnlyWarnsWhenTheExecutorCannotBeStarted(t *testing.T) {
 
 func TestTheExecutorOfADockerStackUsesTheEngineTheInstallerChose(t *testing.T) {
 	h := dockerHarness(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	h.f.env["ProgramFiles"] = `C:\Program Files`
 	if err := h.docker("--connection", "desktop-linux"); err != nil {
 		t.Fatal(err)
@@ -409,6 +427,7 @@ func TestTheExecutorOfEveryOperatingSystemHoldsNoCredentialOfTheService(t *testi
 	for _, goos := range []string{"linux", "darwin", "windows"} {
 		t.Run(goos, func(t *testing.T) {
 			h := machineHarnessOn(t, goos)
+			h.f.idleListing = goos == "windows" // a first install on Windows lists the programs that run once
 			if goos == "darwin" {
 				h.f.on("=-u", "501\n")
 			}
@@ -725,11 +744,38 @@ func TestTheInstallRefusesAPercentSignInTheFolderOfTheWindowsExecutor(t *testing
 	}
 }
 
+// The refusal is for setting up a new test runner. One that an earlier build made in such a folder is still the person's to remove: the uninstall
+// stops it and takes it out of Windows as it does any other, and does not say that the folder is the problem.
+func TestTheUninstallRemovesAnExecutorWhoseFolderHasAPercentSign(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	h.dir = filepath.Join(h.dir, "50%off")
+	if err := os.MkdirAll(h.executorDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	podmanStackExists(h)
+	h.writeFiles()
+	h.first("/Query /TN SuiteWard Executor", "") // the task is registered, and this instance made its two files
+	writeFile(t, filepath.Join(h.executorDir(), executorWrapperName), "the wrapper")
+	writeFile(t, filepath.Join(h.executorDir(), "task.xml"), "the task")
+	h.f.on("Win32_Process", listingOf(nil))
+	if err := h.uninstall("--runtime", "podman", "--connection", "pm", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	out := h.out.String()
+	if strings.Contains(out, "was not removed") || strings.Contains(out, "percent sign") {
+		t.Errorf("the uninstall did not remove the test runner, or blamed the folder:\n%s", out)
+	}
+	if len(h.f.find("/Delete /TN SuiteWard Executor")) == 0 || pathExists(h.executorDir()) {
+		t.Errorf("the task was not deleted or the folder is still there: %v\n%s", h.f.lines(), out)
+	}
+}
+
 // cmd reads the wrapper in the code page of the console, which is not UTF-8: a profile with a letter outside ASCII (C:\Users\João), which the installer
 // writes into the script as UTF-8, would be misread in the `set` lines, the program's path and the log redirect, and the loop would retry
 // silently. The first thing the wrapper does is switch the console to UTF-8.
 func TestTheWrapperOfTheWindowsTaskSwitchesTheConsoleToUTF8First(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	h.dir = filepath.Join(h.dir, "João")
 	if err := os.MkdirAll(h.dir, 0o700); err != nil {
 		t.Fatal(err)

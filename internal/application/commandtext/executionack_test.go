@@ -28,11 +28,16 @@ func bare(outcome commandtext.Outcome) commandtext.Ack {
 const (
 	codeUsed     = "The code was used and nothing was approved."
 	nextCode     = "The next attempt needs the next code"
-	countsLine   = "Receipt of this head: 0 DETECTS, 2 INERT, 1 NEW API, 1 FAILS, 0 MISSING, 0 FLAKY, 3 SKIPPED. Excluded tests: 4. Marker lines seen: 5."
-	forkText     = "this pull request comes from a fork, and pull requests from forks are not supported yet. Nothing changed."
+	countsLine   = "Tests this change adds or edits: 7.\n- Fail before the change and pass now, so they show the change works: 0\n- Pass before and after, so they show nothing: 2\n- Use code that the old code lacks, so they could not run before the change: 1\n- Fail with this change: 1\n- Give no result: 0\n- Give different results when run again: 0\n- Skipped: 3"
+	forkText     = "this pull request comes from a fork, and SuiteWard does not support pull requests from forks yet. Nothing changed."
 	notOpenText  = "this pull request is no longer open. Nothing changed."
 	codeWasUsed  = "The code was used"
-	unblockLifts = "The checks will state that the owner unblocked this head and that the tests did not run."
+	unblockLifts = "The checks will say that the owner unblocked this commit and that its tests did not run."
+	// unblockStays is what an unblock leaves alone: tests that ran. It does not say that a run that is pending stays as it is, since an unblock ends a
+	// pending run that waits for a test runner that does not respond.
+	unblockStays = "The unblock changes no result: tests that have finished, whether they pass or fail, stay as they are."
+	// notLifted is what an unblock does not lift, in the refusal for want of anything to lift.
+	notLifted = "An unblock applies only to tests that could not run, or that wait for a test runner that is not responding. It does nothing for tests that have finished, whether they pass or fail, or that wait for GitHub or for a test runner that is responding."
 )
 
 func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
@@ -45,43 +50,43 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"receipt pending",
 			refused(execution.ReasonReceiptPending, execution.ModeNone),
-			[]string{"Approval of P4-R2 by @octo-owner was refused by the receipt gate: the receipt of this head is not complete yet. " + codeUsed, "`SuiteWard / Receipt`", nextCode},
+			[]string{"Your approval of P4-R2 by @octo-owner was refused: the receipt of this commit has not finished yet (the receipt is the run of the tests that this change adds or edits). " + codeUsed, "`SuiteWard / Receipt`", nextCode},
 			[]string{"unblock", "mode", "eligible"},
 		},
 		{
 			"receipt unavailable",
 			refused(execution.ReasonReceiptUnavailable, execution.ModeNone),
-			[]string{"Approval of P4-R2 by @octo-owner was refused by the receipt gate: the receipt of this head is unavailable. " + codeUsed, "```\n/suiteward unblock <code>\n```", "Then comment the approve again, with the next code.", "lifts only a run that is unavailable", nextCode},
+			[]string{"Your approval of P4-R2 by @octo-owner was refused: the tests of the receipt could not run on this commit. " + codeUsed, "To run the tests again, push a new commit. To approve this commit without a receipt instead, comment:", "```\n/suiteward unblock <code>\n```", "Then comment the approve again, with the next code.", "An unblock applies only to tests that could not run, or that wait for a test runner that is not responding.", nextCode},
 			[]string{"mode", "eligible"},
 		},
 		{
 			"mode required",
 			refused(execution.ReasonModeRequired, execution.ModeNone),
-			[]string{"was refused by the receipt gate: this repository requires a mode with the approve, and the comment named none. " + codeUsed, "```\n/suiteward approve P4-R2 <fix|feature|refactor> <code>\n```", "`<fix|feature|refactor>`", nextCode},
-			[]string{"unblock", "DETECTS"},
+			[]string{"was refused: this repository requires a mode with the approve, and your comment named none. " + codeUsed, "To approve, say what kind of change this is (its mode) and comment:", "```\n/suiteward approve P4-R2 <fix|feature|refactor> <code>\n```", "`<fix|feature|refactor>`", nextCode},
+			[]string{"unblock", "DETECTS", "receipt gate"},
 		},
 		{
 			"fix not met",
 			summaryNotMet(execution.ModeFix),
-			[]string{"was refused by the receipt gate: the receipt of this head does not meet the `fix` mode. " + codeUsed, "needs at least one test that detects the change (DETECTS) and no test that FAILS, is MISSING or is FLAKY", countsLine, nextCode},
+			[]string{"was refused: the receipt of this commit does not meet the `fix` mode. " + codeUsed, "needs at least one test that fails without the change and passes with it, and no test that fails with the change, gives no result or gives different results when run again", countsLine, "Lines to look at: 5. They are listed on the pull request page.", "Tests that SuiteWard cannot run, so the receipt does not cover them: 4.", nextCode},
 			[]string{"unblock", "<fix|feature|refactor>"},
 		},
 		{
 			"feature not met",
 			summaryNotMet(execution.ModeFeature),
-			[]string{"does not meet the `feature` mode", "needs at least one test that detects the change or covers a new API (DETECTS or NEW API) and no test that FAILS, is MISSING or is FLAKY", countsLine},
+			[]string{"does not meet the `feature` mode", "needs at least one test that passes with the change and either fails without it or needs new code, and no test that fails with the change, gives no result or gives different results when run again", countsLine},
 			[]string{"`fix`"},
 		},
 		{
 			"refactor not met",
 			summaryNotMet(execution.ModeRefactor),
-			[]string{"does not meet the `refactor` mode", "needs every evaluated test to be INERT", countsLine},
+			[]string{"does not meet the `refactor` mode", "needs every test of the receipt to pass with the change, and to pass or skip itself on the code before it", countsLine},
 			[]string{"`fix`", "`feature`"},
 		},
 		{
 			"mode set",
 			commandtext.Ack{Outcome: commandtext.ModeSet, Source: source, Owner: owner, Mode: execution.ModeFeature},
-			[]string{"Preview mode recorded for this pull request by @octo-owner: `feature`.", "The receipt page shows it.", "no check and no approval reads it", "travels in the approve command"},
+			[]string{"Preview mode recorded for this pull request by @octo-owner: `feature`.", "The pull request page shows it", "no check and no approval uses it", "The mode that counts is the one you write in the approve command."},
 			[]string{"eligible", "/suiteward approve", "<code>"},
 		},
 		{
@@ -99,19 +104,19 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"unblocked, canonical run",
 			commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: commandtext.Plans{Canonical: true}},
-			[]string{"Unblock recorded by @octo-owner for the current head of this pull request. SuiteWard lifted what was unavailable on it: its canonical run.", unblockLifts, "stays as it is", "A new push is a new head and needs a new unblock if its run is unavailable too."},
+			[]string{"Unblock recorded by @octo-owner for the current commit of this pull request. Its checks no longer wait for the approved tests.", unblockLifts, unblockStays, "A new push is a new commit. If its tests cannot run either, it needs a new unblock."},
 			[]string{"receipt", "eligible"},
 		},
 		{
 			"unblocked, receipt",
 			commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: commandtext.Plans{Receipt: true}},
-			[]string{"SuiteWard lifted what was unavailable on it: its receipt.", unblockLifts, "A new push is a new head"},
+			[]string{"Its checks no longer wait for the receipt.", unblockLifts, unblockStays, "A new push is a new commit"},
 			[]string{"canonical"},
 		},
 		{
 			"unblocked, both",
 			commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: commandtext.Plans{Canonical: true, Receipt: true}},
-			[]string{"SuiteWard lifted what was unavailable on it: its canonical run and its receipt.", unblockLifts},
+			[]string{"Its checks no longer wait for the approved tests and the receipt.", unblockLifts, unblockStays},
 			nil,
 		},
 		{
@@ -129,7 +134,7 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"unblock refused where nothing is unavailable",
 			commandtext.Ack{Outcome: commandtext.UnblockRefused, Source: source, Owner: owner, Refusal: commandtext.NotUnavailable},
-			[]string{"`/suiteward unblock` was not processed: no run of this head is unavailable, so there is nothing to unblock. Nothing changed.", "a pending, failing or complete run is never lifted", codeWasUsed, "next code"},
+			[]string{"`/suiteward unblock` was not processed: no test of this commit is unable to run or waiting for a test runner that is not responding, so there is nothing to unblock. Nothing changed.", notLifted, codeWasUsed, "next code"},
 			nil,
 		},
 	}
@@ -197,9 +202,16 @@ func TestAcknowledgeAnUnmetModeStatesEveryCount(t *testing.T) {
 	a.Counts = execution.ReceiptCounts{Detects: 12, Inert: 34, NewAPI: 5, Fails: 6, Missing: 7, Flaky: 8, Skipped: 9, Excluded: 10}
 	a.Markers = 1
 	body := render(t, func() string { return commandtext.Acknowledge(a) })
-	want := "Receipt of this head: 12 DETECTS, 34 INERT, 5 NEW API, 6 FAILS, 7 MISSING, 8 FLAKY, 9 SKIPPED. Excluded tests: 10. Marker lines seen: 1."
-	if !strings.Contains(body, want) {
-		t.Errorf("body lacks %q:\n%s", want, body)
+	for _, want := range []string{
+		"Tests this change adds or edits: 81.\n- Fail before the change and pass now, so they show the change works: 12\n- Pass before and after, so they show nothing: 34\n" +
+			"- Use code that the old code lacks, so they could not run before the change: 5\n- Fail with this change: 6\n- Give no result: 7\n" +
+			"- Give different results when run again: 8\n- Skipped: 9",
+		"Lines to look at: 1. They are listed on the pull request page.",
+		"Tests that SuiteWard cannot run, so the receipt does not cover them: 10.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
 	}
 }
 
@@ -272,7 +284,7 @@ func TestAcknowledgePanicsOnAnExecutionFieldThatDoesNotFit(t *testing.T) {
 // A changed test file that go cannot parse blocks every mode, so the acknowledgment of an unmet mode says how many there are when there are some, and nothing of the
 // subject when there are none.
 func TestAcknowledgeAnUnmetModeStatesTheChangedTestFilesThatDoNotParseOnlyWhenThereAreSome(t *testing.T) {
-	const unparsed = "Changed test files that do not parse: 3."
+	const unparsed = "Changed test files that cannot be read: 3."
 	a := refused(execution.ReasonModeNotMet, execution.ModeFix)
 	a.Counts = execution.ReceiptCounts{Detects: 1, Unparsed: 3}
 	body := render(t, func() string { return commandtext.Acknowledge(a) })
@@ -282,7 +294,78 @@ func TestAcknowledgeAnUnmetModeStatesTheChangedTestFilesThatDoNotParseOnlyWhenTh
 
 	a.Counts.Unparsed = 0
 	body = render(t, func() string { return commandtext.Acknowledge(a) })
-	if strings.Contains(body, "do not parse") {
-		t.Errorf("body speaks of files that do not parse though there are none:\n%s", body)
+	if strings.Contains(body, "cannot be read") {
+		t.Errorf("body speaks of files that cannot be read though there are none:\n%s", body)
+	}
+}
+
+const (
+	stoppedWaiting = "SuiteWard stopped waiting for the test runner, which was not responding."
+	runnerResponds = "The test runner is responding, so the tests of this commit will run. Nothing was unblocked."
+)
+
+// An unblock that ended an open job says that SuiteWard stopped waiting for the test runner, which was not responding; one that only lifted what was unavailable says
+// nothing of it.
+func TestAcknowledgeAnUnblockThatEndedAJobSaysThatSuiteWardStoppedWaiting(t *testing.T) {
+	both := commandtext.Plans{Canonical: true, Receipt: true}
+	for name, tc := range map[string]struct {
+		ack  commandtext.Ack
+		want bool
+	}{
+		"the canonical run ended": {commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: both, Ended: commandtext.Plans{Canonical: true}}, true},
+		"the receipt ended":       {commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: both, Ended: commandtext.Plans{Receipt: true}}, true},
+		"both ended":              {commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: both, Ended: both}, true},
+		"none ended":              {commandtext.Ack{Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: both}, false},
+	} {
+		if err := commandtext.ValidateAck(tc.ack); err != nil {
+			t.Errorf("%s: ValidateAck refuses it: %v", name, err)
+		}
+		body := render(t, func() string { return commandtext.Acknowledge(tc.ack) })
+		if has := strings.Contains(body, stoppedWaiting); has != tc.want {
+			t.Errorf("%s: the body says that SuiteWard stopped waiting = %v, want %v:\n%s", name, has, tc.want, body)
+		}
+	}
+}
+
+func TestAcknowledgeAnUnblockRefusedBecauseTheRunnerRespondsSaysThatTheTestsWillRunAndThatTheCodeWasUsed(t *testing.T) {
+	ack := commandtext.Ack{Outcome: commandtext.UnblockRefused, Source: source, Owner: owner, Refusal: commandtext.RunnerResponding}
+	if err := commandtext.ValidateAck(ack); err != nil {
+		t.Fatalf("ValidateAck refuses it: %v", err)
+	}
+	body := render(t, func() string { return commandtext.Acknowledge(ack) })
+	checkWantedText(t, body, []string{runnerResponds, "The code was used", "next code"}, []string{"eligible", "nothing to unblock"})
+	checkBody(t, body)
+	checkBodyInert(t, body)
+}
+
+func TestValidateAckRefusesEndedPlansThatDoNotFit(t *testing.T) {
+	both := commandtext.Plans{Canonical: true, Receipt: true}
+	for name, ack := range map[string]commandtext.Ack{
+		"an ended plan that was not lifted":  {Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: commandtext.Plans{Canonical: true}, Ended: commandtext.Plans{Receipt: true}},
+		"ended plans on a refusal":           {Outcome: commandtext.UnblockRefused, Source: source, Owner: owner, Refusal: commandtext.RunnerResponding, Ended: both},
+		"ended plans on a mode that was set": {Outcome: commandtext.ModeSet, Source: source, Owner: owner, Mode: execution.ModeFix, Ended: both},
+		"ended plans on a receipt refusal":   {Outcome: commandtext.ReceiptRefused, Source: source, Owner: owner, Proposal: 4, Revision: 2, Gate: execution.ReasonReceiptPending, Ended: both},
+	} {
+		if err := commandtext.ValidateAck(ack); err == nil {
+			t.Errorf("%s: ValidateAck accepts it", name)
+		}
+	}
+}
+
+// No text of an unblock says what the early unblock made false: that only an unavailable run is lifted, or that a pending run is never lifted or stays as it is.
+func TestTheTextsOfAnUnblockDoNotDenyThatItEndsARunThatWaitsForATestRunner(t *testing.T) {
+	both := commandtext.Plans{Canonical: true, Receipt: true}
+	for name, ack := range map[string]commandtext.Ack{
+		"unblocked, ended":             {Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: both, Ended: both},
+		"unblocked, nothing ended":     {Outcome: commandtext.Unblocked, Source: source, Owner: owner, Plans: both},
+		"nothing to lift":              {Outcome: commandtext.UnblockRefused, Source: source, Owner: owner, Refusal: commandtext.NotUnavailable},
+		"receipt refused, unavailable": refused(execution.ReasonReceiptUnavailable, execution.ModeNone),
+	} {
+		body := render(t, func() string { return commandtext.Acknowledge(ack) })
+		for _, stale := range []string{"lifted what was unavailable", "lifts only", "never lifted", "pending, failing or complete", "that is pending, failing"} {
+			if strings.Contains(body, stale) {
+				t.Errorf("%s: the body says %q, which is false since an unblock ends a run that waits for a test runner that does not respond:\n%s", name, stale, body)
+			}
+		}
 	}
 }

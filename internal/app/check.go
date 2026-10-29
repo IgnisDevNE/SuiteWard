@@ -56,6 +56,9 @@ type checkPayload struct {
 	Unblocked bool `json:"unblocked,omitempty"`
 	// ApproveMode marks an approval-missing check whose approve names a mode, which a required receipt needs (docs/contracts/runtime.md, "The canonical gate", "The approve command of an approval-missing check").
 	ApproveMode bool `json:"approveMode,omitempty"`
+	// Weakened is the number of approved tests that the change edits and that fail, are missing or are flaky in their approved version, which an approval-missing check states in place of
+	// the generic sentence once every wanted run is final (docs/contracts/runtime.md, "The weakened signal"). It needs execution, and is omitted when 0 or unknown.
+	Weakened int `json:"weakened,omitempty"`
 }
 
 // checkExecution are the counts of a complete canonical run: the tests that ran (every declared test but the excluded ones) and how many of them passed, were
@@ -103,7 +106,7 @@ func (p checkPayload) check(key string) (commandtext.Check, error) {
 	case slices.ContainsFunc(p.Paths, func(path string) bool { return len(path) > maxSummaryText }):
 		return commandtext.Check{}, keyError(githubCheckKind, key, "a path is too long")
 	}
-	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal, Unblocked: p.Unblocked, ApproveMode: p.ApproveMode}
+	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal, Unblocked: p.Unblocked, ApproveMode: p.ApproveMode, Weakened: p.Weakened}
 	if p.Execution != nil {
 		counts := commandtext.CheckExecution(*p.Execution)
 		c.Execution = &counts
@@ -146,14 +149,14 @@ func newCheckMessage(repo string, r checks.Result, tier, version string, generat
 // newCheckMessageWithPaths is newCheckMessage for a runner-uncovered result: paths are its runner files and total how many there are. The
 // payload keeps at most 20, each cut to maxSummaryText bytes.
 func newCheckMessageWithPaths(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int) (governance.OutboxMessage, error) {
-	return newCheckMessageOf(repo, r, tier, version, generation, paths, total, nil, false)
+	return newCheckMessageOf(repo, r, tier, version, generation, paths, total, nil, 0, false)
 }
 
-// newCheckMessageOf is newCheckMessageWithPaths for a result that execution adds to: counts are those of a complete canonical run, nil for none, and approveMode says that the
-// approve of an approval that is missing names a mode.
-func newCheckMessageOf(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int, counts *checkExecution, approveMode bool) (governance.OutboxMessage, error) {
+// newCheckMessageOf is newCheckMessageWithPaths for a result that execution adds to: counts are those of a complete canonical run, nil for none, weakened is the count of weakened tests
+// that an approval that is missing states (0 for none or unknown), and approveMode says that its approve names a mode.
+func newCheckMessageOf(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int, counts *checkExecution, weakened int, approveMode bool) (governance.OutboxMessage, error) {
 	p := checkPayload{commentTarget: commentTarget{RepositoryID: r.RepositoryID, Repo: repo, Pull: r.PullNumber}, HeadSHA: r.HeadSHA, Generation: generation,
-		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version, PathsTotal: total, Execution: counts, Unblocked: r.Unblocked, ApproveMode: approveMode}
+		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version, PathsTotal: total, Execution: counts, Unblocked: r.Unblocked, ApproveMode: approveMode, Weakened: weakened}
 	if len(paths) > 0 {
 		p.Paths = boundedText(paths)
 	}

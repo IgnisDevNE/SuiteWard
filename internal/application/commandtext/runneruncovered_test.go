@@ -33,7 +33,7 @@ func TestRunnerUncoveredCommentListsTheFilesAndGivesBothDeclarationsAndTheEditLi
 	for _, w := range []string{
 		"```\njest.config.js\npkg/conftest.py\n```", "can change how the protected tests run", "`in_progress`",
 		"Protect the files", "```\n" + string(n.Protect) + "```", "Ignore the files", "```\n" + string(n.Ignore) + "```",
-		"reduction", "approves", "Commit suggestion", "not an approval",
+		"stops protecting", "approves", "Commit suggestion", "not an approval",
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
@@ -158,7 +158,7 @@ func TestRunnerChoiceBodyAddsTheItemsToAnExistingList(t *testing.T) {
 		}
 	}
 	ignore := choiceBody(t, commandtext.IgnoreChoice, `  - "gen/"`, "  ", []string{"jest.config.js"}, "")
-	for _, w := range []string{"ignoring the runner files", "`exclude` list", "reduces the protected scope", "needs the owner's approval"} {
+	for _, w := range []string{"ignoring the runner files", "`exclude` list", "stops protecting those files", "needs the owner's approval"} {
 		if !strings.Contains(ignore, w) {
 			t.Errorf("ignore body lacks %q:\n%s", w, ignore)
 		}

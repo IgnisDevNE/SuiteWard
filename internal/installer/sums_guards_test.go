@@ -47,6 +47,7 @@ func TestPrepareHostReadsSumsWithWindowsLineEndings(t *testing.T) {
 
 func TestInstallOnWindowsPinsTheExecutorToTheExeLineOfTheSums(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	sums := writeSums(t, h, "suiteward_v0.4.0_windows_amd64.exe")
 	if err := h.podman("--sha256sums", sums); err != nil {
 		t.Fatal(err)

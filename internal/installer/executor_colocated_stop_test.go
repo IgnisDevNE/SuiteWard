@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -157,6 +158,7 @@ type reinstalled struct {
 func reinstallOnWindows(t *testing.T, procs func(wrapper, binary string) []osProc, tune func(*processTable)) reinstalled {
 	t.Helper()
 	first := machineHarnessOn(t, "windows")
+	first.f.idleListing = true // a first install lists the programs that run once
 	if err := first.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +214,7 @@ func TestInstallEndsTheWholeTreeOfTheExecutorBeforeItReplacesTheProgramOnWindows
 	}
 }
 
-// The wrapper waits a minute between two runs: a stop in that pause finds no program, and a wrapper that is left starts the old program with the old
+// The wrapper pauses between two runs: a stop in that pause finds no program, and a wrapper that is left starts the old program with the old
 // environment again, next to the new one.
 func TestInstallEndsTheWrapperThatWaitsBetweenTwoRunsOfTheExecutor(t *testing.T) {
 	r := reinstallOnWindows(t, func(wrapper, binary string) []osProc { return treeOf(100, wrapper, binary)[:2] }, nil)
@@ -264,6 +266,7 @@ func TestInstallDoesNotReplaceTheExecutorWhenTheProcessesCannotBeListedOnWindows
 // executor that the installer could never list again could never be updated or removed by it.
 func TestAFirstInstallOnWindowsEndsNothingAndListsTheProcessesOnceBeforeItCreatesTheTask(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -288,6 +291,7 @@ func TestAFirstInstallOnWindowsSetsUpNoExecutorWhenTheProcessesCannotBeListed(t 
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := machineHarnessOn(t, "windows")
+			h.f.idleListing = true // a first install lists the programs that run once
 			table := &processTable{stubborn: map[int]bool{}}
 			tune(table)
 			env := h.newEnv()
@@ -296,10 +300,16 @@ func TestAFirstInstallOnWindowsSetsUpNoExecutorWhenTheProcessesCannotBeListed(t 
 			if err := Install(context.Background(), args, env); err != nil {
 				t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
 			}
-			const want = "SuiteWard could not list the programs running on this computer (PowerShell may be restricted here). Without that list it could never stop or update the test runner, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server. Detail: "
+			// The cause (what the listing reports) comes first, once; then why the install stopped and who can help. The listing may already say that a
+			// policy stopped PowerShell, and the note does not say that a second time.
+			const cause = "could not list the programs that run on this computer: "
+			const then = ". SuiteWard could never stop or update the test runner without that list, so it did not install it. No test runner files were written. If your organization restricts PowerShell, ask your administrator, or install SuiteWard on a separate server"
 			out := h.out.String()
-			if !strings.Contains(out, want) {
-				t.Errorf("the output lacks %q:\n%s", want, out)
+			if strings.Count(out, cause) != 1 || !strings.Contains(out, then) || strings.Contains(out, "programs running on this computer") || strings.Contains(out, "Detail:") {
+				t.Errorf("the output must say once that the programs could not be listed, then %q:\n%s", then, out)
+			}
+			if n := len(restrictedPowerShell.FindAllString(out, -1)); n > 1 {
+				t.Errorf("the output says %d times that PowerShell may be blocked:\n%s", n, out)
 			}
 			// Running the install again leads nowhere on a computer whose organization restricts PowerShell, so the generic advice is left out.
 			if strings.Contains(out, "Fix the cause") {
@@ -341,6 +351,7 @@ func TestAnInstallFromBeforeTheHeadlessConsoleIsReplacedAndItsOldTreeEnded(t *te
 	for _, via := range []string{"install", "install --upgrade"} {
 		t.Run(via, func(t *testing.T) {
 			first := machineHarnessOn(t, "windows")
+			first.f.idleListing = true // a first install lists the programs that run once
 			if err := first.podman(); err != nil {
 				t.Fatal(err)
 			}
@@ -449,6 +460,7 @@ func TestUninstallKeepsTheExecutorWhenItCannotBeEndedOnWindowsAndSaysSo(t *testi
 // sandboxes. The install ends what is left first.
 func TestAnInstallAgainEndsAWrapperThatIsLeftWhenNothingChangedOnWindows(t *testing.T) {
 	first := machineHarnessOn(t, "windows")
+	first.f.idleListing = true // a first install lists the programs that run once
 	if err := first.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -541,6 +553,7 @@ func TestAMalformedLineOfTheListingIsNeverEchoed(t *testing.T) {
 // this instance runs, and the definition is the one this build makes, so the install starts the task (it does not take another's program for ours).
 func TestAnInstallAgainStartsTheTaskWhenOnlyAnotherInstancesExecutorRunsOnWindows(t *testing.T) {
 	first := machineHarnessOn(t, "windows")
+	first.f.idleListing = true // a first install lists the programs that run once
 	if err := first.podman(); err != nil {
 		t.Fatal(err)
 	}
@@ -560,3 +573,7 @@ func TestAnInstallAgainStartsTheTaskWhenOnlyAnotherInstancesExecutorRunsOnWindow
 		t.Errorf("another instance's processes were ended: %v", left)
 	}
 }
+
+// restrictedPowerShell is a sentence that says that PowerShell may be blocked on this computer: the listing's own (a policy may have stopped it)
+// and the note's earlier one (it may be restricted here).
+var restrictedPowerShell = regexp.MustCompile(`a policy may have stopped PowerShell|PowerShell may be restricted here`)

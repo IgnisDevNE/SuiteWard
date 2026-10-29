@@ -18,7 +18,7 @@ import (
 func chkRequired(t *testing.T, state checks.State, reason string, counts *checkExecution, unblocked bool) (governance.OutboxMessage, error) {
 	t.Helper()
 	r := checks.Result{RepositoryID: cmtRepoID, PullNumber: cmtPull, HeadSHA: chkHead, State: state, Reason: reason, Reference: "P1-R2", Unblocked: unblocked}
-	return newCheckMessageOf(cmtRepo, r, owner.TierIsolated, "V2", 3, nil, 0, counts, false)
+	return newCheckMessageOf(cmtRepo, r, owner.TierIsolated, "V2", 3, nil, 0, counts, 0, false)
 }
 
 var (
@@ -37,16 +37,18 @@ func TestCheckPublisherPostsTheSummaryOfTheCanonicalGate(t *testing.T) {
 		status, conclusion string
 		phrases            []string
 	}{
-		{"pending", checks.InProgress, "canonical-pending", nil, false, "Canonical run pending", "in_progress", "", []string{"has not finished"}},
-		{"unavailable", checks.InProgress, "canonical-unavailable", nil, false, "Canonical run unavailable", "in_progress", "", []string{"could not run the approved tests", "/suiteward unblock <code>"}},
-		{"failing", checks.Failure, "canonical-failing", requiredBlocked, false, "Canonical tests failing", "completed", "failure",
-			[]string{"14 tests ran: 9 passed, 2 skipped, 1 failed, 1 missing, 1 flaky.", "Excluded tests (not run): 3. Excluded tests are not covered."}},
+		{"pending", checks.InProgress, "canonical-pending", nil, false, "Approved tests pending", "in_progress", "", []string{"have not finished on this commit"}},
+		{"unavailable", checks.InProgress, "canonical-unavailable", nil, false, "Approved tests could not run", "in_progress", "", []string{"could not run the approved tests", "/suiteward unblock <code>"}},
+		{"not responding", checks.InProgress, "canonical-not-responding", nil, false, "Test runner not responding", "in_progress", "",
+			[]string{"has not answered for about half a minute", "check that the test runner is running", "/suiteward unblock <code>"}},
+		{"failing", checks.Failure, "canonical-failing", requiredBlocked, false, "Approved tests failing", "completed", "failure",
+			[]string{"Approved tests: 14 tests ran. 9 passed. 1 failed. 1 gave no result. 1 gave different results when they ran again. 2 were skipped. 3 approved tests cannot be run by SuiteWard and are not covered."}},
 		{"awaiting approval", checks.InProgress, "approval-missing", requiredBlocked, false, "Awaiting owner approval", "in_progress", "",
-			[]string{"14 tests ran: 9 passed, 2 skipped, 1 failed, 1 missing, 1 flaky.", "read the change before you approve", "/suiteward approve P1-R2 <code>"}},
-		{"passed", checks.Success, "ready", requiredPassed, false, "Ready for integration", "completed", "success", []string{"12 tests ran: 9 passed, 3 skipped, 0 failed, 0 missing, 0 flaky."}},
-		{"no declared test", checks.Success, "unchanged", &checkExecution{}, false, "No protected change", "completed", "success", []string{"0 tests ran."}},
+			[]string{"Approved tests: 14 tests ran. 9 passed. 1 failed. 1 gave no result.", "read the edit before you approve", "/suiteward approve P1-R2 <code>"}},
+		{"passed", checks.Success, "ready", requiredPassed, false, "Ready for integration", "completed", "success", []string{"Approved tests: 12 tests ran. 9 passed. 0 failed. 0 gave no result. 0 gave different results when they ran again. 3 were skipped."}},
+		{"no declared test", checks.Success, "unchanged", &checkExecution{}, false, "No protected change", "completed", "success", []string{"Approved tests: none are declared, so none ran."}},
 		{"unblocked", checks.Success, "ready", nil, true, "Ready for integration", "completed", "success",
-			[]string{"The owner unblocked this head: its canonical run was unavailable, so the approved tests did not run on it."}},
+			[]string{"The owner unblocked this commit. The approved tests could not run on it, so this check passes without them."}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, err := chkRequired(t, tc.state, tc.reason, tc.counts, tc.unblocked)
@@ -61,7 +63,7 @@ func TestCheckPublisherPostsTheSummaryOfTheCanonicalGate(t *testing.T) {
 			if len(posts) != 1 || posts[0].Name != "SuiteWard / Contract" || posts[0].Status != tc.status || posts[0].Conclusion != tc.conclusion || posts[0].Title != tc.title {
 				t.Fatalf("posted %+v", posts)
 			}
-			for _, phrase := range append(tc.phrases, "This check reports on the protected contract and on the run of its approved tests.", "`isolated`") {
+			for _, phrase := range append(tc.phrases, "This check reports on the protected contract and on the run of its approved tests.", "on a separate server") {
 				if !strings.Contains(posts[0].Summary, phrase) {
 					t.Errorf("the summary lacks %q:\n%s", phrase, posts[0].Summary)
 				}

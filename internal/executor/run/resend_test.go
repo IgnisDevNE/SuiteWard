@@ -76,7 +76,7 @@ func TestAResultTheServiceRefusesUntilTheMarginIsGivenUp(t *testing.T) {
 }
 
 // The heartbeat stops before the first post and the lease lasts 60 s from the last one, so a resend that waits longer than a heartbeat
-// interval (20 s) can miss a service that is back while the lease still holds. The wait doubles from the lease backoff and stops at 20 s,
+// interval (10 s) can miss a service that is back while the lease still holds. The wait doubles from the lease backoff and stops at 10 s,
 // where the old cap (60 s) posted at 0, 5, 15, 35 and 75 s after the first refusal.
 func TestTheWaitBetweenPostsOfAResultNeverPassesAHeartbeatInterval(t *testing.T) {
 	sv, rt := aJob(1)
@@ -96,7 +96,7 @@ func TestTheWaitBetweenPostsOfAResultNeverPassesAHeartbeatInterval(t *testing.T)
 			idle = append(idle, w)
 		}
 	}
-	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 20 * time.Second, 20 * time.Second, 20 * time.Second}
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 10 * time.Second, 10 * time.Second, 10 * time.Second, 10 * time.Second}
 	if len(idle) < len(want) || !slices.Equal(idle[:len(want)], want) {
 		t.Errorf("the executor waited %v between the posts; want %v: doubling from 5 s and never past a heartbeat interval", idle, want)
 	}

@@ -14,7 +14,7 @@ import (
 const (
 	modeCommand = "```\n/suiteward approve P3-R2 <fix|feature|refactor> <code>\n```"
 	plainSteps  = "```\n/suiteward approve P3-R2 <code>\n```"
-	blocking    = "At least one approved test fails, is missing or is flaky on this head. If this change edits that test, read the change before you approve: an edited test can pass by checking less."
+	blocking    = "At least one approved test fails, is missing or is flaky on this commit. If this change edits that test, read the edit before you approve. A test that is edited can pass by checking less."
 )
 
 // awaiting is the check of a head that awaits approval against V4, with the counts of a canonical run and the mode of the approve as the caller sets them.
@@ -59,12 +59,12 @@ func TestCheckSummaryOfAMissingApprovalStatesTheCountsOfACompleteCanonicalRun(t 
 		ran    string
 		block  bool
 	}{
-		{"nothing blocks", passed(), "12 tests ran: 9 passed, 3 skipped, 0 failed, 0 missing, 0 flaky.", false},
-		{"a test blocks", ran(), "14 tests ran: 9 passed, 2 skipped, 1 failed, 1 missing, 1 flaky.", true},
+		{"nothing blocks", passed(), passedCounts, false},
+		{"a test blocks", ran(), ranCounts, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			title, summary := checkText(t, awaiting(tc.counts, false))
-			for _, w := range []string{tc.ran, "Excluded tests (not run): 3. Excluded tests are not covered.", requiredClosing, plainSteps, "no current approval"} {
+			for _, w := range []string{tc.ran, requiredClosing, plainSteps, "has not approved this exact revision of the change yet"} {
 				if !strings.Contains(summary, w) {
 					t.Errorf("summary lacks %q:\n%s", w, summary)
 				}

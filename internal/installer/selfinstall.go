@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -26,9 +27,9 @@ const selfName = "suiteward"
 type instanceArgs struct{ tier, settings, tokenFile string }
 
 // instance reads them from the run: --settings only of the command line (settingsPathFrom reads it nowhere else), and --token-file and
-// --tier of the command line or the answers file, as the commands resolve them.
+// --tier of the command line or the answers file, as the commands resolve them; each, after those, from the installation that was chosen.
 func (r *Resolver) instance() instanceArgs {
-	return instanceArgs{tier: r.preset("tier", ""), settings: r.flags["settings"], tokenFile: r.preset("token-file", "")}
+	return instanceArgs{tier: r.preset("tier", ""), settings: r.settingsFlag(), tokenFile: r.preset("token-file", "")}
 }
 
 // flags are the ones that subcommand defines, as a person pastes them: a command takes a flag only if it defines it (enroll has no --token-file,
@@ -60,6 +61,104 @@ func (a instanceArgs) flags(sub string) []string {
 func (d Deps) suggest(sub string, args ...string) string {
 	words := append([]string{cmp.Or(d.Command, selfName), sub}, d.instance.flags(sub)...)
 	return strings.Join(append(words, args...), " ")
+}
+
+// sudoProgram is how a command that an administrator runs through sudo (or a shell that sudo opens) names this program. sudo looks a command up in its
+// own secure_path, and on EL9 that lacks /usr/local/bin, so the name the shell finds is "command not found" there. A program that suggest names by its
+// own path keeps it. One that suggest names by its bare name is named by the path it runs from, which is a file that exists (the program may be in
+// /usr/bin, or in a folder of the service account), and only where that is not known, or this is not the server's system, by the path where the
+// install guide puts it. Executable is optional in a Deps (a command that copies the program refuses a Deps without it), so none is no answer, not an error.
+func (d Deps) sudoProgram() string {
+	if cmp.Or(d.Command, selfName) != selfName {
+		return d.Command
+	}
+	if d.GOOS == "linux" && d.Executable != nil {
+		if exe, err := d.Executable(); err == nil && path.IsAbs(exe) {
+			return quoteArg(exe)
+		}
+	}
+	return hostProgram
+}
+
+// suggestHostStep is suggest for the host step, which an administrator runs through sudo: the program is named as sudoProgram names it.
+func (d Deps) suggestHostStep(args ...string) string {
+	d.Command = d.sudoProgram()
+	return "sudo " + d.suggest("install host", args...)
+}
+
+// serviceCommands are the subcommands whose bare spelling a row of the service may ask to have written with the flags of the instance.
+var serviceCommands = []string{"enroll", "install"}
+
+// writeCommands is a fix of a row of the service with each command that the row says it names (named) written as every other hint is, with the
+// flags that name the instance (suggest): the service writes the bare name, because it cannot know them. The row comes from another process, so
+// only a subcommand of serviceCommands is written, and only where the fix spells it as a whole command (commandWord); anything else, such as a
+// command with flags of its own or a longer word, stays as the service wrote it. A command is written between backticks, as the service had it
+// or, when it stood alone, with them, because the flags make it longer than a word. All the spellings are found in the service's own text first,
+// so what is written is never read again, and two that share a backtick ("`a`b`") are not both written: the first is written and the other is left
+// as the service wrote it. Whatever the text, the function reads only inside it.
+func (d Deps) writeCommands(fix string, named []string) string {
+	type span struct {
+		from, to int
+		with     string
+	}
+	var spans []span
+	for _, sub := range serviceCommands {
+		if !slices.Contains(named, sub) {
+			continue
+		}
+		bare, written := selfName+" "+sub, "`"+d.suggest(sub)+"`"
+		for at := 0; ; {
+			i := strings.Index(fix[at:], bare)
+			if i < 0 {
+				break
+			}
+			from, to := at+i, at+i+len(bare)
+			at = to
+			if first, last, whole := commandWord(fix, from, to); whole {
+				spans = append(spans, span{first, last, written})
+			}
+		}
+	}
+	slices.SortFunc(spans, func(a, b span) int { return a.from - b.from })
+	var out strings.Builder
+	end := 0
+	for _, s := range spans {
+		if s.from < end { // it would reuse the closing backtick of the span before it: the first one stays
+			continue
+		}
+		out.WriteString(fix[end:s.from])
+		out.WriteString(s.with)
+		end = s.to
+	}
+	out.WriteString(fix[end:])
+	return out.String()
+}
+
+// commandWord says whether fix[from:to], the program's name and a subcommand, is a whole command, and where it stands with its backticks. It is
+// one when it is exactly between a pair of backticks, or when it stands alone: after the start of the text, a space or an opening bracket, and
+// before the end of the text, a line break, a punctuation mark or a space that no flag follows (a flag belongs to the command, and the instance's flags would go
+// before it). Inside a longer backticked command, glued to a word or followed by one it is not.
+func commandWord(fix string, from, to int) (first, last int, whole bool) {
+	var before, after byte
+	if from > 0 {
+		before = fix[from-1]
+	}
+	if to < len(fix) {
+		after = fix[to]
+	}
+	switch {
+	case before == '`' && after == '`':
+		return from - 1, to + 1, true
+	case before != 0 && !strings.ContainsRune(" (\n", rune(before)):
+		return 0, 0, false
+	case after == 0:
+		return from, to, true
+	case after == ' ':
+		rest := strings.TrimLeft(fix[to:], " ")
+		return from, to, rest == "" || rest[0] != '-'
+	default:
+		return from, to, strings.ContainsRune(".,;:!?)\n\r", rune(after))
+	}
 }
 
 // onIsolated is d for the install and the upgrade of the isolated tier, whose hints name it with --tier isolated: a host that was set up by

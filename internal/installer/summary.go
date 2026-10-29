@@ -111,8 +111,11 @@ var rulesetFindings = []string{string(protection.MissingContractCheck), string(p
 
 // What the evaluator says that an import does not fix: the setup instruction (no test check is configured yet) and the caveat of a ruleset
 // whose bypass list cannot be seen. A test passes the sentences of the real evaluator through importRulesetFix, so a rewording fails there.
+// A service that sends the commands of its rows says it with "enroll" too: doctor has then written the command with the flags of the instance
+// (and, for a program run by its path, without the words of the mark), so the data is what is read first.
 const (
 	setupInstructionMark = "suiteward enroll"
+	setupInstructionCmd  = "enroll"
 	bypassCaveatMark     = "bypass list"
 )
 
@@ -136,7 +139,7 @@ func importRulesetFix(r doctorResult, dir string) string {
 		return r.Fix // the install that wrote it may have been another one, or the file moved: the check's own fix is all there is
 	}
 	imports := "import the ruleset file " + file + " on GitHub (open the repository's Settings, then Rules, choose New ruleset, then Import a ruleset)"
-	if slices.ContainsFunc(findings, func(code string) bool { return !fixed(code) }) || strings.Contains(r.Fix, setupInstructionMark) || strings.Contains(r.Fix, bypassCaveatMark) {
+	if slices.ContainsFunc(findings, func(code string) bool { return !fixed(code) }) || slices.Contains(r.Commands, setupInstructionCmd) || strings.Contains(r.Fix, setupInstructionMark) || strings.Contains(r.Fix, bypassCaveatMark) {
 		return imports + ". " + r.Fix
 	}
 	return imports
@@ -189,6 +192,7 @@ func (c *colocatedInstall) answersHere(ctx context.Context) bool {
 // and the Release row the version of the service, as /status reports them.
 func (c *colocatedInstall) commonSummary(ctx context.Context, rows *summaryRows) {
 	rows.add("Installation type", installationTypeWords(string(c.s.Tier)))
+	rows.add(securityLimitKey, reducedAssuranceNotice)
 	rows.add("Container program", engineLine(c.rt.Engine()))
 	if !c.statusDead {
 		version, id := instanceStatus(ctx, func(ctx context.Context) ([]byte, error) {
@@ -198,8 +202,12 @@ func (c *colocatedInstall) commonSummary(ctx context.Context, rows *summaryRows)
 		rows.add("Version", version)
 	}
 	rows.addGitHub(c.s.GitHub)
-	rows.warn(reducedAssuranceNotice)
 }
+
+// securityLimitKey is the row that carries the reduced-assurance notice. It is a key row of the summary (ui keeps those when the window is too
+// small for all of it), because the notice is a security disclosure that a trimmed summary must not lose: ui spells the same name in keyRows, and
+// the test on the smallest window fails when the two drift apart.
+const securityLimitKey = "Security limit"
 
 func (c *colocatedInstall) installSummary(ctx context.Context, t installTarget) []ui.KV {
 	var rows summaryRows

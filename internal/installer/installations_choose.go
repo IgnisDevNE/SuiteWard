@@ -121,13 +121,15 @@ func (r *Resolver) pickInstallation(d Deps, found []candidate, stale int) (candi
 
 // choose makes c the installation of the run. Only what the default would not give is set: its settings file and its token file. The type and
 // the engine are not: the settings file of a candidate exists and names them, and a list that went stale or was edited must not override it.
+// An installation that is not the default one always keeps its token file, even the per-user default (a supported choice for a second instance):
+// without it the run would refuse at instanceTokenFile for a flag that nobody typed.
 func (r *Resolver) choose(d Deps, c candidate) {
 	r.chosen = map[string]string{}
 	if !c.isDefault {
 		r.chosen["settings"] = c.Settings
 	}
 	if c.TokenFile != "" {
-		if def, err := defaultTokenFile(d); err != nil || !samePath(d.GOOS, def, c.TokenFile) { // with no default to compare to, the entry's is the one
+		if def, err := defaultTokenFile(d); !c.isDefault || err != nil || !samePath(d.GOOS, def, c.TokenFile) { // with no default to compare to, the entry's is the one
 			r.chosen["token-file"] = c.TokenFile
 		}
 	}

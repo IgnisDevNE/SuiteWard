@@ -1129,9 +1129,6 @@ func reductionKinds(notice governance.RevisionNotice) (policy, scope bool) {
 	return policy, scope
 }
 
-// receiptPageURL is the link to the receipt page of pull request pull of repo (owner/name) on the instance at base, or "" without a base.
-func receiptPageURL(base, repo string, pull int) string { return pageURL(base, "receipts", repo, pull) }
-
 // pullPageURL is the link to the page of pull request pull of repo (owner/name) on the instance at base, or "" without a base.
 func pullPageURL(base, repo string, pull int) string { return pageURL(base, "pulls", repo, pull) }
 
@@ -1160,7 +1157,7 @@ func (p *commentPublisher) revision(ctx context.Context, key, tail string, paylo
 		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload cannot be rendered")
 	}
 	if plain.Receipt != "" && p.reportBase != "" { // a link that the renderer refuses drops the link and never the line
-		if link := receiptPageURL(p.reportBase, r.Repo, r.Pull); commandtext.ValidReceiptLink(link, r.Pull) {
+		if link := pullPageURL(p.reportBase, r.Repo, r.Pull); commandtext.ValidPullLink(link, r.Pull) {
 			plain.PullURL = link
 		} else {
 			p.logger.WarnContext(ctx, "github_comment: the receipt line is posted without its link, which the renderer refuses", "key", key)

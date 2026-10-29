@@ -320,7 +320,7 @@ func TestInstallPodmanBringsTheStackUpInOrder(t *testing.T) {
 		"run --detach --replace --name suiteward-db ",
 		"--format {{json .State}} suiteward-db",
 		"exec -i suiteward-db psql", "exec -i suiteward-db psql",
-		"secret create --replace suiteward-database-url -",
+		"secret create suiteward-database-url -",
 		"run --rm --replace --name suiteward-migrate ",
 		"run --detach --replace --name suiteward --network",
 	)
@@ -357,6 +357,21 @@ func TestInstallPodmanBringsTheStackUpInOrder(t *testing.T) {
 	if !strings.Contains(h.out.String(), "GitHub is not set up yet") {
 		t.Errorf("the next steps do not say that setup needs GitHub:\n%s", h.out.String())
 	}
+}
+
+// Ubuntu 24.04 LTS packages Podman 4.9, which refuses `secret create --replace` for a secret that does not exist yet. A first install must
+// still finish there: the application URL, the one secret this install writes with a replace, is created without the flag.
+func TestInstallPodmanFinishesOnPodman49WhichRefusesReplaceForANewSecret(t *testing.T) {
+	h := newHarness(t, "linux")
+	h.f.fail("secret create --replace", errPodman49Replace)
+	if err := h.podman(); err != nil {
+		t.Fatalf("a first install on Podman 4.9: %v\n%s", err, h.out.String())
+	}
+	h.assertOrder("exec -i suiteward-db psql", "secret create suiteward-database-url -", "run --rm --replace --name suiteward-migrate ", "run --detach --replace --name suiteward --network")
+	if app := h.secretWrites(SecretDatabaseURL); len(app) != 1 || !strings.HasPrefix(app[0], "postgres://suiteward_app:") {
+		t.Errorf("the application URL was not written once: %q", app)
+	}
+	h.assertNoLeak()
 }
 
 func TestInstallTheOwnerURLUsesTheOwnerPasswordAndTheAppURLTheRolePassword(t *testing.T) {

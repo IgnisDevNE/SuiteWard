@@ -355,9 +355,11 @@ func evidenceOf(canonical, receipt pageRun) (table, error) {
 	if !canonical.found && !receipt.found {
 		return table{}, nil
 	}
-	for _, r := range runs { // the reason of a run is said in words: a code that no sentence says is an impossible state
-		if _, known := commandtext.UnavailableSentence(string(r.job.Reason)); r.found && r.job.Reason != "" && !known {
-			return table{}, fmt.Errorf("job %d has the reason %q, which no text knows", r.job.ID, r.job.Reason)
+	reasons := map[execution.Plan]string{} // the reason of each run in words: a code that no sentence says is an impossible state
+	for _, r := range runs {
+		var err error
+		if reasons[r.plan], err = reasonWords(r); err != nil {
+			return table{}, err
 		}
 	}
 	var rows [][]string
@@ -388,10 +390,7 @@ func evidenceOf(canonical, receipt pageRun) (table, error) {
 		add("Attempts", func(r pageRun) string { return strconv.Itoa(r.job.Attempts) })
 		add("Failures", func(r pageRun) string { return strconv.Itoa(r.job.Failures) })
 	}
-	add("Last reason", func(r pageRun) string {
-		sentence, _ := commandtext.UnavailableSentence(string(r.job.Reason))
-		return sentence
-	})
+	add("Last reason", func(r pageRun) string { return reasons[r.plan] })
 	add("Governing manifest", ran(func(r pageRun) string {
 		return r.job.GoverningDigest.String() + " (source " + commandtext.Visible(string(r.job.GoverningSource)) + ")"
 	}))
@@ -426,4 +425,26 @@ func stateOf(r pageRun) string {
 		return "not run"
 	}
 	return string(r.job.State)
+}
+
+// githubWaitWords is what a job says that waits on GitHub: it has not ended, and has not run either.
+const githubWaitWords = "SuiteWard is waiting for GitHub to answer."
+
+// reasonWords says in words what a run last saw, or nothing: why an unavailable job ended; that a job which has not ended waits on GitHub (which ends nothing: its own bound
+// does, and only then is the job unavailable for github-unavailable); and why the last attempt of a job that was tried again failed. A job that has not ended and has failed no
+// attempt has nothing to say. A code that no sentence says is an impossible state, not a word to show.
+func reasonWords(r pageRun) (string, error) {
+	switch {
+	case !r.found || r.job.Reason == "":
+		return "", nil
+	case r.job.State != execution.StateUnavailable && r.job.Reason == execution.ReasonGitHubUnavailable:
+		return githubWaitWords, nil
+	case r.job.State != execution.StateUnavailable && r.job.Failures == 0:
+		return "", nil
+	}
+	sentence, known := commandtext.UnavailableSentence(string(r.job.Reason))
+	if !known {
+		return "", fmt.Errorf("job %d has the reason %q, which no text knows", r.job.ID, r.job.Reason)
+	}
+	return sentence, nil
 }

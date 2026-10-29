@@ -56,16 +56,18 @@ type kindsSection struct {
 	Preview string
 }
 
-// situate says the situation of the head and of each wanted run. It fills a domain.Set from the jobs, with the levels that they were created under, and asks it whether the
+// situate says the situation of the head and of each wanted run. It fills a domain.Set from the jobs, with the level that each was created under, and asks it whether the
 // head reads not responding, as the checks job and the commands job do, from the one Liveness of the process read once.
 func (p *receiptPages) situate(v *pullView, runs []pageRun, applies bool, deps pageDeps, open bool) error {
 	canonical, receipt := runs[0], runs[1]
+	// The level of each plan is that of its own job, as it was when the job was created, and none when the plan has no job: an old job of one plan that outlived a change of
+	// the declaration must not name the level of the other.
 	set := domain.Set{CanonicalLevel: domain.CanonicalLevelOff, ReceiptLevel: domain.ReceiptLevelOff, ReceiptApplies: applies, ReceiptDecided: true}
-	for _, r := range runs { // both levels are on each job, as they were when it was created; no policy is named when the head has no job
-		if r.found {
-			set.CanonicalLevel, set.ReceiptLevel = r.job.CanonicalLevel, r.job.ReceiptLevel
-			break
-		}
+	if canonical.found {
+		set.CanonicalLevel = canonical.job.CanonicalLevel
+	}
+	if receipt.found {
+		set.ReceiptLevel = receipt.job.ReceiptLevel
 	}
 	var err error
 	if set.CanonicalJob, err = jobOf(canonical); err != nil {
@@ -90,7 +92,7 @@ func (p *receiptPages) situate(v *pullView, runs []pageRun, applies bool, deps p
 			if !known { // the store keeps only the reasons of the closed set: another is an impossible state, not a word to show
 				return fmt.Errorf("a job is unavailable for the reason %q, which no text knows", r.job.Reason)
 			}
-			v.Notes = append(v.Notes, r.label+": The tests did not run: "+sentence)
+			v.Notes = append(v.Notes, r.label+" did not run. "+sentence)
 		}
 	}
 	var unblocked []string
@@ -277,7 +279,7 @@ func statesOf(canonical pageRun, cc domain.CanonicalCounts, receipt pageRun, rc 
 		s.Sentences = append(s.Sentences, "Changed test files that cannot be read: "+strconv.Itoa(rc.Unparsed)+"."+below)
 	}
 	if n := len(receipt.job.UnapprovedPaths); receipt.found && n > 0 {
-		s.Sentences = append(s.Sentences, "Files not evaluated because their pattern is not approved yet: "+strconv.Itoa(n)+"."+below)
+		s.Sentences = append(s.Sentences, notEvaluated+": "+unapprovedCount(n)+"."+below)
 	}
 	return s, nil
 }
@@ -439,7 +441,11 @@ func receiptSection(r pageRun, counts domain.ReceiptCounts, weak map[domain.Test
 	if r.job.ChangedTotal > len(r.job.ChangedPaths) {
 		listed += " (" + strconv.Itoa(len(r.job.ChangedPaths)) + " listed)"
 	}
-	lists := []namedList{{listed, visibleAll(r.job.ChangedPaths)}, {"Not evaluated: pattern not approved yet", visibleAll(r.job.UnapprovedPaths)}}
+	unapproved := notEvaluated + ": " + unapprovedCount(len(r.job.UnapprovedPaths))
+	if len(r.job.UnapprovedPaths) >= maxExecutionPaths {
+		unapproved += " (" + strconv.Itoa(len(r.job.UnapprovedPaths)) + " listed)"
+	}
+	lists := []namedList{{listed, visibleAll(r.job.ChangedPaths)}, {unapproved, visibleAll(r.job.UnapprovedPaths)}}
 	switch {
 	case r.complete():
 		s.Lead = "Tests this change adds or edits: " + strconv.Itoa(counts.Evaluated()) + "."
@@ -450,8 +456,9 @@ func receiptSection(r pageRun, counts domain.ReceiptCounts, weak map[domain.Test
 		for i, m := range r.result.Markers {
 			markers[i] = commandtext.Visible(m.Kind) + ": " + commandtext.Visible(m.Path) + " line " + strconv.Itoa(m.Line)
 		}
-		lists = append(lists, namedList{"Skipped submodules", visibleAll(r.result.Submodules)}, namedList{"Changed test files that cannot be read", visibleAll(r.result.Unparsed)},
-			namedList{"Lines to look at", markers})
+		lists = append(lists, namedList{countedHeading("Skipped submodules", len(r.result.Submodules)), visibleAll(r.result.Submodules)},
+			namedList{countedHeading("Changed test files that cannot be read", len(r.result.Unparsed)), visibleAll(r.result.Unparsed)},
+			namedList{countedHeading("Lines to look at", len(markers)), markers})
 		var err error
 		if s.Table, s.More, err = testsTable(r, weak); err != nil {
 			return testsSection{}, err
@@ -481,4 +488,18 @@ func visibleAll(paths []string) []string {
 		lines[i] = commandtext.Visible(path)
 	}
 	return lines
+}
+
+// notEvaluated says that a file is not evaluated because its pattern is not approved yet.
+const notEvaluated = "Files not evaluated because their pattern is not approved yet"
+
+// countedHeading is the heading of a list with the number of its entries, so that "the count above includes them" is true of a list that a budget cuts.
+func countedHeading(label string, n int) string { return label + ": " + strconv.Itoa(n) }
+
+// unapprovedCount says how many files are not evaluated. The job keeps at most maxExecutionPaths of them and stores no total, so a list that holds that many says "at least".
+func unapprovedCount(n int) string {
+	if n >= maxExecutionPaths {
+		return "at least " + strconv.Itoa(n)
+	}
+	return strconv.Itoa(n)
 }

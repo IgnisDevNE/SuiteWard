@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
@@ -15,7 +16,8 @@ import (
 // changed files with no hunk, a link to the full report of the revision, which keeps the hunks, and a link to the report of each earlier revision of the proposal. The
 // report is built here once, in the turn that the page holds, by the reports of the process, which bound what they read.
 
-// reportSection is the change report of the revision. When the report cannot be built the section is one sentence and nothing else.
+// reportSection is the change report of the revision. When the report cannot be built the section is one sentence and nothing else: no link, since the full report would
+// answer 404 or 413 as well.
 type reportSection struct {
 	Show           bool
 	Reference      string // P<n>-R<m>
@@ -24,8 +26,8 @@ type reportSection struct {
 	Files          table
 	More           string
 	Full           pageLink // the report of the revision, with its hunks
+	EarlierHeading string   // how many earlier revisions there are, and how many are listed when not all
 	Earlier        []pageLink
-	EarlierHeading string // a compiling stub: the commit that follows writes it
 	EarlierMore    string
 }
 
@@ -34,7 +36,7 @@ type reportSection struct {
 // sentence, and the cause is logged.
 func reportOf(ctx context.Context, deps pageDeps, repo string, current contract.ProposalReference, revisions []contract.ProposalReference) (reportSection, error) {
 	reference := referenceText(current)
-	s := reportSection{Show: true, Reference: reference, Full: pageLink{Href: reportHref(repo, reference), Text: "The full change report of " + reference + ", with the changed lines"}}
+	s := reportSection{Show: true, Reference: reference}
 	built, err := deps.reports.build(ctx, current)
 	if cause := ctx.Err(); cause != nil {
 		return reportSection{}, cause
@@ -47,18 +49,21 @@ func reportOf(ctx context.Context, deps pageDeps, repo string, current contract.
 	case err != nil:
 		deps.logger.WarnContext(ctx, "pull request page: the change report is unavailable", "reference", reference, "error", err)
 		s.Sentence = "SuiteWard could not read the files of this revision, so the change report is not shown."
-	default:
-		s.Facts = commandtext.ChangesOf(built.Report).Facts(false)
-		rows := make([][]string, len(built.Report.Files))
-		for i, f := range built.Report.Files {
-			rows[i] = fileRowCells(f)
-		}
-		var hidden int
-		if s.Files, hidden, err = tableOf([]string{"Status", "File", "Lines"}, rows, fileTableBudget); err != nil {
-			return reportSection{}, err
-		}
-		s.More = rowsNotShown(hidden, "file", "files")
 	}
+	if s.Sentence != "" {
+		return s, nil
+	}
+	s.Full = pageLink{Href: reportHref(repo, reference), Text: "The full change report of " + reference + ", with the changed lines"}
+	s.Facts = commandtext.ChangesOf(built.Report).Facts(false)
+	rows := make([][]string, len(built.Report.Files))
+	for i, f := range built.Report.Files {
+		rows[i] = fileRowCells(f)
+	}
+	var hidden int
+	if s.Files, hidden, err = tableOf([]string{"Status", "File", "Lines"}, rows, fileTableBudget); err != nil {
+		return reportSection{}, err
+	}
+	s.More = rowsNotShown(hidden, "file", "files")
 	i := slices.IndexFunc(revisions, func(r contract.ProposalReference) bool { return r.RevisionID == current.RevisionID })
 	if i < 0 { // the current revision is one of the revisions of its proposal
 		return reportSection{}, fmt.Errorf("the revision %s is not among the revisions of its proposal", reference)
@@ -69,9 +74,12 @@ func reportOf(ctx context.Context, deps pageDeps, repo string, current contract.
 		earlier = append(earlier, pageLink{Href: reportHref(repo, text), Text: text})
 	}
 	over := max(len(earlier)-maxEarlierLinks, 0)
-	var hidden int
 	if s.Earlier, hidden, err = linkList(earlier[:len(earlier)-over], listBudget); err != nil {
 		return reportSection{}, err
+	}
+	s.EarlierHeading = countedHeading("Earlier revisions of this proposal", len(earlier))
+	if over > 0 {
+		s.EarlierHeading += " (" + strconv.Itoa(maxEarlierLinks) + " listed)"
 	}
 	s.EarlierMore = entriesNotShown(hidden + over)
 	return s, nil

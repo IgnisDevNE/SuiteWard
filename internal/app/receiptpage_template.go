@@ -68,16 +68,16 @@ li { overflow-wrap: anywhere; }
 {{end}}<p>{{.Kinds.Preview}}</p>
 {{if .Evidence.Head}}<h2>How these results were made</h2>
 {{template "table" .Evidence}}{{end}}{{if .Report.Show}}<h2>Change report</h2>
-<p>The change report of revision {{.Report.Reference}}, without the changed lines.</p>
 {{if .Report.Sentence}}<p>{{.Report.Sentence}}</p>
-{{else}}<ul>
+{{else}}<p>The change report of revision {{.Report.Reference}}, without the changed lines.</p>
+<ul>
 {{range .Report.Facts}}<li>{{.}}</li>
 {{end}}</ul>
 {{if .Report.Files.Head}}{{template "table" .Report.Files}}{{end}}{{if .Report.More}}<p>{{.Report.More}}</p>
-{{end}}{{end}}<p><a href="{{.Report.Full.Href}}">{{.Report.Full.Text}}</a></p>
-{{if .Report.Earlier}}<h3>Earlier revisions of this proposal</h3>
+{{end}}<p><a href="{{.Report.Full.Href}}">{{.Report.Full.Text}}</a></p>
+{{if .Report.Earlier}}<h3>{{.Report.EarlierHeading}}</h3>
 {{template "links" .Report.Earlier}}{{if .Report.EarlierMore}}<p>{{.Report.EarlierMore}}</p>
-{{end}}{{end}}{{end}}<p class="note">The results on this page are evidence reported by a test runner, not a verdict.</p>
+{{end}}{{end}}{{end}}{{end}}<p class="note">The results on this page are evidence reported by a test runner, not a verdict.</p>
 {{if .Notice}}<p class="note">{{.Notice}}</p>
 {{end}}</main>
 </body>

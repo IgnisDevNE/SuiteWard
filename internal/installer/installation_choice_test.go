@@ -232,7 +232,7 @@ func TestOneInstallationIsUsedAndTheLineSaysWhich(t *testing.T) {
 			if err := r.chooseInstallation(choiceDeps(t)); err != nil {
 				t.Fatal(err)
 			}
-			if want := "This computer has one SuiteWard installation, so the command uses it. Its settings file is " + def + ".\n"; out.String() != want {
+			if want := "This computer has one listed SuiteWard installation, so the command uses it. Its settings file is " + def + ".\n"; out.String() != want {
 				t.Errorf("terminal %v: the output is %q, want %q", terminal, out.String(), want)
 			}
 			if len(r.chosen) != 0 {
@@ -252,7 +252,7 @@ func TestOneInstallationIsUsedAndTheLineSaysWhich(t *testing.T) {
 		if err := r.chooseInstallation(choiceDeps(t)); err != nil {
 			t.Fatal(err)
 		}
-		if want := "This computer has one SuiteWard installation, so the command uses it. Its settings file is " + second + ".\n"; out.String() != want {
+		if want := "This computer has one listed SuiteWard installation, so the command uses it. Its settings file is " + second + ".\n"; out.String() != want {
 			t.Errorf("the output is %q, want %q", out.String(), want)
 		}
 		if r.chosen["settings"] != second || r.chosen["token-file"] != token {

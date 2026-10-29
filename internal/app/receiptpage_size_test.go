@@ -290,8 +290,8 @@ func TestPullPageHasNoGroupForAStateWhoseRowsWereAllCutAndCountsEveryRowOfTheGro
 	w := newPageWorld(t)
 	w.pages.timeout = largePageTimeout
 	pkg, name, file := plainLimits()
-	approved := hugeTests(execution.KindDeclared, "pass", pkg, name, file)
-	const failing = 3000 // more rows than the budget holds at the longest names
+	const failing, passing = 3000, 50 // more failing rows than the budget holds at the longest names, and a few passes behind them
+	approved := hugeTests(execution.KindDeclared, "pass", pkg, name, file)[:failing+passing]
 	for i := range failing {
 		approved[i].State, approved[i].HeadRuns = "fail", []string{"fail"}
 	}
@@ -303,7 +303,7 @@ func TestPullPageHasNoGroupForAStateWhoseRowsWereAllCutAndCountsEveryRowOfTheGro
 	}
 	w.wantText(groups, fmt.Sprintf("<summary>FAIL (%d)</summary>", failing))
 	w.wantNoText(groups, "PASS (")
-	w.wantText(rawSection(t, raw, "Approved tests"), fmt.Sprintf("<p>%d more tests are not shown here. The counts above include them.</p>", execution.MaxTests-shown))
+	w.wantText(rawSection(t, raw, "Approved tests"), fmt.Sprintf("<p>%d more tests are not shown here. The counts above include them.</p>", len(approved)-shown))
 }
 
 // hostile is a text of n bytes made of the characters that grow most when they are shown: & and + (html/template writes them as five bytes), and an invalid byte.

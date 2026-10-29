@@ -42,15 +42,13 @@ func TestMain(m *testing.M) {
 	// The two stand-ins for runuser and the systemctl under it: the command starts a child that keeps its output open (as systemctl does when runuser
 	// is killed) and then waits to be killed.
 	case "orphan":
-		child := exec.Command(os.Args[0], "--")
-		child.Env = append(os.Environ(), "SUITEWARD_TEST_HELPER=holdpipe")
-		child.Stdout, child.Stderr = os.Stdout, os.Stderr
-		if err := child.Start(); err != nil {
-			fmt.Fprint(os.Stderr, err)
-			os.Exit(99)
-		}
+		holdOutput()
 		time.Sleep(time.Hour)
 		os.Exit(1)
+	case "leaves-child": // exits well and leaves a child that still holds its output
+		holdOutput()
+		fmt.Print("done")
+		os.Exit(0)
 	case "holdpipe": // ends by itself, so that a run that fails to end the wait leaves nothing behind
 		time.Sleep(20 * time.Second)
 		os.Exit(0)
@@ -216,5 +214,41 @@ func TestOSExecEndsWhenTheContextIsCancelledAndAChildOfTheCommandKeepsItsOutputO
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("OSExec did not return after the context ended: a child of the command holds its output open and nothing bounds the wait")
+	}
+}
+
+// A command that exited with status 0 and left a child holding its output has succeeded: the bound on the wait must not turn that into a failure.
+func TestOSExecSucceedsWhenTheCommandExitedWellAndAChildKeepsItsOutputOpen(t *testing.T) {
+	old := execWaitDelay
+	execWaitDelay = 200 * time.Millisecond
+	t.Cleanup(func() { execWaitDelay = old })
+	name, args := helperCommand(t, "leaves-child")
+	type result struct {
+		out []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := OSExec(context.Background(), name, args, nil)
+		done <- result{out, err}
+	}()
+	select {
+	case got := <-done:
+		if got.err != nil || string(got.out) != "done" {
+			t.Errorf("a command that exited with status 0 must succeed with its output, got %q and %v", got.out, got.err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("OSExec did not return: a child of the command holds its output open and nothing bounds the wait")
+	}
+}
+
+// holdOutput starts a child of the helper that holds the helper's stdout and stderr, as the systemctl under runuser does.
+func holdOutput() {
+	child := exec.Command(os.Args[0], "--")
+	child.Env = append(os.Environ(), "SUITEWARD_TEST_HELPER=holdpipe")
+	child.Stdout, child.Stderr = os.Stdout, os.Stderr
+	if err := child.Start(); err != nil {
+		fmt.Fprint(os.Stderr, err)
+		os.Exit(99)
 	}
 }

@@ -305,7 +305,7 @@ func TestAStaleEntryIsSkippedAndCounted(t *testing.T) {
 		}
 		term, out := fakeTerminal(false, "")
 		r := newTestResolver(t, nil, nil, term)
-		if err := r.chooseInstallation(choiceDeps(t)); err != nil || !strings.Contains(out.String(), "one SuiteWard installation") {
+		if err := r.chooseInstallation(choiceDeps(t)); err != nil || !strings.Contains(out.String(), "one listed SuiteWard installation") {
 			t.Errorf("err %v, output %q: want the default one used", err, out.String())
 		}
 	})
@@ -397,7 +397,7 @@ func TestAnUnattendedRunRefusesSeveralInstallationsAndNeverAsks(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, out := plainResolver(t, map[string]string{"yes": "true"}, nil, "")
-	if err := r.chooseInstallation(choiceDeps(t)); err != nil || !strings.Contains(out.String(), "one SuiteWard installation") {
+	if err := r.chooseInstallation(choiceDeps(t)); err != nil || !strings.Contains(out.String(), "one listed SuiteWard installation") {
 		t.Errorf("one installation under --yes: err %v, output %q, want it used and said", err, out.String())
 	}
 }

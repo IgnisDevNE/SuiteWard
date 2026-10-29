@@ -68,7 +68,7 @@ func TestAPurgeOfTheOnlyInstallationStillNeedsItsInstanceIdWithYes(t *testing.T)
 		t.Fatalf("Uninstall = %v, want the purge refused with the --instance to give\n%s", err, h.out.String())
 	}
 	h.intact()
-	if !strings.Contains(h.out.String(), "one SuiteWard installation") {
+	if !strings.Contains(h.out.String(), "one listed SuiteWard installation") {
 		t.Errorf("the installation that was used is not said:\n%s", h.out.String())
 	}
 	if err := Uninstall(context.Background(), []string{"--plain", "--purge", "--yes", "--instance", testInstance}, h.consoleOf(false, "")); err != nil {

@@ -188,6 +188,13 @@ func ubChanged(e *env) {
 		e.must(err)
 		return e.get(job.ID)
 	}
+	// A lease request that found GitHub unreadable leaves the job pending, with its lease id, and waiting for GitHub: it no longer waits for the runner.
+	githubWaitJob := func(spec execution.Spec) execution.Job {
+		job := e.enqueue(spec, 0)
+		_, _, err := e.s.Lease(e.ctx, e.leaseRequest(time.Second), func(context.Context, execution.Job) error { return execution.ErrGitHubUnavailable })
+		e.requireErr(err, execution.ErrGitHubUnavailable)
+		return job
+	}
 	cancelledJob := func(spec execution.Spec) execution.Job {
 		job := e.enqueue(spec, 0)
 		_, err := e.s.Cancel(e.ctx, job.ID, execution.ReasonHeadMoved, at(time.Second))
@@ -206,6 +213,7 @@ func ubChanged(e *env) {
 		{"a leased job observed with no lease", leasedJob, func(j execution.Job) execution.UnblockJob { return observedAs(j, execution.StateLeased, "") }},
 		{"a job that completed", completedJob, func(j execution.Job) execution.UnblockJob { return observedAs(j, execution.StatePending, "") }},
 		{"a job that completed, observed as leased", completedJob, func(j execution.Job) execution.UnblockJob { return observedAs(j, execution.StateLeased, j.LeaseID) }},
+		{"a pending job that waits for GitHub now", githubWaitJob, func(j execution.Job) execution.UnblockJob { return observedAs(j, execution.StatePending, j.LeaseID) }},
 		{"a pending job that is unavailable now", pendingJob, func(j execution.Job) execution.UnblockJob { return observedAs(j, execution.StateUnavailable, "") }},
 		{"an unavailable job that is pending now", unavailableJob, func(j execution.Job) execution.UnblockJob { return observedAs(j, execution.StatePending, "") }},
 		{"a job that was cancelled", cancelledJob, func(j execution.Job) execution.UnblockJob { return observedAs(j, execution.StatePending, "") }},

@@ -232,7 +232,7 @@ func TestOneInstallationIsUsedAndTheLineSaysWhich(t *testing.T) {
 			if err := r.chooseInstallation(choiceDeps(t)); err != nil {
 				t.Fatal(err)
 			}
-			if want := "This computer has one SuiteWard installation, so the command uses it. Its settings file is " + def + ".\n"; out.String() != want {
+			if want := "This computer has one listed SuiteWard installation, so the command uses it. Its settings file is " + def + ".\n"; out.String() != want {
 				t.Errorf("terminal %v: the output is %q, want %q", terminal, out.String(), want)
 			}
 			if len(r.chosen) != 0 {
@@ -252,7 +252,7 @@ func TestOneInstallationIsUsedAndTheLineSaysWhich(t *testing.T) {
 		if err := r.chooseInstallation(choiceDeps(t)); err != nil {
 			t.Fatal(err)
 		}
-		if want := "This computer has one SuiteWard installation, so the command uses it. Its settings file is " + second + ".\n"; out.String() != want {
+		if want := "This computer has one listed SuiteWard installation, so the command uses it. Its settings file is " + second + ".\n"; out.String() != want {
 			t.Errorf("the output is %q, want %q", out.String(), want)
 		}
 		if r.chosen["settings"] != second || r.chosen["token-file"] != token {
@@ -305,7 +305,7 @@ func TestAStaleEntryIsSkippedAndCounted(t *testing.T) {
 		}
 		term, out := fakeTerminal(false, "")
 		r := newTestResolver(t, nil, nil, term)
-		if err := r.chooseInstallation(choiceDeps(t)); err != nil || !strings.Contains(out.String(), "one SuiteWard installation") {
+		if err := r.chooseInstallation(choiceDeps(t)); err != nil || !strings.Contains(out.String(), "one listed SuiteWard installation") {
 			t.Errorf("err %v, output %q: want the default one used", err, out.String())
 		}
 	})
@@ -397,7 +397,7 @@ func TestAnUnattendedRunRefusesSeveralInstallationsAndNeverAsks(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, out := plainResolver(t, map[string]string{"yes": "true"}, nil, "")
-	if err := r.chooseInstallation(choiceDeps(t)); err != nil || !strings.Contains(out.String(), "one SuiteWard installation") {
+	if err := r.chooseInstallation(choiceDeps(t)); err != nil || !strings.Contains(out.String(), "one listed SuiteWard installation") {
 		t.Errorf("one installation under --yes: err %v, output %q, want it used and said", err, out.String())
 	}
 }

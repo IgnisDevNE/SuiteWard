@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -141,5 +142,25 @@ func TestPrepareHostNamesWhatItRanAsTheExecutorsAccountWhenItFails(t *testing.T)
 				t.Fatalf("the error must name %q and the account, got %v", c.want, err)
 			}
 		})
+	}
+}
+
+// The account of the executor runs what a pull request brings, and any process of the account reads the environment of the client it runs from. The step gives
+// that client an empty environment and only what it needs: a path to find the programs, the runtime directory and the bus. Root's own environment holds whatever
+// the installer was started with.
+func TestPrepareHostGivesTheExecutorsAccountNoneOfRootsEnvironment(t *testing.T) {
+	h := newHostFake()
+	if _, err := runHost(t, h, declineMetadataRule, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	calls := h.callsTo("runuser")
+	if len(calls) == 0 {
+		t.Fatalf("no command ran as the executor's account: %v", h.lines())
+	}
+	want := []string{"-u", ExecutorAccount, "--", "env", "-i", "PATH=/usr/sbin:/usr/bin", "XDG_RUNTIME_DIR=/run/user/1002", "DBUS_SESSION_BUS_ADDRESS=unix:path=" + execBus}
+	for _, c := range calls {
+		if len(c.args) < len(want) || !slices.Equal(c.args[:len(want)], want) {
+			t.Errorf("runuser %s does not start with %v: the environment of root would reach the account", c.line(), want)
+		}
 	}
 }

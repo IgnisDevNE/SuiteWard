@@ -159,26 +159,28 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 	return executionOutcome{counts: checkCountsOf(counts)}, nil
 }
 
-// runnerBack says that the runner is back for the current head: it has a job with an unblock row (since the enrollment), the reason no-executor and an end earlier than the
-// last real executor request (docs/contracts/runtime.md, "The early unblock and its hold"). It reads both plans, whether the owner's command ended the job or lifted it after
-// the lease wait. The comment that warns the owner reads it.
-func (j *checksJob) runnerBack(ctx context.Context, s *pullState) (bool, error) {
-	for _, plan := range []execution.Plan{execution.PlanCanonical, execution.PlanReceipt} {
-		jobs, err := j.executions.HeadJobs(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, plan)
-		if err != nil {
-			return false, fmt.Errorf("read the %s jobs of the head: %w", plan, err)
+// runnerBack says that the runner is back for the current head: a job that a gate reads (the canonical and the receipt job of the set of the pass, as the gates read them)
+// has an unblock row (since the enrollment), the reason no-executor and an end earlier than the last real executor request (docs/contracts/runtime.md, "The early unblock
+// and its hold"), whether the owner's command ended the job or lifted it after the lease wait. An earlier job of the head that a fresh one replaced under another binding is
+// no job a gate reads. The comment that warns the owner reads it.
+func (j *checksJob) runnerBack(ctx context.Context, s *pullState, set domain.Set) (bool, error) {
+	for _, read := range []domain.Job{set.CanonicalJob, set.ReceiptJob} {
+		if read.State != domain.JobUnavailable || read.Reason != string(execution.ReasonNoExecutor) { // the set holds both: a plan with no job is the zero job
+			continue
 		}
-		for _, job := range jobs {
-			if job.State != execution.StateUnavailable || job.Reason != execution.ReasonNoExecutor || !j.liveness.HeardSince(job.FinishedAt) {
-				continue
-			}
-			unblocked, err := j.executions.Unblocked(ctx, job.ID, s.enrollment.EnrolledAt)
-			if err != nil {
-				return false, fmt.Errorf("read the unblock of job %d: %w", job.ID, err)
-			}
-			if unblocked {
-				return true, nil
-			}
+		job, err := j.storedJob(ctx, read.ID) // for the end of the job, which the set does not hold
+		if err != nil {
+			return false, err
+		}
+		if !j.liveness.HeardSince(job.FinishedAt) {
+			continue
+		}
+		unblocked, err := j.executions.Unblocked(ctx, job.ID, s.enrollment.EnrolledAt)
+		if err != nil {
+			return false, fmt.Errorf("read the unblock of job %d: %w", job.ID, err)
+		}
+		if unblocked {
+			return true, nil
 		}
 	}
 	return false, nil

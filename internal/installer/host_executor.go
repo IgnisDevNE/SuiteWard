@@ -165,16 +165,21 @@ func (h *host) executor(ctx context.Context) error {
 	return h.executorUnit(ctx, uid, port, replaced || tokenMade)
 }
 
+// executorPath is the search path of the commands that run as the executor's account: systemctl, systemd-run, timeout and podman are in /usr/bin on the hosts of the guide.
+const executorPath = "/usr/sbin:/usr/bin"
+
 // executorBus is the user bus of the executor's account (uid is its user id), where its user manager answers.
 func executorBus(uid string) string { return "/run/user/" + uid + "/bus" }
 
 // asExecutor runs a command as the executor's account with the account's own user bus, as the install guide does when it opens a shell for the service
 // account (docs/install.md, section 10). It is never `--machine=<user>@.host`, which goes through machined: that opens a login session for the account,
 // and on EL9 with SELinux enforcing the session cannot set the context of a terminal that the installer does not have (its stdin is /dev/null), so the
-// command fails with "Remote peer disconnected" where the same command typed in a terminal works. `runuser` opens no session. An error names what was
-// run as the account (argv): OSExec cuts the command line of its own error at 120 characters, and the prefix above takes most of them.
+// command fails with "Remote peer disconnected" where the same command typed in a terminal works. `runuser` opens no session. The command gets an empty environment
+// but for a path, the runtime directory and the bus (`env -i`): a process of the account reads the environment of the client it runs from, and root's holds what the
+// installer was started with. The commands need nothing else: systemd-run looks the program up in that path, and the state that `is-system-running` prints is not
+// translated. An error names what was run as the account (argv): OSExec cuts the command line of its own error at 120 characters, and the prefix above takes most of them.
 func (h *host) asExecutor(ctx context.Context, uid string, argv ...string) (string, error) {
-	out, err := h.run(ctx, "runuser", append([]string{"-u", ExecutorAccount, "--", "env", "XDG_RUNTIME_DIR=/run/user/" + uid, "DBUS_SESSION_BUS_ADDRESS=unix:path=" + executorBus(uid)}, argv...)...)
+	out, err := h.run(ctx, "runuser", append([]string{"-u", ExecutorAccount, "--", "env", "-i", "PATH=" + executorPath, "XDG_RUNTIME_DIR=/run/user/" + uid, "DBUS_SESSION_BUS_ADDRESS=unix:path=" + executorBus(uid)}, argv...)...)
 	if err != nil {
 		return out, fmt.Errorf("%s, as %s: %w", strings.Join(argv, " "), ExecutorAccount, err)
 	}

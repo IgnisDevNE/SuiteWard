@@ -36,8 +36,8 @@ const (
 	execBus          = "/run/user/1002/bus"
 
 	// Every command of the host step that runs as the executor's account is `runuser` with the account's own user bus, never machined: the login
-	// session that `--machine=<user>@.host` opens fails on EL9 with SELinux enforcing when there is no terminal.
-	execAs      = "-u suiteward-exec -- env XDG_RUNTIME_DIR=/run/user/1002 DBUS_SESSION_BUS_ADDRESS=unix:path=" + execBus
+	// session that `--machine=<user>@.host` opens fails on EL9 with SELinux enforcing when there is no terminal. `env -i` keeps the environment of root from the account.
+	execAs      = "-u suiteward-exec -- env -i PATH=/usr/sbin:/usr/bin XDG_RUNTIME_DIR=/run/user/1002 DBUS_SESSION_BUS_ADDRESS=unix:path=" + execBus
 	execUserRun = execAs + " systemd-run --user --wait --collect"
 	execUserctl = execAs + " systemctl --user"
 	execWaitEnd = " systemctl --user is-system-running --wait" // after `timeout <seconds>`, which bounds the wait

@@ -197,3 +197,36 @@ func TestAnUpgradeOfTheChosenInstallationStillSaysTheTierNotice(t *testing.T) {
 		t.Errorf("the entry is %+v, want the instance %s", got, testInstance)
 	}
 }
+
+// A new install may have made a new instance on the same settings file (a plain uninstall keeps the entry, and the volumes were removed by hand), so the id that its
+// entry had is stale: the entry keeps none until an upgrade lists the live one.
+func TestAnInstallOverAListedEntryLeavesNoStaleInstanceId(t *testing.T) {
+	t.Run("co-located", func(t *testing.T) {
+		useDefaultConfigDir(t)
+		h := newHarness(t, "linux")
+		if err := recordInstallation(runtime.GOOS, h.settingsPath(), h.tokenPath(), colocatedSettings(), testInstance); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.podman(); err != nil {
+			t.Fatal(err)
+		}
+		if got := entryOf(t, h.settingsPath()); got.Instance != "" {
+			t.Errorf("the entry is %+v, want no instance id: the install made the service again", got)
+		}
+	})
+	t.Run("isolated", func(t *testing.T) {
+		useDefaultConfigDir(t)
+		home := t.TempDir()
+		f := newIsoFake(home)
+		f.noImage = true
+		if err := recordInstallation(runtime.GOOS, settingsFile(home), "", isolatedSettings(), testInstance); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := runIsolated(t, f, nil, ""); err != nil {
+			t.Fatal(err)
+		}
+		if got := entryOf(t, settingsFile(home)); got.Instance != "" {
+			t.Errorf("the entry is %+v, want no instance id: the install made the service again", got)
+		}
+	})
+}

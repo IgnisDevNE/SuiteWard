@@ -7,8 +7,8 @@ import (
 )
 
 // A message that v0.1.1 queued and the relay delivers after an upgrade carries none of the fields added since (addInclude, addRunner,
-// protectPatterns, quoting). The notice and the runner-uncovered comment must validate and post what v0.1.1 rendered for them: the bodies below are the output of the
-// v0.1.1 sources (commandtext.ScopeNoticeComment and RunnerUncoveredComment at the tag), not of this tree's renderer. The payloads are the JSON that
+// protectPatterns, quoting). The notice and the runner-uncovered comment must still decode, validate and post, in the words of this tree: the bodies below are what
+// this tree renders for those payloads today, and the wording has moved since v0.1.1, so they say nothing of what v0.1.1 rendered. The payloads are the JSON that
 // v0.1.1's own marshaling wrote (a full declaration, or protect and ignore, and no later field), frozen here so that no fixture edit can change them.
 
 var (
@@ -18,29 +18,29 @@ var (
 )
 
 const (
-	v011ScopeNotice = "**SuiteWard scope notice**\n\nTest-like files in this pull request that the current contract does not protect:\n\n```\npkg/a_test.go\npkg/b_test.go\n```\n\nand 1 more\n\nThe current contract does not protect these files. SuiteWard checks only the protected files, so a change to them needs no approval.\n\nSuiteWard suggests this file: the approved version's `.suiteward.yml` with the new patterns added. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - /tests/**\n  - \"*_test.go\"\n```\n\nThese files may hold test settings among other content, so SuiteWard does not suggest them. Protecting one would put every change to it, even a dependency update, behind an approval. Decide for yourself:\n\n```\npackage.json\n```\n\nTo change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](https://github.com/acme/widgets/edit/feature/x/.suiteward.yml) and paste the suggested file. SuiteWard does not make the commit for you. You make it.\n\nMaking this commit changes the protected files. The owner approves it like any other change to them. Nothing is protected until that change is approved and merged.\n\nThis comment is a suggestion, not an approval. It does not change the check.\n"
+	v011ScopeNoticeToday = "**SuiteWard scope notice**\n\nTest-like files in this pull request that the current contract does not protect:\n\n```\npkg/a_test.go\npkg/b_test.go\n```\n\nand 1 more\n\nThe current contract does not protect these files. SuiteWard checks only the protected files, so a change to them needs no approval.\n\nSuiteWard suggests this file: the approved version's `.suiteward.yml` with the new patterns added. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - /tests/**\n  - \"*_test.go\"\n```\n\nThese files may hold test settings among other content, so SuiteWard does not suggest them. Protecting one would put every change to it, even a dependency update, behind an approval. Decide for yourself:\n\n```\npackage.json\n```\n\nTo change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](https://github.com/acme/widgets/edit/feature/x/.suiteward.yml) and paste the suggested file. SuiteWard does not make the commit for you. You make it.\n\nMaking this commit changes the protected files. The owner approves it like any other change to them. Nothing is protected until that change is approved and merged.\n\nThis comment is a suggestion, not an approval. It does not change the check.\n"
 
-	v011RunnerUncovered = "**SuiteWard found runner files that the contract does not protect**\n\nRunner files that this pull request adds or changes and the current contract does not protect:\n\n```\njest.config.js\npkg/conftest.py\n```\n\nand 1 more\n\nA runner file sets up how tests run. It can change how the protected tests run without touching any of them: a `conftest.py` can skip them, and a `jest.config.js` can narrow which files Jest runs. So SuiteWard keeps the check waiting (`in_progress`) until the owner decides what to do with these files.\n\nThere are two ways out. Each is a change to `.suiteward.yml` that the owner approves like any other change to the protected files.\n\n**Protect the files.** This is the approved version's `.suiteward.yml` with the runner patterns of these files added to `runner`. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - /tests/**\nrunner:\n  - jest.config.*\n```\n\n**Ignore the files.** This is the approved version's `.suiteward.yml` with the paths of these files added to `exclude`. Excluding a path stops protecting it. The owner approves that too, and each pattern names exactly one file:\n\n```\nversion: 1\ninclude:\n  - /tests/**\nexclude:\n  - jest.config.js\n```\n\nTo change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](https://github.com/acme/widgets/edit/feature/x/.suiteward.yml) and paste the suggested file. SuiteWard does not make the commit for you. You make it.\n\nWhen this pull request's diff shows the lists of `.suiteward.yml`, SuiteWard also posts each choice as a review comment, and GitHub's **Commit suggestion** button applies it in one click.\n\nNothing is protected or ignored until the owner approves the new revision and it is merged.\n\nThis comment is a suggestion, not an approval.\n"
+	v011RunnerUncoveredToday = "**SuiteWard found runner files that the contract does not protect**\n\nRunner files that this pull request adds or changes and the current contract does not protect:\n\n```\njest.config.js\npkg/conftest.py\n```\n\nand 1 more\n\nA runner file sets up how tests run. It can change how the protected tests run without touching any of them: a `conftest.py` can skip them, and a `jest.config.js` can narrow which files Jest runs. So SuiteWard keeps the check waiting (`in_progress`) until the owner decides what to do with these files.\n\nThere are two ways out. Each is a change to `.suiteward.yml` that the owner approves like any other change to the protected files.\n\n**Protect the files.** This is the approved version's `.suiteward.yml` with the runner patterns of these files added to `runner`. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - /tests/**\nrunner:\n  - jest.config.*\n```\n\n**Ignore the files.** This is the approved version's `.suiteward.yml` with the paths of these files added to `exclude`. Excluding a path stops protecting it. The owner approves that too, and each pattern names exactly one file:\n\n```\nversion: 1\ninclude:\n  - /tests/**\nexclude:\n  - jest.config.js\n```\n\nTo change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](https://github.com/acme/widgets/edit/feature/x/.suiteward.yml) and paste the suggested file. SuiteWard does not make the commit for you. You make it.\n\nWhen this pull request's diff shows the lists of `.suiteward.yml`, SuiteWard also posts each choice as a review comment, and GitHub's **Commit suggestion** button applies it in one click.\n\nNothing is protected or ignored until the owner approves the new revision and it is merged.\n\nThis comment is a suggestion, not an approval.\n"
 )
 
-func TestCommentPublisherPostsAV011ScopeNoticeAsV011RenderedIt(t *testing.T) {
+func TestCommentPublisherStillPostsAScopeNoticeThatV011Queued(t *testing.T) {
 	w := newCmtWorld(t)
 
 	if err := w.pub.publish(t.Context(), cmtScopeKey, v011ScopeNoticePayload); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
 
-	w.wantPost(cmtScopeKey, v011ScopeNotice)
+	w.wantPost(cmtScopeKey, v011ScopeNoticeToday)
 }
 
-func TestCommentPublisherPostsAV011RunnerUncoveredCommentAsV011RenderedIt(t *testing.T) {
+func TestCommentPublisherStillPostsARunnerUncoveredCommentThatV011Queued(t *testing.T) {
 	w := newCmtWorld(t)
 
 	if err := w.pub.publish(t.Context(), cmtRunnerKey, v011RunnerUncoveredPayload); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
 
-	w.wantPost(cmtRunnerKey, v011RunnerUncovered)
+	w.wantPost(cmtRunnerKey, v011RunnerUncoveredToday)
 }
 
 // The suggestions of a v0.1.1 scope review carry no quoting, and a review comment has no style to follow its anchor in: the payload is refused.

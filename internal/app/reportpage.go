@@ -186,7 +186,7 @@ func newReportView(repo, reference string, built revisionReport) reportView {
 			file.Counts = fmt.Sprintf("+%d/−%d", f.LinesAdded, f.LinesRemoved)
 		}
 		for _, m := range f.Markers {
-			file.Markers = append(file.Markers, markerView{Kind: markerLabel(m.Kind), Line: m.Line, Text: commandtext.Visible(m.Text)})
+			file.Markers = append(file.Markers, markerView{Kind: markerLabel(string(m.Kind)), Line: m.Line, Text: commandtext.Visible(m.Text)})
 		}
 		for _, h := range f.Hunks {
 			hunk := hunkView{Header: fmt.Sprintf("@@ -%d,%d +%d,%d @@", h.OldStart, h.OldLines, h.NewStart, h.NewLines)}
@@ -226,17 +226,26 @@ func usesCRLF(f report.File) bool {
 
 var lineClasses = map[report.LineKind]string{report.LineContext: "ctx", report.LineAdded: "add", report.LineRemoved: "del"}
 
-// markerLabels are the words of the kind of a marker line, as the facts of the summary say them (a marker line is a line to look at, never a verdict).
-var markerLabels = map[report.MarkerKind]string{
-	report.MarkRemovedAssertion: "Removed assertion line",
-	report.MarkAddedSkip:        "Added skip line",
-	report.MarkFocus:            "Added focus line",
-	report.MarkDeletedTest:      "Removed test declaration",
-	report.MarkTestFileRemoved:  "Removed test file",
+// markerLabels are the words of the kind of a marker line (a marker line is a line to look at, never a verdict), for the two pages that list them: the report page, for the
+// lines of a diff, and the pull request page, for the lines of the non-test files that the test runner reports. The kinds of the two sets do not overlap.
+var markerLabels = map[string]string{
+	string(report.MarkRemovedAssertion): "Removed assertion line",
+	string(report.MarkAddedSkip):        "Added skip line",
+	string(report.MarkFocus):            "Added focus line",
+	string(report.MarkDeletedTest):      "Removed test declaration",
+	string(report.MarkTestFileRemoved):  "Removed test file",
+
+	"testing-import":   "Imports the testing package",
+	"testing-testing":  "Asks whether tests are running",
+	"flag-lookup-test": "Looks up a test flag",
+	"exit-in-init":     "Ends the program early, at start-up or with syscall.Exit",
+	"test-file-read":   "Names a test file",
+	"env-read":         "Reads the TESTING or CI setting",
+	"forged-event":     "Holds text that imitates test output",
 }
 
 // markerLabel is the label of a kind, or the kind itself when it has none, so that a kind that a later release adds is shown and never left out.
-func markerLabel(k report.MarkerKind) string { return cmp.Or(markerLabels[k], string(k)) }
+func markerLabel(k string) string { return cmp.Or(markerLabels[k], k) }
 
 // fileNotes say why a file has no line-by-line diff, or only part of one.
 func fileNotes(f report.File) []string {

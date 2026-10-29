@@ -2,7 +2,6 @@ package commandtext
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
@@ -90,10 +89,7 @@ func modeNeeds(mode execution.Mode) string {
 // countsText states the receipt of the commit in the words of the results comment, then the tests that SuiteWard cannot run, which that comment leaves to its page.
 // A changed test file that cannot be read blocks every mode, so that is said when there are some.
 func countsText(a Ack) []string {
-	parts := receiptText(ReceiptRun{Counts: a.Counts, Markers: a.Markers})
-	for i := range parts { // the acknowledgment has no link, so it names the page
-		parts[i] = strings.ReplaceAll(parts[i], "listed on the page", "listed on the pull request page")
-	}
+	parts := receiptText(ReceiptRun{Counts: a.Counts, Markers: a.Markers}, "the pull request page") // the acknowledgment has no link, so it names the page
 	if a.Counts.Unparsed != 0 {
 		parts = append(parts, "Changed test files that cannot be read block every mode.")
 	}

@@ -40,7 +40,7 @@ func (r *Resolver) chooseInstallation(d Deps) error {
 	case len(found) == 0:
 		return nil
 	case len(found) == 1:
-		r.say("This computer has one SuiteWard installation, so the command uses it. Its settings file is %s.\n", printable(found[0].Settings))
+		r.say("This computer has one listed SuiteWard installation, so the command uses it. Its settings file is %s.\n", printable(found[0].Settings))
 		r.choose(d, found[0])
 		return nil
 	case !r.term.IsTerminal || unattended(r.flags):

@@ -660,8 +660,25 @@ func TestPullPageListsWhatIsNotEvaluatedTheSubmodulesTheMarkersAndTheFilesThatDo
 	})
 	section := w.section(w.text(), "Tests this change adds or edits")
 	w.wantText(section, "<h3>Files not evaluated because their pattern is not approved yet: 1</h3>", "<li>e2e/x_test.go</li>", "<h3>Skipped submodules: 1</h3>", "<li>vendor/sub</li>",
-		"<h3>Lines to look at: 2</h3>", "<li>env-read: tests/a_test.go line 12</li>", "<li>testing-import: tests/b_test.go line 3</li>",
+		"<h3>Lines to look at: 2</h3>", "<li>Reads the TESTING or CI setting: tests/a_test.go line 12</li>", "<li>Imports the testing package: tests/b_test.go line 3</li>",
 		"<h3>Changed test files that cannot be read: 1</h3>", "<li>tests/broken_test.go</li>")
+	w.wantNoText(section, "env-read", "testing-import") // the page says what a line does, not the code that the test runner uses for it
+}
+
+// Each kind of marker that the test runner reports has a label that says what the line does, and none shows the code itself. The kinds are the closed set that the store
+// accepts (execution validate.go, markerKinds).
+func TestEveryMarkerKindOfTheTestRunnerHasALabelThatIsNotItsCode(t *testing.T) {
+	seen := map[string]string{}
+	for _, kind := range []string{"testing-import", "testing-testing", "flag-lookup-test", "exit-in-init", "test-file-read", "env-read", "forged-event"} {
+		label := markerLabel(kind)
+		if label == kind || label == "" {
+			t.Errorf("the marker kind %q has no label of its own: %q", kind, label)
+		}
+		if other, twice := seen[label]; twice {
+			t.Errorf("the kinds %q and %q share the label %q", other, kind, label)
+		}
+		seen[label] = kind
+	}
 }
 
 // Everything that comes from the repository or from the test runner is shown escaped: the names of tests, packages and files, the paths of markers, submodules and files

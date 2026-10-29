@@ -454,7 +454,7 @@ func receiptSection(r pageRun, counts domain.ReceiptCounts, weak map[domain.Test
 		}
 		markers := make([]string, len(r.result.Markers))
 		for i, m := range r.result.Markers {
-			markers[i] = commandtext.Visible(m.Kind) + ": " + commandtext.Visible(m.Path) + " line " + strconv.Itoa(m.Line)
+			markers[i] = markerLabel(commandtext.Visible(m.Kind)) + ": " + commandtext.Visible(m.Path) + " line " + strconv.Itoa(m.Line)
 		}
 		lists = append(lists, namedList{countedHeading("Skipped submodules", len(r.result.Submodules)), visibleAll(r.result.Submodules)},
 			namedList{countedHeading("Changed test files that cannot be read", len(r.result.Unparsed)), visibleAll(r.result.Unparsed)},

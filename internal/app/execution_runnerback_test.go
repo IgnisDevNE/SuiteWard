@@ -7,6 +7,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // The runner is back (docs/contracts/runtime.md, "The early unblock and its hold", "The runner is back"): the current head has a job with an unblock row, the reason
@@ -18,9 +19,21 @@ func (w *cjJobWorld) pull5(t *testing.T) *pullState {
 	return &pullState{enrollment: owner.State{EnrolledAt: bootTime}, p: owner.ProjectPolicy{RepositoryID: bootRepoID}, pull: githubsync.PullState{Number: 5, HeadSHA: cjHead2}}
 }
 
+// gateSet is the set that a pass holds for a head: the newest job of each plan that is not cancelled, which is what the gates read.
+func (w *cjJobWorld) gateSet(pull int, head string) domain.Set {
+	w.t.Helper()
+	var set domain.Set
+	for plan, job := range map[execution.Plan]*domain.Job{execution.PlanCanonical: &set.CanonicalJob, execution.PlanReceipt: &set.ReceiptJob} {
+		if jobs := w.headJobs(pull, head, plan); len(jobs) > 0 {
+			*job, _ = jobs[len(jobs)-1].InSet(false)
+		}
+	}
+	return set
+}
+
 func (w *cjJobWorld) wantRunnerBack(t *testing.T, want bool, why string) {
 	t.Helper()
-	got, err := w.check.runnerBack(t.Context(), w.pull5(t))
+	got, err := w.check.runnerBack(t.Context(), w.pull5(t), w.gateSet(5, cjHead2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +84,7 @@ func TestTheRunnerIsNotBackForAJobThatEndedForAnotherReasonOrBelongsToAnotherHea
 		w.check.liveness.Saw(canonical.FinishedAt.Add(time.Hour))
 		other := w.pull5(t)
 		other.pull.HeadSHA = cjHead3 // the head moved
-		got, err := w.check.runnerBack(t.Context(), other)
+		got, err := w.check.runnerBack(t.Context(), other, w.gateSet(5, cjHead3))
 		if err != nil || got {
 			t.Errorf("runnerBack of a head that has no job = %v, %v; want false", got, err)
 		}

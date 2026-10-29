@@ -1131,16 +1131,14 @@ func reductionKinds(notice governance.RevisionNotice) (policy, scope bool) {
 	return policy, scope
 }
 
-// pullPageURL is the link to the page of pull request pull of repo (owner/name) on the instance at base, or "" without a base.
-func pullPageURL(base, repo string, pull int) string { return pageURL(base, "pulls", repo, pull) }
-
-// pageURL is <base>/<route>/<owner>/<name>/<pull>, with the owner and the name path-escaped, or "" without a base.
-func pageURL(base, route, repo string, pull int) string {
+// pullPageURL is the link to the page of pull request pull of repo (owner/name) on the instance at base, <base>/pulls/<owner>/<name>/<pull> with the owner and the name
+// path-escaped, or "" without a base.
+func pullPageURL(base, repo string, pull int) string {
 	if base == "" {
 		return ""
 	}
 	account, name, _ := strings.Cut(repo, "/")
-	return base + "/" + route + "/" + url.PathEscape(account) + "/" + url.PathEscape(name) + "/" + strconv.Itoa(pull)
+	return base + "/pulls/" + url.PathEscape(account) + "/" + url.PathEscape(name) + "/" + strconv.Itoa(pull)
 }
 
 // revision renders the comment of a revision and, when it can, states the numbers of its change report and links it: the report is rebuilt now, from

@@ -32,11 +32,11 @@ func headReasonOf(r checks.Result) domain.HeadReason {
 
 // headSetOf is the Set of the head that the comments and the counts of an awaiting check read: the Set that headNotResponding returns, with the reason that the head
 // would have without the gate. A fork gets no run, so no Set, and neither does a policy that was not read or that names no execution.
-func (j *checksJob) headSetOf(ctx context.Context, s *pullState, x *executionRun, jobs headJobs, silent bool, d *pullDecision) (domain.Set, error) {
+func (j *checksJob) headSetOf(ctx context.Context, s *pullState, x *executionRun, jobs headJobs, d *pullDecision) (domain.Set, error) {
 	if isFork(s.pull.HeadRepo, s.p.Repo) {
 		return domain.Set{}, nil
 	}
-	set, _, _, err := j.headNotResponding(ctx, s, x, jobs, silent)
+	set, err := j.headNotResponding(ctx, s, x, jobs)
 	if err != nil {
 		return domain.Set{}, err
 	}

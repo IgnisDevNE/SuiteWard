@@ -228,15 +228,10 @@ func pullFourState() *pullState {
 	return &pullState{p: owner.ProjectPolicy{RepositoryID: bootRepoID}, pull: githubsync.PullState{Number: 4, HeadSHA: bootHead}}
 }
 
-// readHead asks whether a head reads not responding, with the silence as the caller read it. The clock of the world says the opposite, so that a function that read
-// the clock again would answer wrongly.
-func (w *cjJobWorld) readHead(x *executionRun, jobs headJobs, silent bool) (domain.Set, domain.JobPair, bool, error) {
+// readHead reads the Set of the head. The silence of the runner is not an input: the caller asks the Set NotResponding(silent) with the silence it read.
+func (w *cjJobWorld) readHead(x *executionRun, jobs headJobs) (domain.Set, error) {
 	w.t.Helper()
-	w.clock = w.check.liveness.LastSeen()
-	if !silent {
-		w.clock = w.clock.Add(time.Hour)
-	}
-	return w.check.headNotResponding(w.t.Context(), pullFourState(), x, jobs, silent)
+	return w.check.headNotResponding(w.t.Context(), pullFourState(), x, jobs)
 }
 
 // A head reads "not responding" when the runner is silent and at least one wanted job of the head waits for it: the state that the comment of the head and the
@@ -280,9 +275,10 @@ func TestAHeadReadsNotRespondingWhenTheRunnerIsSilentAndAWantedJobWaitsForIt(t *
 		"a canonical job that the pass did not read": {required, true, headJobs{}, domain.JobPair{Canonical: stored.ID}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, got, reading, err := w.readHead(tc.x, tc.jobs, tc.silent)
-			if err != nil || got != tc.want || reading != tc.reading {
-				t.Errorf("headNotResponding = %+v, %v, %v; want %+v, %v", got, reading, err, tc.want, tc.reading)
+			set, err := w.readHead(tc.x, tc.jobs)
+			got, reading := set.NotResponding(tc.silent)
+			if err != nil || got.Jobs != tc.want || reading != tc.reading {
+				t.Errorf("headNotResponding = %+v, %v, %v; want %+v, %v", got.Jobs, reading, err, tc.want, tc.reading)
 			}
 		})
 	}
@@ -297,10 +293,11 @@ func TestAHeadReturnsTheSetItReadsNotRespondingFrom(t *testing.T) {
 	x := &executionRun{known: true, policy: executionPolicy{canonical: domain.CanonicalLevelRequired, receipt: domain.ReceiptLevelBeforeApproval}}
 	receipt := execution.Job{ID: 91, State: execution.StateLeased, Spec: execution.Spec{GoverningDigest: stored.GoverningDigest}}
 
-	set, waiting, reading, err := w.readHead(x, headJobs{receiptApplies: true, receiptDecided: true, receipt: receipt, hasReceipt: true}, true)
+	set, err := w.readHead(x, headJobs{receiptApplies: true, receiptDecided: true, receipt: receipt, hasReceipt: true})
 
-	if err != nil || !reading || waiting != (domain.JobPair{Canonical: stored.ID, Receipt: 91}) {
-		t.Fatalf("headNotResponding = %+v, %v, %v; want both jobs, reading", waiting, reading, err)
+	waiting, reading := set.NotResponding(true)
+	if err != nil || !reading || waiting.Jobs != (domain.JobPair{Canonical: stored.ID, Receipt: 91}) {
+		t.Fatalf("headNotResponding = %+v, %v, %v; want both jobs, reading", waiting.Jobs, reading, err)
 	}
 	canonicalJob, _ := stored.InSet(false)
 	// ReceiptDecided is in it too: a Set with it unset is never final, so the comment would never be written.
@@ -309,10 +306,6 @@ func TestAHeadReturnsTheSetItReadsNotRespondingFrom(t *testing.T) {
 	if set != want {
 		t.Errorf("the Set = %+v; want %+v", set, want)
 	}
-	// Asked again by the caller, with the silence it read, the Set gives the same jobs: there is one rule.
-	if again, ok := set.NotResponding(true); !ok || again.Jobs != waiting {
-		t.Errorf("Set.NotResponding(true) = %+v, %v; want the jobs %+v", again, ok, waiting)
-	}
 }
 
 // A cancelled job is not one that a head reads: the gates never return one, so it is a broken state and not a job that waits for nothing.
@@ -320,8 +313,8 @@ func TestAHeadThatReadsACancelledJobIsAnError(t *testing.T) {
 	w := gateWorld(t)
 	x := &executionRun{known: true, policy: executionPolicy{canonical: domain.CanonicalLevelRequired, receipt: domain.ReceiptLevelOff}}
 	cancelled := execution.Job{ID: 90, State: execution.StateCancelled, Reason: execution.ReasonClosed}
-	if set, got, reading, err := w.readHead(x, headJobs{canonicalPlanned: true, canonical: cancelled, hasCanonical: true}, true); err == nil {
-		t.Errorf("headNotResponding = %+v, %+v, %v, nil; want an error for the cancelled job", set, got, reading)
+	if set, err := w.readHead(x, headJobs{canonicalPlanned: true, canonical: cancelled, hasCanonical: true}); err == nil {
+		t.Errorf("headNotResponding = %+v, nil; want an error for the cancelled job", set)
 	}
 }
 

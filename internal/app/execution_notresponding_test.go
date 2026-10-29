@@ -8,7 +8,10 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // A runner that does not respond (docs/contracts/runtime.md, "Not responding"): when no executor was seen for 30 s and a wanted job of the head waits for the
@@ -220,28 +223,147 @@ func TestChecksReadEachJobForItsOwnCheckWhenOnlyOneWaitsForTheRunner(t *testing.
 	}
 }
 
+// pullFourState is the state of pull 4 at the head of the canonical, as the checks job holds it for a head.
+func pullFourState() *pullState {
+	return &pullState{p: owner.ProjectPolicy{RepositoryID: bootRepoID}, pull: githubsync.PullState{Number: 4, HeadSHA: bootHead}}
+}
+
+// readHead asks whether a head reads not responding, with the silence as the caller read it. The clock of the world says the opposite, so that a function that read
+// the clock again would answer wrongly.
+func (w *cjJobWorld) readHead(x *executionRun, jobs headJobs, silent bool) (domain.Set, domain.JobPair, bool, error) {
+	w.t.Helper()
+	w.clock = w.check.liveness.LastSeen()
+	if !silent {
+		w.clock = w.clock.Add(time.Hour)
+	}
+	return w.check.headNotResponding(w.t.Context(), pullFourState(), x, jobs, silent)
+}
+
 // A head reads "not responding" when the runner is silent and at least one wanted job of the head waits for it: the state that the comment of the head and the
-// unblock read (docs/contracts/runtime.md, "Not responding"). A job that the head does not want, and a plan with no job yet, wait for nothing.
+// unblock read (docs/contracts/runtime.md, "Not responding", "Definitions"). The wanted jobs are the canonical job when the canonical level is not off, whatever the
+// pass decided of the head, and the receipt job when the receipt level is not off and the receipt applies. A job that is not wanted, and a plan with no job yet, wait
+// for nothing. The answer names the jobs that wait, 0 for none. The silence is the caller's, read once for the pass: the function never reads the clock.
 func TestAHeadReadsNotRespondingWhenTheRunnerIsSilentAndAWantedJobWaitsForIt(t *testing.T) {
-	start := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
-	waits, github := execution.Job{State: execution.StatePending}, execution.Job{State: execution.StatePending, Reason: execution.ReasonGitHubUnavailable}
-	leased, done := execution.Job{State: execution.StateLeased}, execution.Job{State: execution.StateComplete}
+	w := gateWorld(t)
+	w.execRun() // the canonical job of pull 4 is pending, and stays so
+	stored := w.onlyJob(4, bootHead, execution.PlanCanonical)
+	policy := func(canonical domain.CanonicalLevel, receipt domain.ReceiptLevel) *executionRun {
+		return &executionRun{known: true, policy: executionPolicy{canonical: canonical, receipt: receipt}}
+	}
+	required, advisory, off := policy(domain.CanonicalLevelRequired, domain.ReceiptLevelRequired), policy(domain.CanonicalLevelAdvisory, domain.ReceiptLevelOff), policy(domain.CanonicalLevelOff, domain.ReceiptLevelRequired)
+	canonicalOnly := policy(domain.CanonicalLevelRequired, domain.ReceiptLevelOff)
+	job := func(id int64, state execution.State, reason execution.Reason) execution.Job {
+		return execution.Job{ID: id, State: state, Reason: reason, Spec: execution.Spec{GoverningDigest: stored.GoverningDigest}}
+	}
+	waits, leased := job(90, execution.StatePending, ""), job(91, execution.StateLeased, "")
+	github, done := job(90, execution.StatePending, execution.ReasonGitHubUnavailable), job(90, execution.StateComplete, "")
 	for name, tc := range map[string]struct {
-		silence time.Duration
+		x       *executionRun
+		silent  bool
 		jobs    headJobs
-		want    bool
+		want    domain.JobPair
+		reading bool
 	}{
-		"the canonical job waits":                      {30 * time.Second, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, true},
-		"the receipt job waits, the canonical is done": {30 * time.Second, headJobs{canonicalPlanned: true, canonical: done, hasCanonical: true, receiptApplies: true, receipt: leased, hasReceipt: true}, true},
-		"one waits on GitHub and the other is done":    {time.Hour, headJobs{canonicalPlanned: true, canonical: github, hasCanonical: true, receiptApplies: true, receipt: done, hasReceipt: true}, false},
-		"the runner is not silent yet":                 {30*time.Second - time.Millisecond, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, false},
-		"a canonical job that the head does not want":  {time.Hour, headJobs{canonical: waits, hasCanonical: true}, false},
-		"a receipt that does not apply":                {time.Hour, headJobs{receipt: waits, hasReceipt: true}, false},
-		"no job yet":                                   {time.Hour, headJobs{canonicalPlanned: true, receiptApplies: true}, false},
+		"the canonical job waits":                      {required, true, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, domain.JobPair{Canonical: 90}, true},
+		"the receipt job waits, the canonical is done": {required, true, headJobs{canonicalPlanned: true, canonical: done, hasCanonical: true, receiptApplies: true, receipt: leased, hasReceipt: true}, domain.JobPair{Receipt: 91}, true},
+		"both wait": {required, true, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true, receiptApplies: true, receipt: leased, hasReceipt: true}, domain.JobPair{Canonical: 90, Receipt: 91}, true},
+		"one waits on GitHub and the other is done": {required, true, headJobs{canonicalPlanned: true, canonical: github, hasCanonical: true, receiptApplies: true, receipt: job(91, execution.StateComplete, ""), hasReceipt: true}, domain.JobPair{}, false},
+		"the runner is not silent":                  {required, false, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, domain.JobPair{}, false},
+		"an advisory canonical level is wanted":     {advisory, true, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, domain.JobPair{Canonical: 90}, true},
+		"a canonical level that is off":             {off, true, headJobs{canonical: waits, hasCanonical: true}, domain.JobPair{}, false},
+		"a receipt that does not apply":             {required, true, headJobs{canonicalPlanned: true, canonical: done, hasCanonical: true, receipt: leased, hasReceipt: true}, domain.JobPair{}, false},
+		"a receipt level that is off":               {canonicalOnly, true, headJobs{canonicalPlanned: true, canonical: done, hasCanonical: true, receiptApplies: true, receipt: leased, hasReceipt: true}, domain.JobPair{}, false},
+		"no job yet":                                {required, true, headJobs{canonicalPlanned: true, receiptApplies: true}, domain.JobPair{}, false},
+		"a policy that was not read":                {&executionRun{}, true, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, domain.JobPair{}, false},
+		"a policy that names no execution":          {&executionRun{known: true}, true, headJobs{}, domain.JobPair{}, false},
+		// The check of this head was decided by another rule, so the pass planned no canonical job and read none, but the job that is still open waits.
+		"a canonical job that the pass did not read": {required, true, headJobs{}, domain.JobPair{Canonical: stored.ID}, true},
 	} {
-		j := &checksJob{liveness: execution.NewLiveness(start), now: func() time.Time { return start.Add(tc.silence) }}
-		if got := j.headNotResponding(tc.jobs); got != tc.want {
-			t.Errorf("%s: headNotResponding = %v, want %v", name, got, tc.want)
+		t.Run(name, func(t *testing.T) {
+			_, got, reading, err := w.readHead(tc.x, tc.jobs, tc.silent)
+			if err != nil || got != tc.want || reading != tc.reading {
+				t.Errorf("headNotResponding = %+v, %v, %v; want %+v, %v", got, reading, err, tc.want, tc.reading)
+			}
+		})
+	}
+}
+
+// The Set that the head reads from is returned with the answer, so that the comment fills the rest of it (the reason of the head, the earlier job, the counts) and
+// reads its Unblock, Holds and Next from the same jobs and levels, never from a rebuilt copy: the canonical job that the pass did not read is in it too.
+func TestAHeadReturnsTheSetItReadsNotRespondingFrom(t *testing.T) {
+	w := gateWorld(t)
+	w.execRun()
+	stored := w.onlyJob(4, bootHead, execution.PlanCanonical)
+	x := &executionRun{known: true, policy: executionPolicy{canonical: domain.CanonicalLevelRequired, receipt: domain.ReceiptLevelBeforeApproval}}
+	receipt := execution.Job{ID: 91, State: execution.StateLeased, Spec: execution.Spec{GoverningDigest: stored.GoverningDigest}}
+
+	set, waiting, reading, err := w.readHead(x, headJobs{receiptApplies: true, receiptDecided: true, receipt: receipt, hasReceipt: true}, true)
+
+	if err != nil || !reading || waiting != (domain.JobPair{Canonical: stored.ID, Receipt: 91}) {
+		t.Fatalf("headNotResponding = %+v, %v, %v; want both jobs, reading", waiting, reading, err)
+	}
+	canonicalJob, _ := stored.InSet(false)
+	// ReceiptDecided is in it too: a Set with it unset is never final, so the comment would never be written.
+	want := domain.Set{CanonicalLevel: domain.CanonicalLevelRequired, ReceiptLevel: domain.ReceiptLevelBeforeApproval, ReceiptApplies: true, ReceiptDecided: true, CanonicalJob: canonicalJob,
+		ReceiptJob: domain.Job{ID: 91, State: domain.JobLeased, Governing: stored.GoverningDigest}}
+	if set != want {
+		t.Errorf("the Set = %+v; want %+v", set, want)
+	}
+	// Asked again by the caller, with the silence it read, the Set gives the same jobs: there is one rule.
+	if again, ok := set.NotResponding(true); !ok || again.Jobs != waiting {
+		t.Errorf("Set.NotResponding(true) = %+v, %v; want the jobs %+v", again, ok, waiting)
+	}
+}
+
+// A cancelled job is not one that a head reads: the gates never return one, so it is a broken state and not a job that waits for nothing.
+func TestAHeadThatReadsACancelledJobIsAnError(t *testing.T) {
+	w := gateWorld(t)
+	x := &executionRun{known: true, policy: executionPolicy{canonical: domain.CanonicalLevelRequired, receipt: domain.ReceiptLevelOff}}
+	cancelled := execution.Job{ID: 90, State: execution.StateCancelled, Reason: execution.ReasonClosed}
+	if set, got, reading, err := w.readHead(x, headJobs{canonicalPlanned: true, canonical: cancelled, hasCanonical: true}, true); err == nil {
+		t.Errorf("headNotResponding = %+v, %+v, %v, nil; want an error for the cancelled job", set, got, reading)
+	}
+}
+
+// One pass reads the silence of the runner once (docs/contracts/runtime.md, "Not responding": the state is a function of the stored jobs, the clock and lastSeenAt):
+// whenever the clock crosses the 30 s between the reads that the pass makes, the Contract check and the Receipt check of a head still agree, because both use the one
+// reading. The clock is a step: the calls before the crossing read 29.999 s of silence, the rest read 30 s.
+func TestAPassReadsTheSilenceOfTheRunnerOnceForEveryCheckOfAHead(t *testing.T) {
+	w := newExecWorld(t, execDecl)
+	w.execPullFive(execHeadFiles(execDecl, "v2"))
+	w.consent(contract.ApproveConsent, 201, 2, 1, 5)
+	w.execRun() // the head is ready: its two jobs wait
+	lastSeen := w.check.liveness.LastSeen()
+	before, after := lastSeen.Add(30*time.Second-time.Millisecond), lastSeen.Add(30*time.Second)
+	calls, crossing := 0, 0
+	w.check.now = func() time.Time {
+		calls++
+		if calls <= crossing {
+			return before
 		}
+		return after
+	}
+	run := func() (contractSilent, receiptSilent bool) {
+		calls = 0
+		w.mustCheck()
+		record, found := w.record(5)
+		stored, foundReceipt := w.receipt(5)
+		if !found || !foundReceipt {
+			t.Fatalf("crossing %d: Contract check found %v, Receipt check found %v", crossing, found, foundReceipt)
+		}
+		return record.Reason == "canonical-not-responding", stored.Reason == "receipt-not-responding"
+	}
+	run()
+	reads := calls // the clock is read this many times by a pass, wherever the silence is read
+	sawNotResponding, sawWaiting := false, false
+	for crossing = 0; crossing <= reads; crossing++ {
+		contractSilent, receiptSilent := run()
+		if contractSilent != receiptSilent {
+			t.Fatalf("with the clock crossing 30 s after %d reads, the Contract check says not-responding = %v and the Receipt check says %v", crossing, contractSilent, receiptSilent)
+		}
+		sawNotResponding, sawWaiting = sawNotResponding || contractSilent, sawWaiting || !contractSilent
+	}
+	if !sawNotResponding || !sawWaiting {
+		t.Errorf("the passes said not-responding: %v, and a plain wait: %v; want both, so that the clock really crossed the limit", sawNotResponding, sawWaiting)
 	}
 }

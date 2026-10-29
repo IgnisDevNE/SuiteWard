@@ -35,8 +35,11 @@ type Memory struct {
 // comment is the key of a ledger entry.
 type comment struct{ repository, comment int64 }
 
-// unblock holds the rows of one unblock command: the jobs it lifted, when its ledger entry was created and the time its rows were decided.
+// unblock holds the rows of one unblock command: the pull request and head it names, the jobs it lifted, when its ledger entry was created and the time its rows were
+// decided.
 type unblock struct {
+	pull      int
+	head      string
 	jobs      []int64
 	createdAt time.Time
 	decidedAt time.Time
@@ -423,6 +426,28 @@ func (m *Memory) Unblocked(ctx context.Context, jobID int64, since time.Time) (b
 	return false, nil
 }
 
+// HeadUnblocks implements execution.Store.
+func (m *Memory) HeadUnblocks(ctx context.Context, repositoryID int64, pull int, headSHA string, since time.Time) ([]execution.JobUnblock, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	unblocks := []execution.JobUnblock{}
+	for key, u := range m.unblocks {
+		if key.repository != repositoryID || u.pull != pull || u.head != headSHA || u.createdAt.Before(since) {
+			continue
+		}
+		for _, id := range u.jobs {
+			unblocks = append(unblocks, execution.JobUnblock{JobID: id, DecidedAt: u.decidedAt})
+		}
+	}
+	slices.SortFunc(unblocks, func(a, b execution.JobUnblock) int {
+		return cmp.Or(cmp.Compare(a.JobID, b.JobID), a.DecidedAt.Compare(b.DecidedAt))
+	})
+	return unblocks, nil
+}
+
 // RecordApproval implements execution.Store.
 func (m *Memory) RecordApproval(ctx context.Context, e commands.Entry, ack *governance.OutboxMessage, gate execution.ApprovalGate) error {
 	if err := ctx.Err(); err != nil {
@@ -494,7 +519,7 @@ func (m *Memory) RecordUnblock(ctx context.Context, e commands.Entry, ack *gover
 	for _, o := range jobs {
 		m.jobs[o.ID] = m.jobs[o.ID].UnblockEnded(at)
 	}
-	m.unblocks[key] = unblock{jobs: lifted, createdAt: execution.Stored(e.CreatedAt), decidedAt: execution.Stored(at)}
+	m.unblocks[key] = unblock{pull: e.PullNumber, head: headSHA, jobs: lifted, createdAt: execution.Stored(e.CreatedAt), decidedAt: execution.Stored(at)}
 	return nil
 }
 

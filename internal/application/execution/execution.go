@@ -258,6 +258,12 @@ type UnblockJob struct {
 	LeaseID string
 }
 
+// JobUnblock is one unblock row: the job it names and the time its command decided it (docs/contracts/persistence.md, "Table execution_unblocks").
+type JobUnblock struct {
+	JobID     int64
+	DecidedAt time.Time
+}
+
 // RunState is the state of the receipt at an approve.
 type RunState string
 
@@ -341,6 +347,9 @@ type Store interface {
 	// Unblocked reports whether a row names the job and its command entry was created at or after since (the current enrollment's
 	// enrolled_at). The row binds to the job and not to the head.
 	Unblocked(ctx context.Context, jobID int64, since time.Time) (bool, error)
+	// HeadUnblocks reads the unblock rows of the jobs of a head whose command entry was created at or after since (the current enrollment's
+	// enrolled_at), by job id and then decided_at: a job that two commands unblocked has two rows. Job.EndedBy reads them.
+	HeadUnblocks(ctx context.Context, repositoryID int64, pull int, headSHA string, since time.Time) ([]JobUnblock, error)
 	// RecordApproval records the ledger entry of an approve that reached the receipt gate (processed or receipt-refused) and its
 	// gate record, with the acknowledgment when there is one, in one transaction. The same entry and gate again is success; another
 	// entry or gate for the comment is commands.ErrConflict.

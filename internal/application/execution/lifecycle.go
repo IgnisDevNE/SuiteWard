@@ -3,7 +3,10 @@ package execution
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"slices"
 	"time"
+
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // This file is the lifecycle of a job as pure functions (docs/contracts/runtime.md, "Job lifecycle"). The stores load a job, apply
@@ -134,6 +137,16 @@ func (j Job) UnblockEnded(at time.Time) Job {
 // runner that took a pending job in between is a change.
 func (j Job) Observed(o UnblockJob) bool { return j.State == o.State && j.LeaseID == o.LeaseID }
 
+// EndedBy reports whether an unblock ended the job and not the sweep (docs/contracts/runtime.md, "The early unblock and its hold", "`ended` is derived, not stored"):
+// the job is unavailable for no-executor and its end is the decided_at of a row that names it. unblocks holds every row of the head, since a job that two commands
+// lifted has two rows and only the first can have ended it. The times are compared at the precision that is stored.
+func (j Job) EndedBy(unblocks []JobUnblock) bool {
+	if j.State != StateUnavailable || j.Reason != ReasonNoExecutor {
+		return false
+	}
+	return slices.ContainsFunc(unblocks, func(u JobUnblock) bool { return u.JobID == j.ID && Stored(u.DecidedAt).Equal(Stored(j.FinishedAt)) })
+}
+
 // ended is the job after it became final.
 func (j Job) ended(state State, reason Reason, now time.Time) Job {
 	j.State, j.Reason, j.FinishedAt = state, reason, now
@@ -258,8 +271,22 @@ func (j Job) Swept(p ExpireParams) (next Job, changed, serviceRow bool) {
 	return next, changed, false
 }
 
-// WaitsForRunner reports whether the job waits for the test runner: it is leased, or pending for a reason other than a failing GitHub read
-// (a job that waits on GitHub waits for GitHub, and has its own bound).
+// setStates are the states of a job that is part of a set of the comments of a head. A cancelled job is not one: its binding is no longer wanted.
+var setStates = map[State]domain.JobState{StatePending: domain.JobPending, StateLeased: domain.JobLeased, StateComplete: domain.JobComplete, StateUnavailable: domain.JobUnavailable}
+
+// InSet is the job as the rules of the comments of a head read it (docs/contracts/runtime.md, "The comments of a head"); unblocked says that an unblock row since the
+// current enrollment names it. ok is false for a cancelled job, which is not part of a set.
+func (j Job) InSet(unblocked bool) (job domain.Job, ok bool) {
+	state, ok := setStates[j.State]
+	if !ok {
+		return domain.Job{}, false
+	}
+	return domain.Job{ID: j.ID, State: state, Reason: string(j.Reason), Governing: j.GoverningDigest, Unblocked: unblocked}, true
+}
+
+// WaitsForRunner reports whether the job waits for the test runner (docs/contracts/runtime.md, "Not responding"). It is the rule of the domain job, which the comments
+// of a head read, so that a check and a comment never disagree; a cancelled job is part of no set and waits for nothing.
 func (j Job) WaitsForRunner() bool {
-	return j.State == StateLeased || (j.State == StatePending && j.Reason != ReasonGitHubUnavailable)
+	inSet, ok := j.InSet(false)
+	return ok && inSet.WaitsForRunner()
 }

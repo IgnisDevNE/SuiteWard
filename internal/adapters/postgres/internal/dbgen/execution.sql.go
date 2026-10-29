@@ -699,6 +699,51 @@ func (q *Queries) ListExecutionUnblocks(ctx context.Context, arg ListExecutionUn
 	return items, nil
 }
 
+const listHeadExecutionUnblocks = `-- name: ListHeadExecutionUnblocks :many
+SELECT u.job_id, u.decided_at FROM execution_unblocks u
+JOIN pr_commands c ON c.repository_id = u.repository_id AND c.comment_id = u.comment_id
+WHERE u.repository_id = $1 AND u.pull_number = $2 AND u.head_sha = $3 AND c.created_at >= $4::timestamptz
+ORDER BY u.job_id, u.decided_at, u.comment_id
+`
+
+type ListHeadExecutionUnblocksParams struct {
+	RepositoryID int64
+	PullNumber   int32
+	HeadSha      string
+	Since        pgtype.Timestamptz
+}
+
+type ListHeadExecutionUnblocksRow struct {
+	JobID     int64
+	DecidedAt pgtype.Timestamptz
+}
+
+// The rows of the jobs of a head whose command entry was created at or after since, with the time they were decided, by job and then by time.
+func (q *Queries) ListHeadExecutionUnblocks(ctx context.Context, arg ListHeadExecutionUnblocksParams) ([]ListHeadExecutionUnblocksRow, error) {
+	rows, err := q.db.Query(ctx, listHeadExecutionUnblocks,
+		arg.RepositoryID,
+		arg.PullNumber,
+		arg.HeadSha,
+		arg.Since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListHeadExecutionUnblocksRow{}
+	for rows.Next() {
+		var i ListHeadExecutionUnblocksRow
+		if err := rows.Scan(&i.JobID, &i.DecidedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockExecutionJob = `-- name: LockExecutionJob :one
 SELECT job_id, job_key, repository_id, pull_number, plan, profile, head_sha, base_sha, governing_digest, governing_source, declaration_digest, canonical_level,
        receipt_level, unapproved_paths, changed_paths, changed_total, state, reason, attempts, failures, github_since, not_before, lease_id, lease_expires_at,

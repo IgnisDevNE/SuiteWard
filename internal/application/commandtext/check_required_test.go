@@ -60,7 +60,7 @@ func TestRequiredCheckSummaryStatesTheCanonicalRunItIsWaitingForOrCouldNotMake(t
 		if title != tc.title {
 			t.Errorf("%s: title %q, want %q", tc.reason, title, tc.title)
 		}
-		for _, w := range []string{tc.phrase, "- State: `" + tc.name + "`", "- Proposal revision: P3-R2", "- Canonical version: V4", "- Installation tier: `isolated`", requiredClosing} {
+		for _, w := range []string{tc.phrase, "- State: `" + tc.name + "`", "- Proposal revision: P3-R2", "- Canonical version: V4", "- Installation type: on a separate server", requiredClosing} {
 			if !strings.Contains(summary, w) {
 				t.Errorf("%s: summary lacks %q:\n%s", tc.reason, w, summary)
 			}
@@ -160,7 +160,7 @@ func TestRequiredCheckSummaryStatesTheTierAndHoldsNoRepositoryText(t *testing.T)
 		for _, tier := range []commandtext.Tier{commandtext.Isolated, commandtext.CoLocated} {
 			c.Tier = tier
 			title, summary := checkText(t, c)
-			if tier == commandtext.CoLocated && (!strings.Contains(summary, "`co-located`") || !strings.Contains(summary, "assurance is reduced")) {
+			if tier == commandtext.CoLocated && (!strings.Contains(summary, "on the same computer as your coding agent") || !strings.Contains(summary, "protection is reduced")) {
 				t.Errorf("%s: the co-located summary lacks the tier or the reduced assurance:\n%s", c.Reason, summary)
 			}
 			for _, s := range []string{title, summary} {

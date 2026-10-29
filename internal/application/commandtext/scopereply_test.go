@@ -69,7 +69,7 @@ func TestScopeReplyEndsWithTheNextStep(t *testing.T) {
 		}
 	}
 	body, found := strings.CutSuffix(noticeText(t, reply(commandtext.BaseContract)), link)
-	if !found || strings.Contains(body, "/suiteward propose") || !strings.HasSuffix(body, "approve the new revision SuiteWard posts, like any other change to the protected files. Nothing is protected until that change is approved and promoted.\n") {
+	if !found || strings.Contains(body, "/suiteward propose") || !strings.HasSuffix(body, "Approve the new revision that SuiteWard posts, as for any other change to them. Nothing is protected until that change is approved and merged.\n") {
 		t.Errorf("after the first contract the body ends with approving the new revision, not with a propose:\n%s", body)
 	}
 }
@@ -90,7 +90,7 @@ func TestScopeReplyMentionsTheOneClickCommitSuggestionWhenTheHeadsFileIsTheBase(
 // in the notice of an old payload, so it has no link to it: the file is shown to copy.
 func TestScopeReplyForTheDefaultBranchSaysTheChangeMustReachTheDefaultBranchFirst(t *testing.T) {
 	body := noticeText(t, reply(commandtext.BaseDefaultBranch))
-	for _, w := range []string{"default branch first", "commit or merge", "```\n/suiteward propose\n```"} {
+	for _, w := range []string{"there first", "commit or merge", "```\n/suiteward propose\n```"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
 		}
@@ -118,7 +118,7 @@ func TestNothingUncoveredNamesTheBase(t *testing.T) {
 		})
 	}
 	for base, subject := range map[commandtext.ScopeBase]string{commandtext.BasePull: "this pull request's `.suiteward.yml`", commandtext.BaseDefaultBranch: "the default branch's `.suiteward.yml`", commandtext.BaseContract: "the current contract"} {
-		if body := ack(base); !strings.Contains(body, "covered by "+subject) || strings.Contains(body, "in the scope already") {
+		if body := ack(base); !strings.Contains(body, subject+" already covers every test-like file") || strings.Contains(body, "in the scope already") {
 			t.Errorf("base %d: the body does not name %q:\n%s", base, subject, body)
 		}
 	}
@@ -138,7 +138,7 @@ func TestScopeNoticeWithoutABaseKeepsItsWords(t *testing.T) {
 	n := notice()
 	n.Source = source
 	body := noticeText(t, n)
-	for _, w := range []string{"**SuiteWard scope notice**", "not protected by the current contract", "SuiteWard never commits it for you"} {
+	for _, w := range []string{"**SuiteWard scope notice**", "does not protect these files", "SuiteWard does not make the commit for you"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
 		}

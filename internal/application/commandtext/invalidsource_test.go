@@ -16,7 +16,7 @@ func TestInvalidSourceCommentNamesTheProblemAndTheNextStep(t *testing.T) {
 		says    []string
 	}{
 		{"declaration", commandtext.InvalidSourceNotice{Problem: commandtext.DeclarationProblem},
-			[]string{"`.suiteward.yml` of this pull request's head is not a valid declaration", "fix `.suiteward.yml`"}},
+			[]string{"`.suiteward.yml` file of this pull request is not valid", "fix `.suiteward.yml`"}},
 		{"link", commandtext.InvalidSourceNotice{Problem: commandtext.LinkProblem, Path: "spec_link"},
 			[]string{"symbolic link", "```\nspec_link\n```", "remove the link or point it to a regular file, and push"}},
 	}
@@ -24,7 +24,7 @@ func TestInvalidSourceCommentNamesTheProblemAndTheNextStep(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body := render(t, func() string { return commandtext.InvalidSourceComment(tc.problem) })
 
-			for _, want := range append(tc.says, "Any canonical contract already in force stays in force", "the check stays `failure` until a push fixes it") {
+			for _, want := range append(tc.says, "The approved contract stays as it is", "check stays `failure` until a push fixes this") {
 				if !strings.Contains(body, want) {
 					t.Errorf("the comment lacks %q:\n%s", want, body)
 				}
@@ -108,7 +108,7 @@ func TestInvalidSourceCommentOffersToAcceptTheLink(t *testing.T) {
 			})
 
 			for _, want := range []string{"remove the link or point it to a regular file, and push", "accept the link", "`exclude`", tc.block,
-				"nothing reached through the link is protected", "scope reduction", "the owner approves"} {
+				"nothing reached through the link is protected", "That removes protection", "the owner approves"} {
 				if !strings.Contains(body, want) {
 					t.Errorf("the comment lacks %q:\n%s", want, body)
 				}

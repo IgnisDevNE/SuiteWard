@@ -63,7 +63,7 @@ func TestCheckPublisherPostsTheSummaryOfTheCanonicalGate(t *testing.T) {
 			if len(posts) != 1 || posts[0].Name != "SuiteWard / Contract" || posts[0].Status != tc.status || posts[0].Conclusion != tc.conclusion || posts[0].Title != tc.title {
 				t.Fatalf("posted %+v", posts)
 			}
-			for _, phrase := range append(tc.phrases, "This check reports on the protected contract and on the run of its approved tests.", "`isolated`") {
+			for _, phrase := range append(tc.phrases, "This check reports on the protected contract and on the run of its approved tests.", "on a separate server") {
 				if !strings.Contains(posts[0].Summary, phrase) {
 					t.Errorf("the summary lacks %q:\n%s", phrase, posts[0].Summary)
 				}

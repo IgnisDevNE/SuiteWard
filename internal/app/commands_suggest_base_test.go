@@ -370,8 +370,8 @@ func TestCommentPublisherRendersTheSuggestReplyWithABase(t *testing.T) {
 		other []string
 	}{
 		{"this pull request's file", "pull", []string{"this pull request's `.suiteward.yml` does not cover", "```\n/suiteward propose\n```", "Commit suggestion", "/edit/feature/x/.suiteward.yml"}, []string{"the default branch's", "the current contract"}},
-		{"the default branch's file", "default-branch", []string{"the default branch's `.suiteward.yml` does not cover", "default branch first", "```\n/suiteward propose\n```"}, []string{"this pull request's `.suiteward.yml`", "the current contract", "Commit suggestion", "/new/", "/edit/"}},
-		{"the canonical", "contract", []string{"the current contract does not cover", "approve the new revision SuiteWard posts", "Commit suggestion"}, []string{"/suiteward propose", "the default branch's"}},
+		{"the default branch's file", "default-branch", []string{"the default branch's `.suiteward.yml` does not cover", "there first", "```\n/suiteward propose\n```"}, []string{"this pull request's `.suiteward.yml`", "the current contract", "Commit suggestion", "/new/", "/edit/"}},
+		{"the canonical", "contract", []string{"the current contract does not cover", "Approve the new revision that SuiteWard posts", "Commit suggestion"}, []string{"/suiteward propose", "the default branch's"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCmtWorld(t)

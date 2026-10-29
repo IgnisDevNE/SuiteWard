@@ -119,11 +119,11 @@ func ScopeNoticeComment(n ScopeNotice) string {
 	}
 	parts := []string{
 		"**SuiteWard scope notice**",
-		listingAndMore("Test-like files in this pull request's head that the current contract does not protect", n.Paths, n.PathsTotal),
-		"These files are not protected by the current contract: SuiteWard assesses only the protected files, so a change to them needs no approval.",
+		listingAndMore("Test-like files in this pull request that the current contract does not protect", n.Paths, n.PathsTotal),
+		"The current contract does not protect these files. SuiteWard checks only the protected files, so a change to them needs no approval.",
 	}
 	parts = append(parts, missingLists(n)...)
-	parts = append(parts, suggestedDeclaration("the current canonical `.suiteward.yml`", "new", n.Declaration))
+	parts = append(parts, suggestedDeclaration("the approved version's `.suiteward.yml`", "new", n.Declaration))
 	if n.Cut {
 		parts = append(parts, cutWarning)
 	}
@@ -135,7 +135,7 @@ func ScopeNoticeComment(n ScopeNotice) string {
 	}
 	parts = append(parts,
 		pasteStep(n.Repo, n.Branch, pasteAction(len(n.Declaration) > 0, len(n.Declaration) == 0)),
-		"Committing it creates a protected change, which the owner approves like any other change to the protected files. Nothing is protected until that change is approved and promoted.",
+		"Making this commit changes the protected files. The owner approves it like any other change to them. Nothing is protected until that change is approved and merged.",
 		"This comment is a suggestion, not an approval. It does not change the check.",
 	)
 	return replyTo(paragraphs(parts...), n.Source)
@@ -149,7 +149,7 @@ func baseNames(base ScopeBase) (subject, file string) {
 	case BaseDefaultBranch:
 		return "the default branch's `.suiteward.yml`", "the default branch's `.suiteward.yml`"
 	}
-	return "the current contract", "the current canonical `.suiteward.yml`"
+	return "the current contract", "the approved version's `.suiteward.yml`"
 }
 
 // missingLists is the paragraphs that list the patterns that the base lacks, each list as lines to copy.
@@ -160,7 +160,7 @@ func missingLists(n ScopeNotice) []string {
 	}
 	if len(n.AddRunner) > 0 {
 		parts = append(parts, "Patterns missing from the `runner` list:\n\n"+fencedLines(n.AddRunner),
-			"Runner names matter before a file of that name exists: a file with one of these names, added later, can change how the tests run.")
+			"These runner names matter even before a file with that name exists. Such a file, added later, can change how the tests run.")
 	}
 	return parts
 }
@@ -171,7 +171,7 @@ func suggestedDeclaration(file, adjective string, declaration []byte) string {
 	if len(declaration) == 0 {
 		return "SuiteWard suggests adding the " + adjective + " patterns to " + file + ". Review them and change them as needed."
 	}
-	return "SuiteWard suggests this declaration, " + file + " with the " + adjective + " patterns added. Review it and change it as needed:\n\n" + fenced(withNewline(declaration))
+	return "SuiteWard suggests this file: " + file + " with the " + adjective + " patterns added. Review it and change it as needed:\n\n" + fenced(withNewline(declaration))
 }
 
 // scopeSuggestReply renders the notice as the reply of /suiteward suggest: it names the base the head was compared with, shows
@@ -179,17 +179,17 @@ func suggestedDeclaration(file, adjective string, declaration []byte) string {
 func scopeSuggestReply(n ScopeNotice) string {
 	subject, file := baseNames(n.Base)
 	has := len(n.Declaration) > 0
-	action, put := pasteAction(has, !has), "this declaration"
+	action, put := pasteAction(has, !has), "this file"
 	if !has {
 		put = "these patterns"
 	}
 	var parts []string
 	if len(n.Paths) == 0 {
-		parts = []string{"`/suiteward suggest`: compared with " + subject + ", no test-like file of the head of this pull request is uncovered, but some patterns are missing. Nothing changed."}
+		parts = []string{"`/suiteward suggest`: compared with " + subject + ", every test-like file of this pull request is covered, but some patterns are missing. Nothing changed."}
 	} else {
 		parts = []string{
-			"`/suiteward suggest`: compared with " + subject + ", the head of this pull request has test-like files that are not covered. Nothing changed.",
-			listingAndMore("Test-like files in this pull request's head that "+subject+" does not cover", n.Paths, n.PathsTotal),
+			"`/suiteward suggest`: compared with " + subject + ", this pull request has test-like files that are not covered. Nothing changed.",
+			listingAndMore("Test-like files in this pull request that "+subject+" does not cover", n.Paths, n.PathsTotal),
 		}
 	}
 	parts = append(parts, missingLists(n)...)
@@ -213,13 +213,13 @@ func scopeSuggestReply(n ScopeNotice) string {
 	parts = append(parts, "This comment is a suggestion, not an approval. It does not change the check.")
 	switch n.Base {
 	case BaseContract:
-		parts = append(parts, "Committing it creates a protected change: approve the new revision SuiteWard posts, like any other change to the protected files. Nothing is protected until that change is approved and promoted.")
+		parts = append(parts, "Making this commit changes the protected files. Approve the new revision that SuiteWard posts, as for any other change to them. Nothing is protected until that change is approved and merged.")
 	case BasePull:
-		parts = append(parts, "Nothing is protected until the first contract is approved and promoted.",
+		parts = append(parts, "Nothing is protected until the first contract is approved and merged.",
 			"Once the file is committed on this branch, comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"))
 	case BaseDefaultBranch:
-		parts = append(parts, "Nothing is protected until the first contract is approved and promoted.",
-			"The first contract is proposed from the default branch's `.suiteward.yml`, so put "+put+" on the default branch first: commit or merge it there. "+commitNote+" "+
+		parts = append(parts, "Nothing is protected until the first contract is approved.",
+			"SuiteWard proposes the first contract from the default branch's `.suiteward.yml`, so put "+put+" there first: commit or merge it on the default branch. "+commitNote+" "+
 				"Then comment this command to start the first contract:\n\n"+fenced("/suiteward propose\n"))
 	}
 	return replyTo(paragraphs(parts...), n.Source)
@@ -255,7 +255,7 @@ func pathEscape(branch string) string {
 func ScopeSuggestionBody(anchorLine, indent string, patterns []string, quoting Quoting) string {
 	must(ValidateScopeSuggestion(anchorLine, indent, patterns, quoting))
 	content := anchorLine + suggestedItems(patterns, indent, quoting.style())
-	return paragraphs("SuiteWard suggests adding these patterns to this list; committing the suggestion is a protected change that needs the owner's approval.",
+	return paragraphs("SuiteWard suggests adding these patterns to this list, but committing them changes the protected files and needs the owner's approval.",
 		fence("suggestion", content+"\n"))
 }
 

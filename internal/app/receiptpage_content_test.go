@@ -71,7 +71,7 @@ func TestPullPageTopStatesThePullRequestTheHeadTheBaseAndTheTier(t *testing.T) {
 	page := w.text()
 	w.wantText(page, "Pull request: 5", "Repository: acme/widgets", "Head: "+cjHead2[:7]+" (full SHA: "+cjHead2+")", "Base branch head: "+bootHead, "Installation tier: isolated",
 		"evidence reported by a test runner", "not a verdict")
-	w.wantNoText(page, "assurance is reduced", "This pull request is not open")
+	w.wantNoText(page, "protection is reduced", "This pull request is not open")
 	w.serve("co-located") // the enrollment recorded isolated: the effective tier is co-located
 	w.wantText(w.text(), "Installation tier: co-located", commandtext.CoLocatedNotice)
 }

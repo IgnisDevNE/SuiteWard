@@ -124,12 +124,12 @@ func TestCheckSummaryStatesTheTier(t *testing.T) {
 	for _, tc := range checkReasons {
 		c := check(tc.state, tc.reason)
 		_, isolated := checkText(t, c)
-		if !strings.Contains(isolated, "`isolated`") || strings.Contains(isolated, "reduced") {
+		if !strings.Contains(isolated, "on a separate server") || strings.Contains(isolated, "reduced") {
 			t.Errorf("%s: the isolated summary says %q", tc.reason, isolated)
 		}
 		c.Tier = commandtext.CoLocated
 		_, colocated := checkText(t, c)
-		if !strings.Contains(colocated, "`co-located`") || !strings.Contains(colocated, "assurance is reduced") {
+		if !strings.Contains(colocated, "on the same computer as your coding agent") || !strings.Contains(colocated, "protection is reduced") {
 			t.Errorf("%s: the co-located summary lacks the tier or the reduced assurance:\n%s", tc.reason, colocated)
 		}
 	}
@@ -234,7 +234,7 @@ func TestCheckSummaryOfABootstrapThatIsReadyStatesWhatWillHappen(t *testing.T) {
 	}
 	for _, w := range []string{
 		"- State: `success`", "- Proposal revision: P3-R2", "approved the exact revision", "assessed the integrity of this head",
-		"No canonical contract exists yet", "first canonical version", "from the exact merge commit after", "- Installation tier: `isolated`",
+		"No canonical contract exists yet", "first canonical version", "from the exact merge commit after", "- Installation type: on a separate server",
 		"This check reports on the protected contract only.",
 	} {
 		if !strings.Contains(summary, w) {
@@ -251,7 +251,7 @@ func TestCheckSummaryOfABootstrapThatIsReadyStatesTheTierAndNeverClaimsThatTests
 	c := bootstrapReady()
 	c.Tier = commandtext.CoLocated
 	title, summary := checkText(t, c)
-	if !strings.Contains(summary, "`co-located`") || !strings.Contains(summary, "assurance is reduced") || claim.MatchString(title+summary) {
+	if !strings.Contains(summary, "on the same computer as your coding agent") || !strings.Contains(summary, "protection is reduced") || claim.MatchString(title+summary) {
 		t.Errorf("the summary lacks the tier or claims that tests ran:\n%s", summary)
 	}
 	c.Proposal, c.Revision = 999999999, 999999999
@@ -295,7 +295,7 @@ func TestCheckSummaryOfAwaitingTheBootstrapStatesHowToStartOrSkip(t *testing.T) 
 		t.Errorf("title %q", title)
 	}
 	for _, w := range []string{
-		"SuiteWard has no canonical contract yet.", "- State: `in_progress`", "- Installation tier: `isolated`",
+		"SuiteWard has no canonical contract yet.", "- State: `in_progress`", "- Installation type: on a separate server",
 		"`/suiteward propose`", "pull request that should carry the first contract", "`/suiteward skip <code>`", "This check reports on the protected contract only.",
 	} {
 		if !strings.Contains(summary, w) {
@@ -334,7 +334,7 @@ func TestCheckSummaryBeforeTheFirstContractStaysInsideItsBounds(t *testing.T) {
 			if claim.MatchString(title+summary) || strings.Contains(summary, "<!--") || strings.Contains(summary, "@") || strings.Contains(summary, "#issuecomment") || len(summary) > 4096 {
 				t.Errorf("%s: the summary claims a test result, holds a marker, a mention or a comment link, or is long:\n%s", tc.reason, summary)
 			}
-			if tier == commandtext.CoLocated && (!strings.Contains(summary, "`co-located`") || !strings.Contains(summary, "assurance is reduced")) {
+			if tier == commandtext.CoLocated && (!strings.Contains(summary, "on the same computer as your coding agent") || !strings.Contains(summary, "protection is reduced")) {
 				t.Errorf("%s: the co-located summary lacks the tier or the reduced assurance:\n%s", tc.reason, summary)
 			}
 		}

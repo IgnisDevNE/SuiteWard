@@ -30,7 +30,7 @@ func TestCheckPublisherStatesTheNumbersOfTheRevisionWithoutALinkOrAPath(t *testi
 	}
 
 	summary := w.posted(t)
-	for _, want := range []string{"- Files: 1 added, 1 modified, 0 removed\n", "- Lines: +5/−1 (counted in 2 of 2 files)\n", "- Marker lines seen: 1 removed assertion line, 1 added skip line\n"} {
+	for _, want := range []string{"- Files: 1 added, 1 modified, 0 removed\n", "- Lines: 5 added, 1 removed (counted in 2 of 2 files)\n", "- Marker lines seen: 1 removed assertion line, 1 added skip line\n"} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, summary)
 		}

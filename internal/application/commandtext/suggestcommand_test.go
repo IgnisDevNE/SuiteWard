@@ -17,8 +17,8 @@ func suggestReply(include []string) commandtext.DeclarationSuggestion {
 
 func TestSuggestReplyDoesNotSpeakOfAPropose(t *testing.T) {
 	body := suggestionText(t, suggestReply([]string{"tests/**", "*_test.go"}))
-	for _, w := range []string{"`/suiteward suggest`", "SuiteWard suggests this declaration for this pull request", "```\nversion: 1\ninclude:\n  - \"tests/**\"\n  - \"*_test.go\"\n```",
-		"[open GitHub's editor with this file filled in](https://github.com/octo-org/widgets/new/feature/add-tests?filename=.suiteward.yml&value=", "the commit is yours",
+	for _, w := range []string{"`/suiteward suggest`", "SuiteWard suggests this `.suiteward.yml` for this pull request", "```\nversion: 1\ninclude:\n  - \"tests/**\"\n  - \"*_test.go\"\n```",
+		"[open GitHub's editor with this file filled in](https://github.com/octo-org/widgets/new/feature/add-tests?filename=.suiteward.yml&value=", "You make it",
 		"In reply to [your command](#issuecomment-2345678901)."} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
@@ -33,7 +33,7 @@ func TestSuggestReplyDoesNotSpeakOfAPropose(t *testing.T) {
 
 func TestSuggestReplySaysThatNoDeclarationExists(t *testing.T) {
 	body := suggestionText(t, suggestReply([]string{"tests/**"}))
-	for _, w := range []string{"found no `.suiteward.yml` on the default branch or in the head of this pull request", "Nothing changed.", "comment `/suiteward propose`"} {
+	for _, w := range []string{"found no `.suiteward.yml` file (the file that lists the files to protect) on the default branch or in this pull request", "Nothing changed.", "comment `/suiteward propose`"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("reply lacks %q:\n%s", w, body)
 		}

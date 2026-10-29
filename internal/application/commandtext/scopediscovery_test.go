@@ -40,9 +40,9 @@ func suggestionText(t *testing.T, a commandtext.DeclarationSuggestion) string {
 
 // Callers that know nothing of scope discovery see the output of M1.7b, byte for byte.
 func TestSuggestDeclarationWithoutDiscoveryFieldsIsUnchanged(t *testing.T) {
-	const want = "`/suiteward propose` was not processed: SuiteWard found no `.suiteward.yml` on the default branch or in the head of this pull request, so it cannot tell which files to protect and proposed nothing. Nothing changed.\n\n" +
-		"SuiteWard suggests this declaration, built from the test-like paths of this repository. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - \"tests/**\"\n  - \"*_test.go\"\n```\n\n" +
-		"To add it on this pull request's branch, [open GitHub's editor with this file filled in](https://github.com/octo-org/widgets/new/feature/add-tests?filename=.suiteward.yml&value=version%3A%201%0Ainclude%3A%0A%20%20-%20%22tests%2F%2A%2A%22%0A%20%20-%20%22%2A_test.go%22%0A). SuiteWard never commits it for you: the commit is yours.\n\n" +
+	const want = "`/suiteward propose` was not processed: SuiteWard found no `.suiteward.yml` file (the file that lists the files to protect) on the default branch or in this pull request, so it cannot tell which files to protect. It proposed nothing. Nothing changed.\n\n" +
+		"SuiteWard suggests this `.suiteward.yml`, built from the test-like files of this repository. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - \"tests/**\"\n  - \"*_test.go\"\n```\n\n" +
+		"To add it on this pull request's branch, [open GitHub's editor with this file filled in](https://github.com/octo-org/widgets/new/feature/add-tests?filename=.suiteward.yml&value=version%3A%201%0Ainclude%3A%0A%20%20-%20%22tests%2F%2A%2A%22%0A%20%20-%20%22%2A_test.go%22%0A). SuiteWard does not make the commit for you. You make it.\n\n" +
 		"After the file is on this branch, comment `/suiteward propose` again.\n\nIn reply to [your command](#issuecomment-2345678901).\n"
 	if got := suggestionText(t, missingWith([]string{"tests/**", "*_test.go"}, nil, nil, false)); got != want {
 		t.Errorf("got %q\nwant %q", got, want)
@@ -283,9 +283,9 @@ func TestScopeNoticeListsThePathsAndGivesTheDeclarationAndTheEditLink(t *testing
 	n := notice()
 	body := noticeText(t, n)
 	for _, w := range []string{
-		"```\ninternal/x/x_test.go\ne2e/testdata/a.json\n```", "not protected by the current contract",
+		"```\ninternal/x/x_test.go\ne2e/testdata/a.json\n```", "does not protect these files",
 		"```\n" + string(n.Declaration) + "```",
-		"creates a protected change", "owner approves", "Nothing is protected until",
+		"changes the protected files", "owner approves", "Nothing is protected until",
 		"does not change the check",
 	} {
 		if !strings.Contains(body, w) {
@@ -381,11 +381,11 @@ func TestScopeNoticeWarnsThatSubmoduleContentsAreNotProtected(t *testing.T) {
 // Without submodules the notice is what it was before M1.9-E3, byte for byte.
 func TestScopeNoticeWithoutSubmodulesIsUnchanged(t *testing.T) {
 	const want = "**SuiteWard scope notice**\n\n" +
-		"Test-like files in this pull request's head that the current contract does not protect:\n\n```\ninternal/x/x_test.go\ne2e/testdata/a.json\n```\n\n" +
-		"These files are not protected by the current contract: SuiteWard assesses only the protected files, so a change to them needs no approval.\n\n" +
-		"SuiteWard suggests this declaration, the current canonical `.suiteward.yml` with the new patterns added. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - \"*_test.go\"\n  - \"**/testdata/**\"\n```\n\n" +
-		"To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](https://github.com/octo-org/widgets/edit/feature/add-tests/.suiteward.yml) and paste the declaration. SuiteWard never commits it for you: the commit is yours.\n\n" +
-		"Committing it creates a protected change, which the owner approves like any other change to the protected files. Nothing is protected until that change is approved and promoted.\n\n" +
+		"Test-like files in this pull request that the current contract does not protect:\n\n```\ninternal/x/x_test.go\ne2e/testdata/a.json\n```\n\n" +
+		"The current contract does not protect these files. SuiteWard checks only the protected files, so a change to them needs no approval.\n\n" +
+		"SuiteWard suggests this file: the approved version's `.suiteward.yml` with the new patterns added. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - \"*_test.go\"\n  - \"**/testdata/**\"\n```\n\n" +
+		"To change `.suiteward.yml` on this pull request's branch, [open GitHub's editor for it](https://github.com/octo-org/widgets/edit/feature/add-tests/.suiteward.yml) and paste the suggested file. SuiteWard does not make the commit for you. You make it.\n\n" +
+		"Making this commit changes the protected files. The owner approves it like any other change to them. Nothing is protected until that change is approved and merged.\n\n" +
 		"This comment is a suggestion, not an approval. It does not change the check.\n"
 	if got := noticeText(t, notice()); got != want {
 		t.Errorf("got %q\nwant %q", got, want)
@@ -400,9 +400,9 @@ func TestRepliesToASuggestWithoutSubmodulesAreUnchanged(t *testing.T) {
 	if got, want := noticeText(t, n), strings.TrimSuffix(plain, "\n")+"\n\nIn reply to [your command](#issuecomment-2345678901).\n"; got != want {
 		t.Errorf("got %q\nwant %q", got, want)
 	}
-	const want = "`/suiteward suggest`: SuiteWard found no `.suiteward.yml` on the default branch or in the head of this pull request, so no files are protected yet. Nothing changed.\n\n" +
-		"SuiteWard suggests this declaration for this pull request, built from the test-like paths of this repository. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - \"tests/**\"\n```\n\n" +
-		"To add it on this pull request's branch, [open GitHub's editor with this file filled in](https://github.com/octo-org/widgets/new/feature/add-tests?filename=.suiteward.yml&value=version%3A%201%0Ainclude%3A%0A%20%20-%20%22tests%2F%2A%2A%22%0A). SuiteWard never commits it for you: the commit is yours.\n\n" +
+	const want = "`/suiteward suggest`: SuiteWard found no `.suiteward.yml` file (the file that lists the files to protect) on the default branch or in this pull request, so no files are protected yet. Nothing changed.\n\n" +
+		"SuiteWard suggests this `.suiteward.yml` for this pull request, built from the test-like files of this repository. Review it and change it as needed:\n\n```\nversion: 1\ninclude:\n  - \"tests/**\"\n```\n\n" +
+		"To add it on this pull request's branch, [open GitHub's editor with this file filled in](https://github.com/octo-org/widgets/new/feature/add-tests?filename=.suiteward.yml&value=version%3A%201%0Ainclude%3A%0A%20%20-%20%22tests%2F%2A%2A%22%0A). SuiteWard does not make the commit for you. You make it.\n\n" +
 		"After the file is on this branch, comment `/suiteward propose` to start the first contract.\n\nIn reply to [your command](#issuecomment-2345678901).\n"
 	a := missingWith([]string{"tests/**"}, nil, nil, false)
 	a.Suggest = true
@@ -626,7 +626,7 @@ func TestScopeSuggestionBodyIsRefusedOnAnImpossibleState(t *testing.T) {
 func TestRevisionCommentWithoutReductionDetailIsUnchanged(t *testing.T) {
 	r := revision(commandtext.Isolated)
 	r.Reduced = true
-	const want = "**SuiteWard contract change P7-R3**\n\nThis pull request changes the protected files against the canonical contract V4. SuiteWard proposes the change as P7-R3 for the owner's approval.\n\n- Base canonical version: V4\n- Installation tier: `isolated`\n\n" +
+	const want = "**SuiteWard contract change P7-R3**\n\nThis pull request changes the protected files, compared with V4, the approved version of the contract. SuiteWard proposes the change as P7-R3 for the owner's approval.\n\n- Approved version: V4\n- Installation type: on a separate server\n\n" +
 		"Protected files added:\n\n```\ntests/new_test.go\n```\n\nProtected files modified:\n\n```\ntests/a.go\ntests/b.go\n```\n\nProtected files removed:\n\n```\ntests/old.go\n```\n\n" +
 		"**This revision reduces the protected scope.** Review it carefully before approving.\n\n" +
 		"This comment is a record, not an approval. To approve this exact revision, comment:\n\n```\n/suiteward approve P7-R3 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\nThis supersedes `P7-R2`.\n"
@@ -747,7 +747,7 @@ func TestRevisionCommentWithReductionDetailFitsInAComment(t *testing.T) {
 // A notice of `/suiteward suggest` covers the whole head, not only what the pull request added.
 func TestScopeNoticeDoesNotClaimThatThePullRequestAddedTheFiles(t *testing.T) {
 	body := noticeText(t, notice())
-	if !strings.Contains(body, "in this pull request's head that the current contract does not protect") || strings.Contains(body, "adds") {
+	if !strings.Contains(body, "in this pull request that the current contract does not protect") || strings.Contains(body, "adds") {
 		t.Errorf("the title claims more than the head holds:\n%s", body)
 	}
 }
@@ -769,7 +769,7 @@ func TestRevisionCommentSaysThatTheReductionDetailWasOmitted(t *testing.T) {
 	r := revision(commandtext.Isolated)
 	r.Reduced, r.ReducedOmitted, r.ReducedPathsTotal = true, true, 52
 	body := revisionText(t, r)
-	for _, want := range []string{"**This revision reduces the protected scope.**", "omitted", "no longer covered: 52"} {
+	for _, want := range []string{"**This revision reduces the protected scope.**", "left out", "no longer covered: 52"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body lacks %q:\n%s", want, body)
 		}
@@ -778,7 +778,7 @@ func TestRevisionCommentSaysThatTheReductionDetailWasOmitted(t *testing.T) {
 		t.Errorf("body lists detail that was omitted:\n%s", body)
 	}
 	r.ReducedPathsTotal = 0
-	if body := revisionText(t, r); !strings.Contains(body, "omitted") || strings.Contains(body, "paths") {
+	if body := revisionText(t, r); !strings.Contains(body, "left out") || strings.Contains(body, "paths") {
 		t.Errorf("without a count of paths the body must say omitted and name no paths:\n%s", body)
 	}
 	for name, mutate := range map[string]func(*commandtext.Revision){

@@ -13,7 +13,7 @@ import (
 const (
 	receiptURL = "http://127.0.0.1:8080/receipts/acme/widgets/7" // the old page, which the revision comment no longer links
 
-	receiptLead = "Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. It is evidence, not a verdict. "
+	receiptLead = "Receipt: SuiteWard runs the tests this revision adds or changes, on this commit and on the code before the change, and shows what it saw. It is evidence, not a verdict. "
 	receiptTail = "The `SuiteWard / Receipt` check carries the counts."
 )
 
@@ -84,7 +84,7 @@ func TestRevisionCommentOfABeforeApprovalReceiptSaysThatApprovingWaitsForTheRece
 // Under required the approve needs a mode: the copyable command has its placeholder, in place of the usual one.
 func TestRevisionCommentOfARequiredReceiptOffersTheCommandWithAModePlaceholder(t *testing.T) {
 	body := revisionText(t, receiptRevision(t, "required"))
-	needs := strings.Index(body, "Approving needs a mode and a receipt that meets it:")
+	needs := strings.Index(body, "To approve, name a mode (the kind of change) that the receipt meets, and comment:")
 	command := strings.Index(body, "```\n/suiteward approve P7-R3 <fix|feature|refactor> <code>\n```")
 	if needs < 0 || command <= needs {
 		t.Errorf("the comment does not offer the command with the mode, after saying what approving needs:\n%s", body)
@@ -133,29 +133,6 @@ func TestRevisionCommentRefusesAReceiptThatDoesNotFit(t *testing.T) {
 	}
 }
 
-func TestValidReceiptLinkAcceptsTheLoopbackReceiptPageOfThePullRequestAndNothingElse(t *testing.T) {
-	for _, tc := range []struct {
-		link string
-		pull int
-		want bool
-	}{
-		{receiptURL, 7, true},
-		{"http://localhost:8080/receipts/acme/widgets/7", 7, true},
-		{"http://127.0.0.1:1/receipts/a.b_c-d/w%20x/7", 7, true},
-		{"http://127.0.0.1:65535/receipts/acme/widgets/2147483647", 2147483647, true},
-		{receiptURL, 8, false},
-		{reportURL, 7, false},
-		{"http://127.0.0.1:8080/receipts/acme/widgets/7/", 7, false},
-		{"http://[::1]:8080/receipts/acme/widgets/7", 7, false}, // the settings allow 127.0.0.1 and localhost only
-		{"http://127.0.0.1:8080/receipts/acme/widgets/", 7, false},
-		{"", 7, false},
-	} {
-		if got := commandtext.ValidReceiptLink(tc.link, tc.pull); got != tc.want {
-			t.Errorf("ValidReceiptLink(%q, %d) = %v, want %v", tc.link, tc.pull, got, tc.want)
-		}
-	}
-}
-
 // A reduction whose detail was left out can no longer say what it lowers from its entries, so the revision says it.
 func TestRevisionCommentOfAnOmittedReductionSaysWhatItLowers(t *testing.T) {
 	omitted := func(policy, scope bool) commandtext.Revision {
@@ -163,9 +140,9 @@ func TestRevisionCommentOfAnOmittedReductionSaysWhatItLowers(t *testing.T) {
 		r.Reduced, r.ReducedOmitted, r.LowersPolicy, r.ReducesScope = true, true, policy, scope
 		return r
 	}
-	const notice = "The detail of this reduction was omitted because it did not fit in this comment."
+	const notice = "The details of this reduction do not fit in this comment, so they are left out."
 	body := revisionText(t, omitted(true, false))
-	for _, want := range []string{"**This revision lowers the execution policy.**", notice, "- Files: 1 added, 0 modified, 2 removed\n"} {
+	for _, want := range []string{"**This revision lowers the test requirements.**", notice, "- Files: 1 added, 0 modified, 2 removed\n"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body lacks %q:\n%s", want, body)
 		}
@@ -175,18 +152,18 @@ func TestRevisionCommentOfAnOmittedReductionSaysWhatItLowers(t *testing.T) {
 	}
 
 	both := revisionText(t, omitted(true, true))
-	if !strings.Contains(both, "**This revision reduces the protected scope and lowers the execution policy.**") || !strings.Contains(both, notice) ||
+	if !strings.Contains(both, "**This revision reduces the protected scope and lowers the test requirements.**") || !strings.Contains(both, notice) ||
 		!strings.Contains(both, "2 removed from the protected files") {
 		t.Errorf("a revision that does both does not say so:\n%s", both)
 	}
 
 	scopeOnly := revisionText(t, omitted(false, true))
-	if !strings.Contains(scopeOnly, "**This revision reduces the protected scope.**") || strings.Contains(scopeOnly, "execution policy") {
+	if !strings.Contains(scopeOnly, "**This revision reduces the protected scope.**") || strings.Contains(scopeOnly, "test requirements") {
 		t.Errorf("a revision that only reduces the scope speaks of the policy:\n%s", scopeOnly)
 	}
 
 	neither := revisionText(t, omitted(false, false)) // a message that was queued before the flags existed
-	if !strings.Contains(neither, "**This revision reduces the protected scope.**") || strings.Contains(neither, "execution policy") {
+	if !strings.Contains(neither, "**This revision reduces the protected scope.**") || strings.Contains(neither, "test requirements") {
 		t.Errorf("an omitted reduction with neither flag does not read as it did:\n%s", neither)
 	}
 }

@@ -310,7 +310,7 @@ func (f *prFlow) secondPull() {
 	f.pass()
 	f.wantCheck(6, checks.InProgress, "approval-missing", "P2-R1", " against V1")
 	f.wantComment(6, "revision:1001:P2-R1", "V1", "tests/a_test.go", "/suiteward approve P2-R1 <code>",
-		"- Files: 0 added, 1 modified, 0 removed", "- Lines: +1/−1 (counted in 1 of 1 files)", "[Full change report]("+prReportBase+"/reports/acme/widgets/P2-R1)")
+		"- Files: 0 added, 1 modified, 0 removed", "- Lines: 1 added, 1 removed (counted in 1 of 1 files)", "[Full change report]("+prReportBase+"/reports/acme/widgets/P2-R1)")
 	f.wantComments(6, 1, "")
 	f.wantReportPage("P2-R1", "V1", "v2")
 	if record := f.current(7); record.State != checks.Success || record.Reason != "unchanged" || len(f.gh.posted(7)) != 1 {

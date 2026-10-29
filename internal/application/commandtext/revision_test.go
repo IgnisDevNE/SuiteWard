@@ -25,7 +25,7 @@ func revisionText(t *testing.T, r commandtext.Revision) string {
 func TestRevisionCommentStatesTheChangeTheBaseAndHowToApprove(t *testing.T) {
 	body := revisionText(t, revision(commandtext.Isolated))
 	for _, w := range []string{
-		"P7-R3", "approved version", "V4", "Installation tier: `isolated`",
+		"P7-R3", "approved version", "V4", "Installation type: on a separate server",
 		"tests/new_test.go", "tests/a.go\ntests/b.go", "tests/old.go",
 		"```\n/suiteward approve P7-R3 <code>\n```", "`<code>`", "This supersedes `P7-R2`.",
 	} {
@@ -33,7 +33,7 @@ func TestRevisionCommentStatesTheChangeTheBaseAndHowToApprove(t *testing.T) {
 			t.Errorf("body lacks %q:\n%s", w, body)
 		}
 	}
-	for _, w := range []string{"assurance is reduced", "scope", "/suiteward revoke"} {
+	for _, w := range []string{"protection is reduced", "scope", "/suiteward revoke"} {
 		if strings.Contains(body, w) {
 			t.Errorf("body contains %q:\n%s", w, body)
 		}
@@ -60,7 +60,7 @@ func TestRevisionCommentStatesAScopeReductionAndTheCoLocatedTier(t *testing.T) {
 	r := revision(commandtext.CoLocated)
 	r.Reduced = true
 	body := revisionText(t, r)
-	for _, w := range []string{"reduces the protected scope", "Installation tier: `co-located`", "assurance is reduced"} {
+	for _, w := range []string{"reduces the protected scope", "Installation type: on the same computer as your coding agent", "protection is reduced"} {
 		if !strings.Contains(body, w) {
 			t.Errorf("body lacks %q:\n%s", w, body)
 		}

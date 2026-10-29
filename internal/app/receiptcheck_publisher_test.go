@@ -117,7 +117,7 @@ func TestReceiptCheckPublisherPostsEveryState(t *testing.T) {
 			}
 			// A withdrawn receipt observed nothing, so its summary does not call the results evidence.
 			evidence := strings.Contains(p.Summary, "Observed by this instance's executor. Evidence, not a verdict.")
-			if p.Title != tc.title || !strings.Contains(p.Summary, tc.phrase) || !strings.Contains(p.Summary, "`isolated`") || evidence != (tc.reason != receiptNotApplicable) {
+			if p.Title != tc.title || !strings.Contains(p.Summary, tc.phrase) || !strings.Contains(p.Summary, "on a separate server") || evidence != (tc.reason != receiptNotApplicable) {
 				t.Fatalf("title %q, summary %q", p.Title, p.Summary)
 			}
 			if got := w.runner.listed; len(got) != 1 || got[0] != fmt.Sprintf("%s %s SuiteWard / Receipt %d", cmtRepo, chkHead, chkAppID) {
@@ -469,7 +469,7 @@ func TestReceiptCheckPublisherPostsTheSummaryOfARunnerThatDoesNotRespond(t *test
 			if len(posts) != 1 || posts[0].Name != "SuiteWard / Receipt" || posts[0].Status != "in_progress" || posts[0].Title != "Receipt waiting: test runner not responding" {
 				t.Fatalf("posted %+v", posts)
 			}
-			for _, phrase := range []string{"has not answered for about half a minute", "Evidence, not a verdict.", "`isolated`"} {
+			for _, phrase := range []string{"has not answered for about half a minute", "Evidence, not a verdict.", "on a separate server"} {
 				if !strings.Contains(posts[0].Summary, phrase) {
 					t.Errorf("the summary lacks %q:\n%s", phrase, posts[0].Summary)
 				}

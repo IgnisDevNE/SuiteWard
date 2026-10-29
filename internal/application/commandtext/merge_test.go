@@ -112,10 +112,10 @@ func TestMergeCommentStatesTheCoLocatedTierOnly(t *testing.T) {
 		isolated := mergeText(t, m)
 		m.Tier = commandtext.CoLocated
 		colocated := mergeText(t, m)
-		if !strings.Contains(isolated, "- Installation tier: `isolated`") || strings.Contains(isolated, "assurance is reduced") {
+		if !strings.Contains(isolated, "- Installation type: on a separate server") || strings.Contains(isolated, "protection is reduced") {
 			t.Errorf("the isolated comment does not name its tier or states a reduced assurance:\n%s", isolated)
 		}
-		if !strings.Contains(colocated, "assurance is reduced") || !strings.Contains(colocated, "- Installation tier: `co-located`") {
+		if !strings.Contains(colocated, "protection is reduced") || !strings.Contains(colocated, "- Installation type: on the same computer as your coding agent") {
 			t.Errorf("the co-located comment does not state the reduced assurance:\n%s", colocated)
 		}
 	}
@@ -207,7 +207,7 @@ func TestMergeCommentWithoutACanonicalSaysSoGivesTheReasonAndTheRecovery(t *test
 	}
 	m := blocked("canonical-changed")
 	m.Version, m.Proposal, m.Revision, m.Tier = 0, 0, 0, commandtext.CoLocated
-	if text := mergeText(t, m); !strings.Contains(text, "assurance is reduced") || strings.Contains(text, "Proposal revision") {
+	if text := mergeText(t, m); !strings.Contains(text, "protection is reduced") || strings.Contains(text, "Proposal revision") {
 		t.Errorf("the co-located comment lacks the reduced assurance or names a revision that does not exist:\n%s", text)
 	}
 }
@@ -243,7 +243,7 @@ func TestMergeCommentPanicsOnAVersionThatCannotBeMissing(t *testing.T) {
 // canonical, and every other text stays as it was.
 func TestMergeCommentKeepsItsExistingTexts(t *testing.T) {
 	const (
-		facts    = "- Merge commit: `" + mergeSHA + "`\n- Proposal revision: P2-R1\n- Installation tier: `isolated`\n\n"
+		facts    = "- Merge commit: `" + mergeSHA + "`\n- Proposal revision: P2-R1\n- Installation type: on a separate server\n\n"
 		checked  = "SuiteWard checked the approval and the integrity of the protected files at that commit.\n"
 		recovery = "open a new pull request that restores the protected files of V3, or one that carries the merged files for a new exact approval. There is no reset command.\n"
 	)
@@ -279,7 +279,7 @@ func TestMergeCommentKeepsItsExistingTexts(t *testing.T) {
 			unreadable,
 			"**This merge is not a new approved version: the approved contract stays at V3**\n\n" +
 				"SuiteWard could not read the merge commit from GitHub within 30 minutes of seeing the pull request stop being open, or GitHub reported no merge commit for it.\n\n" +
-				"- Proposal revision: P2-R1\n- Installation tier: `isolated`\n\n" + "To recover, " + recovery,
+				"- Proposal revision: P2-R1\n- Installation type: on a separate server\n\n" + "To recover, " + recovery,
 		},
 	} {
 		if got := mergeText(t, tc.merge); got != tc.want {

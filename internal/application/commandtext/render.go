@@ -431,22 +431,22 @@ func BootstrapSummary(s Summary) string {
 }
 
 // CoLocatedNotice is what a body says when the instance runs beside the coding agent (ADR 0027).
-const CoLocatedNotice = "This SuiteWard instance runs beside the coding agent (co-located tier), so its assurance is reduced: " +
-	"the agent can reach SuiteWard's credentials, database and confirmation secret."
+const CoLocatedNotice = "SuiteWard runs on the same computer as your coding agent, so its protection is reduced. " +
+	"The agent can reach SuiteWard's credentials, its database and the secret behind your six-digit codes."
 
-// tierName is the name of a tier; a value that is not one is an impossible state.
-func tierName(t Tier) string {
+// tierWords says where an installation of a tier runs, in the words of the installer; a value that is not a tier is an impossible state.
+func tierWords(t Tier) string {
 	switch t {
 	case Isolated:
-		return "isolated"
+		return "on a separate server"
 	case CoLocated:
-		return "co-located"
+		return "on the same computer as your coding agent"
 	}
 	panic(fmt.Sprintf("commandtext: unknown tier %d", t))
 }
 
-// tierLine is the fact that states the installation tier.
-func tierLine(t Tier) string { return "- Installation tier: `" + tierName(t) + "`" }
+// tierLine is the fact that states where the installation runs.
+func tierLine(t Tier) string { return "- Installation type: " + tierWords(t) }
 
 // listing shows at most maxListed items and says how many of the total it left
 // out; a total below the items is the number of items.
@@ -699,7 +699,7 @@ func RevisionComment(r Revision) string {
 	parts := []string{
 		"**SuiteWard contract change " + ref + "**",
 		fmt.Sprintf("This pull request changes the protected files, compared with V%d, the approved version of the contract. SuiteWard proposes the change as %s for the owner's approval.", r.Canonical, ref),
-		"- Approved version it changes: V" + strconv.Itoa(r.Canonical) + "\n" + tierLine(r.Tier),
+		"- Approved version: V" + strconv.Itoa(r.Canonical) + "\n" + tierLine(r.Tier),
 	}
 	parts = append(parts, changesSection(r)...)
 	if r.Reduced {

@@ -626,7 +626,7 @@ func TestScopeSuggestionBodyIsRefusedOnAnImpossibleState(t *testing.T) {
 func TestRevisionCommentWithoutReductionDetailIsUnchanged(t *testing.T) {
 	r := revision(commandtext.Isolated)
 	r.Reduced = true
-	const want = "**SuiteWard contract change P7-R3**\n\nThis pull request changes the protected files, compared with V4, the approved version of the contract. SuiteWard proposes the change as P7-R3 for the owner's approval.\n\n- Approved version it changes: V4\n- Installation tier: `isolated`\n\n" +
+	const want = "**SuiteWard contract change P7-R3**\n\nThis pull request changes the protected files, compared with V4, the approved version of the contract. SuiteWard proposes the change as P7-R3 for the owner's approval.\n\n- Approved version: V4\n- Installation type: on a separate server\n\n" +
 		"Protected files added:\n\n```\ntests/new_test.go\n```\n\nProtected files modified:\n\n```\ntests/a.go\ntests/b.go\n```\n\nProtected files removed:\n\n```\ntests/old.go\n```\n\n" +
 		"**This revision reduces the protected scope.** Review it carefully before approving.\n\n" +
 		"This comment is a record, not an approval. To approve this exact revision, comment:\n\n```\n/suiteward approve P7-R3 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\nThis supersedes `P7-R2`.\n"

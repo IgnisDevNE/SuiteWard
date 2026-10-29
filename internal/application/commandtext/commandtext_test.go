@@ -624,7 +624,7 @@ func pathList(n int) []string {
 }
 
 func TestBootstrapSummary(t *testing.T) {
-	coLocated := "runs beside the coding agent (co-located tier), so its assurance is reduced"
+	coLocated := "runs on the same computer as your coding agent, so its protection is reduced"
 	cases := []struct {
 		name    string
 		summary commandtext.Summary
@@ -637,7 +637,7 @@ func TestBootstrapSummary(t *testing.T) {
 			[]string{
 				"SuiteWard proposes the first contract: P1-R1", "Commit: `" + origin + "` on branch `main`",
 				"Protected files: 3\n", "tests/case_a_test.go\ntests/case_b_test.go\ntests/case_c_test.go",
-				"tests/**\nfixtures/", "tests/tmp/", "Installation tier: `isolated`",
+				"tests/**\nfixtures/", "tests/tmp/", "Installation type: on a separate server",
 				"/suiteward approve P1-R1 <code>", "`<code>`", "does not approve the other changes in this pull request",
 			},
 			[]string{coLocated, "not listed"},
@@ -663,7 +663,7 @@ func TestBootstrapSummary(t *testing.T) {
 		{
 			"co-located",
 			summary(1, pathList(1), commandtext.CoLocated),
-			[]string{"Installation tier: `co-located`", coLocated, "/suiteward approve P1-R1 <code>"},
+			[]string{"Installation type: on the same computer as your coding agent", coLocated, "/suiteward approve P1-R1 <code>"},
 			nil,
 		},
 	}
@@ -1090,7 +1090,7 @@ func TestBootstrapSummaryOfTheBranchKeepsItsExactText(t *testing.T) {
 		"SuiteWard proposes the protected files of this repository as its first contract, P1-R1. Nothing is approved yet.\n\n" +
 		"- Commit: `" + origin + "` on branch `main` (this exact commit is proposed, even if the branch moves on)\n" +
 		"- Protected files: 1\n" +
-		"- Installation tier: `isolated`\n\n" +
+		"- Installation type: on a separate server\n\n" +
 		"Inventory:\n\n```\ntests/case_a_test.go\n```\n\n" +
 		"Scope include rules:\n\n```\ntests/**\nfixtures/\n```\n\n" +
 		"Scope runner rules: none.\n\n" +
@@ -1117,7 +1117,7 @@ func TestBootstrapSummaryOfAPullRequestStatesWhatApprovingDoes(t *testing.T) {
 	body := render(t, func() string { return commandtext.BootstrapSummary(pullSummary(commandtext.Isolated)) })
 	for _, w := range []string{
 		"SuiteWard proposes the first contract: P1-R1", "`" + origin + "`", "exact commit of this pull request", "Nothing is approved yet",
-		"Protected files: 3\n", "tests/case_a_test.go", "tests/**", "Installation tier: `isolated`",
+		"Protected files: 3\n", "tests/case_a_test.go", "tests/**", "Installation type: on a separate server",
 		"Approving P1-R1 lets this pull request merge", "using the exact merge commit",
 		"A later push that changes the protected files needs a new approval",
 		"```\n/suiteward approve P1-R1 <code>\n```",
@@ -1126,14 +1126,14 @@ func TestBootstrapSummaryOfAPullRequestStatesWhatApprovingDoes(t *testing.T) {
 			t.Errorf("body lacks %q:\n%s", w, body)
 		}
 	}
-	for _, w := range []string{"on branch", "default branch", "does not move", "assurance is reduced", "other changes in this PR"} {
+	for _, w := range []string{"on branch", "default branch", "does not move", "protection is reduced", "other changes in this PR"} {
 		if strings.Contains(body, w) {
 			t.Errorf("body contains %q:\n%s", w, body)
 		}
 	}
 	checkBody(t, body)
 	co := render(t, func() string { return commandtext.BootstrapSummary(pullSummary(commandtext.CoLocated)) })
-	if !strings.Contains(co, "assurance is reduced") || !strings.Contains(co, "`co-located`") {
+	if !strings.Contains(co, "protection is reduced") || !strings.Contains(co, "on the same computer as your coding agent") {
 		t.Errorf("the co-located summary lacks the reduced assurance:\n%s", co)
 	}
 }
@@ -1257,7 +1257,7 @@ func TestBootstrapSummaryWithRunnerRulesHasItsExactText(t *testing.T) {
 		"SuiteWard proposes the protected files of this repository as its first contract, P1-R1. Nothing is approved yet.\n\n" +
 		"- Commit: `" + origin + "` on branch `main` (this exact commit is proposed, even if the branch moves on)\n" +
 		"- Protected files: 1\n" +
-		"- Installation tier: `isolated`\n\n" +
+		"- Installation type: on a separate server\n\n" +
 		"Inventory:\n\n```\ntests/case_a_test.go\n```\n\n" +
 		"Scope include rules:\n\n```\ntests/**\nfixtures/\n```\n\n" +
 		"Scope runner rules:\n\n```\npytest.ini\nconftest.py\n```\n\n" +

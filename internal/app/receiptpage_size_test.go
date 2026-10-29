@@ -25,7 +25,7 @@ func TestPullPageShowsTheChangeReportOfTheCurrentRevisionWithoutAnyHunk(t *testi
 	w.completed(canonicalTests("pass"), receiptTests("detects"))
 	page := w.text()
 	section := w.section(page, "Change report")
-	w.wantText(section, "P2-R1", "Files: 0 added, 1 modified, 0 removed", "Lines: +1/−1 (counted in 1 of 1 files)", "Marker lines seen: none",
+	w.wantText(section, "P2-R1", "Files: 0 added, 1 modified, 0 removed", "Lines: 1 added, 1 removed (counted in 1 of 1 files)", "Marker lines seen: none",
 		pageHeader("Status", "File", "Lines"), pageRow("modified", "tests/a_test.go", "+1/−1"), `<a href="/reports/acme/widgets/P2-R1">`)
 	w.wantNoText(page, "@@", "<pre", "-v1", "+v2", "line cut")
 }

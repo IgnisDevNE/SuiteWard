@@ -137,7 +137,7 @@ func (c Changes) Facts(listed bool) []string {
 	}
 	facts := []string{
 		fmt.Sprintf("Files: %d added, %d modified, %d %s", c.Added, c.Modified, c.Removed, removed),
-		fmt.Sprintf("Lines: +%d/−%d (counted in %d of %d files)", c.LinesAdded, c.LinesRemoved, c.Counted, c.Added+c.Modified+c.Removed),
+		fmt.Sprintf("Lines: %d added, %d removed (counted in %d of %d files)", c.LinesAdded, c.LinesRemoved, c.Counted, c.Added+c.Modified+c.Removed),
 	}
 	if c.NotShownTotal > 0 {
 		fact := "Not shown line by line: " + counted(c.NotShownTotal, "file", "files")

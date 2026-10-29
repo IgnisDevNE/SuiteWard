@@ -86,7 +86,7 @@ func TestReceiptCheckTitlesAreTheOnesOfTheContract(t *testing.T) {
 func TestReceiptCheckSummaryStatesTheStateTheRevisionAndTheTier(t *testing.T) {
 	for _, tc := range receiptReasons {
 		_, summary := receiptText(t, receiptOf(tc.reason))
-		for _, w := range []string{tc.phrase, "- State: `" + tc.name + "`", "- Proposal revision: P3-R2", "- Installation tier: `isolated`"} {
+		for _, w := range []string{tc.phrase, "- State: `" + tc.name + "`", "- Proposal revision: P3-R2", "- Installation type: on a separate server"} {
 			if !strings.Contains(summary, w) {
 				t.Errorf("%s: summary lacks %q:\n%s", tc.reason, w, summary)
 			}
@@ -226,7 +226,7 @@ func TestReceiptCheckSummaryStatesTheTierAndHoldsNoRepositoryTextNoPathNoLinkAnd
 				c.Unblocked = true
 			}
 			title, summary := receiptText(t, c)
-			if tier == commandtext.CoLocated && (!strings.Contains(summary, "`co-located`") || !strings.Contains(summary, "assurance is reduced")) {
+			if tier == commandtext.CoLocated && (!strings.Contains(summary, "on the same computer as your coding agent") || !strings.Contains(summary, "protection is reduced")) {
 				t.Errorf("%s: the co-located summary lacks the tier or the reduced assurance:\n%s", tc.reason, summary)
 			}
 			if tier == commandtext.Isolated && strings.Contains(summary, "reduced") {
@@ -329,7 +329,7 @@ func TestReceiptCheckSummaryOfARunnerThatDoesNotRespondOffersTheUnblockOnlyWhere
 	c := receiptOf("receipt-not-responding")
 	c.OffersUnblock = true
 	_, offered := receiptText(t, c)
-	if !strings.Contains(offered, receiptNotRespondingText+" "+receiptUnblockOffer+"\n\n") || !strings.Contains(offered, evidenceText) || !strings.Contains(offered, "- Installation tier: `isolated`") {
+	if !strings.Contains(offered, receiptNotRespondingText+" "+receiptUnblockOffer+"\n\n") || !strings.Contains(offered, evidenceText) || !strings.Contains(offered, "- Installation type: on a separate server") {
 		t.Errorf("the summary with the offer:\n%s", offered)
 	}
 	for _, phrase := range notRunPhrases {

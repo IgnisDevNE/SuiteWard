@@ -69,18 +69,18 @@ func TestPullPageTopStatesThePullRequestTheHeadTheBaseAndTheTier(t *testing.T) {
 	w := newPageWorld(t)
 	w.completed(canonicalTests("pass"), receiptTests("detects"))
 	page := w.text()
-	w.wantText(page, "Pull request: 5", "Repository: acme/widgets", "Head: "+cjHead2[:7]+" (full SHA: "+cjHead2+")", "Base branch head: "+bootHead, "Installation tier: isolated",
+	w.wantText(page, "Pull request: 5", "Repository: acme/widgets", "Commit: "+cjHead2[:7]+" (full SHA: "+cjHead2+")", "Base branch commit: "+bootHead, "Installation type: isolated (on a separate server)",
 		"evidence reported by a test runner", "not a verdict")
 	w.wantNoText(page, "protection is reduced", "This pull request is not open")
 	w.serve("co-located") // the enrollment recorded isolated: the effective tier is co-located
-	w.wantText(w.text(), "Installation tier: co-located", commandtext.CoLocatedNotice)
+	w.wantText(w.text(), "Installation type: co-located (on this computer, next to your coding agent)", commandtext.CoLocatedNotice)
 }
 
 func TestPullPageOfAClosedPullRequestShowsTheLastHeadRecorded(t *testing.T) {
 	w := newPageWorld(t)
 	w.completed(canonicalTests("pass"), receiptTests("detects"))
 	w.sync(map[int]string{4: bootHead}) // pull 5 is no longer open
-	w.wantText(w.text(), "Head: "+cjHead2[:7], "This pull request is not open: the results are those of the last head recorded for it.")
+	w.wantText(w.text(), "Commit: "+cjHead2[:7], "This pull request is not open: the results are those of the last commit recorded for it.")
 }
 
 func TestPullPageNeverCallsATestRunnerAnExecutor(t *testing.T) {
@@ -596,15 +596,15 @@ func TestPullPageStatesTheEvidenceOfEachRunAsATable(t *testing.T) {
 	digest := canonical.GoverningDigest.String()
 	w.wantInOrder(section, pageHeader("What", "Approved tests", "Tests this change adds or edits"),
 		pageRow("State", "complete", "complete"),
-		pageRow("Governing manifest", digest+" (source V1)", digest+" (source V1)"),
+		pageRow("Approved file list (fingerprint)", digest+" (source V1)", digest+" (source V1)"),
 		pageRow("Policy levels", "canonical advisory, receipt advisory", "canonical advisory, receipt advisory"),
 		pageRow("Profile", "go", "go"),
 		pageRow("Test runner version", "0.4.0-test", "0.4.0-test"),
-		pageRow("Test runner binary SHA-256", artifactHash("binary"), artifactHash("binary")),
+		pageRow("Test runner program fingerprint (SHA-256)", artifactHash("binary"), artifactHash("binary")),
 		pageRow("Container program", "podman 5.5.0", "podman 5.5.0"),
 		pageRow("Go toolchain", "go1.25.1", "go1.25.1"),
-		pageRow("Image digest", artifactHash("image"), artifactHash("image")))
-	w.wantText(section, "<tr><td>Started</td><td>", "<tr><td>Ended</td><td>", pageRow("Merge base", "-", receipt.BaseSHA))
+		pageRow("Image fingerprint (digest)", artifactHash("image"), artifactHash("image")))
+	w.wantText(section, "<tr><td>Started</td><td>", "<tr><td>Ended</td><td>", pageRow("Common ancestor commit (merge base)", "-", receipt.BaseSHA))
 	w.wantNoText(section, "Attempts", "Failures")
 }
 
@@ -616,7 +616,7 @@ func TestPullPageStatesAJobThatWasNotRunWithItsReasonAndNoEvidence(t *testing.T)
 	const notConfigured = "No test runner is set up for this SuiteWard installation."
 	w.wantText(section, pageRow("State", "not run", "not run"), pageRow("Last reason", notConfigured, notConfigured))
 	w.wantNoText(section, "executor-not-configured")
-	w.wantNoText(section, "Governing manifest", "Test runner version", "Image digest", "Started")
+	w.wantNoText(section, "Approved file list", "Test runner version", "Image fingerprint", "Started")
 }
 
 func TestPullPageStatesWhatARunThatWasTriedAgainSaw(t *testing.T) {

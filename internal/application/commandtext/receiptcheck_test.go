@@ -9,13 +9,12 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
-// The summary of the SuiteWard / Receipt check (docs/contracts/runtime.md, "The SuiteWard / Receipt check"): the count of each state, the excluded tests, the marker
-// lines, the changed test files that do not parse, the tier, the evidence sentence, for a receipt that was not run the reason in words, and the unblock. No
-// repository text, no path, no test name, no link and no mode.
+// The summary of the SuiteWard / Receipt check (docs/contracts/runtime.md, "The SuiteWard / Receipt check"): the counts of a receipt that completed, in the words of the results
+// comment, the tier, the evidence sentence, for a receipt that was not run the reason in words, and the unblock. No repository text, no path, no test name, no link and no mode.
 
 const (
-	evidenceText         = "Observed by this instance's executor. Evidence, not a verdict."
-	receiptUnblockedText = "The owner unblocked this head: its receipt was unavailable, so the tests did not run."
+	evidenceText         = "What the test runner saw is evidence, not a verdict."
+	receiptUnblockedText = "The owner unblocked this commit. Its receipt could not run, so the tests of this change did not run."
 )
 
 // receiptBanned matches what a public summary never holds: a mode, a link, a path, a test name, an HTML comment, a mention or a command.
@@ -29,12 +28,12 @@ var receiptReasons = []struct {
 	phrase string
 	name   string
 }{
-	{commandtext.CheckInProgress, "receipt-running", "Receipt pending", "it is waiting for an executor, or it is running", "in_progress"},
+	{commandtext.CheckInProgress, "receipt-running", "Receipt pending", "has not finished. The tests are waiting for the test runner, or they are running", "in_progress"},
 	{commandtext.CheckInProgress, "receipt-not-responding", "Receipt waiting: test runner not responding", "has not answered for about half a minute", "in_progress"},
-	{commandtext.CheckFailure, "receipt-failing", "Receipt: failing or missing tests", "FAILS or is MISSING", "failure"},
-	{commandtext.CheckSuccess, "receipt-complete", "Receipt ready", "ran the tests that this revision adds or changes", "success"},
-	{commandtext.CheckNeutral, "receipt-not-run", "Receipt unavailable", "could not run the receipt of this head", "neutral"},
-	{commandtext.CheckNeutral, "receipt-not-applicable", "No receipt for this revision", "has no receipt now", "neutral"},
+	{commandtext.CheckFailure, "receipt-failing", "Receipt: failing or missing tests", "fails or gives no result with this change", "failure"},
+	{commandtext.CheckSuccess, "receipt-complete", "Receipt ready", "ran the tests that this change adds or edits", "success"},
+	{commandtext.CheckNeutral, "receipt-not-run", "Receipt unavailable", "could not run the receipt of this commit", "neutral"},
+	{commandtext.CheckNeutral, "receipt-not-applicable", "No receipt for this revision", "This commit has no receipt", "neutral"},
 }
 
 // seen is the receipt of a head: what it saw. Only a receipt that completed has any.
@@ -108,9 +107,9 @@ func TestReceiptCheckSummaryStatesTheEvidenceSentenceExceptWhereNothingWasObserv
 }
 
 const (
-	receiptRunningText  = "The receipt of this head has not finished: it is waiting for an executor, or it is running. The check has no result yet."
-	receiptCompleteText = "SuiteWard ran the tests that this revision adds or changes, on the head and on the code before the change. The counts below are what it saw."
-	receiptEmptyText    = "This revision adds or changes no test that SuiteWard can run, so the receipt is empty. The counts below are what it saw."
+	receiptRunningText  = "The receipt of this commit, the run of the tests that this change adds or edits, has not finished. The tests are waiting for the test runner, or they are running. This check has no result yet."
+	receiptCompleteText = "SuiteWard ran the tests that this change adds or edits, with the change and on the code before it. The counts below are what it saw."
+	receiptEmptyText    = "The receipt of this commit is empty, so there is nothing to judge."
 )
 
 // The text of a reason is the first paragraph of its summary. A complete receipt with no evaluated test (every state count at zero) says that it is empty; any state
@@ -138,11 +137,18 @@ func TestReceiptCheckSummaryOpensWithTheTextOfItsReason(t *testing.T) {
 	}
 }
 
-func TestReceiptCheckSummaryStatesEveryCount(t *testing.T) {
+func TestReceiptCheckSummaryStatesEveryCountInTheWordsOfTheResultsComment(t *testing.T) {
 	_, complete := receiptText(t, receiptOf("receipt-complete"))
 	for _, w := range []string{
-		"- Tests by state: 3 DETECTS, 2 INERT, 1 NEW API, 0 FAILS, 0 MISSING, 6 FLAKY, 4 SKIPPED",
-		"- Excluded tests: 5", "- Marker lines seen: 8", "- Changed test files that do not parse: 0",
+		"Tests this change adds or edits: 16.\n" +
+			"- Fail before the change and pass now, so they show the change works: 3\n" +
+			"- Pass before and after, so they show nothing: 2\n" +
+			"- Use code that the old code lacks, so they could not run before the change: 1\n" +
+			"- Fail with this change: 0\n" +
+			"- Give no result: 0\n" +
+			"- Give different results when run again: 6\n" +
+			"- Skipped: 4\n\n" +
+			"5 tests that this change adds or edits cannot be run by SuiteWard and are not covered. Lines to look at: 8.\n\n",
 	} {
 		if !strings.Contains(complete, w) {
 			t.Errorf("summary lacks %q:\n%s", w, complete)
@@ -150,8 +156,15 @@ func TestReceiptCheckSummaryStatesEveryCount(t *testing.T) {
 	}
 	_, failing := receiptText(t, receiptOf("receipt-failing"))
 	for _, w := range []string{
-		"- Tests by state: 3 DETECTS, 2 INERT, 1 NEW API, 2 FAILS, 1 MISSING, 6 FLAKY, 4 SKIPPED",
-		"- Excluded tests: 5", "- Marker lines seen: 9", "- Changed test files that do not parse: 7",
+		"Tests this change adds or edits: 19.\n" +
+			"- Fail before the change and pass now, so they show the change works: 3\n" +
+			"- Pass before and after, so they show nothing: 2\n" +
+			"- Use code that the old code lacks, so they could not run before the change: 1\n" +
+			"- Fail with this change: 2\n" +
+			"- Give no result: 1\n" +
+			"- Give different results when run again: 6\n" +
+			"- Skipped: 4\n\n" +
+			"5 tests that this change adds or edits cannot be run by SuiteWard and are not covered. Changed test files that cannot be read: 7. Lines to look at: 9.\n\n",
 	} {
 		if !strings.Contains(failing, w) {
 			t.Errorf("summary lacks %q:\n%s", w, failing)
@@ -159,48 +172,50 @@ func TestReceiptCheckSummaryStatesEveryCount(t *testing.T) {
 	}
 }
 
-// An empty receipt is complete: a success with the counts at zero. Nothing that was not run has a count either.
-func TestReceiptCheckSummaryOfAnEmptyOrAnUnrunReceiptHasItsCountsAtZero(t *testing.T) {
-	for _, reason := range []string{"receipt-running", "receipt-not-run", "receipt-not-applicable"} {
+// A receipt that completed with one excluded test says it in the singular, and a note that has nothing to say is left out.
+func TestReceiptCheckSummaryLeavesOutTheNotesThatHaveNothingToSay(t *testing.T) {
+	c := receiptOf("receipt-complete")
+	c.Counts, c.Markers = execution.ReceiptCounts{Detects: 1, Excluded: 1}, 0
+	_, summary := receiptText(t, c)
+	if !strings.Contains(summary, "- Skipped: 0\n\n1 test that this change adds or edits cannot be run by SuiteWard and is not covered.\n\n") || strings.Contains(summary, "Lines to look at") ||
+		strings.Contains(summary, "cannot be read") {
+		t.Errorf("summary:\n%s", summary)
+	}
+}
+
+// Only a receipt that completed has counts. An empty one says that it adds or edits no test that SuiteWard can run, and a receipt that is running, was not run or does not
+// apply says nothing of counts, which would read as zero tests.
+func TestReceiptCheckSummaryOfAReceiptThatDidNotCompleteHasNoCountsAndAnEmptyOneSaysSo(t *testing.T) {
+	for _, reason := range []string{"receipt-running", "receipt-not-responding", "receipt-not-run", "receipt-not-applicable"} {
 		_, summary := receiptText(t, receiptOf(reason))
-		if !strings.Contains(summary, "- Tests by state: 0 DETECTS, 0 INERT, 0 NEW API, 0 FAILS, 0 MISSING, 0 FLAKY, 0 SKIPPED") || !strings.Contains(summary, "- Excluded tests: 0") {
-			t.Errorf("%s: the counts are not at zero:\n%s", reason, summary)
+		for _, s := range []string{"Tests this change adds or edits", "This change adds or edits no test", "Lines to look at", "cannot be read", "not covered"} {
+			if strings.Contains(summary, s) {
+				t.Errorf("%s: the summary has counts, which a receipt that did not complete has not (%q):\n%s", reason, s, summary)
+			}
 		}
 	}
 	c := receiptOf("receipt-complete")
 	c.Counts, c.Markers = execution.ReceiptCounts{}, 0
-	if _, summary := receiptText(t, c); !strings.Contains(summary, "- Tests by state: 0 DETECTS") || !strings.Contains(summary, "- Marker lines seen: 0") {
+	if _, summary := receiptText(t, c); !strings.Contains(summary, "\n\nThis change adds or edits no test that SuiteWard can run.\n\n") || strings.Contains(summary, "Tests this change adds or edits") {
 		t.Errorf("an empty receipt:\n%s", summary)
 	}
 }
 
-// unavailableWords are the reasons a receipt job is unavailable (docs/contracts/runtime.md, "Unavailable reasons"), each with a phrase of its words.
-var unavailableWords = map[string]string{
-	"executor-error":          "the executor failed in a way that no other reason names",
-	"sandbox-unavailable":     "the sandbox could not be built",
-	"archive-unavailable":     "could not be read",
-	"lease-expired":           "the executor was lost",
-	"timeout":                 "time limit",
-	"github-unavailable":      "GitHub could not be read",
-	"no-executor":             "no executor was seen",
-	"fetch-failed":            "could not be fetched from the Go module proxy",
-	"install-failed":          "dependency prefetch was refused",
-	"resource-limit":          "resource limit",
-	"toolchain-mismatch":      "needs a Go toolchain that this release does not have",
-	"source-mismatch":         "source of the head could not be verified",
-	"too-large":               "size limit",
-	"profile-unsupported":     "does not support the profile",
-	"executor-not-configured": "no executor is configured",
-	"no-merge-base":           "no merge base",
-}
+// unavailableCodes are the reasons a job is unavailable (docs/contracts/runtime.md, "The reason a run is unavailable"), whose sentences testwords_test.go pins.
+var unavailableCodes = []string{"executor-error", "sandbox-unavailable", "archive-unavailable", "lease-expired", "timeout", "github-unavailable", "no-executor", "fetch-failed",
+	"install-failed", "resource-limit", "toolchain-mismatch", "source-mismatch", "too-large", "profile-unsupported", "executor-not-configured", "no-merge-base"}
 
-func TestReceiptCheckSummaryOfAnUnavailableReceiptSaysWhyInWords(t *testing.T) {
-	for code, phrase := range unavailableWords {
+func TestReceiptCheckSummaryOfAnUnavailableReceiptSaysWhyInTheWordsOfTheContract(t *testing.T) {
+	for _, code := range unavailableCodes {
+		sentence, ok := commandtext.UnavailableSentence(code)
+		if !ok {
+			t.Fatalf("no sentence for %q", code)
+		}
 		c := receiptOf("receipt-not-run")
 		c.Unavailable = code
 		_, summary := receiptText(t, c)
-		if !strings.Contains(summary, phrase) {
-			t.Errorf("%s: summary lacks %q:\n%s", code, phrase, summary)
+		if !strings.Contains(summary, "SuiteWard could not run the receipt of this commit.\n\n"+sentence+"\n\n"+receiptNotRunNext+receiptNotRunUnblock+"\n\n- State: `neutral`") {
+			t.Errorf("%s: summary lacks %q after the text of the reason:\n%s", code, sentence, summary)
 		}
 		if strings.Contains(summary, code) {
 			t.Errorf("%s: the summary says the code, not the words:\n%s", code, summary)
@@ -208,11 +223,16 @@ func TestReceiptCheckSummaryOfAnUnavailableReceiptSaysWhyInWords(t *testing.T) {
 	}
 }
 
+const (
+	receiptNotRunNext    = "This check does not fail the pull request. A new push runs the receipt again."
+	receiptNotRunUnblock = " Where the receipt is required, the owner can unblock this commit. The comment on the pull request gives the command."
+)
+
 func TestReceiptCheckSummaryOfAnUnblockedHeadSaysThatTheTestsDidNotRun(t *testing.T) {
 	c := receiptOf("receipt-not-run")
 	c.Unblocked = true
 	_, summary := receiptText(t, c)
-	if !strings.Contains(summary, receiptUnblockedText) || !strings.Contains(summary, "- State: `neutral`") {
+	if !strings.Contains(summary, receiptUnblockedText) || !strings.Contains(summary, "- State: `neutral`") || !strings.Contains(summary, receiptNotRunNext+"\n\n") || strings.Contains(summary, "can unblock") {
 		t.Errorf("summary:\n%s", summary)
 	}
 }

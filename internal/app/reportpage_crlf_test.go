@@ -8,7 +8,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/report"
 )
 
-const crlfNote = "This file uses CRLF line endings."
+const crlfNote = "This file uses Windows line endings (CRLF). They are not shown on each line."
 
 func crlfReport(files ...report.File) report.Report {
 	return report.Report{Files: files, Totals: report.Totals{Files: map[report.Status]int{report.Modified: len(files)}, Markers: map[report.MarkerKind]int{}}}

@@ -86,7 +86,7 @@ func TestTheReportPageStatesTheRevisionTheBaseTheNumbersAndEveryFile(t *testing.
 	for _, w := range []string{
 		"P2-R1", "acme/widgets", "V1",
 		"Files: 1 added, 1 modified, 0 removed", "Lines: 5 added, 1 removed (counted in 2 of 2 files)", "Marker lines seen: 1 removed assertion line, 1 added skip line",
-		"tests/a_test.go", "tests/new_test.go", "+2/−1", "+3/−0", "removed-assertion", "added-skip", "assert.Equal(t, 1, f())", "var x = 1",
+		"tests/a_test.go", "tests/new_test.go", "+2/−1", "+3/−0", "Removed assertion line", "Added skip line", "assert.Equal(t, 1, f())", "var x = 1",
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("the page lacks %q:\n%s", w, body)
@@ -131,10 +131,10 @@ func TestTheReportPageExplainsEveryReasonAFileHasNoDiff(t *testing.T) {
 
 	for _, w := range []string{
 		"Binary file, 2 bytes before and 3 bytes after.", "Binary file, 7 bytes.", "Binary file, 9 bytes.", "Too large to compare line by line: 2000000 bytes before and 2000001 bytes after.",
-		"Too different to compare line by line", "Not compared: the comparison work of this report ran out before this file.",
-		"The diff of this file was left out to keep the report within its size budget; the line counts are exact.",
-		"Some marker lines of this file are not listed; the totals above count them all.",
-		"Some details of this report were left out to keep it within its size budget.",
+		"Too different to compare line by line", "Not compared: the report had used up its limit on comparison work before this file.",
+		"The changed lines of this file are not shown, to keep the report small. The line counts are exact.",
+		"Some marker lines of this file are not listed. The totals above count them all.",
+		"Some details of this report were left out to keep it small.",
 		"Lines: 4 added, 5 removed (counted in 2 of 8 files)", "Not shown line by line: 7 files",
 	} {
 		if !strings.Contains(body, w) {

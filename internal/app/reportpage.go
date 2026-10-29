@@ -238,7 +238,7 @@ var markerLabels = map[string]string{
 	"testing-import":   "Imports the testing package",
 	"testing-testing":  "Asks whether tests are running",
 	"flag-lookup-test": "Looks up a test flag",
-	"exit-in-init":     "Exits the program while it starts",
+	"exit-in-init":     "Ends the program early, at start-up or with syscall.Exit",
 	"test-file-read":   "Names a test file",
 	"env-read":         "Reads the TESTING or CI setting",
 	"forged-event":     "Holds text that imitates test output",

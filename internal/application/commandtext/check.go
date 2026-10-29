@@ -162,6 +162,15 @@ func WeakenedSentence(n int) string {
 	return count + " A test that is edited can pass by checking less. Read the edit before you approve."
 }
 
+// blockingEditSentence is the sentence that follows the counts of an approval that is missing when a test blocks: the weakened count and what to do when the change edits an
+// approved test that fails in its approved version, and the generic sentence when none is known to be, which is still true.
+func blockingEditSentence(weakened int) string {
+	if weakened > 0 {
+		return WeakenedSentence(weakened)
+	}
+	return blockingEditText
+}
+
 // closingText ends a summary: the usual one reports on the protected contract only, and the one of canonical: required reports on the run of the approved tests too.
 func closingText(c Check) string {
 	if c.Execution != nil || c.Unblocked || slices.Contains(canonicalReasons, c.Reason) {
@@ -206,7 +215,7 @@ func CheckSummary(c Check) (title, summary string) {
 	if c.Execution != nil {
 		parts = append(parts, executionText(*c.Execution))
 		if c.Reason == "approval-missing" && c.Execution.Failed+c.Execution.Missing+c.Execution.Flaky > 0 {
-			parts = append(parts, blockingEditText)
+			parts = append(parts, blockingEditSentence(c.Weakened))
 		}
 	}
 	if c.Unblocked {
@@ -252,6 +261,10 @@ func checkRequired(c Check) error {
 		return errors.New("commandtext: a head with no canonical version has no canonical run to count")
 	case c.Unblocked && (!success || c.Execution != nil):
 		return fmt.Errorf("commandtext: reason %q does not fit an unblocked run, which is lifted only to a success and has no counts", c.Reason)
+	case c.Weakened < 0 || c.Weakened > blocking:
+		return fmt.Errorf("commandtext: %d weakened tests, which the %d blocking tests of the run do not show", c.Weakened, blocking)
+	case c.Weakened > 0 && c.Reason != "approval-missing":
+		return fmt.Errorf("commandtext: reason %q states no weakened test: only an approval that is missing does", c.Reason)
 	case success && blocking > 0:
 		return errors.New("commandtext: a success with a failing, missing or flaky test")
 	case c.Reason == "canonical-failing" && blocking == 0:

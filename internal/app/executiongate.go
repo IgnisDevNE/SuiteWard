@@ -54,9 +54,10 @@ func runnerNotResponding(job execution.Job, found, silent bool) bool {
 // canonical job planned and none read, but the job that is still open waits, so it is read here. A policy that was not read, or that names no execution, wants nothing
 // (the zero Set). The gates do not call this: each check reads its own job (runnerNotResponding).
 //
-// The Set that it read from comes back with the answer: its levels, whether the receipt applies and the two jobs. The comment fills the rest of it (HeadReason, Earlier,
-// the counts of the runs) and asks it for Unblock, Holds and Next, so that it never rebuilds the jobs. Waiting.Unblock of the first answer is not to be read: it depends on
-// the reason of the head, which only the filled Set holds.
+// The Set that it read from comes back with the answer: its levels, whether the receipt applies and was decided, and the two jobs. The comment fills the rest of it
+// (HeadReason, Earlier, the counts of the runs, Weakened) and asks it for Unblock, Holds and Next, so that it never rebuilds the jobs. Two things are the caller's: the
+// jobs carry Unblocked false (read the unblock rows of the head and set it, or an unavailable job that the owner unblocked reads as lost), and a canonical job read here is
+// in the Set and not in jobs. Waiting.Unblock of the first answer is not to be read: it depends on the reason of the head, which only the filled Set holds.
 func (j *checksJob) headNotResponding(ctx context.Context, s *pullState, x *executionRun, jobs headJobs, silent bool) (set domain.Set, waiting domain.JobPair, reading bool, err error) {
 	if !x.known || !x.policy.wants() {
 		return domain.Set{}, domain.JobPair{}, false, nil
@@ -67,7 +68,7 @@ func (j *checksJob) headNotResponding(ctx context.Context, s *pullState, x *exec
 			return domain.Set{}, domain.JobPair{}, false, err
 		}
 	}
-	set = domain.Set{CanonicalLevel: x.policy.canonical, ReceiptLevel: x.policy.receipt, ReceiptApplies: jobs.receiptApplies}
+	set = domain.Set{CanonicalLevel: x.policy.canonical, ReceiptLevel: x.policy.receipt, ReceiptApplies: jobs.receiptApplies, ReceiptDecided: jobs.receiptDecided}
 	if set.CanonicalJob, err = planJob(canonical, hasCanonical); err != nil {
 		return domain.Set{}, domain.JobPair{}, false, err
 	}

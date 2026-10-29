@@ -144,11 +144,13 @@ func TestChecksJobOnPostgreSQLGatesTheContractCheckAndDecidesTheReceipt(t *testi
 	}
 
 	// The receipt page reads the same rows, through the real stores: the tests of the receipt of pull 5 with their state, and the evidence of the run.
-	pages := &api{owners: store, receipts: newReceiptPages(store, artifacts, store.Execution(), store, store, owner.TierIsolated), logger: logger}
+	pages := &api{owners: store, receipts: newReceiptPages(store, artifacts, store.Execution(), store, store, owner.TierIsolated), reports: newChangeReports(store, artifacts),
+		executorStatus: &executorStatus{liveness: execution.NewLiveness(time.Now())}, logger: logger}
 	response := httptest.NewRecorder()
 	newRouter(pages).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/pulls/acme/widgets/5", nil))
 	page := html.UnescapeString(response.Body.String())
-	for _, want := range []string{"Head: " + cjHead2, "State: complete", "DETECTS  .  TestR00  a_test.go", "INERT  .  TestR01  a_test.go", "Executor: 0.4.0-test", "fix: met", "refactor: not met", "No preview mode is recorded for this pull request."} {
+	for _, want := range []string{"Head: " + cjHead2[:7] + " (full SHA: " + cjHead2 + ")", pageRow("State", "complete", "complete"), pageRow("DETECTS", "TestR00", ".", "a_test.go", "", ""), "<td>INERT</td><td>TestR01</td>",
+		pageRow("Test runner version", "0.4.0-test", "0.4.0-test"), pageRow("fix", "Met", "-"), "<td>refactor</td><td>Not met</td>", "No preview mode is recorded for this pull request.", "<h2>Change report</h2>"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("the receipt page (status %d) lacks %q:\n%s", response.Code, want, page)
 		}

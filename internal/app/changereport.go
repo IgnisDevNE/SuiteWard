@@ -223,13 +223,18 @@ func summarize(ctx context.Context, reports reportSource, logger *slog.Logger, w
 	return commandtext.ChangesOf(built.Report), true, nil
 }
 
+// reportHref is the path of the report of a revision of repo (owner/name) on the instance, which the page of a pull request links without the address of the instance.
+func reportHref(repo, reference string) string {
+	owner, name, _ := strings.Cut(repo, "/")
+	return "/reports/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/" + reference
+}
+
 // reportURL is the link to the report of a revision of repo (owner/name) on the instance at base, or "" without a base.
 func reportURL(base, repo, reference string) string {
 	if base == "" {
 		return ""
 	}
-	owner, name, _ := strings.Cut(repo, "/")
-	return base + "/reports/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/" + reference
+	return base + reportHref(repo, reference)
 }
 
 // storeManifest keeps the canonical encoding of m in the content store, under the digest of m. It is idempotent, like every Put.

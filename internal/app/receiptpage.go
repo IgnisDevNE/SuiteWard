@@ -30,7 +30,7 @@ var errReceiptNotFound = errors.New("the pull request is not known")
 
 // receiptSource builds the page of a pull request of an enrolled repository.
 type receiptSource interface {
-	page(ctx context.Context, state owner.State, project owner.ProjectPolicy, pull int) ([]byte, error)
+	page(ctx context.Context, state owner.State, project owner.ProjectPolicy, pull int, deps pageDeps) ([]byte, error)
 }
 
 // pullNumber is the pull request of the route: a positive integer written without a leading zero, as GitHub numbers it.
@@ -70,28 +70,25 @@ func (a *api) pull(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	page, err := a.receipts.page(ctx, state, project, number)
+	page, err := a.receipts.page(ctx, state, project, number, pageDeps{reports: a.reports, liveness: a.executorStatus.liveness, logger: a.logger})
 	switch {
 	case errors.Is(err, errReceiptNotFound):
 		http.NotFound(w, r)
 		return
-	case errors.Is(err, errPageTooLarge):
-		http.Error(w, "the receipt is too large to show", http.StatusRequestEntityTooLarge)
-		return
-	case err != nil:
+	case err != nil: // a page that passed its cap is one of them: the budgets keep it unreachable, so it is a failure to build, never a refusal for the size
 		a.receiptFailed(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if _, err := w.Write(page); err != nil {
-		a.logger.DebugContext(r.Context(), "write receipt", "path", r.URL.Path, "error", err)
+		a.logger.DebugContext(r.Context(), "write pull request page", "path", r.URL.Path, "error", err)
 	}
 }
 
 // receiptFailed logs the cause and answers with a fixed text: the cause may quote the store.
 func (a *api) receiptFailed(w http.ResponseWriter, r *http.Request, err error) {
-	a.logger.WarnContext(r.Context(), "receipt failed", "path", r.URL.Path, "error", err)
-	http.Error(w, "the receipt is unavailable", http.StatusServiceUnavailable)
+	a.logger.WarnContext(r.Context(), "pull request page failed", "path", r.URL.Path, "error", err)
+	http.Error(w, "the pull request page is unavailable", http.StatusServiceUnavailable)
 }
 
 // previewReader is the part of the command ledger the page reads: the preview mode of a pull request.
@@ -99,7 +96,7 @@ type previewReader interface {
 	PreviewMode(ctx context.Context, repositoryID int64, pull int, since time.Time) (string, bool, error)
 }
 
-// receiptPages builds the receipt page. One page is built at a time in the process, because a page of two runs of 10,000 tests holds its rows and its markup.
+// receiptPages builds the pull request page. One page is built at a time in the process, because a page of two runs of 10,000 tests holds its rows and its markup.
 type receiptPages struct {
 	suites     governance.UnitOfWork
 	contents   governance.ContentReader
@@ -113,5 +110,5 @@ type receiptPages struct {
 }
 
 func newReceiptPages(suites governance.UnitOfWork, contents governance.ContentReader, executions execution.Store, pulls pullLister, previews previewReader, tier string) *receiptPages {
-	return &receiptPages{suites: suites, contents: contents, executions: executions, pulls: pulls, previews: previews, tier: tier, gate: make(chan struct{}, 1), limit: maxReportPage, now: time.Now}
+	return &receiptPages{suites: suites, contents: contents, executions: executions, pulls: pulls, previews: previews, tier: tier, gate: make(chan struct{}, 1), limit: maxPullPage, now: time.Now}
 }

@@ -318,3 +318,15 @@ pre .cut { display: inline; padding: 0; }
 </body>
 </html>
 `))
+
+// fileRowCells are the cells of a changed file in the table of a report without its hunks: the status, the path and the lines, which are +N/−M, or why there are none.
+func fileRowCells(f report.File) []string {
+	lines := "no line count"
+	switch {
+	case f.CountsKnown:
+		lines = fmt.Sprintf("+%d/−%d", f.LinesAdded, f.LinesRemoved)
+	case len(fileNotes(f)) > 0:
+		lines = strings.Join(fileNotes(f), " ")
+	}
+	return []string{string(f.Status), commandtext.Visible(f.Path), lines}
+}

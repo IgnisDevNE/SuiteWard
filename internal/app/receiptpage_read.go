@@ -172,7 +172,11 @@ func (p *receiptPages) read(ctx context.Context, state owner.State, project owne
 	}
 	pull := pulls[i]
 	tier, _ := effectiveTier(p.tier, state, true)
-	v := pullView{Pull: number, Repo: commandtext.Visible(project.Repo), Head: pull.HeadSHA, ShortHead: shortSHA(pull.HeadSHA), Base: pull.BaseSHA, Open: pull.NotOpenSince.IsZero(), Tier: cmp.Or(tierWords[tier], tier)}
+	installation := checkTiers[tier]
+	if installation == 0 {
+		return pullView{}, fmt.Errorf("the installation type %q is not one that SuiteWard knows", tier)
+	}
+	v := pullView{Pull: number, Repo: commandtext.Visible(project.Repo), Head: pull.HeadSHA, ShortHead: shortSHA(pull.HeadSHA), Base: pull.BaseSHA, Open: pull.NotOpenSince.IsZero(), Tier: commandtext.TierWords(installation)}
 	if tier == owner.TierCoLocated {
 		v.Notice = commandtext.CoLocatedNotice
 	}
@@ -447,10 +451,4 @@ func reasonWords(r pageRun) (string, error) {
 		return "", fmt.Errorf("job %d has the reason %q, which no text knows", r.job.ID, r.job.Reason)
 	}
 	return sentence, nil
-}
-
-// tierWords say the installation type as the installer does: its name, and what it means.
-var tierWords = map[string]string{
-	owner.TierIsolated:  "isolated (on a separate server)",
-	owner.TierCoLocated: "co-located (on this computer, next to your coding agent)",
 }

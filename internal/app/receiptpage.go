@@ -31,6 +31,7 @@ var errReceiptNotFound = errors.New("the pull request is not known")
 // receiptSource builds the page of a pull request of an enrolled repository.
 type receiptSource interface {
 	page(ctx context.Context, state owner.State, project owner.ProjectPolicy, pull int, deps pageDeps) ([]byte, error)
+	requestTimeout() time.Duration
 }
 
 // pullNumber is the pull request of the route: a positive integer written without a leading zero, as GitHub numbers it.
@@ -105,8 +106,11 @@ type receiptPages struct {
 	previews   previewReader
 	tier       string           // the configured installation tier
 	limit      int              // the most bytes a page may hold, a field so that a test can lower it
+	timeout    time.Duration    // how long a request for a page may take, a field so that a test of the largest page can lift it
 	now        func() time.Time // the clock of the page, which a test can set
 }
+
+func (p *receiptPages) requestTimeout() time.Duration { return p.timeout }
 
 func newReceiptPages(suites governance.UnitOfWork, contents governance.ContentReader, executions execution.Store, pulls pullLister, previews previewReader, tier string) *receiptPages {
 	return &receiptPages{suites: suites, contents: contents, executions: executions, pulls: pulls, previews: previews, tier: tier, limit: maxPullPage, now: time.Now}

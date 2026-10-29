@@ -408,3 +408,31 @@ func TestThePullRequestPageAndTheReportPageShareOneTurn(t *testing.T) {
 		t.Errorf("the page of the pull request is %d", got)
 	}
 }
+
+// The deadline of a request is the builder's, so that a test of the largest page can lift it; production keeps 20 s.
+func TestAPageIsBuiltUnderADeadlineOfTwentySeconds(t *testing.T) {
+	if got := newReceiptPages(nil, nil, nil, nil, nil, "isolated").requestTimeout(); got != 20*time.Second {
+		t.Errorf("a request for a page may take %s, want 20 s", got)
+	}
+}
+
+func TestPullPageGivesUpWhenTheDeadlineOfItsBuilderEnds(t *testing.T) {
+	w := newPageWorld(t)
+	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
+	release, err := w.server.reports.turn(t.Context()) // another build holds the one turn
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	w.pages.timeout = 100 * time.Millisecond // a real deadline
+	answered := make(chan int, 1)
+	go func() { answered <- w.get("127.0.0.1:8080", pullPath).Code }()
+	select {
+	case got := <-answered:
+		if got != http.StatusServiceUnavailable {
+			t.Errorf("status %d, want 503 once the deadline of the page ended", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request still waits for its turn after the deadline of its page")
+	}
+}

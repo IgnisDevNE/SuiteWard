@@ -65,18 +65,18 @@ Copy the binary to `/usr/local/bin/suiteward`, and keep the verified `SHA256SUMS
 **2. Prepare the host**, once, as the administrator ([step 10.2](install.md#10-running-on-a-separate-host-operators)):
 
 ```
-sudo suiteward install host --sha256sums <path to the verified SHA256SUMS>
+sudo /usr/local/bin/suiteward install host --sha256sums <path to the verified SHA256SUMS>
 ```
 
-It also makes the executor, under an account of its own, and pins its binary to the release's line in that file.
+It also makes the executor, under an account of its own, and pins its binary to the release's line in that file. Use the full path: `sudo` on AlmaLinux 9 does not search `/usr/local/bin`, and the shell that step 3 opens may not either.
 
 **3. Install the stack** in a shell as the account `suiteward` that [step 10.3](install.md#10-running-on-a-separate-host-operators) opens:
 
 ```
-suiteward install --tier isolated --github yes --manifest-port 8765
+/usr/local/bin/suiteward install --tier isolated --github yes --manifest-port 8765
 ```
 
-The binary carries its release's image digest, so no `--image` is needed. From your PC, forward the port the installer names and open `http://127.0.0.1:8765/` in your browser, with the same number on both sides of the forward ([step 10.4](install.md#10-running-on-a-separate-host-operators)). The installer walks through the App, the repositories and the test checks, and writes a ruleset file for each repository on the host: print it with `cat` in the session, save it on your PC and import it. It then runs setup on the terminal (turn off session recording first) and you run `suiteward doctor`. With an App you made by hand, give its values and key file instead.
+The binary carries its release's image digest, so no `--image` is needed. From your PC, forward the port the installer names and open `http://127.0.0.1:8765/` in your browser, with the same number on both sides of the forward ([step 10.4](install.md#10-running-on-a-separate-host-operators)). The installer walks through the App, the repositories and the test checks, and writes a ruleset file for each repository on the host: print it with `cat` in the session, save it on your PC and import it. It then runs setup on the terminal (turn off session recording first) and you run `/usr/local/bin/suiteward doctor`. With an App you made by hand, give its values and key file instead.
 
 ## The first contract ([section 8](install.md#8-first-use-bootstrap))
 

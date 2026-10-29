@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -140,7 +142,7 @@ func (h *hostFake) answerExecutorUnits(c call) (out []byte, handled bool, err er
 		return nil, false, nil
 	case strings.HasPrefix(line, execAs+" timeout ") && strings.HasSuffix(line, execWaitEnd):
 		if h.managerStuck {
-			return nil, true, errors.New("timeout: exit status 124")
+			return nil, true, fmt.Errorf("timeout: %w", exitStatus(124))
 		}
 		if h.managerState != "running" { // is-system-running prints its state and exits non-zero for anything but running
 			return []byte(h.managerState + "\n"), true, errors.New("systemctl: exit status 1")
@@ -612,3 +614,9 @@ func TestPrepareHostRestartsARunningExecutorOnlyWhenItMakesANewToken(t *testing.
 		})
 	}
 }
+
+// exitStatus is the error of a command that exits with that status, which `errors.As` finds as it does for the error of OSExec.
+type exitStatus int
+
+func (e exitStatus) Error() string { return "exit status " + strconv.Itoa(int(e)) }
+func (e exitStatus) ExitCode() int { return int(e) }

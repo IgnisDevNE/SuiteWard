@@ -48,8 +48,9 @@ func TestIsolatedInstallRefusesSHA256SUMSAndNamesTheHostStep(t *testing.T) {
 	if !errors.Is(err, ErrUsage) || !strings.Contains(err.Error(), "install host --sha256sums") {
 		t.Fatalf("want a usage error that names `sudo suiteward install host --sha256sums`, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "`sudo /usr/local/bin/suiteward install host --sha256sums") {
-		t.Errorf("the host step is named by the path that sudo finds: %v", err)
+	// The program of the run is a file of the harness, and its path is the one the hint names.
+	if want := "`" + h.newEnv().Deps.suggestHostStep("--sha256sums <the release's SHA256SUMS file>") + "`"; !strings.Contains(err.Error(), want) {
+		t.Errorf("the host step is named by the path that sudo finds (%s): %v", want, err)
 	}
 }
 

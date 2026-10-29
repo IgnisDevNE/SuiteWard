@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -52,6 +53,9 @@ func (d Deps) validate() error {
 func OSDeps() Deps {
 	return Deps{Exec: OSExec, Interactive: OSInteractive, GOOS: runtime.GOOS, Getenv: os.Getenv, UserSID: osUserSID, Executable: os.Executable}
 }
+
+// execWaitDelay bounds the wait of OSExec for the output of a command (compile stub: not used yet).
+var execWaitDelay = 5 * time.Second
 
 // OSExec runs name with args. When name is an absolute path its directory is put first on the child's PATH, because
 // Docker Desktop's credential helper sits next to its CLI. A podman call that selects a connection with --connection also

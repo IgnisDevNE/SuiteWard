@@ -94,20 +94,51 @@ func TestPrepareHostAcceptsADegradedManagerOfTheExecutor(t *testing.T) {
 	}
 }
 
+// The message says what happened: a manager that timed out did not answer within the bound, one that answered says its state, and one that could
+// not be asked says why. The bound is named only when it was the reason.
 func TestPrepareHostStopsBeforeThePullWhenTheManagerOfTheExecutorDoesNotBecomeReady(t *testing.T) {
-	for name, set := range map[string]func(*hostFake){
-		"it is stopping":   func(h *hostFake) { h.managerState = "stopping" },
-		"it never answers": func(h *hostFake) { h.managerStuck = true },
+	for name, c := range map[string]struct {
+		set       func(*hostFake)
+		want, not string
+	}{
+		"it is stopping":   {func(h *hostFake) { h.managerState = "stopping" }, `"stopping"`, "60 seconds"},
+		"it never answers": {func(h *hostFake) { h.managerStuck = true }, "did not answer within 60 seconds", `it says`},
+		"it cannot be asked": {func(h *hostFake) {
+			h.failOn = map[string]error{"timeout 60 systemctl --user is-system-running": errInjected}
+		}, errInjected.Error(), "60 seconds"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHostFake()
-			set(h)
+			c.set(h)
 			_, err := runHost(t, h, declineMetadataRule, false, "")
 			if err == nil || !strings.Contains(err.Error(), "user manager of "+ExecutorAccount) || !strings.Contains(err.Error(), "journalctl") {
 				t.Fatalf("a manager that is not ready must stop the run naming it and where to read why, got %v", err)
 			}
+			if !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), c.not) {
+				t.Errorf("the message must say %q and not %q: %v", c.want, c.not, err)
+			}
 			if h.has("runuser", "podman pull") {
 				t.Errorf("the image was pulled although the manager was not ready: %v", h.lines())
+			}
+		})
+	}
+}
+
+// OSExec cuts the command it names in an error at 120 characters, and the prefix of every command of the account (runuser, its bus) takes nearly all
+// of them, so an error says what was run as the account itself.
+func TestPrepareHostNamesWhatItRanAsTheExecutorsAccountWhenItFails(t *testing.T) {
+	for name, c := range map[string]struct{ failing, want string }{
+		"the pull":               {"podman pull", "podman pull " + goprofile.Image},
+		"the check of the image": {"podman image exists", "podman image exists " + goprofile.Image},
+		"the reload of units":    {"systemctl --user daemon-reload", "systemctl --user daemon-reload"},
+		"the start":              {"systemctl --user enable --now", "systemctl --user enable --now " + executorUnitName},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHostFake()
+			h.failOn = map[string]error{c.failing: errInjected}
+			_, err := runHost(t, h, declineMetadataRule, false, "")
+			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), ExecutorAccount) {
+				t.Fatalf("the error must name %q and the account, got %v", c.want, err)
 			}
 		})
 	}

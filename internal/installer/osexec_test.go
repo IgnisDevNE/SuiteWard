@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -38,6 +39,21 @@ func TestMain(m *testing.M) {
 	case "fail":
 		fmt.Fprint(os.Stderr, "something went wrong")
 		os.Exit(3)
+	// The two stand-ins for runuser and the systemctl under it: the command starts a child that keeps its output open (as systemctl does when runuser
+	// is killed) and then waits to be killed.
+	case "orphan":
+		child := exec.Command(os.Args[0], "--")
+		child.Env = append(os.Environ(), "SUITEWARD_TEST_HELPER=holdpipe")
+		child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		if err := child.Start(); err != nil {
+			fmt.Fprint(os.Stderr, err)
+			os.Exit(99)
+		}
+		time.Sleep(time.Hour)
+		os.Exit(1)
+	case "holdpipe": // ends by itself, so that a run that fails to end the wait leaves nothing behind
+		time.Sleep(20 * time.Second)
+		os.Exit(0)
 	case "record": // stdout: each argument after "--" on a line of its own, after "arg="; the exit code is SUITEWARD_TEST_EXIT
 		args := os.Args
 		for i, a := range args {
@@ -176,5 +192,29 @@ func TestOSExecErrorCarriesStderrOnly(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "migration 21 failed") || strings.Contains(err.Error(), "log log") {
 		t.Fatalf("the error repeats the standard output: %v", err)
+	}
+}
+
+// A cancelled command whose child keeps the output pipe open (runuser killed, systemctl under it still running) must not hold OSExec: without a bound
+// on the wait for the pipes, cmd.Run waits for the child, and the step that cancelled it waits with it.
+func TestOSExecEndsWhenTheContextIsCancelledAndAChildOfTheCommandKeepsItsOutputOpen(t *testing.T) {
+	old := execWaitDelay
+	execWaitDelay = 200 * time.Millisecond
+	t.Cleanup(func() { execWaitDelay = old })
+	name, args := helperCommand(t, "orphan")
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := OSExec(ctx, name, args, nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a command that was cancelled reported success")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("OSExec did not return after the context ended: a child of the command holds its output open and nothing bounds the wait")
 	}
 }

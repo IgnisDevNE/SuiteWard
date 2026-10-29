@@ -111,27 +111,29 @@ func (j *checksJob) runnerBackComment(ctx context.Context, s *pullState) error {
 // set is written once, and the keys that the job decided, written or not, are remembered so that a settled head costs one read of its canonical jobs.
 func (j *checksJob) resultsComments(ctx context.Context, s *pullState, executed executionOutcome) error {
 	later := executed.set
-	if !later.Final() {
-		return nil
-	}
 	earlier, hasEarlier, err := j.earlierSet(ctx, s, later)
 	if err != nil {
 		return err
 	}
+	earlierFinal := hasEarlier && earlier.Final() // an earlier set is written when it is final, whether or not the later one is
+	if !later.Final() && !earlierFinal {
+		return nil
+	}
 	laterKey, earlierKey := keyOfResults(s.target(), s.pull.HeadSHA, later.Jobs()), keyOfResults(s.target(), s.pull.HeadSHA, earlier.Jobs())
-	if j.announced[laterKey] && (!hasEarlier || j.announced[earlierKey]) {
+	if (!later.Final() || j.announced[laterKey]) && (!earlierFinal || j.announced[earlierKey]) {
 		return nil
 	}
 	unblocks, err := j.executions.HeadUnblocks(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, s.enrollment.EnrolledAt)
 	if err != nil {
 		return fmt.Errorf("read the unblocks of the head: %w", err)
 	}
-	filledLater, err := j.fillSet(ctx, later, unblocks)
-	if err != nil {
-		return err
+	filledLater, filledEarlier := filledSet{Set: later}, filledSet{Set: earlier}
+	if later.Final() {
+		if filledLater, err = j.fillSet(ctx, later, unblocks); err != nil {
+			return err
+		}
 	}
-	var filledEarlier filledSet
-	if hasEarlier {
+	if earlierFinal {
 		if filledEarlier, err = j.fillSet(ctx, earlier, unblocks); err != nil {
 			return err
 		}
@@ -149,8 +151,10 @@ func (j *checksJob) resultsComments(ctx context.Context, s *pullState, executed 
 			return err
 		}
 	}
-	j.remember(laterKey)
-	if hasEarlier {
+	if later.Final() {
+		j.remember(laterKey)
+	}
+	if earlierFinal {
 		j.remember(earlierKey)
 	}
 	return nil
@@ -159,8 +163,8 @@ func (j *checksJob) resultsComments(ctx context.Context, s *pullState, executed 
 // earlierSet is the set of an approved head that came before the approval: the canonical job that the canonical's manifest governed, taken with the receipt job of the later
 // set. ok is false for a head that is not approved and for one with no such job (its first job was cancelled while it waited). A cancelled job is part of no set.
 func (j *checksJob) earlierSet(ctx context.Context, s *pullState, later domain.Set) (earlier domain.Set, ok bool, err error) {
-	if later.CanonicalLevel == domain.CanonicalLevelOff {
-		return domain.Set{}, false, nil
+	if later.CanonicalLevel == 0 || later.CanonicalLevel == domain.CanonicalLevelOff || later.CanonicalJob.ID == 0 || later.CanonicalJob.Governing == s.suite.manifest {
+		return domain.Set{}, false, nil // no policy read, no canonical run, or a head that is not approved (its job runs the canonical's manifest): nothing to look for
 	}
 	stored, err := j.executions.HeadJobs(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical)
 	if err != nil {

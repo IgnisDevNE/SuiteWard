@@ -156,8 +156,8 @@ func plainLimits() (pkg, name, file func(i int) string) {
 		func(int) string { return strings.Repeat("f", 1000) + "_test.go" }
 }
 
-// tableOfSection is the first table of the raw section, as the page wrote it, and the number of rows of tests in it.
-func tableOfSection(t *testing.T, raw, heading string) (table string, rows int) {
+// rawSection is the part of the raw page under <h2>heading</h2>, up to the next <h2>.
+func rawSection(t *testing.T, raw, heading string) string {
 	t.Helper()
 	open := "<h2>" + heading + "</h2>"
 	start := strings.Index(raw, open)
@@ -168,6 +168,13 @@ func tableOfSection(t *testing.T, raw, heading string) (table string, rows int) 
 	if end := strings.Index(rest, "<h2>"); end >= 0 {
 		rest = rest[:end]
 	}
+	return rest
+}
+
+// tableOfSection is the first table of the raw section, as the page wrote it, and the number of rows of tests in it.
+func tableOfSection(t *testing.T, raw, heading string) (table string, rows int) {
+	t.Helper()
+	rest := rawSection(t, raw, heading)
 	from := strings.Index(rest, "<table>")
 	to := strings.Index(rest, "</table>")
 	if from < 0 || to < 0 {
@@ -175,6 +182,20 @@ func tableOfSection(t *testing.T, raw, heading string) (table string, rows int) 
 	}
 	table = rest[from : to+len("</table>")]
 	return table, strings.Count(table, "<tr><td>")
+}
+
+// groupsOfSection is every group of the tests of the raw section, as the page wrote them, from the first <details> to the last </details>, and the number of rows of tests in
+// them: what a table of tests is made of, which its budget counts.
+func groupsOfSection(t *testing.T, raw, heading string) (groups string, rows int) {
+	t.Helper()
+	rest := rawSection(t, raw, heading)
+	from := strings.Index(rest, "<details")
+	to := strings.LastIndex(rest, "</details>")
+	if from < 0 || to < 0 {
+		t.Fatalf("no group of tests in the section %q", heading)
+	}
+	groups = rest[from : to+len("</details>")]
+	return groups, strings.Count(groups, "<tr><td>")
 }
 
 func TestPullPageCutsEachTableOfTestsAtItsBudgetAndCountsTheRowsItDoesNotShow(t *testing.T) {
@@ -190,16 +211,20 @@ func TestPullPageCutsEachTableOfTestsAtItsBudgetAndCountsTheRowsItDoesNotShow(t 
 	if response.Body.Len() > 9<<20 {
 		t.Errorf("the page has %d bytes, more than the 9 MiB of its budgets", response.Body.Len())
 	}
-	for _, heading := range []string{"Approved tests", "Tests this change adds or edits"} {
-		table, shown := tableOfSection(t, raw, heading)
+	for heading, summary := range map[string]string{"Approved tests": "PASS", "Tests this change adds or edits": "INERT"} {
+		table, shown := groupsOfSection(t, raw, heading)
 		if len(table) > 3<<20 {
-			t.Errorf("%s: the table has %d bytes, over its budget of 3 MiB", heading, len(table))
+			t.Errorf("%s: the groups have %d bytes, over the budget of 3 MiB of the table", heading, len(table))
 		}
 		if shown == 0 || shown == execution.MaxTests {
 			t.Fatalf("%s: %d rows of tests are shown, want some and not all", heading, shown)
 		}
-		if want := fmt.Sprintf("<p>%d more tests are not shown here. The counts above include them.</p>", execution.MaxTests-shown); !strings.Contains(raw, want) {
-			t.Errorf("%s: the page lacks %q", heading, want)
+		more := fmt.Sprintf("<p>%d more tests are not shown here. The counts above include them.</p>", execution.MaxTests-shown)
+		if section := rawSection(t, raw, heading); !strings.Contains(section[strings.LastIndex(section, "</details>"):], more) {
+			t.Errorf("%s: the sentence %q is not after the last group, outside every group", heading, more)
+		}
+		if want := fmt.Sprintf("<summary>%s (%d)</summary>", summary, execution.MaxTests); !strings.Contains(table, want) { // the count of a group includes the rows that were cut
+			t.Errorf("%s: the group lacks %q", heading, want)
 		}
 		if !strings.Contains(table, fmt.Sprintf("Test%0190d", shown-1)) || strings.Contains(table, fmt.Sprintf("Test%0190d", shown)) {
 			t.Errorf("%s: the rows shown are not the first %d in order of package and name", heading, shown)
@@ -209,25 +234,28 @@ func TestPullPageCutsEachTableOfTestsAtItsBudgetAndCountsTheRowsItDoesNotShow(t 
 	w.wantText(html.UnescapeString(raw), "does anything.</td><td>-</td><td>10000</td></tr>") // the counts of the table by state are complete
 }
 
-// The weakened rows and then the flagged ones come first, so that a budget never drops one of them, however late they sort.
+// A weakened row comes before the other rows of its group, and a flagged state comes before the passes, so that a budget never drops a weakened row or a flagged one before a
+// passing one, however late it sorts. The fillers are the failing tests of the approved run and the DETECTS tests of the receipt, so that only the order inside a group keeps the
+// weakened rows. (Under the contract's order a weakened DETECTS row can go before the rows of INERT, NEW API, SKIPPED and EXCLUDED: they come before the group of DETECTS.)
 func TestPullPageNeverCutsAWeakenedRowOrAFlaggedRowBeforeAPassingOne(t *testing.T) {
 	w := newPageWorld(t)
 	w.pages.timeout = largePageTimeout
 	pkg, name, file := plainLimits()
-	approved := hugeTests(execution.KindDeclared, "pass", pkg, name, file)
-	changes := hugeTests(execution.KindAdded, "inert", pkg, name, file)
-	for i := 0; i < 3; i++ { // the last three sort last, and are an approved test that fails and this change edits, and a receipt test that fails
-		last := execution.MaxTests - 1 - i
-		approved[last].State, approved[last].HeadRuns = "fail", []string{"fail"}
-		changes[last].Kind, changes[last].State, changes[last].HeadRuns, changes[last].BaseRuns = execution.KindChanged, "detects", []string{"pass"}, []string{"fail"}
+	approved := hugeTests(execution.KindDeclared, "fail", pkg, name, file)
+	changes := hugeTests(execution.KindAdded, "detects", pkg, name, file)
+	for i := range approved {
+		approved[i].HeadRuns, changes[i].BaseRuns = []string{"fail"}, []string{"fail"}
+	}
+	for i := 0; i < 3; i++ { // the last three sort last, and are an approved test that fails and this change edits, and a receipt test that detects it
+		changes[execution.MaxTests-1-i].Kind = execution.KindChanged
 	}
 	changes[0].State, changes[0].HeadRuns = "fails", []string{"fail"} // sorts first, and is flagged
 	changes[execution.MaxTests-4].State, changes[execution.MaxTests-4].HeadRuns = "fails", []string{"fail"}
 	w.completed(approved, changes)
 	raw := html.UnescapeString(w.get("127.0.0.1:8080", pullPath).Body.String())
-	canonical, shown := tableOfSection(t, raw, "Approved tests")
+	canonical, shown := groupsOfSection(t, raw, "Approved tests")
 	if shown >= execution.MaxTests {
-		t.Fatalf("the table shows all %d rows: the budget did not cut it", shown)
+		t.Fatalf("the approved table shows all %d rows: the budget did not cut it", shown)
 	}
 	for i := 0; i < 3; i++ {
 		last := fmt.Sprintf("Test%0190d", execution.MaxTests-1-i)
@@ -238,11 +266,44 @@ func TestPullPageNeverCutsAWeakenedRowOrAFlaggedRowBeforeAPassingOne(t *testing.
 	if got := strings.Count(canonical, "Weakened: this change edits this test."); got != 3 {
 		t.Errorf("%d weakened rows in the approved table, want 3", got)
 	}
-	receipt, _ := tableOfSection(t, raw, "Tests this change adds or edits")
-	w.wantInOrder(receipt, "<td>DETECTS</td>", "<td>FAILS</td>") // the weakened rows come first, then the flagged ones
+	receipt, shown := groupsOfSection(t, raw, "Tests this change adds or edits")
+	if shown >= execution.MaxTests {
+		t.Fatalf("the table of the receipt shows all %d rows: the budget did not cut it", shown)
+	}
+	w.wantInOrder(receipt, "<td>FAILS</td>", "<td>DETECTS</td>") // the flagged state comes before the passes
 	if got := strings.Count(receipt, "<td>FAILS</td>"); got != 2 {
 		t.Errorf("%d FAILS rows, want both of them whatever the budget cut", got)
 	}
+	for i := 0; i < 3; i++ {
+		last := fmt.Sprintf("Test%0190d", execution.MaxTests-1-i)
+		if !strings.Contains(receipt, last+"</td>") {
+			t.Errorf("the weakened test %s sorts last and is not in the table of the receipt", last)
+		}
+	}
+	if got := strings.Count(receipt, "Weakened: the approved version of this test fails on this commit."); got != 3 {
+		t.Errorf("%d weakened rows in the table of the receipt, want 3", got)
+	}
+}
+
+// A state whose rows were all cut has no group, and the group in which the budget ran out counts every row of its state: the counts of the page include the rows it does not show.
+func TestPullPageHasNoGroupForAStateWhoseRowsWereAllCutAndCountsEveryRowOfTheGroupThatIsCut(t *testing.T) {
+	w := newPageWorld(t)
+	w.pages.timeout = largePageTimeout
+	pkg, name, file := plainLimits()
+	approved := hugeTests(execution.KindDeclared, "pass", pkg, name, file)
+	const failing = 3000 // more rows than the budget holds at the longest names
+	for i := range failing {
+		approved[i].State, approved[i].HeadRuns = "fail", []string{"fail"}
+	}
+	w.completed(approved, receiptTests("detects"))
+	raw := w.get("127.0.0.1:8080", pullPath).Body.String()
+	groups, shown := groupsOfSection(t, raw, "Approved tests")
+	if shown == 0 || shown >= failing {
+		t.Fatalf("%d rows are shown, want some and fewer than the %d that fail", shown, failing)
+	}
+	w.wantText(groups, fmt.Sprintf("<summary>FAIL (%d)</summary>", failing))
+	w.wantNoText(groups, "PASS (")
+	w.wantText(rawSection(t, raw, "Approved tests"), fmt.Sprintf("<p>%d more tests are not shown here. The counts above include them.</p>", execution.MaxTests-shown))
 }
 
 // hostile is a text of n bytes made of the characters that grow most when they are shown: & and + (html/template writes them as five bytes), and an invalid byte.
@@ -285,8 +346,8 @@ func TestPullPageStaysUnderItsBudgetsWhateverTheRepositoryAndTheTestRunnerSay(t 
 		t.Errorf("the page has %d bytes, more than the 9 MiB that its budgets add up to", response.Body.Len())
 	}
 	for _, heading := range []string{"Approved tests", "Tests this change adds or edits"} {
-		if table, _ := tableOfSection(t, raw, heading); len(table) > 3<<20 {
-			t.Errorf("%s: the table has %d bytes, over its budget of 3 MiB", heading, len(table))
+		if table, _ := groupsOfSection(t, raw, heading); len(table) > 3<<20 {
+			t.Errorf("%s: the groups have %d bytes, over the budget of 3 MiB of the table", heading, len(table))
 		}
 	}
 	if table, _ := tableOfSection(t, raw, "Change report"); len(table) > 1<<20 {

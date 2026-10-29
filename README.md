@@ -63,7 +63,7 @@ Everything happens in the pull request: comments, commands and checks, one of th
   - **The escape.** When a run cannot be completed (the executor is down, say), `/suiteward unblock <code>` lets the owner lift that run for that head. It never lifts a failing test.
   - The [install guide](docs/install.md#running-the-tests-canonical-execution-and-the-receipt) says how to turn it on and what each level does, and lists the [limits](docs/install.md#limits-of-canonical-execution).
 - **Evidence, not authority.** Comments and notices explain; they never approve or protect anything. A test result is evidence about one head: it never approves anything and never enters the approval's binding. A wrong or unrecognized command gets a reply and changes nothing. The exception is a wrong or reused confirmation code, which fails the check as a security signal.
-- **Labeled assurance.** An **isolated** installation, where SuiteWard, its App key, its database, the TOTP secret and the executor are out of the agent's reach, gives full assurance. A **co-located** one, next to the agent, is supported, and the check summary and the proposal, revision and merge comments say that its assurance is reduced. On that tier the executor runs as the agent's own user, so its results catch drift and accident, not a determined agent.
+- **Labeled assurance.** An **isolated** installation, where SuiteWard, its App key, its database, the TOTP secret and the executor are out of the agent's reach, gives full assurance. A **co-located** one, next to the agent, is supported, and the check summaries, the pull request page and the proposal, revision, merge and results comments say that its protection is reduced. On that tier the executor runs as the agent's own user, so its results catch drift and accident, not a determined agent.
 
 ## A pull request, step by step
 
@@ -108,7 +108,7 @@ Commands from any other account are recorded and ignored. The prefix and the ver
 | State | Meaning |
 | --- | --- |
 | success | No protected change; or the current revision is approved and assessed. A pull request the owner skipped before the first contract is also `success`, with nothing assessed. |
-| in_progress | An approval is missing, there is no contract yet, a runner file needs a decision, the revision is no longer current, the pull request comes from a fork, the tree is too large to read, SuiteWard is still reading, or, under `canonical: required`, the canonical run is pending or could not be completed. |
+| in_progress | An approval is missing, there is no contract yet, a runner file needs a decision, the revision is no longer current, the pull request comes from a fork, the tree is too large to read, SuiteWard is still reading, or, under `canonical: required`, the canonical run is pending, the test runner is not responding, or the run could not be completed. |
 | failure | `.suiteward.yml` is invalid or a symbolic link hides what would be protected (`invalid-source`); the canonical failed its integrity check; a confirmation code was wrong or reused (a valid `approve` or `revoke`, or a new push, clears it); or, under `canonical: required`, an approved test fails, is missing or is flaky. |
 
 The full table, with every reason, is in the [install guide](docs/install.md).

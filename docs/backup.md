@@ -302,7 +302,7 @@ These steps are the same on both tiers. Run the first one in the shell of your f
 
 3. Approve the revision the proposal comment names, with a fresh 6-digit code from your authenticator app: `/suiteward approve P<n>-R<m> <code>`. `setup` consumed the step it verified, and a code that was already used is refused. A code is spent by the first command that uses it, so wait for the next code before you approve the next repository.
 
-   - A `branch` baseline becomes V1 by itself, with no merge. V1 can take up to about a minute to appear, and the bot then comments `Bootstrap complete: P<n>-R1, approved by <owner>, is now canonical version V1.`
+   - A `branch` baseline becomes V1 by itself, with no merge. V1 can take up to about a minute to appear, and the bot then comments `Setup is complete: P<n>-R1, approved by @<owner>, is now V1, the approved version of the contract.`
    - A `pull` baseline becomes V1 only from the exact merge commit of that pull request, after it merges. A push that changes a protected file in that pull request cancels the proposal: comment `/suiteward propose` again.
 
 4. Read `/status`. Expect `owner` to show the new enrollment, and each `github` entry to show its `protection` result and no `bootstrap` error. On the isolated host, in the `suiteward` shell:

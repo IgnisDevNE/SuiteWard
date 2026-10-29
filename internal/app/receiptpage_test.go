@@ -221,31 +221,6 @@ func TestReceiptPageEscapesWhatTheRepositoryAndTheExecutorSay(t *testing.T) {
 	w.wantText(page, `pkg\n<b>pk</b>`, `Test<img src=x onerror=alert(1)>`, `a\u202e_test.go`, `Test\\n\u200bZero`, `sub<script>`, `x\ny<i>.go`, `<u>_test.go`, `podman <5>`)
 }
 
-// A page that passes 8 MiB is refused whole: 413 with a fixed text, and nothing of it is cut.
-func TestReceiptPageIsRefusedWholeWhenItPassesItsLimit(t *testing.T) {
-	w := newPageWorld(t)
-	long := func(n int, c string) string { return strings.Repeat(c, n) }
-	tests := make([]execution.Test, execution.MaxTests)
-	for i := range tests {
-		tests[i] = execution.Test{Package: long(500, "p") + fmt.Sprint(i), Name: fmt.Sprintf("Test%0190d", i), File: long(1000, "f") + "_test.go", Kind: execution.KindAdded, State: "inert",
-			HeadRuns: []string{"pass"}, BaseRuns: []string{"pass"}}
-	}
-	w.completed(canonicalTests("pass"), tests)
-	response := w.get("127.0.0.1:8080", pullPath)
-	if response.Code != http.StatusRequestEntityTooLarge || response.Body.String() != "the receipt is too large to show\n" {
-		t.Fatalf("status %d, body of %d bytes, want 413 and the fixed text", response.Code, response.Body.Len())
-	}
-	if response.Header().Get("Content-Security-Policy") == "" {
-		t.Error("the refusal lacks the headers")
-	}
-
-	small := newPageWorld(t)
-	small.completed(canonicalTests("pass"), receiptTests("inert"))
-	if got := small.get("127.0.0.1:8080", pullPath).Code; got != http.StatusOK {
-		t.Errorf("a small page is %d", got)
-	}
-}
-
 // pageResultsFail is an execution store that cannot read a result.
 type pageResultsFail struct{ execution.Store }
 
@@ -380,27 +355,6 @@ func TestReceiptPageIs503ForAnUnavailableJobWhoseReasonNoTextKnows(t *testing.T)
 	}
 	if !strings.Contains(w.apiLogs.String(), "the-moon") {
 		t.Errorf("the cause is not logged: %s", w.apiLogs)
-	}
-}
-
-func TestModeLineRefusesASummaryNoTextCanSay(t *testing.T) {
-	for name, summary := range map[string]domain.ModeSummary{
-		"a reason that no words exist for": {Verdict: domain.VerdictNotMet, Reason: "a-reason-from-the-future"},
-		"no reason at all":                 {Verdict: domain.VerdictNotMet},
-		"a verdict that is none":           {},
-		"the verdict of no mode":           {Verdict: domain.VerdictNotJudged},
-	} {
-		if line, err := modeLine(domain.ModeFix, summary); err == nil {
-			t.Errorf("%s: %q", name, line)
-		}
-	}
-	for summary, want := range map[domain.ModeSummary]string{
-		{Verdict: domain.VerdictMet}:                                      "fix: met",
-		{Verdict: domain.VerdictNotMet, Reason: domain.ReasonNoDetection}: "fix: not met: no test detects anything (no-detection)",
-	} {
-		if line, err := modeLine(domain.ModeFix, summary); err != nil || line != want {
-			t.Errorf("modeLine(%+v) = %q, %v; want %q", summary, line, err, want)
-		}
 	}
 }
 

@@ -280,9 +280,9 @@ func commandAck(a Ack) string {
 	}
 	switch a.Outcome {
 	case InvalidCode:
-		return paragraphs(wrongCode("The code"+of+" was not accepted, so the command did nothing.", "a current code from your authenticator app"))
+		return paragraphs(wrongCode("The code"+of+" was not accepted, so the command had no effect.", "a current code from your authenticator app"))
 	case ReplayedCode:
-		return paragraphs(wrongCode("The code"+of+" was already used, so the command did nothing. Each code works only once.", "a new code") +
+		return paragraphs(wrongCode("The code"+of+" was already used, so the command had no effect. Each code works only once.", "a new code") +
 			"\nWait for your authenticator app to show a new code first.")
 	case NoSuite:
 		subject := "Your command"

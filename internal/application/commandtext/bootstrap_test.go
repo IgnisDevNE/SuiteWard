@@ -187,13 +187,13 @@ func TestAcknowledgeProposeAndSkip(t *testing.T) {
 			// A skip has no reference, so the code outcomes and NoSuite do not name one either.
 			"invalid code without a reference",
 			with(commandtext.Ack{Outcome: commandtext.InvalidCode}),
-			[]string{"The code was not accepted, so the command did nothing. This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with a current code from your authenticator app, or push a new commit."},
+			[]string{"The code was not accepted, so the command had no effect. This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with a current code from your authenticator app, or push a new commit."},
 			[]string{" for P", "for  "},
 		},
 		{
 			"replayed code without a reference",
 			with(commandtext.Ack{Outcome: commandtext.ReplayedCode}),
-			[]string{"The code was already used, so the command did nothing. Each code works only once. This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with a new code, or push a new commit.", "new code"},
+			[]string{"The code was already used, so the command had no effect. Each code works only once. This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with a new code, or push a new commit.", "new code"},
 			[]string{" for P"},
 		},
 		{

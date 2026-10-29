@@ -81,7 +81,7 @@ func modeNeeds(mode execution.Mode) string {
 	case execution.ModeFeature:
 		return "at least one test that passes with the change and either fails without it or needs new code" + noBlock
 	case execution.ModeRefactor:
-		return "every test of the receipt to behave the same with and without the change"
+		return "every test of the receipt to pass with the change, and to pass or skip itself on the code before it"
 	}
 	panic(fmt.Sprintf("commandtext: unknown mode %d", mode))
 }

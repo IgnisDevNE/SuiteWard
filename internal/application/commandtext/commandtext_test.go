@@ -449,13 +449,13 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"invalid code",
 			commandtext.Ack{Outcome: commandtext.InvalidCode, Proposal: 4, Revision: 2, Source: source, Owner: owner},
-			[]string{"The code for P4-R2 was not accepted, so the command did nothing. This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with a current code from your authenticator app, or push a new commit."},
+			[]string{"The code for P4-R2 was not accepted, so the command had no effect. This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with a current code from your authenticator app, or push a new commit."},
 			[]string{"eligible"},
 		},
 		{
 			"replayed code",
 			commandtext.Ack{Outcome: commandtext.ReplayedCode, Proposal: 4, Revision: 2, Source: source, Owner: owner},
-			[]string{"The code for P4-R2 was already used, so the command did nothing. Each code works only once. This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with a new code, or push a new commit.", "new code"},
+			[]string{"The code for P4-R2 was already used, so the command had no effect. Each code works only once. This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with a new code, or push a new commit.", "new code"},
 			[]string{"eligible"},
 		},
 		{

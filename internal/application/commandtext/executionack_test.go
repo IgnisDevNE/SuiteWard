@@ -80,7 +80,7 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"refactor not met",
 			summaryNotMet(execution.ModeRefactor),
-			[]string{"does not meet the `refactor` mode", "needs every test of the receipt to behave the same with and without the change", countsLine},
+			[]string{"does not meet the `refactor` mode", "needs every test of the receipt to pass with the change, and to pass or skip itself on the code before it", countsLine},
 			[]string{"`fix`", "`feature`"},
 		},
 		{

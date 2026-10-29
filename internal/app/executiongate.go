@@ -49,27 +49,27 @@ func (j *checksJob) runnerNotResponding(job execution.Job, found bool) bool {
 // whose check another rule decided has no canonical job planned and none read, but the job that is still open waits, so it is read here. A policy that was not read, or that
 // names no execution, wants nothing. The gates do not call this: each check reads its own job (runnerNotResponding). Waiting.Unblock is not told here, since it depends on the
 // reason of the head, which only a full Set holds: a caller that offers the unblock fills the Set and asks it.
-func (j *checksJob) headNotResponding(ctx context.Context, s *pullState, x *executionRun, jobs headJobs) (domain.JobPair, bool, error) {
+func (j *checksJob) headNotResponding(ctx context.Context, s *pullState, x *executionRun, jobs headJobs, silent bool) (domain.Set, domain.JobPair, bool, error) {
 	if !x.known || !x.policy.wants() {
-		return domain.JobPair{}, false, nil
+		return domain.Set{}, domain.JobPair{}, false, nil
 	}
 	canonical, hasCanonical := jobs.canonical, jobs.hasCanonical
 	if x.policy.canonicalOn() && !jobs.canonicalPlanned {
 		var err error
 		if canonical, hasCanonical, err = j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical, artifact.Digest{}); err != nil {
-			return domain.JobPair{}, false, err
+			return domain.Set{}, domain.JobPair{}, false, err
 		}
 	}
 	set := domain.Set{CanonicalLevel: x.policy.canonical, ReceiptLevel: x.policy.receipt, ReceiptApplies: jobs.receiptApplies}
 	var err error
 	if set.CanonicalJob, err = planJob(canonical, hasCanonical); err != nil {
-		return domain.JobPair{}, false, err
+		return domain.Set{}, domain.JobPair{}, false, err
 	}
 	if set.ReceiptJob, err = planJob(jobs.receipt, jobs.hasReceipt); err != nil {
-		return domain.JobPair{}, false, err
+		return domain.Set{}, domain.JobPair{}, false, err
 	}
 	waiting, reading := set.NotResponding(j.liveness.Silent(j.now()))
-	return waiting.Jobs, reading, nil
+	return domain.Set{}, waiting.Jobs, reading, nil
 }
 
 // planJob is the job of a plan as a set holds it: the zero job for a plan with none. A cancelled job is an error: the gates never return one.

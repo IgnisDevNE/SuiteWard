@@ -164,15 +164,15 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 // and its hold"), whether the owner's command ended the job or lifted it after the lease wait. An earlier job of the head that a fresh one replaced under another binding is
 // no job a gate reads. The comment that warns the owner reads it.
 func (j *checksJob) runnerBack(ctx context.Context, s *pullState, set domain.Set) (bool, error) {
-	for _, id := range []int64{set.CanonicalJob.ID, set.ReceiptJob.ID} {
-		if id == 0 {
-			continue // a plan with no job
+	for _, read := range []domain.Job{set.CanonicalJob, set.ReceiptJob} {
+		if read.State != domain.JobUnavailable || read.Reason != string(execution.ReasonNoExecutor) { // the set holds both: a plan with no job is the zero job
+			continue
 		}
-		job, err := j.storedJob(ctx, id)
+		job, err := j.storedJob(ctx, read.ID) // for the end of the job, which the set does not hold
 		if err != nil {
 			return false, err
 		}
-		if job.State != execution.StateUnavailable || job.Reason != execution.ReasonNoExecutor || !j.liveness.HeardSince(job.FinishedAt) {
+		if !j.liveness.HeardSince(job.FinishedAt) {
 			continue
 		}
 		unblocked, err := j.executions.Unblocked(ctx, job.ID, s.enrollment.EnrolledAt)

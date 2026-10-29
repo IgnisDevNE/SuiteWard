@@ -55,7 +55,7 @@ func (j *checksJob) commentsOfHead(ctx context.Context, s *pullState, executed e
 	if !s.exec.known || !s.exec.policy.wants() || isFork(s.pull.HeadRepo, s.p.Repo) {
 		return nil
 	}
-	return errors.Join(j.notRespondingComment(ctx, s, executed), j.resultsComments(ctx, s, executed), j.runnerBackComment(ctx, s))
+	return errors.Join(j.notRespondingComment(ctx, s, executed), j.resultsComments(ctx, s, executed), j.runnerBackComment(ctx, s, executed))
 }
 
 // announceOnce writes the comment that build makes, unless the job wrote or found written the key already (the outbox refuses a key twice, which outboxOnce tolerates),
@@ -93,13 +93,13 @@ func (j *checksJob) notRespondingComment(ctx context.Context, s *pullState, exec
 	return j.announceOnce(ctx, s.p.RepositoryID, p.key(), func() (governance.OutboxMessage, error) { return newNotRespondingMessage(p) })
 }
 
-// runnerBackComment writes the comment of a head that the owner unblocked and whose runner is seen again.
-func (j *checksJob) runnerBackComment(ctx context.Context, s *pullState) error {
+// runnerBackComment writes the comment of a head that the owner unblocked and whose runner is seen again, for the jobs of the set that the pass read.
+func (j *checksJob) runnerBackComment(ctx context.Context, s *pullState, executed executionOutcome) error {
 	p := runnerBackPayload{commentTarget: s.target(), Head: s.pull.HeadSHA, Tier: s.tier}
 	if j.announced[p.key()] {
 		return nil
 	}
-	back, err := j.runnerBack(ctx, s)
+	back, err := j.runnerBack(ctx, s, executed.set)
 	if err != nil || !back {
 		return err
 	}

@@ -1,6 +1,6 @@
 # SuiteWard engineering plan
 
-- **Updated:** 2026-10-28 (phase M2.1, canonical execution and the receipt with the Go profile, is merged ([#60](https://github.com/IgnisDevNE/SuiteWard/pull/60)) and released as the pre-release `v0.5.0-alpha.1`, the latest, and verified live on both tiers)
+- **Updated:** 2026-10-29 (phase [M2.1b](plan/phases/M2.1b.md), results communication, is merged ([#62](https://github.com/IgnisDevNE/SuiteWard/pull/62)) and released as the pre-release `v0.5.0-alpha.2`, the latest); 2026-10-28 (phase M2.1, canonical execution and the receipt with the Go profile, is merged ([#60](https://github.com/IgnisDevNE/SuiteWard/pull/60)) and released as the pre-release `v0.5.0-alpha.1`, and verified live on both tiers)
 - **Status:** The MVP phases through M1.11 are delivered and released as `v0.2.0` (2026-10-22), after the security hardening phase [SH](plan/phases/SH.md). The installer phases M1.12 to M1.15 are released as alphas. [M2.1](plan/phases/M2.1.md), canonical execution and the receipt with the Go profile, is merged ([#60](https://github.com/IgnisDevNE/SuiteWard/pull/60)) and released as the pre-release `v0.5.0-alpha.1`, verified live on both tiers.
 
 This plan builds on the [project baseline](project-baseline.md) and the [accepted ADRs](decisions/README.md). It concerns how SuiteWard itself is developed; the product's rules for governing customer repositories are separate.

@@ -1,7 +1,7 @@
 # ADR 0029: Results communication
 
 - **Date:** 2026-10-28
-- **Status:** Accepted for phase M2.1b. The owner's decisions of 2026-10-28 are on the [phase page](../plan/phases/M2.1b.md#owner-decisions-2026-10-28) (decisions 1 to 8). Five points that they do not settle are listed at the end for the owner, with the option this record writes down.
+- **Status:** Accepted for phase M2.1b, merged ([#62](https://github.com/IgnisDevNE/SuiteWard/pull/62)) and released as the pre-release `v0.5.0-alpha.2`. The owner's decisions of 2026-10-28 are on the [phase page](../plan/phases/M2.1b.md#owner-decisions-2026-10-28) (decisions 1 to 8). Five points that they do not settle are listed at the end for the owner, with the option this record writes down.
 - **Product:** SuiteWard
 - **Scope:** What SuiteWard says about its test runs and where: the comments of a head, the page of a pull request, the reason of each flagged test, the signal for a test that an edit weakened, a test runner that stops responding and the owner's early unblock, the installer that asks which installation, and the wording of every comment, check summary and page.
 - **Amends:** [ADR 0028](0028-canonical-execution-and-the-receipt.md) (the unblock never lifts a pending run, and an unblock does not carry over to a fresh job; ADR 0028 carries its own dated note).

@@ -191,7 +191,7 @@ func (p resultsPayload) results(link string) (commandtext.Results, error) {
 		return commandtext.Results{}, err
 	}
 	r := commandtext.Results{Head: p.Head, Pull: p.Pull, Tier: checkTiers[p.Tier], CanonicalLevel: canonicalLevel, ReceiptLevel: receiptLevel, Weakened: p.Weakened,
-		Unblocked: unblocked, Ended: ended, Next: next, ApproveMode: p.ApproveMode, PullURL: link}
+		Unblocked: unblocked, Ended: ended, Next: next, ApproveMode: p.ApproveMode, ApprovalMissing: p.ApprovalMissing, PullURL: link}
 	if p.Reference != "" {
 		r.Proposal, r.Revision, _ = commandtext.ParseReference(p.Reference)
 	}

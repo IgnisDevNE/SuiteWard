@@ -254,7 +254,7 @@ func kindsText(r Results) []string {
 }
 
 // unblockText is the paragraph of the unblock: what the owner unblocked and whether the command ended the wait, the offer where a run holds something back, and what an
-// approval does to approved tests that did not run. An approval is missing exactly when the next step is the approve or its refusal.
+// approval does to approved tests that did not run, which the payload says by ApprovalMissing (the next step may be the unblock where the receipt holds the approve too).
 func unblockText(r Results) string {
 	var sentences []string
 	if r.Unblocked != (Plans{}) {
@@ -266,8 +266,7 @@ func unblockText(r Results) string {
 	if r.Next == execution.NextUnblock {
 		sentences = append(sentences, unblockOffer)
 	}
-	approval := r.Next == execution.NextApprove || r.Next == execution.NextBlocked
-	if approval && r.CanonicalLevel == execution.CanonicalLevelRequired && r.Canonical != nil && r.Canonical.Unavailable != "" {
+	if r.ApprovalMissing && r.CanonicalLevel == execution.CanonicalLevelRequired && r.Canonical != nil && r.Canonical.Unavailable != "" {
 		sentences = append(sentences, approvalText)
 	}
 	return strings.Join(sentences, " ")
@@ -323,6 +322,10 @@ func validateResults(r Results) error {
 		return fmt.Errorf("commandtext: unknown next step %d", r.Next)
 	case r.Next == execution.NextApprove && r.Proposal == 0:
 		return errors.New("commandtext: an approve for no revision")
+	case (r.Next == execution.NextApprove || r.Next == execution.NextBlocked) && !r.ApprovalMissing:
+		return errors.New("commandtext: an approve, or its refusal, for a head whose approval is not missing")
+	case r.ApprovalMissing && (r.Next == execution.NextNone || r.Next == execution.NextFix):
+		return errors.New("commandtext: a missing approval is the next step, or the unblock is: nothing to do and a fix to push are not")
 	case (r.Proposal == 0) != (r.Revision == 0):
 		return fmt.Errorf("commandtext: reference P%d-R%d does not fit", r.Proposal, r.Revision)
 	case r.set().Lead() == 0:

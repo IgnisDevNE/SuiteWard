@@ -300,8 +300,8 @@ func resultsPayloadOf(s *pullState, executed executionOutcome, f filledSet) (res
 	pair := f.Jobs()
 	p := resultsPayload{commentTarget: s.target(), Head: s.pull.HeadSHA, Tier: s.tier, CanonicalJob: pair.Canonical, ReceiptJob: pair.Receipt, Reference: executed.reference,
 		CanonicalLevel: f.CanonicalLevel.String(), ReceiptLevel: f.ReceiptLevel.String(), Weakened: f.Weakened, Next: next.String(),
-		ApproveMode: executed.approveMode && next == domain.NextApprove,
-		Unblocked:   planNames(commandtext.Plans{Canonical: pair.Canonical != 0 && f.CanonicalJob.Unblocked, Receipt: pair.Receipt != 0 && f.ReceiptJob.Unblocked}), Ended: planNames(f.ended)}
+		ApproveMode: executed.approveMode && next == domain.NextApprove, ApprovalMissing: f.HeadReason == domain.HeadReasonApprovalMissing,
+		Unblocked: planNames(commandtext.Plans{Canonical: pair.Canonical != 0 && f.CanonicalJob.Unblocked, Receipt: pair.Receipt != 0 && f.ReceiptJob.Unblocked}), Ended: planNames(f.ended)}
 	if pair.Canonical != 0 {
 		p.Canonical = &resultsCanonical{Status: runComplete}
 		if f.CanonicalJob.State == domain.JobComplete {

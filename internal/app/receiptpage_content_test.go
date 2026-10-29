@@ -84,10 +84,28 @@ func TestPullPageOfAClosedPullRequestShowsTheLastHeadRecorded(t *testing.T) {
 }
 
 func TestPullPageNeverCallsATestRunnerAnExecutor(t *testing.T) {
-	w := newPageWorld(t)
-	w.completed(canonicalTests("pass", "fail"), receiptTests("detects", "fails"))
-	if page := strings.ToLower(w.text()); strings.Contains(page, "executor") {
-		t.Errorf("the page says executor: a person reads test runner:\n%s", page)
+	for name, setup := range map[string]func(w *pageWorld){
+		"both runs are complete": func(w *pageWorld) { w.completed(canonicalTests("pass", "fail"), receiptTests("detects", "fails")) },
+		"no test runner is set up": func(w *pageWorld) {
+			w.check.executorConfigured = false
+			w.execPullFive(execHeadFiles(receiptDecl, "v2"))
+		},
+		"an attempt failed": func(w *pageWorld) {
+			w.execPullFive(execHeadFiles(receiptDecl, "v2"))
+			w.failAttempt(w.onlyJob(5, cjHead2, execution.PlanCanonical))
+		},
+		"the runner does not respond": func(w *pageWorld) {
+			w.execPullFive(execHeadFiles(receiptDecl, "v2"))
+			w.runnerSilentFor(45 * time.Second)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newPageWorld(t)
+			setup(w)
+			if page := strings.ToLower(w.text()); strings.Contains(page, "executor") {
+				t.Errorf("the page says executor, and a person reads test runner: %s", page)
+			}
+		})
 	}
 }
 
@@ -595,7 +613,9 @@ func TestPullPageStatesAJobThatWasNotRunWithItsReasonAndNoEvidence(t *testing.T)
 	w.check.executorConfigured = false // the jobs are created already unavailable, and no results row exists
 	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
 	section := w.section(w.text(), "How these results were made")
-	w.wantText(section, pageRow("State", "not run", "not run"), pageRow("Last reason", "executor-not-configured", "executor-not-configured"))
+	const notConfigured = "No test runner is set up for this SuiteWard installation."
+	w.wantText(section, pageRow("State", "not run", "not run"), pageRow("Last reason", notConfigured, notConfigured))
+	w.wantNoText(section, "executor-not-configured")
 	w.wantNoText(section, "Governing manifest", "Test runner version", "Image digest", "Started")
 }
 
@@ -605,7 +625,9 @@ func TestPullPageStatesWhatARunThatWasTriedAgainSaw(t *testing.T) {
 	canonical := w.onlyJob(5, cjHead2, execution.PlanCanonical) // the older job: it is leased first
 	w.failAttempt(canonical)
 	section := w.section(w.text(), "How these results were made")
-	w.wantText(section, pageRow("State", "pending", "pending"), pageRow("Attempts", "1", "0"), pageRow("Failures", "1", "0"), pageRow("Last reason", "executor-error", "-"))
+	w.wantText(section, pageRow("State", "pending", "pending"), pageRow("Attempts", "1", "0"), pageRow("Failures", "1", "0"),
+		pageRow("Last reason", "The test runner failed in a way that SuiteWard cannot name.", "-"))
+	w.wantNoText(section, "executor-error")
 }
 
 func TestPullPageListsTheChangedFilesAtMostOneHundredAndHowManyThereAre(t *testing.T) {

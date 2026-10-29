@@ -376,3 +376,35 @@ func TestReceiptPageAsksWhetherTheReceiptAppliesBeforeItReadsItsJob(t *testing.T
 	}
 	w.wantText(page, "This revision changes no file that the approved patterns match, so it has no receipt.")
 }
+
+// The page of a pull request and the report page share the one turn (docs/contracts/runtime.md, "The pull request page", "Memory"): a page of two runs of 10,000 tests and a
+// report of 32 MiB are never built at the same time in the container of 256 MiB.
+func TestThePullRequestPageAndTheReportPageShareOneTurn(t *testing.T) {
+	w := newPageWorld(t)
+	w.completed(canonicalTests("pass"), receiptTests("detects"))
+	if got := w.get("127.0.0.1:8080", "/reports/acme/widgets/P2-R1").Code; got != http.StatusOK {
+		t.Fatalf("the report page of P2-R1 is %d, want 200 when nothing is being built", got)
+	}
+	pulls := &pagePullsBlock{pullLister: w.pulls, entered: make(chan struct{}, 2), release: make(chan struct{})}
+	w.pages.pulls = pulls
+	first := make(chan int, 1)
+	go func() { first <- w.get("127.0.0.1:8080", pullPath).Code }()
+	select {
+	case <-pulls.entered: // the page of the pull request is being built
+	case <-time.After(5 * time.Second):
+		t.Fatal("the page never started to build")
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond) // a real deadline: the report waits for its turn until it ends
+	defer cancel()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/reports/acme/widgets/P2-R1", nil).WithContext(ctx)
+	newRouter(w.server).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Errorf("the report page built while the page of the pull request was building: status %d, want 503 once its wait ended", recorder.Code)
+	}
+	close(pulls.release)
+	if got := <-first; got != http.StatusOK {
+		t.Errorf("the page of the pull request is %d", got)
+	}
+}

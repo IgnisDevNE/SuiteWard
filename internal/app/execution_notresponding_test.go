@@ -297,13 +297,14 @@ func TestAHeadReturnsTheSetItReadsNotRespondingFrom(t *testing.T) {
 	x := &executionRun{known: true, policy: executionPolicy{canonical: domain.CanonicalLevelRequired, receipt: domain.ReceiptLevelBeforeApproval}}
 	receipt := execution.Job{ID: 91, State: execution.StateLeased, Spec: execution.Spec{GoverningDigest: stored.GoverningDigest}}
 
-	set, waiting, reading, err := w.readHead(x, headJobs{receiptApplies: true, receipt: receipt, hasReceipt: true}, true)
+	set, waiting, reading, err := w.readHead(x, headJobs{receiptApplies: true, receiptDecided: true, receipt: receipt, hasReceipt: true}, true)
 
 	if err != nil || !reading || waiting != (domain.JobPair{Canonical: stored.ID, Receipt: 91}) {
 		t.Fatalf("headNotResponding = %+v, %v, %v; want both jobs, reading", waiting, reading, err)
 	}
 	canonicalJob, _ := stored.InSet(false)
-	want := domain.Set{CanonicalLevel: domain.CanonicalLevelRequired, ReceiptLevel: domain.ReceiptLevelBeforeApproval, ReceiptApplies: true, CanonicalJob: canonicalJob,
+	// ReceiptDecided is in it too: a Set with it unset is never final, so the comment would never be written.
+	want := domain.Set{CanonicalLevel: domain.CanonicalLevelRequired, ReceiptLevel: domain.ReceiptLevelBeforeApproval, ReceiptApplies: true, ReceiptDecided: true, CanonicalJob: canonicalJob,
 		ReceiptJob: domain.Job{ID: 91, State: domain.JobLeased, Governing: stored.GoverningDigest}}
 	if set != want {
 		t.Errorf("the Set = %+v; want %+v", set, want)

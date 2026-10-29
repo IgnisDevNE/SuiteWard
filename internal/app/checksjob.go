@@ -344,10 +344,8 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err := j.commentAfterCheck(ctx, s, d.result, d.runners); err != nil {
 		return "", err
 	}
-	if err := j.commentsOfHead(ctx, s, executed); err != nil {
-		return "", err
-	}
-	return d.problem, errors.Join(stepErr, countsErr)
+	commentErr := j.commentsOfHead(ctx, s, executed)
+	return d.problem, errors.Join(stepErr, countsErr, executed.setErr, commentErr)
 }
 
 // namesMode says whether the approve that the check of r shows names a mode: an approval that is missing does under a required receipt, as the comment of the revision does,

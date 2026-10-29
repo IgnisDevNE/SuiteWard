@@ -15,61 +15,67 @@ import (
 // (docs/contracts/runtime.md, "The canonical gate" and "The SuiteWard / Receipt check"). The domain decides each rule; the job reads the job of the head,
 // counts its tests and asks.
 
-// executionOutcome is what the execution step of a pull request decided beside its jobs: the counts that its Contract check carries and its Receipt check.
+// executionOutcome is what the execution step of a pull request decided beside its jobs: the counts that its Contract check carries, its Receipt check, and the
+// silence of the runner that the step read, which the comment of the head reads too (the zero value, for a step that failed, is not a reading).
 type executionOutcome struct {
 	counts  *checkExecution
 	receipt receiptDecision
+	silent  bool
 }
 
 // executionStep plans and creates the jobs of the head, lets the canonical job gate its Contract check and decides its Receipt check. A head that could not be
-// assessed is planned for once it is.
+// assessed is planned for once it is. It reads the silence of the runner once, so that the two checks and the comment of the head never disagree about it.
 func (j *checksJob) executionStep(ctx context.Context, s *pullState, x *executionRun, assessed checks.Result, d *pullDecision) (executionOutcome, error) {
 	jobs, err := j.execute(ctx, s, x, assessed)
 	if err != nil {
 		return executionOutcome{}, err
 	}
-	outcome, err := j.applyCanonicalGate(ctx, s, x, jobs, d)
+	silent := j.liveness.Silent(j.now())
+	outcome, err := j.applyCanonicalGate(ctx, s, x, jobs, d, silent)
 	if err != nil {
 		return executionOutcome{}, err
 	}
-	outcome.receipt, err = j.receiptCheck(ctx, s, x, jobs)
+	outcome.receipt, err = j.receiptCheck(ctx, s, x, jobs, silent)
+	outcome.silent = silent
 	return outcome, err
 }
 
 // runnerNotResponding says that the job a gate reads waits for a runner that no request reached for NotRespondingAfter (docs/contracts/runtime.md, "Not responding"):
-// the job is leased, or pending for a reason other than GitHub (Job.WaitsForRunner, the rule of the domain), and the runner is silent. A plan with no job yet waits for
-// nothing. Each check reads its own job, so a head-level reading (headNotResponding) never changes what a check says.
-func (j *checksJob) runnerNotResponding(job execution.Job, found bool) bool {
-	return found && job.WaitsForRunner() && j.liveness.Silent(j.now())
+// the job is leased, or pending for a reason other than GitHub (Job.WaitsForRunner, the rule of the domain), and the runner is silent, as the pass read it. A plan with no
+// job yet waits for nothing. Each check reads its own job, so a head-level reading (headNotResponding) never changes what a check says.
+func runnerNotResponding(job execution.Job, found, silent bool) bool {
+	return silent && found && job.WaitsForRunner()
 }
 
 // headNotResponding says whether a head reads "not responding" and which of its wanted jobs wait for the runner, 0 for none (docs/contracts/runtime.md, "Not responding",
-// "Definitions"). It is domain.Set.NotResponding, the rule that the comment of the head and the page read, so the wanted jobs are the contract's: the canonical job when the
-// canonical level is not off, whatever the pass decided of the head, and the receipt job when the receipt level is not off and the pass found that the receipt applies. A head
-// whose check another rule decided has no canonical job planned and none read, but the job that is still open waits, so it is read here. A policy that was not read, or that
-// names no execution, wants nothing. The gates do not call this: each check reads its own job (runnerNotResponding). Waiting.Unblock is not told here, since it depends on the
-// reason of the head, which only a full Set holds: a caller that offers the unblock fills the Set and asks it.
-func (j *checksJob) headNotResponding(ctx context.Context, s *pullState, x *executionRun, jobs headJobs, silent bool) (domain.Set, domain.JobPair, bool, error) {
+// "Definitions"), for a runner whose silence the caller read once for the pass (executionOutcome.silent): the function never reads the clock. It is domain.Set.NotResponding,
+// the rule that the comment of the head and the page read, so the wanted jobs are the contract's: the canonical job when the canonical level is not off, whatever the pass
+// decided of the head, and the receipt job when the receipt level is not off and the pass found that the receipt applies. A head whose check another rule decided has no
+// canonical job planned and none read, but the job that is still open waits, so it is read here. A policy that was not read, or that names no execution, wants nothing
+// (the zero Set). The gates do not call this: each check reads its own job (runnerNotResponding).
+//
+// The Set that it read from comes back with the answer: its levels, whether the receipt applies and the two jobs. The comment fills the rest of it (HeadReason, Earlier,
+// the counts of the runs) and asks it for Unblock, Holds and Next, so that it never rebuilds the jobs. Waiting.Unblock of the first answer is not to be read: it depends on
+// the reason of the head, which only the filled Set holds.
+func (j *checksJob) headNotResponding(ctx context.Context, s *pullState, x *executionRun, jobs headJobs, silent bool) (set domain.Set, waiting domain.JobPair, reading bool, err error) {
 	if !x.known || !x.policy.wants() {
 		return domain.Set{}, domain.JobPair{}, false, nil
 	}
 	canonical, hasCanonical := jobs.canonical, jobs.hasCanonical
 	if x.policy.canonicalOn() && !jobs.canonicalPlanned {
-		var err error
 		if canonical, hasCanonical, err = j.reads().gateJob(ctx, s.p.RepositoryID, s.pull.Number, s.pull.HeadSHA, execution.PlanCanonical, artifact.Digest{}); err != nil {
 			return domain.Set{}, domain.JobPair{}, false, err
 		}
 	}
-	set := domain.Set{CanonicalLevel: x.policy.canonical, ReceiptLevel: x.policy.receipt, ReceiptApplies: jobs.receiptApplies}
-	var err error
+	set = domain.Set{CanonicalLevel: x.policy.canonical, ReceiptLevel: x.policy.receipt, ReceiptApplies: jobs.receiptApplies}
 	if set.CanonicalJob, err = planJob(canonical, hasCanonical); err != nil {
 		return domain.Set{}, domain.JobPair{}, false, err
 	}
 	if set.ReceiptJob, err = planJob(jobs.receipt, jobs.hasReceipt); err != nil {
 		return domain.Set{}, domain.JobPair{}, false, err
 	}
-	waiting, reading := set.NotResponding(j.liveness.Silent(j.now()))
-	return domain.Set{}, waiting.Jobs, reading, nil
+	answer, reading := set.NotResponding(silent)
+	return set, answer.Jobs, reading, nil
 }
 
 // planJob is the job of a plan as a set holds it: the zero job for a plan with none. A cancelled job is an error: the gates never return one.
@@ -100,7 +106,7 @@ func ungated(r checks.Result) checks.Result {
 
 // applyCanonicalGate lets the canonical job of the head hold the check back: only under canonical: required, and only where the check would be success
 // (reason unchanged or ready), as every other reason keeps its precedence. A head with no canonical job yet reads as pending.
-func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *executionRun, jobs headJobs, d *pullDecision) (executionOutcome, error) {
+func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *executionRun, jobs headJobs, d *pullDecision, silent bool) (executionOutcome, error) {
 	base := ungated(d.result)
 	if !x.known || x.policy.canonical != domain.CanonicalLevelRequired || base.State != checks.Success || (base.Reason != reasonUnchanged && base.Reason != reasonReady) {
 		return executionOutcome{}, nil
@@ -120,7 +126,7 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 	if err != nil {
 		return executionOutcome{}, fmt.Errorf("decide the canonical gate: %w", err)
 	}
-	if reason == domain.ReasonCanonicalPending && j.runnerNotResponding(jobs.canonical, jobs.hasCanonical) {
+	if reason == domain.ReasonCanonicalPending && runnerNotResponding(jobs.canonical, jobs.hasCanonical, silent) {
 		reason = domain.ReasonCanonicalNotResponding
 	}
 	d.result = base

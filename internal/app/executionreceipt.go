@@ -93,7 +93,7 @@ func (j *checksJob) withdrawnReceipt(ctx context.Context, s *pullState, jobs hea
 // receiptCheck decides the Receipt check of the head from its receipt job: in progress while it is pending or has no job yet, a failure when it is complete
 // with a failing or missing test or a file that does not parse, a success otherwise, and neutral when it is unavailable, which the owner's unblock marks
 // without changing it.
-func (j *checksJob) receiptCheck(ctx context.Context, s *pullState, x *executionRun, jobs headJobs) (receiptDecision, error) {
+func (j *checksJob) receiptCheck(ctx context.Context, s *pullState, x *executionRun, jobs headJobs, silent bool) (receiptDecision, error) {
 	if !jobs.receiptApplies {
 		return j.withdrawnReceipt(ctx, s, jobs)
 	}
@@ -110,7 +110,7 @@ func (j *checksJob) receiptCheck(ctx context.Context, s *pullState, x *execution
 	switch conclusion {
 	case domain.ConclusionInProgress:
 		check.State, check.Reason = execution.CheckInProgress, receiptRunning
-		if j.runnerNotResponding(jobs.receipt, jobs.hasReceipt) {
+		if runnerNotResponding(jobs.receipt, jobs.hasReceipt, silent) {
 			check.Reason = receiptNotResponding
 			// The unblock is offered where the receipt gate would refuse an approve while the run is pending: under required and before-approval.
 			refusal, err := x.policy.receipt.ApproveGate(domain.RunPending, domain.ReceiptCounts{}, domain.ModeNone, false)

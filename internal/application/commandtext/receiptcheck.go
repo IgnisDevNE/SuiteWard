@@ -50,8 +50,8 @@ var receiptReasons = map[string]receiptReason{
 }
 
 const (
-	// evidenceSentence is the results comment's: the check and the comment say it in the same words.
-	evidenceSentence         = resultsEvidence
+	// evidenceSentence closes every summary but the one of a receipt that does not apply. The check is written before the runs are final, so it speaks of what the test runner saw, not of results that it may not have.
+	evidenceSentence         = "What the test runner saw is evidence, not a verdict."
 	receiptUnblockedSentence = "The owner unblocked this commit. Its receipt could not run, so the tests of this change did not run."
 	// receiptUnblockOffer ends the text of receipt-not-responding where the receipt gate would refuse an approve.
 	receiptUnblockOffer = "To approve without the receipt, the owner can comment `/suiteward unblock <code>`."

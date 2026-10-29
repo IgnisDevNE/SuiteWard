@@ -13,7 +13,7 @@ import (
 // comment, the tier, the evidence sentence, for a receipt that was not run the reason in words, and the unblock. No repository text, no path, no test name, no link and no mode.
 
 const (
-	evidenceText         = resultsEvidence // the check says what the results comment says
+	evidenceText         = "What the test runner saw is evidence, not a verdict."
 	receiptUnblockedText = "The owner unblocked this commit. Its receipt could not run, so the tests of this change did not run."
 )
 

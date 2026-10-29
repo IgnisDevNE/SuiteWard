@@ -12,6 +12,7 @@ import (
 // one sentence for one fact: ExecutionText and ReceiptFacts say what the comment says.
 func TestTheCountsOfTheCheckSummariesAreThoseOfTheResultsComment(t *testing.T) {
 	canonical := execution.CanonicalCounts{Pass: 9, Fail: 1, Skipped: 2, Missing: 1, Flaky: 1, Excluded: 3}
+	// No excluded tests: the check states how many tests of the receipt SuiteWard cannot run, which the results comment does not (a gap that the owner may close).
 	receipt := execution.ReceiptCounts{Detects: 3, Inert: 2, NewAPI: 1, Fails: 2, Missing: 1, Flaky: 6, Skipped: 4, Unparsed: 7}
 	comment := resultsText(t, results(func(r *commandtext.Results) {
 		r.Canonical = &commandtext.CanonicalRun{Counts: canonical}

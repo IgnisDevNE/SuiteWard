@@ -326,11 +326,18 @@ var receiptLinkPattern = regexp.MustCompile(`^http://(?:127\.0\.0\.1|localhost):
 
 // ValidReceiptLink reports whether link is the link to the receipt page of pull request pull: a loopback address, as the settings allow, and the path /receipts/<owner>/<repo>/<pull>.
 func ValidReceiptLink(link string, pull int) bool {
-	m := receiptLinkPattern.FindStringSubmatch(link)
-	return m != nil && pull >= 1 && m[1] == strconv.Itoa(pull) && !strings.Contains(link, "/../") && !strings.Contains(link, "/./") // a segment of dots climbs or stays
+	return validPageLink(receiptLinkPattern, link, pull)
 }
 
-// ValidPullLink reports whether link is the link to the page of pull request pull.
-func ValidPullLink(link string, pull int) bool {
-	return false
+// pullLinkPattern is the link to the page of a pull request, which replaced the receipt page: the same address and the path /pulls/. It is apart from the other two patterns,
+// so that a link of one kind is never taken for another.
+var pullLinkPattern = regexp.MustCompile(`^http://(?:127\.0\.0\.1|localhost):[0-9]{1,5}/pulls/[A-Za-z0-9._%-]+/[A-Za-z0-9._%-]+/([1-9][0-9]*)$`)
+
+// ValidPullLink reports whether link is the link to the page of pull request pull: a loopback address, as the settings allow, and the path /pulls/<owner>/<repo>/<pull>.
+func ValidPullLink(link string, pull int) bool { return validPageLink(pullLinkPattern, link, pull) }
+
+// validPageLink reports whether link matches pattern, whose one group is the number of a pull request, and names pull.
+func validPageLink(pattern *regexp.Regexp, link string, pull int) bool {
+	m := pattern.FindStringSubmatch(link)
+	return m != nil && pull >= 1 && m[1] == strconv.Itoa(pull) && !strings.Contains(link, "/../") && !strings.Contains(link, "/./") // a segment of dots climbs or stays
 }

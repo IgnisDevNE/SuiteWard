@@ -121,7 +121,7 @@ func installColocated(ctx context.Context, r *Resolver, env Env, t installTarget
 			return err
 		}
 		c.clearPending() // the settings name the App now
-		listInstallation(scr, env.Deps, t.settingsPath, tokenFile, c.s, "")
+		listNewInstallation(scr, env.Deps, t.settingsPath, tokenFile, c.s)
 		return nil
 	}
 	if err := c.bringUp(ctx, save); err != nil {

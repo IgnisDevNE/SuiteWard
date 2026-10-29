@@ -136,6 +136,11 @@ func samePath(goos, a, b string) bool {
 // list that was read and is replaced atomically, and the last write wins (there is no lock: a lost entry returns at the next upgrade). An
 // empty instance keeps the one the entry had.
 func recordInstallation(goos, settingsPath, tokenFile string, s Settings, instance string) error {
+	return putInstallation(goos, settingsPath, tokenFile, s, instance, true)
+}
+
+// putInstallation adds the entry or replaces the one of the same settings file; keepOld says that an empty instance keeps the one that entry had.
+func putInstallation(goos, settingsPath, tokenFile string, s Settings, instance string, keepOld bool) error {
 	path, err := installationsPath()
 	if err != nil {
 		return err
@@ -153,7 +158,9 @@ func recordInstallation(goos, settingsPath, tokenFile string, s Settings, instan
 		return fmt.Errorf("this installation's entry %s, so it was not listed", problem)
 	}
 	if i := slices.IndexFunc(list.Installations, func(e installation) bool { return samePath(goos, e.Settings, entry.Settings) }); i >= 0 {
-		entry.Instance = cmp.Or(instance, list.Installations[i].Instance)
+		if keepOld {
+			entry.Instance = cmp.Or(instance, list.Installations[i].Instance)
+		}
 		list.Installations[i] = entry
 	} else {
 		list.Installations = append(list.Installations, entry)
@@ -182,7 +189,17 @@ func forgetInstallation(goos, settingsPath string) error {
 // listInstallation adds the installation whose settings were just saved to the list. A list that cannot be written is a warning and not a
 // failure: the installation works, and its entry returns at the next upgrade.
 func listInstallation(scr *ui.Screen, d Deps, settingsPath, tokenFile string, s Settings, instance string) {
-	if err := recordInstallation(d.GOOS, settingsPath, tokenFile, s, instance); err != nil {
+	warnUnlisted(scr, d, recordInstallation(d.GOOS, settingsPath, tokenFile, s, instance))
+}
+
+// listNewInstallation is listInstallation for an install, which reads no instance id: the entry keeps none either. An install over a listed entry may have made a new instance
+// (a plain uninstall keeps the entry, and the volumes may have been removed by hand), so the id that the entry had is stale until an upgrade lists the live one.
+func listNewInstallation(scr *ui.Screen, d Deps, settingsPath, tokenFile string, s Settings) {
+	warnUnlisted(scr, d, putInstallation(d.GOOS, settingsPath, tokenFile, s, "", false))
+}
+
+func warnUnlisted(scr *ui.Screen, d Deps, err error) {
+	if err != nil {
 		scr.Warn("Could not update the list of installations: %v. The installation itself works. To add it to the list, run `%s` later.", err, d.suggest("install", "--upgrade"))
 	}
 }

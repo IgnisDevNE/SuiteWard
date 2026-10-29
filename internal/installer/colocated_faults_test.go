@@ -37,7 +37,7 @@ func TestInstallPodmanStopsAtTheFirstFailingEngineCall(t *testing.T) {
 		{"start the database", "run --detach --replace --name suiteward-db ", false},
 		{"read the database health", "--format {{json .State}} suiteward-db", false},
 		{"look for the role", "exec -i suiteward-db psql", false},
-		{"write the application URL", "secret create --replace suiteward-database-url", false},
+		{"write the application URL", "secret create suiteward-database-url", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

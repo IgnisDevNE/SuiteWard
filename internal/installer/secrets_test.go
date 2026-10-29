@@ -13,10 +13,15 @@ const (
 	pemValue    = "-----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----\n"
 )
 
+// errPodman49Replace is what Podman 4.9 (the one of Ubuntu 24.04 LTS) answers to `secret create --replace` for a secret that does
+// not exist yet. Podman 5 creates it; plain `secret create`, and `--replace` for an existing secret, work on both.
+var errPodman49Replace = errors.New("exit status 125: Error: deleting secret : : no secret data with ID")
+
 func TestPodmanSecretsAreWrittenThroughStdinWithoutANewline(t *testing.T) {
 	ctx := context.Background()
 	f := newFake("linux")
 	secrets := newRootlessPodman(t, f, "").Secrets()
+	f.on("secret ls", SecretGitHubAppKey+"\n") // the key is there, so writing it replaces it
 
 	if err := secrets.Write(ctx, SecretMCPAuth, []byte(secretValue), false); err != nil {
 		t.Fatal(err)
@@ -260,11 +265,27 @@ func TestPodmanWriteWithoutReplaceKeepsAnExistingSecret(t *testing.T) {
 	if len(f.find("secret create")) != 0 {
 		t.Fatal("podman secret create ran for an existing secret")
 	}
-	// Replacing needs no look first.
 	if err := secrets.Write(ctx, SecretMCPAuth, []byte(secretValue), true); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.find("secret create --replace")) != 1 {
 		t.Fatalf("calls: %v", f.lines())
 	}
+}
+
+// Podman 4.9 refuses --replace for a secret that is not there yet, so a write that may replace creates a missing secret without it.
+func TestPodmanReplacingAMissingSecretCreatesItWithoutReplace(t *testing.T) {
+	ctx := context.Background()
+	f := newFake("linux")
+	secrets := newRootlessPodman(t, f, "").Secrets()
+	f.fail("secret create --replace", errPodman49Replace)
+
+	if err := secrets.Write(ctx, SecretDatabaseURL, []byte(secretValue), true); err != nil {
+		t.Fatalf("a missing secret was not created: %v", err)
+	}
+	creates := f.find("secret create")
+	if len(creates) != 1 || creates[0].line() != "secret create suiteward-database-url -" || creates[0].stdin != secretValue {
+		t.Fatalf("want one plain create with the value on stdin: %v", f.lines())
+	}
+	f.assertNoSecret(t, secretValue)
 }

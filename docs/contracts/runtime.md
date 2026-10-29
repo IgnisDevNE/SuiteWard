@@ -829,7 +829,7 @@ The `github_checks` job writes it for each open, non-fork pull request of a repo
 
 When a head already has a published Receipt check and its receipt then becomes `not-applicable`, or the `receipt` level becomes `off` (the head was rebound after the canonical moved, say), the checks job publishes one last run for that head: `neutral`, reason `receipt-not-applicable` †, title "No receipt for this revision" †, with the counts at zero, and nothing after it while that stays so. A head that never had a Receipt check gets none.
 
-The conclusion never depends on a mode. An empty receipt is `complete`, so it is `success` with the counts of the seven states at zero. An unblock does not change the conclusion: an unblocked head's receipt stays `neutral`, marked `unblocked`. The summary is public text. It holds the count of each state (`DETECTS`, `INERT`, `NEW API`, `FAILS`, `MISSING`, `FLAKY`, `SKIPPED`), the number of excluded tests, the number of marker lines seen, the number of changed test files that do not parse (`unparsed`, each a blocking failure), the tier, the sentence "Observed by this instance's executor. Evidence, not a verdict." (every reason but `receipt-not-applicable`, where nothing was observed), for `unavailable` the reason code in words, and, when the owner unblocked the head, "The owner unblocked this head: its receipt was unavailable, so the tests did not run." It has no repository text, no path, no test name, no link and no mode.
+The conclusion never depends on a mode. An empty receipt is `complete`, so it is `success`, and its summary says that the receipt is empty. An unblock does not change the conclusion: an unblocked head's receipt stays `neutral`, marked `unblocked`. The summary is public text. For a receipt that completed (`receipt-failing` and `receipt-complete`) it holds the counts in the words of the results comment: "Tests this change adds or edits: <n>." with one line for each of `DETECTS`, `INERT`, `NEW API`, `FAILS`, `MISSING`, `FLAKY` and `SKIPPED` (the lines of the results comment), or "This change adds or edits no test that SuiteWard can run." for an empty receipt, and, only when there are some, "<n> tests that this change adds or edits cannot be run by SuiteWard and are not covered.", "Changed test files that cannot be read: <n>." (the changed test files that do not parse, `unparsed`, each a blocking failure) and "Lines to look at: <n>." (the marker lines seen). A receipt that has not completed has no counts to state (amended M2.1b: the summary stated every count, at zero). The summary also holds the tier, the sentence "These results are what the test runner saw. They are evidence, not a verdict." (every reason but `receipt-not-applicable`, where nothing was observed), for `unavailable` the sentence of its code in [the reason a run is unavailable](#the-reason-in-words-and-the-meaning-of-the-states), and, when the owner unblocked the head, "The owner unblocked this commit. Its receipt could not run, so the tests of this change did not run." It has no repository text, no path, no test name, no link and no mode.
 
 **Outbox kind `github_receipt_check`.** Key `receipt-check:<repository id>:<pull>:<generation>`, a system row. The payload (explicit tags, strict decoding) has `repositoryId`, `repo`, `pull`, `headSha`, `generation`, `state`, `reason`, `reference`, `tier`, `counts` (`detects`, `inert`, `newApi`, `fails`, `missing`, `flaky`, `skipped`, `excluded`, `markers`, `unparsed`, all integers, every key always present), `unavailable` (optional, the reason code, for `neutral`) and `unblocked` (optional boolean).
 
@@ -1044,7 +1044,7 @@ Decision 7. No output of a test is stored, and none is shown: each sentence belo
 | `NEW API` | receipt | "The test passes with this change, but the code before it could not build the test, because it uses something new." |
 | `FAILS` | receipt | "The test does not pass with this change: it failed, did not finish, or did not build." |
 
-**The reason a mode is not met**, by the reason of the domain and the mode (the words of `ModeReason` become these, for the page and the comment):
+**The reason a mode is not met**, by the reason of the domain and the mode (the page and the comment say these; `ModeReason`, the old words, is gone):
 
 | Mode | Reason | Sentence † |
 | --- | --- | --- |
@@ -1055,7 +1055,7 @@ Decision 7. No output of a test is stored, and none is shown: each sentence belo
 | `feature` | `no-detection` | "No test fails without the change or needs new code, so none shows that it adds something." |
 | `refactor` | `not-inert` | "A test behaves differently with the change, so this does not look like a refactor." |
 
-**The reason a run is unavailable**, by code (the words of `unavailableWords` become these, for the page, the comments and, when W2 aligns them, the checks):
+**The reason a run is unavailable**, by code (the page, the comments and the Receipt check say these; `unavailableWords`, the old words, is gone):
 
 | Code | Sentence † |
 | --- | --- |

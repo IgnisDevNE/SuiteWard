@@ -25,7 +25,7 @@ import (
 
 // The receipt page (docs/contracts/runtime.md, "The receipt page"): the results of the current head of a pull request, rebuilt on every request from the stored rows.
 
-const receiptPath = "/receipts/acme/widgets/5"
+const pullPath = "/pulls/acme/widgets/5"
 
 var receiptDecl = execDeclaration("advisory", "advisory")
 
@@ -73,7 +73,7 @@ func (w *pageWorld) get(host, path string) *httptest.ResponseRecorder {
 // text is what a browser shows of the page of pull 5, which must be served.
 func (w *pageWorld) text() string {
 	w.t.Helper()
-	response := w.get("127.0.0.1:8080", receiptPath)
+	response := w.get("127.0.0.1:8080", pullPath)
 	if response.Code != http.StatusOK || !strings.HasPrefix(response.Header().Get("Content-Type"), "text/html") {
 		w.t.Fatalf("status %d, type %q, body %q\nlogs: %s", response.Code, response.Header().Get("Content-Type"), response.Body.String(), w.apiLogs)
 	}
@@ -103,12 +103,12 @@ func TestReceiptPageIsServedToALoopbackHostOnly(t *testing.T) {
 	w := newPageWorld(t)
 	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
 	for _, host := range []string{"127.0.0.1:8080", "localhost:8080", "[::1]:8080", "LOCALHOST", "127.0.0.1"} {
-		if got := w.get(host, receiptPath).Code; got != http.StatusOK {
+		if got := w.get(host, pullPath).Code; got != http.StatusOK {
 			t.Errorf("Host %q: status %d, want 200", host, got)
 		}
 	}
 	for _, host := range []string{"example.com", "evil.localhost.example:8080", "192.168.1.5:8080", "0.0.0.0:8080", "127.0.0.2:8080", ""} {
-		response := w.get(host, receiptPath)
+		response := w.get(host, pullPath)
 		if response.Code != http.StatusForbidden || strings.Contains(response.Body.String(), "acme") {
 			t.Errorf("Host %q: status %d, body %q, want 403 with nothing of the pull request", host, response.Code, response.Body.String())
 		}
@@ -122,13 +122,13 @@ func TestReceiptPageSetsTheFourHeadersOnEveryAnswer(t *testing.T) {
 		"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cache-Control": "no-store",
 	}
 	answers := map[string]*httptest.ResponseRecorder{
-		"200":  w.get("127.0.0.1:8080", receiptPath),
-		"403":  w.get("example.com", receiptPath),
-		"404":  w.get("127.0.0.1:8080", "/receipts/acme/widgets/99"),
-		"404b": w.get("127.0.0.1:8080", "/receipts/acme/other/5"),
+		"200":  w.get("127.0.0.1:8080", pullPath),
+		"403":  w.get("example.com", pullPath),
+		"404":  w.get("127.0.0.1:8080", "/pulls/acme/widgets/99"),
+		"404b": w.get("127.0.0.1:8080", "/pulls/acme/other/5"),
 	}
 	w.pages.executions = &pageResultsFail{Store: w.jobs}
-	answers["503"] = w.get("127.0.0.1:8080", receiptPath)
+	answers["503"] = w.get("127.0.0.1:8080", pullPath)
 	for name, response := range answers {
 		for header, value := range want {
 			if got := response.Header().Get(header); got != value {
@@ -145,22 +145,22 @@ func TestReceiptPageIs404ForWhatIsNotKnown(t *testing.T) {
 	w := newPageWorld(t)
 	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
 	for name, path := range map[string]string{
-		"an unknown pull request":           "/receipts/acme/widgets/99",
-		"a repository that is not enrolled": "/receipts/acme/gadgets/5",
-		"another owner":                     "/receipts/other/widgets/5",
-		"a pull request that is no number":  "/receipts/acme/widgets/five",
-		"pull request zero":                 "/receipts/acme/widgets/0",
-		"a negative number":                 "/receipts/acme/widgets/-5",
-		"a number over the range":           "/receipts/acme/widgets/2147483648",
-		"a number with a leading zero":      "/receipts/acme/widgets/05",
-		"a number with a plus":              "/receipts/acme/widgets/+5",
+		"an unknown pull request":           "/pulls/acme/widgets/99",
+		"a repository that is not enrolled": "/pulls/acme/gadgets/5",
+		"another owner":                     "/pulls/other/widgets/5",
+		"a pull request that is no number":  "/pulls/acme/widgets/five",
+		"pull request zero":                 "/pulls/acme/widgets/0",
+		"a negative number":                 "/pulls/acme/widgets/-5",
+		"a number over the range":           "/pulls/acme/widgets/2147483648",
+		"a number with a leading zero":      "/pulls/acme/widgets/05",
+		"a number with a plus":              "/pulls/acme/widgets/+5",
 	} {
 		if got := w.get("127.0.0.1:8080", path).Code; got != http.StatusNotFound {
 			t.Errorf("%s: status %d, want 404", name, got)
 		}
 	}
 	w.server.owners = ownertest.NewMemory() // nobody is enrolled yet
-	if got := w.get("127.0.0.1:8080", receiptPath).Code; got != http.StatusNotFound {
+	if got := w.get("127.0.0.1:8080", pullPath).Code; got != http.StatusNotFound {
 		t.Errorf("before an owner is enrolled: status %d, want 404", got)
 	}
 }
@@ -367,7 +367,7 @@ func TestReceiptPageEscapesWhatTheRepositoryAndTheExecutorSay(t *testing.T) {
 		r.Unparsed = []string{"<u>_test.go"}
 		r.Runtime = "podman <5>"
 	})
-	raw := w.get("127.0.0.1:8080", receiptPath).Body.String()
+	raw := w.get("127.0.0.1:8080", pullPath).Body.String()
 	for _, banned := range []string{"<img", "<b>", "<script>", "<i>", "<u>", "\u202e", "\u200b", "pkg\n", "x\ny"} {
 		if strings.Contains(raw, banned) {
 			t.Errorf("the page holds %q unescaped", banned)
@@ -387,7 +387,7 @@ func TestReceiptPageIsRefusedWholeWhenItPassesItsLimit(t *testing.T) {
 			HeadRuns: []string{"pass"}, BaseRuns: []string{"pass"}}
 	}
 	w.completed(canonicalTests("pass"), tests)
-	response := w.get("127.0.0.1:8080", receiptPath)
+	response := w.get("127.0.0.1:8080", pullPath)
 	if response.Code != http.StatusRequestEntityTooLarge || response.Body.String() != "the receipt is too large to show\n" {
 		t.Fatalf("status %d, body of %d bytes, want 413 and the fixed text", response.Code, response.Body.Len())
 	}
@@ -397,7 +397,7 @@ func TestReceiptPageIsRefusedWholeWhenItPassesItsLimit(t *testing.T) {
 
 	small := newPageWorld(t)
 	small.completed(canonicalTests("pass"), receiptTests("inert"))
-	if got := small.get("127.0.0.1:8080", receiptPath).Code; got != http.StatusOK {
+	if got := small.get("127.0.0.1:8080", pullPath).Code; got != http.StatusOK {
 		t.Errorf("a small page is %d", got)
 	}
 }
@@ -413,7 +413,7 @@ func TestReceiptPageThatCannotBeBuiltIs503WithAFixedTextAndTheCauseInTheLog(t *t
 	w := newPageWorld(t)
 	w.completed(canonicalTests("pass"), receiptTests("detects"))
 	w.pages.executions = &pageResultsFail{Store: w.jobs}
-	response := w.get("127.0.0.1:8080", receiptPath)
+	response := w.get("127.0.0.1:8080", pullPath)
 	if response.Code != http.StatusServiceUnavailable || response.Body.String() != "the receipt is unavailable\n" {
 		t.Fatalf("status %d, body %q, want 503 and the fixed text", response.Code, response.Body.String())
 	}
@@ -430,7 +430,7 @@ func TestReceiptPageThatCannotBeBuiltIs503WithAFixedTextAndTheCauseInTheLog(t *t
 		w := newPageWorld(t)
 		w.completed(canonicalTests("pass"), receiptTests("detects"))
 		edit(w)
-		response := w.get("127.0.0.1:8080", receiptPath)
+		response := w.get("127.0.0.1:8080", pullPath)
 		if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), "SECRET") {
 			t.Errorf("%s: status %d, body %q, want 503 and the fixed text", name, response.Code, response.Body.String())
 		}
@@ -476,15 +476,19 @@ func TestOnlyOneReceiptPageIsBuiltAtATime(t *testing.T) {
 	w.pages.pulls = pulls
 
 	first := make(chan int, 1)
-	go func() { first <- w.get("127.0.0.1:8080", receiptPath).Code }()
-	<-pulls.entered // the first request is building
+	go func() { first <- w.get("127.0.0.1:8080", pullPath).Code }()
+	select {
+	case <-pulls.entered: // the first request is building
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first request never started to build")
+	}
 
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond) // a real deadline: the page waits for its turn until it ends
 	defer cancel()
 	second := make(chan int, 1)
 	go func() {
 		recorder := httptest.NewRecorder()
-		request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080"+receiptPath, nil).WithContext(ctx)
+		request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080"+pullPath, nil).WithContext(ctx)
 		newRouter(w.server).ServeHTTP(recorder, request)
 		second <- recorder.Code
 	}()
@@ -525,7 +529,7 @@ func TestReceiptPageIs503ForAnUnavailableJobWhoseReasonNoTextKnows(t *testing.T)
 	w.execPullFive(execHeadFiles(receiptDecl, "v2"))
 	w.pages.executions = pageReasonsUnknown{Store: w.jobs}
 
-	response := w.get("127.0.0.1:8080", receiptPath)
+	response := w.get("127.0.0.1:8080", pullPath)
 
 	if response.Code != http.StatusServiceUnavailable || response.Body.String() != "the receipt is unavailable\n" {
 		t.Fatalf("status %d, body %q, want 503 and the fixed text", response.Code, response.Body.String())
@@ -566,7 +570,7 @@ func TestReceiptPageAsksWhetherTheReceiptAppliesBeforeItReadsItsJob(t *testing.T
 		GoverningDigest: w.canonicalManifest(), GoverningSource: "V1", DeclarationDigest: artifact.Hash([]byte(receiptDecl)),
 		CanonicalLevel: domain.CanonicalLevelAdvisory, ReceiptLevel: domain.ReceiptLevelAdvisory})
 
-	response := w.get("127.0.0.1:8080", receiptPath)
+	response := w.get("127.0.0.1:8080", pullPath)
 
 	page := html.UnescapeString(response.Body.String())
 	if response.Code != http.StatusOK || strings.Contains(page, "<h2>Receipt</h2>") {

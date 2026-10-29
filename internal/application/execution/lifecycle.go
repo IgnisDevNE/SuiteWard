@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"slices"
 	"time"
+
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // This file is the lifecycle of a job as pure functions (docs/contracts/runtime.md, "Job lifecycle"). The stores load a job, apply
@@ -273,4 +275,9 @@ func (j Job) Swept(p ExpireParams) (next Job, changed, serviceRow bool) {
 // (a job that waits on GitHub waits for GitHub, and has its own bound).
 func (j Job) WaitsForRunner() bool {
 	return j.State == StateLeased || (j.State == StatePending && j.Reason != ReasonGitHubUnavailable)
+}
+
+// InSet is the job as the rules of the comments of a head read it; unblocked says that an unblock row since the current enrollment names it.
+func (j Job) InSet(unblocked bool) (domain.Job, bool) {
+	return domain.Job{}, false
 }

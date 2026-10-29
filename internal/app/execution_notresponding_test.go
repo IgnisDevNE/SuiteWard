@@ -8,7 +8,10 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // A runner that does not respond (docs/contracts/runtime.md, "Not responding"): when no executor was seen for 30 s and a wanted job of the head waits for the
@@ -221,27 +224,65 @@ func TestChecksReadEachJobForItsOwnCheckWhenOnlyOneWaitsForTheRunner(t *testing.
 }
 
 // A head reads "not responding" when the runner is silent and at least one wanted job of the head waits for it: the state that the comment of the head and the
-// unblock read (docs/contracts/runtime.md, "Not responding"). A job that the head does not want, and a plan with no job yet, wait for nothing.
+// unblock read (docs/contracts/runtime.md, "Not responding", "Definitions"). The wanted jobs are the canonical job when the canonical level is not off, whatever the
+// pass decided of the head, and the receipt job when the receipt level is not off and the receipt applies. A job that is not wanted, and a plan with no job yet, wait
+// for nothing. The answer names the jobs that wait, 0 for none.
 func TestAHeadReadsNotRespondingWhenTheRunnerIsSilentAndAWantedJobWaitsForIt(t *testing.T) {
-	start := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
-	waits, github := execution.Job{State: execution.StatePending}, execution.Job{State: execution.StatePending, Reason: execution.ReasonGitHubUnavailable}
-	leased, done := execution.Job{State: execution.StateLeased}, execution.Job{State: execution.StateComplete}
+	w := gateWorld(t)
+	w.execRun() // the canonical job of pull 4 is pending, and stays so
+	stored := w.onlyJob(4, bootHead, execution.PlanCanonical)
+	s := &pullState{p: owner.ProjectPolicy{RepositoryID: bootRepoID}, pull: githubsync.PullState{Number: 4, HeadSHA: bootHead}}
+	policy := func(canonical domain.CanonicalLevel, receipt domain.ReceiptLevel) *executionRun {
+		return &executionRun{known: true, policy: executionPolicy{canonical: canonical, receipt: receipt}}
+	}
+	required, advisory, off := policy(domain.CanonicalLevelRequired, domain.ReceiptLevelRequired), policy(domain.CanonicalLevelAdvisory, domain.ReceiptLevelOff), policy(domain.CanonicalLevelOff, domain.ReceiptLevelRequired)
+	canonicalOnly := policy(domain.CanonicalLevelRequired, domain.ReceiptLevelOff)
+	job := func(id int64, state execution.State, reason execution.Reason) execution.Job {
+		return execution.Job{ID: id, State: state, Reason: reason, Spec: execution.Spec{GoverningDigest: stored.GoverningDigest}}
+	}
+	waits, leased := job(90, execution.StatePending, ""), job(91, execution.StateLeased, "")
+	github, done := job(90, execution.StatePending, execution.ReasonGitHubUnavailable), job(90, execution.StateComplete, "")
+	silent, tooSoon := 30*time.Second, 30*time.Second-time.Millisecond
 	for name, tc := range map[string]struct {
+		x       *executionRun
 		silence time.Duration
 		jobs    headJobs
-		want    bool
+		want    domain.JobPair
+		reading bool
 	}{
-		"the canonical job waits":                      {30 * time.Second, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, true},
-		"the receipt job waits, the canonical is done": {30 * time.Second, headJobs{canonicalPlanned: true, canonical: done, hasCanonical: true, receiptApplies: true, receipt: leased, hasReceipt: true}, true},
-		"one waits on GitHub and the other is done":    {time.Hour, headJobs{canonicalPlanned: true, canonical: github, hasCanonical: true, receiptApplies: true, receipt: done, hasReceipt: true}, false},
-		"the runner is not silent yet":                 {30*time.Second - time.Millisecond, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, false},
-		"a canonical job that the head does not want":  {time.Hour, headJobs{canonical: waits, hasCanonical: true}, false},
-		"a receipt that does not apply":                {time.Hour, headJobs{receipt: waits, hasReceipt: true}, false},
-		"no job yet":                                   {time.Hour, headJobs{canonicalPlanned: true, receiptApplies: true}, false},
+		"the canonical job waits":                      {required, silent, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, domain.JobPair{Canonical: 90}, true},
+		"the receipt job waits, the canonical is done": {required, silent, headJobs{canonicalPlanned: true, canonical: done, hasCanonical: true, receiptApplies: true, receipt: leased, hasReceipt: true}, domain.JobPair{Receipt: 91}, true},
+		"both wait": {required, silent, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true, receiptApplies: true, receipt: leased, hasReceipt: true}, domain.JobPair{Canonical: 90, Receipt: 91}, true},
+		"one waits on GitHub and the other is done": {required, time.Hour, headJobs{canonicalPlanned: true, canonical: github, hasCanonical: true, receiptApplies: true, receipt: job(91, execution.StateComplete, ""), hasReceipt: true}, domain.JobPair{}, false},
+		"the runner is not silent yet":              {required, tooSoon, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, domain.JobPair{}, false},
+		"an advisory canonical level is wanted":     {advisory, silent, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, domain.JobPair{Canonical: 90}, true},
+		"a canonical level that is off":             {off, time.Hour, headJobs{canonical: waits, hasCanonical: true}, domain.JobPair{}, false},
+		"a receipt that does not apply":             {required, time.Hour, headJobs{canonicalPlanned: true, canonical: done, hasCanonical: true, receipt: leased, hasReceipt: true}, domain.JobPair{}, false},
+		"a receipt level that is off":               {canonicalOnly, time.Hour, headJobs{canonicalPlanned: true, canonical: done, hasCanonical: true, receiptApplies: true, receipt: leased, hasReceipt: true}, domain.JobPair{}, false},
+		"no job yet":                                {required, time.Hour, headJobs{canonicalPlanned: true, receiptApplies: true}, domain.JobPair{}, false},
+		"a policy that was not read":                {&executionRun{}, time.Hour, headJobs{canonicalPlanned: true, canonical: waits, hasCanonical: true}, domain.JobPair{}, false},
+		"a policy that names no execution":          {&executionRun{known: true}, time.Hour, headJobs{}, domain.JobPair{}, false},
+		// The check of this head was decided by another rule, so the pass planned no canonical job and read none, but the job that is still open waits.
+		"a canonical job that the pass did not read": {required, silent, headJobs{}, domain.JobPair{Canonical: stored.ID}, true},
 	} {
-		j := &checksJob{liveness: execution.NewLiveness(start), now: func() time.Time { return start.Add(tc.silence) }}
-		if got := j.headNotResponding(tc.jobs); got != tc.want {
-			t.Errorf("%s: headNotResponding = %v, want %v", name, got, tc.want)
-		}
+		t.Run(name, func(t *testing.T) {
+			w.clock = w.check.liveness.LastSeen().Add(tc.silence)
+			got, reading, err := w.check.headNotResponding(t.Context(), s, tc.x, tc.jobs)
+			if err != nil || got != tc.want || reading != tc.reading {
+				t.Errorf("headNotResponding = %+v, %v, %v; want %+v, %v", got, reading, err, tc.want, tc.reading)
+			}
+		})
+	}
+}
+
+// A cancelled job is not one that a head reads: the gates never return one, so it is a broken state and not a job that waits for nothing.
+func TestAHeadThatReadsACancelledJobIsAnError(t *testing.T) {
+	w := gateWorld(t)
+	s := &pullState{p: owner.ProjectPolicy{RepositoryID: bootRepoID}, pull: githubsync.PullState{Number: 4, HeadSHA: bootHead}}
+	x := &executionRun{known: true, policy: executionPolicy{canonical: domain.CanonicalLevelRequired, receipt: domain.ReceiptLevelOff}}
+	cancelled := execution.Job{ID: 90, State: execution.StateCancelled, Reason: execution.ReasonClosed}
+	w.clock = w.check.liveness.LastSeen().Add(time.Hour)
+	if got, reading, err := w.check.headNotResponding(t.Context(), s, x, headJobs{canonicalPlanned: true, canonical: cancelled, hasCanonical: true}); err == nil {
+		t.Errorf("headNotResponding = %+v, %v, nil; want an error for the cancelled job", got, reading)
 	}
 }

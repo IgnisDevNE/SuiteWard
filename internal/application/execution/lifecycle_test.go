@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
@@ -76,5 +77,24 @@ func TestTheApplicationJobAndTheDomainJobAgreeOnWaitingForTheRunner(t *testing.T
 				t.Errorf("a %s job with the reason %q: WaitsForRunner = %v, the domain rule says %v", state, reason, got, want)
 			}
 		}
+	}
+}
+
+// A job that is part of a set is the job that the rules of the comments of a head read: its id, state, reason and governing manifest, and whether the owner unblocked
+// it. A cancelled job is not part of a set: its binding is no longer wanted.
+func TestAJobInASetCarriesWhatTheRulesOfTheCommentsRead(t *testing.T) {
+	manifest := artifact.Hash([]byte("manifest"))
+	for state, want := range map[execution.State]domain.JobState{execution.StatePending: domain.JobPending, execution.StateLeased: domain.JobLeased,
+		execution.StateComplete: domain.JobComplete, execution.StateUnavailable: domain.JobUnavailable} {
+		for _, unblocked := range []bool{false, true} {
+			job := execution.Job{ID: 9, State: state, Reason: execution.ReasonNoExecutor, Spec: execution.Spec{GoverningDigest: manifest}}
+			got, ok := job.InSet(unblocked)
+			if wantJob := (domain.Job{ID: 9, State: want, Reason: "no-executor", Governing: manifest, Unblocked: unblocked}); !ok || got != wantJob {
+				t.Errorf("a %s job, unblocked %v: InSet = %+v, %v; want %+v", state, unblocked, got, ok, wantJob)
+			}
+		}
+	}
+	if got, ok := (execution.Job{ID: 9, State: execution.StateCancelled, Reason: execution.ReasonClosed}).InSet(false); ok {
+		t.Errorf("a cancelled job: InSet = %+v, true; want it out of a set", got)
 	}
 }

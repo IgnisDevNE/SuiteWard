@@ -43,8 +43,8 @@ func (j *checksJob) runnerNotResponding(job execution.Job, found bool) bool {
 
 // headNotResponding says that a head reads "not responding": the runner is silent and at least one wanted job of the head waits for it. The wanted jobs are the canonical
 // job when the canonical level is not off and the receipt job when the receipt applies, as the gates read them. The comment of the head reads this.
-func (j *checksJob) headNotResponding(jobs headJobs) bool {
-	return (jobs.canonicalPlanned && j.runnerNotResponding(jobs.canonical, jobs.hasCanonical)) || (jobs.receiptApplies && j.runnerNotResponding(jobs.receipt, jobs.hasReceipt))
+func (j *checksJob) headNotResponding(ctx context.Context, s *pullState, x *executionRun, jobs headJobs) (domain.JobPair, bool, error) {
+	return domain.JobPair{}, false, nil
 }
 
 // ungated is the check as it was decided before the canonical gate held it back: a stored check with a gate reason is the success it replaced, unchanged for

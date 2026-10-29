@@ -64,9 +64,9 @@ func TestRevisionMessageKeepsWhatAReductionLowersWhenItsDetailIsDropped(t *testi
 		lead, unwanted   string
 		numbersSayDelete bool
 	}{
-		"only the policy": {execEntries(), nil, true, false, "**This revision lowers the execution policy.**", "reduces the protected scope", true},
+		"only the policy": {execEntries(), nil, true, false, "**This revision lowers the test requirements.**", "reduces the protected scope", true},
 		"the scope alone": {asRules(list()), list(), false, true, "**This revision reduces the protected scope.**", "execution policy", false},
-		"both":            {append(asRules(list()), execEntries()[0]), list(), true, true, "**This revision reduces the protected scope and lowers the execution policy.**", "", false},
+		"both":            {append(asRules(list()), execEntries()[0]), list(), true, true, "**This revision reduces the protected scope and lowers the test requirements.**", "", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			notice := cmtNotice()
@@ -85,7 +85,7 @@ func TestRevisionMessageKeepsWhatAReductionLowersWhenItsDetailIsDropped(t *testi
 			w := newCmtWorld(t)
 			w.mustDeliver(message)
 			body := w.writer.posts()[0].body
-			for _, want := range []string{tc.lead, "omitted", "/suiteward approve P2-R2 <code>"} {
+			for _, want := range []string{tc.lead, "left out", "/suiteward approve P2-R2 <code>"} {
 				if !strings.Contains(body, want) {
 					t.Errorf("comment lacks %q:\n%s", want, body)
 				}
@@ -129,9 +129,9 @@ func TestRevisionCommentPostsTheReceiptLineWithTheLinkOfThePullRequestPage(t *te
 	w.mustDeliver(receiptMessage(t, "required"))
 	body := w.writer.posts()[0].body
 	for _, want := range []string{
-		"Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. It is evidence, not a verdict. " +
+		"Receipt: SuiteWard runs the tests this revision adds or changes, on this commit and on the code before the change, and shows what it saw. It is evidence, not a verdict. " +
 			"Results: [Pull request page](http://127.0.0.1:8080/pulls/acme/widgets/7). The `SuiteWard / Receipt` check carries the counts.",
-		"Approving needs a mode and a receipt that meets it:", "```\n/suiteward approve P2-R2 <fix|feature|refactor> <code>\n```",
+		"To approve, name a mode (the kind of change) that the receipt meets, and comment:", "```\n/suiteward approve P2-R2 <fix|feature|refactor> <code>\n```",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("comment lacks %q:\n%s", want, body)

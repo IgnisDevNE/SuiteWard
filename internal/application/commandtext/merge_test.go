@@ -12,21 +12,21 @@ const mergeSHA = "9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b"
 
 // blockedReasons are the blocked reasons of the persistence contract, each with a phrase only its text holds.
 var blockedReasons = []struct{ reason, phrase string }{
-	{"unapproved-change", "never saw a contract change proposal"},
-	{"invalid-source", "is invalid"},
-	{"assessment-conflict", "different integrity assessment"},
-	{"approval-missing", "approval of this exact revision was not current"},
+	{"unapproved-change", "never saw a proposal for the change"},
+	{"invalid-source", "may be invalid"},
+	{"assessment-conflict", "different recorded check"},
+	{"approval-missing", "approval of this exact revision was not valid"},
 	{"differs-from-approved", "differ from the exact revision the owner approved"},
-	{"not-current", "was no longer the current revision"},
-	{"canonical-changed", "canonical contract changed after"},
-	{"policy-changed", "policy changed after"},
-	{"integrity-not-passed", "integrity assessment of the merge commit did not pass"},
-	{"integration-mismatch", "does not match the approved change"},
+	{"not-current", "was no longer the latest revision"},
+	{"canonical-changed", "approved version of the contract changed after"},
+	{"policy-changed", "approval rules changed after"},
+	{"integrity-not-passed", "check of the protected files at the merge commit did not pass"},
+	{"integration-mismatch", "does not match the change the owner approved"},
 	{"correction-context-reused", "already used for another correction"},
-	{"fork-unsupported", "from forks are not supported"},
+	{"fork-unsupported", "does not support pull requests from forks"},
 	{"shared-merge-commit", "another merged pull request has the same merge commit"},
 	{"integration-unreadable", "could not read the merge commit"},
-	{"integrity-failed", "failed its integrity verification"},
+	{"integrity-failed", "failed its integrity check"},
 }
 
 func blocked(reason string) commandtext.Merge {
@@ -78,7 +78,7 @@ func TestMergeCommentForAnUnreadableMergeCommitNeedsNoCommit(t *testing.T) {
 
 func TestMergeCommentForAFailedIntegrityVerificationSendsTheOperatorToTheArtifactStore(t *testing.T) {
 	text := mergeText(t, blocked("integrity-failed"))
-	if !strings.Contains(text, "restore the artifact store from a backup") || strings.Contains(text, "push a corrected") {
+	if !strings.Contains(text, "restore its artifact store from a backup") || strings.Contains(text, "push a corrected") {
 		t.Errorf("the comment does not tell the operator to restore the store:\n%s", text)
 	}
 }
@@ -165,7 +165,7 @@ func TestMergeCommentPanicsOnAStateThatCannotBeStored(t *testing.T) {
 
 func TestMergeCommentForTheFirstCanonicalVersionNamesTheCommitAndSaysWhatWasChecked(t *testing.T) {
 	text := mergeText(t, commandtext.Merge{Kind: commandtext.MergePromoted, Source: mergeSHA, Version: 1, Proposal: 1, Revision: 2, Tier: commandtext.Isolated})
-	for _, phrase := range []string{"promoted the canonical contract to V1", "first canonical version", mergeSHA, "P1-R2"} {
+	for _, phrase := range []string{"V1 is now the approved version of the contract", "first approved version", mergeSHA, "P1-R2"} {
 		if !strings.Contains(text, phrase) {
 			t.Errorf("the comment lacks %q:\n%s", phrase, text)
 		}
@@ -173,9 +173,9 @@ func TestMergeCommentForTheFirstCanonicalVersionNamesTheCommitAndSaysWhatWasChec
 	if strings.Contains(text, "tests passed") || strings.Contains(text, "correction") {
 		t.Errorf("the comment claims tests or a correction:\n%s", text)
 	}
-	// A later promotion is not the first canonical version.
+	// A later promotion is not the first approved version.
 	later := mergeText(t, commandtext.Merge{Kind: commandtext.MergePromoted, Source: mergeSHA, Version: 2, Proposal: 1, Revision: 2, Tier: commandtext.Isolated})
-	if strings.Contains(later, "first canonical version") {
+	if strings.Contains(later, "first approved version") {
 		t.Errorf("a later promotion says it is the first:\n%s", later)
 	}
 }
@@ -189,8 +189,8 @@ func TestMergeCommentWithoutACanonicalSaysSoGivesTheReasonAndTheRecovery(t *test
 		m.Version = 0
 		text := mergeText(t, m)
 		for _, phrase := range []string{
-			tc.phrase, "SuiteWard has no canonical contract yet", "default branch now holds the merged files",
-			"comments `/suiteward propose` on an open pull request to propose the default branch's contract",
+			tc.phrase, "SuiteWard has no approved contract yet", "default branch now holds the merged files",
+			"comments `/suiteward propose` on an open pull request to propose them as the first contract",
 		} {
 			if !strings.Contains(text, phrase) {
 				t.Errorf("%s: the comment lacks %q:\n%s", tc.reason, phrase, text)
@@ -239,13 +239,13 @@ func TestMergeCommentPanicsOnAVersionThatCannotBeMissing(t *testing.T) {
 	}
 }
 
-// The merge texts of M1.6 and M1.7 are pinned: M1.7b adds the first canonical version and a merge without a
+// The merge texts of M1.6 and M1.7 are pinned: M1.7b adds the first approved version and a merge without a
 // canonical, and every other text stays as it was.
 func TestMergeCommentKeepsItsExistingTexts(t *testing.T) {
 	const (
 		facts    = "- Merge commit: `" + mergeSHA + "`\n- Proposal revision: P2-R1\n- Installation tier: `isolated`\n\n"
 		checked  = "SuiteWard checked the approval and the integrity of the protected files at that commit.\n"
-		recovery = "open a new pull request that restores the protected files of V3, or one that carries the integrated files for a new exact approval. There is no reset command.\n"
+		recovery = "open a new pull request that restores the protected files of V3, or one that carries the merged files for a new exact approval. There is no reset command.\n"
 	)
 	unreadable := blocked("integration-unreadable")
 	unreadable.Source = ""
@@ -255,30 +255,30 @@ func TestMergeCommentKeepsItsExistingTexts(t *testing.T) {
 	}{
 		"promoted": {
 			commandtext.Merge{Kind: commandtext.MergePromoted, Source: mergeSHA, Version: 2, Proposal: 2, Revision: 1, Tier: commandtext.Isolated},
-			"**SuiteWard promoted the canonical contract to V2**\n\n" +
-				"This merge integrated the contract change the owner approved, and SuiteWard promoted V2 from the merge commit.\n\n" + facts + checked,
+			"**V2 is now the approved version of the contract**\n\n" +
+				"This pull request was merged with the contract change the owner approved. SuiteWard made V2 the approved version, from the merge commit.\n\n" + facts + checked,
 		},
 		"corrected": {
 			commandtext.Merge{Kind: commandtext.MergeCorrected, Source: mergeSHA, Version: 3, Corrects: 2, Proposal: 2, Revision: 1, Tier: commandtext.Isolated},
-			"**SuiteWard promoted the canonical contract to V3 as a correction**\n\n" +
-				"This merge restored the protected files of an earlier version, and SuiteWard promoted V3 as a correction of V2. The history is kept.\n\n" + facts + checked,
+			"**V3 is now the approved version of the contract, as a correction**\n\n" +
+				"This pull request was merged and it restored the protected files of an earlier version. SuiteWard made V3 the approved version, as a correction of V2. The history is kept.\n\n" + facts + checked,
 		},
 		"blocked": {
 			blocked("canonical-changed"),
-			"**SuiteWard did not promote this merge: the canonical contract stays at V3**\n\n" +
-				"The canonical contract changed after the owner approved this revision, so the approval no longer applies to what was merged.\n\n" + facts +
+			"**This merge is not a new approved version: the approved contract stays at V3**\n\n" +
+				"The approved version of the contract changed after the owner approved this revision, so the approval no longer applies to what was merged.\n\n" + facts +
 				"To recover, " + recovery,
 		},
 		"blocked with its own next action": {
 			blocked("integrity-failed"),
-			"**SuiteWard did not promote this merge: the canonical contract stays at V3**\n\n" +
-				"SuiteWard's stored canonical contract failed its integrity verification, so SuiteWard refuses to promote anything on top of it.\n\n" + facts +
-				"Next: the operator must restore the artifact store from a backup or re-bootstrap the repository. A pull request cannot fix this. After that, to recover, " + recovery,
+			"**This merge is not a new approved version: the approved contract stays at V3**\n\n" +
+				"The approved contract that SuiteWard stored failed its integrity check, so SuiteWard refuses to build a new version on top of it.\n\n" + facts +
+				"What to do: the person who runs SuiteWard must restore its artifact store from a backup, or set up the repository again. A pull request cannot fix this. After that, to recover, " + recovery,
 		},
 		"blocked without a commit": {
 			unreadable,
-			"**SuiteWard did not promote this merge: the canonical contract stays at V3**\n\n" +
-				"SuiteWard could not read the merge commit from GitHub within 30 minutes of seeing the pull request leave the open list, or GitHub reported no merge commit for it.\n\n" +
+			"**This merge is not a new approved version: the approved contract stays at V3**\n\n" +
+				"SuiteWard could not read the merge commit from GitHub within 30 minutes of seeing the pull request stop being open, or GitHub reported no merge commit for it.\n\n" +
 				"- Proposal revision: P2-R1\n- Installation tier: `isolated`\n\n" + "To recover, " + recovery,
 		},
 	} {
@@ -293,7 +293,7 @@ func TestMergeCommentKeepsItsExistingTexts(t *testing.T) {
 func TestMergeCommentForAnInvalidSourceStatesTheAmendedLinkRule(t *testing.T) {
 	text := mergeText(t, blocked("invalid-source"))
 
-	if strings.Contains(text, "submodule") || !strings.Contains(text, "a symlink that the protected scope reaches and whose target is not a regular file of the tree") {
+	if strings.Contains(text, "submodule") || !strings.Contains(text, "a protected path may be a symbolic link whose target is not a regular file in the repository") {
 		t.Errorf("the comment mentions a submodule or lacks the amended link rule:\n%s", text)
 	}
 }

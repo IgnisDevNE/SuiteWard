@@ -284,7 +284,7 @@ func TestMergeMessageOfABlockedMergeWithoutACanonicalHasNoVersion(t *testing.T) 
 	w.mustDeliver(message)
 
 	w.wantPost(cmtMergeKey, commandtext.MergeComment(commandtext.Merge{Kind: commandtext.MergeBlocked, Reason: "differs-from-approved", Source: cmtMergeSHA, Proposal: 2, Revision: 1, Tier: commandtext.Isolated}))
-	if !strings.Contains(w.writer.posts()[0].body, "no canonical contract yet") {
+	if !strings.Contains(w.writer.posts()[0].body, "no approved contract yet") {
 		t.Fatalf("body %q does not say that no canonical exists", w.writer.posts()[0].body)
 	}
 }
@@ -400,7 +400,7 @@ func TestRevisionMessageDropsTheReductionDetailThatDoesNotFitTheOutbox(t *testin
 	w := newCmtWorld(t)
 	w.mustDeliver(message)
 	body := w.writer.posts()[0].body
-	for _, want := range []string{"**This revision reduces the protected scope.**", "omitted", "/suiteward approve P2-R2 <code>"} {
+	for _, want := range []string{"**This revision reduces the protected scope.**", "left out", "/suiteward approve P2-R2 <code>"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("comment lacks %q:\n%s", want, body)
 		}
@@ -441,7 +441,7 @@ func TestRevisionCommentOfAnExecutionOnlyWeakeningIsPostedWithTheLoweredLevels(t
 	w.mustDeliver(message)
 	body := w.writer.posts()[0].body
 	for _, want := range []string{
-		"**This revision lowers the execution policy.**", "Execution policy lowered:\n\n```\ncanonical: required -> advisory\nreceipt: advisory -> off\n```", "/suiteward approve P2-R2 <code>",
+		"**This revision lowers the test requirements.**", "Test requirements lowered:\n\n```\napproved tests: required -> advisory\nreceipt: advisory -> off\n```", "/suiteward approve P2-R2 <code>",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("comment lacks %q:\n%s", want, body)

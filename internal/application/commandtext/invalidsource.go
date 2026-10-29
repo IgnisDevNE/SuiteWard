@@ -59,15 +59,15 @@ func InvalidSourceComment(s InvalidSourceNotice) string {
 	var problem, next string
 	switch s.Problem {
 	case DeclarationProblem:
-		problem = "The `.suiteward.yml` of this pull request's head is not a valid declaration, so SuiteWard cannot tell which files this head protects."
-		next = "Next: fix `.suiteward.yml` and push." + editSentence(s, "To change it on this pull request's branch")
+		problem = "The `.suiteward.yml` file of this pull request is not valid, so SuiteWard cannot tell which files it protects."
+		next = "What to do: fix `.suiteward.yml` and push a new commit." + editSentence(s, "To change it on this pull request's branch")
 	case LinkProblem:
-		problem = "This pull request's head has a symbolic link that the protected scope covers or may cover below, and whose target is not a regular file of the tree, " +
+		problem = "This pull request has a symbolic link (a file that points to another file) that the protected files reach, or may reach through it, and its target is not a regular file in the repository, " +
 			"so SuiteWard cannot tell what protecting it would mean:\n\n" + fencedLines([]string{s.Path})
-		next = "Next: remove the link or point it to a regular file, and push." + acceptLink(s)
+		next = "What to do: remove the link or point it to a regular file, and push a new commit." + acceptLink(s)
 	}
-	return paragraphs("**SuiteWard could not read the contract source of this pull request**", problem, next,
-		"Any canonical contract already in force stays in force, and the check stays `failure` until a push fixes it.",
+	return paragraphs("**SuiteWard could not read the contract files of this pull request**", problem, next,
+		"The approved contract stays as it is. The `SuiteWard / Contract` check stays `failure` until a push fixes this.",
 		"This comment is evidence, not an approval.")
 }
 
@@ -93,7 +93,7 @@ func acceptLink(s InvalidSourceNotice) string {
 	}
 	choice := "Or accept the link by adding its exact anchored path to `exclude` in `.suiteward.yml`:\n\n" + fencedLines([]string{"/" + s.Path})
 	if len(s.Declaration) > 0 {
-		choice = "Or accept the link by adding its exact anchored path to `exclude`. This is the head's own `.suiteward.yml` with that path added:\n\n" + fenced(withNewline(s.Declaration))
+		choice = "Or accept the link by adding its exact anchored path to `exclude`. This is the `.suiteward.yml` of this pull request with that path added:\n\n" + fenced(withNewline(s.Declaration))
 	}
-	return "\n\n" + choice + editSentence(s, "To make that change on this pull request's branch") + "\n\nAccepting the link means that nothing reached through the link is protected. It is a scope reduction, so the owner approves it like any other change to the protected files."
+	return "\n\n" + choice + editSentence(s, "To make that change on this pull request's branch") + "\n\nAccepting the link means that nothing reached through the link is protected. That removes protection, so the owner approves it like any other change to the protected files."
 }

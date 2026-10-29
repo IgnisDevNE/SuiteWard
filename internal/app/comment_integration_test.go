@@ -129,7 +129,7 @@ func TestCommentPublisherOnPostgreSQLPostsEachMessageOnce(t *testing.T) {
 	if len(posted) != 2 {
 		t.Fatalf("posted %d comments, want the summary and the acknowledgment", len(posted))
 	}
-	want := map[string]string{"bootstrap-summary:1001:P1-R1": "SuiteWard bootstrap proposal P1-R1", "ack:1001:101": "Approval recorded for P1-R1 by @owner"}
+	want := map[string]string{"bootstrap-summary:1001:P1-R1": "SuiteWard proposes the first contract: P1-R1", "ack:1001:101": "Approval recorded for P1-R1 by @owner"}
 	for key, text := range want {
 		found := false
 		for _, body := range posted {

@@ -90,25 +90,25 @@ func TestAcknowledgeProposeAndSkip(t *testing.T) {
 		{
 			"propose refused: canonical present",
 			with(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.CanonicalPresent}),
-			[]string{"`/suiteward propose` was not processed: this repository already has a canonical contract", "Nothing changed."},
+			[]string{"`/suiteward propose` was not processed: this repository already has an approved contract", "Nothing changed."},
 			nil,
 		},
 		{
 			"propose refused: fork",
 			with(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.Fork}),
-			[]string{"`/suiteward propose` was not processed: this pull request comes from a fork", "not supported yet", "Nothing changed.", "branch of this repository"},
+			[]string{"`/suiteward propose` was not processed: this pull request comes from a fork", "does not support pull requests from forks yet", "Nothing changed.", "branch of this repository"},
 			nil,
 		},
 		{
 			"propose refused: empty inventory",
 			with(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.EmptyInventory}),
-			[]string{"`/suiteward propose` was not processed: no file matches the include rules", "Nothing changed.", "comment `/suiteward propose` again"},
+			[]string{"`/suiteward propose` was not processed: no file matches the `include` rules", "Nothing changed.", "comment `/suiteward propose` again"},
 			nil,
 		},
 		{
 			"propose refused: invalid source",
 			with(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.InvalidSource}),
-			[]string{"`/suiteward propose` was not processed: SuiteWard could not read the files to protect as a contract", "declaration is invalid", "a link", "too large", "Nothing changed.", "comment `/suiteward propose` again"},
+			[]string{"`/suiteward propose` was not processed: SuiteWard could not read the files to protect", "the `.suiteward.yml` file is invalid", "a link", "too large", "Nothing changed.", "comment `/suiteward propose` again"},
 			nil,
 		},
 		{
@@ -120,31 +120,31 @@ func TestAcknowledgeProposeAndSkip(t *testing.T) {
 		{
 			"propose refused: base is not the target",
 			with(commandtext.Ack{Outcome: commandtext.ProposeRefused, Refusal: commandtext.BaseNotTarget}),
-			[]string{"`/suiteward propose` was not processed: this pull request does not target the default branch", "its merge could never become the first contract", "Nothing changed.", "into the default branch"},
+			[]string{"`/suiteward propose` was not processed: this pull request does not merge into the default branch", "it could never become the first contract", "Nothing changed.", "into the default branch"},
 			nil,
 		},
 		{
 			"already proposed",
 			with(commandtext.Ack{Outcome: commandtext.AlreadyProposed, Proposal: 4, Revision: 2}),
-			[]string{"already proposed as P4-R2", "Nothing changed.", "bootstrap summary"},
+			[]string{"The first contract was already proposed as P4-R2", "Nothing changed.", "the summary that SuiteWard posted for P4-R2"},
 			nil,
 		},
 		{
 			"propose failed",
 			with(commandtext.Ack{Outcome: commandtext.ProposeFailed}),
-			[]string{"could not process your `/suiteward propose` command", "proposed nothing", "comment `/suiteward propose` again"},
+			[]string{"tried several times and could not process your `/suiteward propose` command", "proposed nothing", "Comment `/suiteward propose` again"},
 			nil,
 		},
 		{
 			"skipped",
 			with(commandtext.Ack{Outcome: commandtext.Skipped}),
-			[]string{"Skip recorded for this pull request by @octo-owner.", "may merge before the first contract", "nothing was assessed", "not a contract assessment", "`/suiteward propose`"},
+			[]string{"Skip recorded for this pull request by @octo-owner.", "can merge before the first contract exists", "has not checked it against any contract", "none is approved yet", "`/suiteward propose`"},
 			nil,
 		},
 		{
 			"skip refused: canonical present",
 			with(commandtext.Ack{Outcome: commandtext.SkipRefused, Refusal: commandtext.CanonicalPresent}),
-			[]string{"`/suiteward skip` was not processed: this repository already has a canonical contract", "Nothing changed."},
+			[]string{"`/suiteward skip` was not processed: this repository already has an approved contract", "Nothing changed.", "SuiteWard checks pull requests against that contract."},
 			nil,
 		},
 		{
@@ -156,13 +156,13 @@ func TestAcknowledgeProposeAndSkip(t *testing.T) {
 		{
 			"skip refused: carrier",
 			with(commandtext.Ack{Outcome: commandtext.SkipRefused, Refusal: commandtext.Carrier}),
-			[]string{"`/suiteward skip` was not processed: this pull request carries the first contract proposal", "Nothing changed.", "`/suiteward propose` on another pull request"},
+			[]string{"`/suiteward skip` was not processed: this pull request carries the proposal of the first contract", "Nothing changed.", "`/suiteward propose` on another pull request"},
 			nil,
 		},
 		{
 			"suggest refused: fork",
 			with(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.Fork}),
-			[]string{"`/suiteward suggest` was not processed: this pull request comes from a fork", "not supported yet", "Nothing changed.", "comment `/suiteward suggest` there"},
+			[]string{"`/suiteward suggest` was not processed: this pull request comes from a fork", "does not support pull requests from forks yet", "Nothing changed.", "comment `/suiteward suggest` there"},
 			[]string{"`/suiteward propose`"},
 		},
 		{
@@ -174,32 +174,32 @@ func TestAcknowledgeProposeAndSkip(t *testing.T) {
 		{
 			"suggest refused: invalid source",
 			with(commandtext.Ack{Outcome: commandtext.SuggestRefused, Refusal: commandtext.InvalidSource}),
-			[]string{"`/suiteward suggest` was not processed: SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest a declaration", "Nothing changed.", "comment `/suiteward suggest` again"},
+			[]string{"`/suiteward suggest` was not processed: SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest changes to it", "Nothing changed.", "comment `/suiteward suggest` again"},
 			[]string{"`/suiteward propose`"},
 		},
 		{
 			"nothing uncovered",
 			with(commandtext.Ack{Outcome: commandtext.NothingUncovered, Base: commandtext.BaseContract}),
-			[]string{"every test-like path in this pull request's head is covered by the current contract already", "nothing to suggest", "Nothing changed.", "not an approval"},
+			[]string{"the current contract already covers every test-like file of this pull request", "nothing to suggest", "Nothing changed.", "not an approval"},
 			[]string{" for P", "P0"},
 		},
 		{
 			// A skip has no reference, so the code outcomes and NoSuite do not name one either.
 			"invalid code without a reference",
 			with(commandtext.Ack{Outcome: commandtext.InvalidCode}),
-			[]string{"The confirmation code was not accepted, so the command had no effect. The `SuiteWard / Contract` check may now show as failed until you comment a corrected command with a current code, or push."},
+			[]string{"The code was not accepted, so the command did nothing. This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with a current code from your authenticator app, or push a new commit."},
 			[]string{" for P", "for  "},
 		},
 		{
 			"replayed code without a reference",
 			with(commandtext.Ack{Outcome: commandtext.ReplayedCode}),
-			[]string{"The confirmation code was already used, so the command had no effect; each code works only once. The `SuiteWard / Contract` check may now show as failed until you comment a corrected command with a new code, or push.", "new code"},
+			[]string{"The code was already used, so the command did nothing. Each code works only once. This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with a new code, or push a new commit.", "new code"},
 			[]string{" for P"},
 		},
 		{
 			"no suite without a reference",
 			with(commandtext.Ack{Outcome: commandtext.NoSuite}),
-			[]string{"Your command was not processed: this repository's SuiteWard bootstrap is still pending, so nothing changed.", "comment `/suiteward propose`"},
+			[]string{"Your command was not processed, because SuiteWard has not finished setting up this repository. Nothing changed.", "comment `/suiteward propose`"},
 			[]string{"P0", "R0", "bootstrap summary"},
 		},
 	}
@@ -277,8 +277,8 @@ func TestSuggestDeclarationSuggestsTheDeclarationAndLinksGitHubsEditor(t *testin
 	body := render(t, func() string { return commandtext.SuggestDeclaration(declarationMissing(suggestion...)) })
 	declaration := "version: 1\ninclude:\n  - \"tests/**\"\n  - \"internal/app/*_test.*\"\n"
 	for _, w := range []string{
-		"`/suiteward propose` was not processed: SuiteWard found no `.suiteward.yml`", "default branch", "head of this pull request",
-		"proposed nothing", "Nothing changed.", fencedYAML(declaration), "comment `/suiteward propose` again", "never commits",
+		"`/suiteward propose` was not processed: SuiteWard found no `.suiteward.yml`", "default branch", "in this pull request",
+		"proposed nothing", "Nothing changed.", fencedYAML(declaration), "comment `/suiteward propose` again", "does not make the commit for you",
 		"[your command](#issuecomment-2345678901)",
 	} {
 		if !strings.Contains(body, w) {
@@ -325,7 +325,7 @@ func TestSuggestDeclarationWithoutPatternsGivesAMinimalFileToFillIn(t *testing.T
 	for _, suggestion := range [][]string{nil, {}} {
 		body := render(t, func() string { return commandtext.SuggestDeclaration(declarationMissing(suggestion...)) })
 		declaration := "version: 1\ninclude:\n  - \"path/to/tests/**\"\n"
-		if !strings.Contains(body, fencedYAML(declaration)) || !strings.Contains(body, "no test-like path") || !strings.Contains(body, "Replace") {
+		if !strings.Contains(body, fencedYAML(declaration)) || !strings.Contains(body, "no test-like file") || !strings.Contains(body, "Replace") {
 			t.Errorf("body does not give the minimal file to fill in:\n%s", body)
 		}
 		if got := linkedDeclaration(t, body, "feature/add-tests"); got != declaration {
@@ -562,9 +562,9 @@ func TestProposeAndSkipBodiesNeverEchoTheComment(t *testing.T) {
 func TestBootstrapNoticeSaysHowToStartOrSkip(t *testing.T) {
 	body := render(t, commandtext.BootstrapNotice)
 	for _, w := range []string{
-		"SuiteWard has no canonical contract yet.", "`/suiteward propose`", "pull request that should carry the first contract",
+		"SuiteWard has no approved contract yet.", "`/suiteward propose`", "pull request that should carry the first contract",
 		"`/suiteward skip <code>`", "before the first contract", "authenticator app",
-		"of the default branch when it has a `.suiteward.yml`, otherwise those of that pull request",
+		"of the default branch if it has a `.suiteward.yml`, and otherwise those of that pull request",
 		"`/suiteward suggest`", "grants nothing",
 	} {
 		if !strings.Contains(body, w) {

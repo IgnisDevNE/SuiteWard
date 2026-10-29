@@ -20,7 +20,7 @@ func TestScopeReplyForTheDefaultBranchLinksToTheEditorOfTheDefaultBranch(t *test
 	if want := "https://github.com/octo-org/widgets/edit/release/2%231/.suiteward.yml"; raw != want {
 		t.Errorf("the link is %q, want %q", raw, want)
 	}
-	for _, want := range []string{"[open GitHub's editor for it]", "on the default branch", "new branch and a pull request", "default branch first"} {
+	for _, want := range []string{"[open GitHub's editor for it]", "on the default branch", "new branch and a pull request", "there first"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the body lacks %q:\n%s", want, body)
 		}
@@ -65,12 +65,12 @@ func TestRefusalsThatAskToFixTheDeclarationLinkToTheEditorOfTheFileRefused(t *te
 		where string
 		says  string
 	}{
-		{"suggest, the head's declaration", refusal(commandtext.SuggestRefused, commandtext.InvalidSource, commandtext.BasePull, "feat/a#b%c"), pullLink, "this pull request's branch", "Fix the declaration"},
+		{"suggest, the head's declaration", refusal(commandtext.SuggestRefused, commandtext.InvalidSource, commandtext.BasePull, "feat/a#b%c"), pullLink, "this pull request's branch", "Fix it"},
 		{"suggest, the default branch's declaration", refusal(commandtext.SuggestRefused, commandtext.InvalidSource, commandtext.BaseDefaultBranch, "main"),
-			"https://github.com/octo-org/widgets/edit/main/.suiteward.yml", "the default branch", "Fix the declaration"},
-		{"propose, the source declaration", refusal(commandtext.ProposeRefused, commandtext.InvalidSource, commandtext.BasePull, "feat/a#b%c"), pullLink, "this pull request's branch", "If the declaration is the problem"},
+			"https://github.com/octo-org/widgets/edit/main/.suiteward.yml", "the default branch", "Fix it"},
+		{"propose, the source declaration", refusal(commandtext.ProposeRefused, commandtext.InvalidSource, commandtext.BasePull, "feat/a#b%c"), pullLink, "this pull request's branch", "If the file is the problem"},
 		{"propose, the default branch's declaration", refusal(commandtext.ProposeRefused, commandtext.InvalidSource, commandtext.BaseDefaultBranch, "main"),
-			"https://github.com/octo-org/widgets/edit/main/.suiteward.yml", "the default branch", "If the declaration is the problem"},
+			"https://github.com/octo-org/widgets/edit/main/.suiteward.yml", "the default branch", "If the file is the problem"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := commandtext.ValidateAck(tc.ack); err != nil {

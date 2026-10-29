@@ -786,7 +786,7 @@ func TestMergesRefuseWhatSuiteWardCannotTrust(t *testing.T) {
 		w.wantOutcome(5, governance.MergePromoted, "")
 		w.wantOutcome(6, governance.MergeBlocked, governance.MergeReasonSharedMergeCommit)
 	})
-	t.Run("a canonical that failed its integrity verification", func(t *testing.T) {
+	t.Run("a canonical that failed its integrity check", func(t *testing.T) {
 		w := newMgWorld(t)
 		w.approved(5, cjHead2, "v2", 2, 201)
 		w.leave(5)

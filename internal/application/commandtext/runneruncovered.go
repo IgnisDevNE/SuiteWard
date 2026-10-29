@@ -55,23 +55,23 @@ func ValidateRunnerUncovered(n RunnerUncovered) error {
 func RunnerUncoveredComment(n RunnerUncovered) string {
 	must(ValidateRunnerUncovered(n))
 	parts := []string{
-		"**SuiteWard found runner files outside the protected scope**",
+		"**SuiteWard found runner files that the contract does not protect**",
 		listingAndMore("Runner files that this pull request adds or changes and the current contract does not protect", n.Paths, n.PathsTotal),
-		"A runner file can change how the protected tests run without touching any of them: a `conftest.py` can skip them, and a `jest.config.js` can narrow which files Jest runs. " +
-			"So SuiteWard keeps the check `in_progress` until the owner decides what to do with these files.",
-		"There are two ways out. Each is a commit to `.suiteward.yml` that the owner approves like any other change to the protected files.",
+		"A runner file sets up how tests run. It can change how the protected tests run without touching any of them: a `conftest.py` can skip them, and a `jest.config.js` can narrow which files Jest runs. " +
+			"So SuiteWard keeps the check waiting (`in_progress`) until the owner decides what to do with these files.",
+		"There are two ways out. Each is a change to `.suiteward.yml` that the owner approves like any other change to the protected files.",
 		"**Protect the files.** " + protectChoice(n),
 	}
 	if len(n.Ignore) > 0 {
-		parts = append(parts, "**Ignore the files.** This declaration is the current canonical `.suiteward.yml` with the paths of these files added to `exclude`. "+
-			"Excluding a path removes it from the protected scope, a reduction that the owner approves too, and each pattern names exactly one file:\n\n"+fenced(withNewline(n.Ignore)))
+		parts = append(parts, "**Ignore the files.** This is the approved version's `.suiteward.yml` with the paths of these files added to `exclude`. "+
+			"Excluding a path stops protecting it. The owner approves that too, and each pattern names exactly one file:\n\n"+fenced(withNewline(n.Ignore)))
 	} else {
-		parts = append(parts, "SuiteWard cannot offer to ignore these files: a path with a character that `exclude` reads as a pattern cannot be named there exactly, and a declaration that cannot be shown is not offered. Protect them, or write the `exclude` entries yourself.")
+		parts = append(parts, "SuiteWard cannot offer to ignore these files. A path with a character that `exclude` reads as a pattern cannot be named there exactly, and a file that cannot be shown here is not offered. Protect them, or write the `exclude` entries yourself.")
 	}
 	parts = append(parts,
 		pasteStep(n.Repo, n.Branch, pasteAction(len(n.Protect) > 0 || len(n.Ignore) > 0, len(n.Protect) == 0)),
 		"When this pull request's diff shows the lists of `.suiteward.yml`, SuiteWard also posts each choice as a review comment, and GitHub's **Commit suggestion** button applies it in one click.",
-		"Nothing is protected or ignored until the owner approves the new revision and it is promoted.",
+		"Nothing is protected or ignored until the owner approves the new revision and it is merged.",
 		"This comment is a suggestion, not an approval.",
 	)
 	return paragraphs(parts...)
@@ -80,9 +80,9 @@ func RunnerUncoveredComment(n RunnerUncovered) string {
 // protectChoice is the protect choice of n: its declaration, or the runner patterns to add when the declaration cannot be shown.
 func protectChoice(n RunnerUncovered) string {
 	if len(n.Protect) == 0 {
-		return "Add these runner patterns to the `runner` list of the current canonical `.suiteward.yml`. Review them and change them as needed:\n\n" + fencedLines(n.ProtectPatterns)
+		return "Add these runner patterns to the `runner` list of the approved version's `.suiteward.yml`. Review them and change them as needed:\n\n" + fencedLines(n.ProtectPatterns)
 	}
-	return "This declaration is the current canonical `.suiteward.yml` with the runner patterns of these files added to `runner`. Review it and change it as needed:\n\n" + fenced(withNewline(n.Protect))
+	return "This is the approved version's `.suiteward.yml` with the runner patterns of these files added to `runner`. Review it and change it as needed:\n\n" + fenced(withNewline(n.Protect))
 }
 
 func withNewline(declaration []byte) string {
@@ -118,9 +118,9 @@ func RunnerChoiceBody(choice RunnerChoice, anchorLine, indent string, patterns [
 		items = "\n" + indent + newList + ":" + suggestedItems(patterns, indent+"  ", 0)
 	}
 	content := anchorLine + items
-	sentence := "SuiteWard suggests protecting the runner files of this pull request by adding their patterns to the `runner` list. Committing the suggestion is a protected change that needs the owner's approval."
+	sentence := "SuiteWard suggests protecting the runner files of this pull request by adding their patterns to the `runner` list. Committing the suggestion changes the protected files, so it needs the owner's approval."
 	if choice == IgnoreChoice {
-		sentence = "SuiteWard suggests ignoring the runner files of this pull request by adding their paths to the `exclude` list. Committing the suggestion reduces the protected scope and needs the owner's approval."
+		sentence = "SuiteWard suggests ignoring the runner files of this pull request by adding their paths to the `exclude` list. Committing the suggestion stops protecting those files, so it needs the owner's approval."
 	}
 	return paragraphs(sentence, fence("suggestion", content+"\n"))
 }

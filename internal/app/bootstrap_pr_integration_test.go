@@ -254,7 +254,7 @@ func (f *prFlow) carrierSummary() {
 	f.step()
 	f.pass()
 	f.wantCheck(5, checks.InProgress, "approval-missing", "P1-R1", "")
-	f.wantComment(5, "bootstrap-summary:1001:P1-R1", "exact head of this pull request", "lets this pull request merge", cjHead2)
+	f.wantComment(5, "bootstrap-summary:1001:P1-R1", "exact commit of this pull request", "lets this pull request merge", cjHead2)
 	f.wantComments(5, 1, "")
 	f.wantCheck(7, checks.InProgress, "bootstrap-awaiting", "", ": it carries no proposal")
 	f.wantComment(7, "bootstrap-notice:1001:7", "/suiteward propose", "/suiteward skip <code>")
@@ -292,7 +292,7 @@ func (f *prFlow) merged() {
 		t.Fatalf("merge outcomes %q, want the promotion of V1", got)
 	}
 	f.pass()
-	f.wantComment(5, "merge:1001:5", "V1", "first canonical version", mgSHA5, "checked the approval and the integrity of the protected files at that commit.")
+	f.wantComment(5, "merge:1001:5", "V1", "first approved version", mgSHA5, "checked the approval and the integrity of the protected files at that commit.")
 	f.wantComments(5, 2, "")
 	if _, err := merges.run(t.Context()); err != nil { // a replay decides and posts nothing again
 		t.Fatalf("merges replay: %v", err)

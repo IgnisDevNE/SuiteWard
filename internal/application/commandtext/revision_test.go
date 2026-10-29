@@ -25,7 +25,7 @@ func revisionText(t *testing.T, r commandtext.Revision) string {
 func TestRevisionCommentStatesTheChangeTheBaseAndHowToApprove(t *testing.T) {
 	body := revisionText(t, revision(commandtext.Isolated))
 	for _, w := range []string{
-		"P7-R3", "canonical", "V4", "Installation tier: `isolated`",
+		"P7-R3", "approved version", "V4", "Installation tier: `isolated`",
 		"tests/new_test.go", "tests/a.go\ntests/b.go", "tests/old.go",
 		"```\n/suiteward approve P7-R3 <code>\n```", "`<code>`", "This supersedes `P7-R2`.",
 	} {

@@ -216,14 +216,14 @@ func notInGroup(o Outcome) string {
 // consentAck renders the outcomes of an approval or a revocation, which state the approval requirement of the reference.
 func consentAck(a Ack) string {
 	ref, who := mustReference(a), "@"+a.Owner
-	// Only the approval requirement is stated: other requirements may still block promotion.
-	requirement := "The approval requirement for " + ref + " is not met."
+	// Only whether the approval is there is stated: other requirements may still block the merge.
+	requirement := ref + " does not have the approval it needs."
 	if a.Eligible {
-		requirement = "The approval requirement for " + ref + " is met."
+		requirement = ref + " has the approval it needs."
 	}
 	switch a.Outcome {
 	case Approved:
-		status := "The approval requirement for " + ref + " is not met yet."
+		status := ref + " does not have the approval it needs yet."
 		if a.Eligible {
 			status = requirement
 		}
@@ -235,7 +235,7 @@ func consentAck(a Ack) string {
 	case Revoked:
 		status := requirement
 		if a.Eligible {
-			status = "The approval requirement for " + ref + " is still met through other valid approval."
+			status = ref + " still has the approval it needs, from another valid approval."
 		}
 		return paragraphs(
 			"Revocation recorded for "+ref+" by "+who+".\nYour approval no longer counts. "+status,
@@ -245,21 +245,21 @@ func consentAck(a Ack) string {
 	case RevokedAfterPromotion:
 		// Says nothing about an approval being withdrawn: the owner may have had none active.
 		return paragraphs(
-			"Revoke command for "+ref+" by "+who+" was recorded.\n"+
-				ref+" is already promoted, so the canonical version remains unchanged; your revocation does not undo the promotion.",
-			"Reversing it needs "+rollback,
+			"Your revoke command for "+ref+" ("+who+") was recorded, but it changes nothing.\n"+
+				ref+" is already merged and is part of the approved version, so revoking cannot undo it.",
+			reverseText,
 		)
 	case ApprovedAfterPromotion:
 		return paragraphs(
 			"Approval recorded for "+ref+" by "+who+".\n"+
-				ref+" is already promoted, so the canonical version remains unchanged. No further action is needed.",
-			"Reversing the promotion needs "+rollback,
+				ref+" is already merged and is part of the approved version, so nothing changes. There is nothing more to do.",
+			reverseText,
 		)
 	case NoActiveApproval:
-		return paragraphs("No active approval by " + who + " for " + ref + " to withdraw; nothing changed.\n" + requirement + "\nNo action is needed.")
+		return paragraphs(who + " has no active approval of " + ref + ", so there is nothing to withdraw. Nothing changed.\n" + requirement + "\nThere is nothing to do.")
 	case Rejected:
 		reason, next := rejectionText(a.Rejection, ref, who)
-		return paragraphs("Command for " + ref + " rejected by policy: " + reason + ". Nothing changed.\n" + requirement + "\n" + next)
+		return paragraphs("Your command for " + ref + " was refused: " + reason + ". Nothing changed.\n" + requirement + "\n" + next)
 	}
 	return notInGroup(a.Outcome)
 }
@@ -267,7 +267,7 @@ func consentAck(a Ack) string {
 // wrongCode finishes the first sentence of the acknowledgment of a wrong code: the command had no effect, but the check fails for
 // it (D-COMMANDS, "A wrong command has no effect"). code names the code the next command needs.
 func wrongCode(first, code string) string {
-	return first + " The `SuiteWard / Contract` check may now show as failed until you comment a corrected command with " + code + ", or push."
+	return first + " This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with " + code + ", or push a new commit."
 }
 
 // commandAck renders the outcomes of a command that could not be processed as one.
@@ -280,27 +280,27 @@ func commandAck(a Ack) string {
 	}
 	switch a.Outcome {
 	case InvalidCode:
-		return paragraphs(wrongCode("The confirmation code"+of+" was not accepted, so the command had no effect.", "a current code"))
+		return paragraphs(wrongCode("The code"+of+" was not accepted, so the command did nothing.", "a current code from your authenticator app"))
 	case ReplayedCode:
-		return paragraphs(wrongCode("The confirmation code"+of+" was already used, so the command had no effect; each code works only once.", "a new code") +
+		return paragraphs(wrongCode("The code"+of+" was already used, so the command did nothing. Each code works only once.", "a new code") +
 			"\nWait for your authenticator app to show a new code first.")
 	case NoSuite:
 		subject := "Your command"
 		if ref != "" {
-			subject = ref
+			subject += " for " + ref
 		}
-		return paragraphs(subject + " was not processed: this repository's SuiteWard bootstrap is still pending, so nothing changed.\n" +
+		return paragraphs(subject + " was not processed, because SuiteWard has not finished setting up this repository. Nothing changed.\n" +
 			"Wait for SuiteWard to finish setting up this repository, then comment `/suiteward propose` on the pull request that should carry the first contract.")
 	case MalformedCommand:
 		return paragraphs("Your `/suiteward` command was not understood: " + malformedText(a.Malformed) + ". Nothing changed.\n" +
-			"Comment again in the form `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>`, `/suiteward suggest`, " +
-			"`/suiteward mode <fix|feature|refactor>` or `/suiteward unblock <code>`, " +
-			"with a current code from your authenticator app where the command takes one.")
+			"Comment it again in one of these forms: `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>`, `/suiteward suggest`, " +
+			"`/suiteward mode <fix|feature|refactor>` or `/suiteward unblock <code>`. " +
+			"`<ref>` is the reference in SuiteWard's comment about the proposal. Where a command takes a code, use the current six-digit code from your authenticator app.")
 	case OtherPullRequest:
-		return paragraphs(ref + " belongs to another pull request; comment the command on that pull request. Nothing changed.")
+		return paragraphs(ref + " belongs to another pull request. Comment your command on that pull request instead. Nothing changed.")
 	case EditedFirst:
-		return paragraphs("Your comment was edited before SuiteWard first read it, so it was not processed as a command; nothing changed.\n" +
-			"Post the command as a new comment with a current code. Edits to a command comment are never processed.")
+		return paragraphs("SuiteWard does not treat this comment as a command, because it was edited before SuiteWard first read it. Nothing changed.\n" +
+			"Post the command again as a new comment, with a current code. SuiteWard never acts on an edited command.")
 	}
 	return notInGroup(a.Outcome)
 }
@@ -310,23 +310,23 @@ func bootstrapAck(a Ack) string {
 	ref, who := mustReference(a), "@"+a.Owner
 	switch a.Outcome {
 	case AlreadyProposed:
-		return paragraphs("The baseline was already proposed as "+ref+". Nothing changed.",
-			"Review the bootstrap summary SuiteWard posted for "+ref+" on this pull request, and approve it as described there.")
+		return paragraphs("The first contract was already proposed as "+ref+". Nothing changed.",
+			"Review the summary that SuiteWard posted for "+ref+" on this pull request, and approve it as that summary describes.")
 	case ProposeFailed:
-		return paragraphs("SuiteWard could not process your `/suiteward propose` command after several attempts, so it proposed nothing. Nothing changed.\n" +
-			"Please comment `/suiteward propose` again.")
+		return paragraphs("SuiteWard tried several times and could not process your `/suiteward propose` command, so it proposed nothing. Nothing changed.\n" +
+			"Comment `/suiteward propose` again.")
 	case Skipped:
 		return paragraphs("Skip recorded for this pull request by "+who+".\n"+
-			"This pull request may merge before the first contract: nothing was assessed. This is not a contract assessment, and no canonical contract exists yet.",
+			"This pull request can merge before the first contract exists. SuiteWard has not checked it against any contract, because none is approved yet.",
 			"To start the first contract instead, comment `/suiteward propose` on the pull request that should carry it.")
 	case NothingUncovered:
 		subject, _ := baseNames(a.Base)
-		return paragraphs("`/suiteward suggest`: every test-like path in this pull request's head is covered by " + subject + " already, so there is nothing to suggest. Nothing changed.\n" +
+		return paragraphs("`/suiteward suggest`: " + subject + " already covers every test-like file of this pull request, so there is nothing to suggest. Nothing changed.\n" +
 			"This answer is not an approval.")
 	case BootstrapPromoted:
-		return paragraphs(fmt.Sprintf("Bootstrap complete: %s, approved by %s, is now canonical version V%d.\n", ref, who, a.Version) +
-			"SuiteWard recorded an integrity assessment of the approved files at the pinned origin commit.\n" +
-			"Later changes to the protected files need a new proposal and your approval.")
+		return paragraphs(fmt.Sprintf("Setup is complete: %s, approved by %s, is now V%d, the approved version of the contract.\n", ref, who, a.Version) +
+			"SuiteWard checked the approved files at the exact commit that was approved, and recorded the result.\n" +
+			"From now on, a change to the protected files needs a new proposal and your approval.")
 	}
 	return notInGroup(a.Outcome)
 }
@@ -342,19 +342,19 @@ func rejectionText(r Rejection, ref, who string) (reason, next string) {
 	const latest = "Review the latest revision of this proposal and approve that one."
 	switch r {
 	case Unauthorized:
-		return who + " is not authorized for this action under the project's policy",
-			"Only the enrolled owner can approve or revoke; check the owner set up on this SuiteWard instance."
+		return who + " is not allowed to do this",
+			"Only the owner enrolled in SuiteWard can approve or revoke. Check which GitHub account is enrolled as the owner."
 	case UnknownRevision:
-		return ref + " is not a revision of this project",
-			"Check the reference in the latest SuiteWard summary and comment again with a new code."
+		return ref + " is not a revision that SuiteWard knows",
+			"Check the reference in the latest SuiteWard comment, then comment the command again with a new code."
 	case SupersededRevision:
-		return ref + " has been superseded by a newer revision", latest
+		return "a newer revision has replaced " + ref, latest
 	case ContextMismatch:
-		return ref + " no longer matches its source or integration target", latest
+		return ref + " no longer matches its pull request or the branch it merges into", latest
 	case PolicyMismatch:
-		return "the project's policy changed after " + ref + " was proposed", latest
+		return "the approval rules of this project changed after " + ref + " was proposed", latest
 	case ObsoleteCommand:
-		return "a later command for " + ref + " was already processed",
+		return "SuiteWard already processed a later command for " + ref,
 			"Comment again with a new code if you still want this change."
 	}
 	panic(fmt.Sprintf("commandtext: unknown rejection %d", r))
@@ -363,21 +363,21 @@ func rejectionText(r Rejection, ref, who string) (reason, next string) {
 func malformedText(r Reason) string {
 	switch r {
 	case UnknownVerb:
-		return "the action must be `approve`, `revoke`, `propose`, `skip`, `suggest`, `mode` or `unblock`"
+		return "the word after `/suiteward` must be `approve`, `revoke`, `propose`, `skip`, `suggest`, `mode` or `unblock`"
 	case MissingReference:
 		return "the proposal reference is missing"
 	case BadReference:
 		return "the reference must have the form `P<n>-R<m>`"
 	case MissingCode:
-		return "the 6-digit confirmation code is missing"
+		return "the six-digit code from your authenticator app is missing"
 	case BadCode:
-		return "the confirmation code must be exactly 6 digits"
+		return "the code must be exactly six digits"
 	case ExtraText:
-		return "nothing may follow the end of the command"
+		return "there is extra text after the command"
 	case MissingMode:
-		return "the mode is missing, it must be `fix`, `feature` or `refactor`"
+		return "the mode (the kind of change) is missing: it must be `fix`, `feature` or `refactor`"
 	case BadMode:
-		return "the mode must be `fix`, `feature` or `refactor`"
+		return "the mode (the kind of change) must be `fix`, `feature` or `refactor`"
 	}
 	panic(fmt.Sprintf("commandtext: unknown malformed reason %d", r))
 }
@@ -405,19 +405,19 @@ func BootstrapSummary(s Summary) string {
 	if unlisted := s.Protected - len(s.Paths); unlisted > 0 {
 		count += fmt.Sprintf(" (%d listed below; %d more are not listed)", len(s.Paths), unlisted)
 	}
-	intro := "SuiteWard proposes this repository's protected baseline as " + ref + ". Nothing is canonical yet."
-	origin := "- Origin commit: `" + s.Origin + "` on branch " + codeSpan(display(s.Branch)) + " (pinned: it does not move if the branch advances)"
-	review := "Review the inventory and the scope. To approve this exact baseline, comment:"
-	after := "Approving " + ref + " does not approve the other changes in this PR."
+	intro := "SuiteWard proposes the protected files of this repository as its first contract, " + ref + ". Nothing is approved yet."
+	origin := "- Commit: `" + s.Origin + "` on branch " + codeSpan(display(s.Branch)) + " (this exact commit is proposed, even if the branch moves on)"
+	review := "Review the inventory and the rules. To approve this exact proposal, comment:"
+	after := "Approving " + ref + " does not approve the other changes in this pull request."
 	if s.Source == SourcePull {
-		intro = "SuiteWard proposes the protected files of this pull request, at its exact head, as this repository's first baseline " + ref + ". Nothing is canonical yet."
-		origin = "- Head commit: `" + s.Origin + "` (the exact head of this pull request)"
-		review = "Review the inventory and the scope. To approve this exact head, comment:"
-		after = "Approving " + ref + " lets this pull request merge. SuiteWard promotes V1 only from the exact merge commit after the merge. " +
+		intro = "SuiteWard proposes the protected files of this pull request, at its exact commit, as this repository's first contract, " + ref + ". Nothing is approved yet."
+		origin = "- Commit: `" + s.Origin + "` (the exact commit of this pull request that is proposed)"
+		review = "Review the inventory and the rules. To approve this exact commit, comment:"
+		after = "Approving " + ref + " lets this pull request merge. After the merge, SuiteWard makes V1 the approved version, using the exact merge commit. " +
 			"A later push that changes the protected files needs a new approval."
 	}
 	parts := []string{
-		"**SuiteWard bootstrap proposal " + ref + "**",
+		"**SuiteWard proposes the first contract: " + ref + "**",
 		intro,
 		origin + "\n" + count + "\n" + tierLine(s.Tier),
 	}
@@ -483,14 +483,14 @@ func fenced(block string) string { return fence("", block) }
 // mixedWarning says that files may hold test settings among other content and are not suggested. They are listed only
 // in text: a mixed file never goes into a declaration.
 func mixedWarning(mixed []string) string {
-	return "These files may hold test settings among other content, so SuiteWard does not suggest them: protecting one would put every change to it, " +
+	return "These files may hold test settings among other content, so SuiteWard does not suggest them. Protecting one would put every change to it, " +
 		"even a dependency update, behind an approval. Decide for yourself:\n\n" + fencedLines(mixed)
 }
 
 // submodulesWarning says that the submodules a suggested pattern reaches are outside the scope: what is inside them is not
 // protected, because SuiteWard never reads a submodule.
 func submodulesWarning(submodules []string) string {
-	return "A suggested pattern reaches these submodules, but their contents are not protected: SuiteWard never reads a submodule, " +
+	return "A suggested pattern reaches these submodules, but their contents are not protected. SuiteWard never reads a submodule, " +
 		"so a change inside one needs no approval:\n\n" + fencedLines(submodules)
 }
 
@@ -645,9 +645,8 @@ func HasMarker(body, instance, key string) bool {
 	return strings.HasSuffix(strings.TrimRight(body, " \t\r\n"), Marker(instance, key))
 }
 
-// rollback is how a promotion is reversed (ADR 0018): never by a revocation.
-const rollback = "a separately approved rollback (corrective) proposal: a new PR with its own exact approval, " +
-	"integration and promotion of a new version, with the history kept."
+// reverseText is how a merged contract change is reversed (ADR 0018): never by a revocation.
+const reverseText = "To reverse it, open a new pull request that restores the earlier files. It needs its own approval and becomes a new version. The history is kept."
 
 // Revision is what the comment of a new change-proposal revision states. Previous is the reference this revision
 // supersedes (an earlier revision of the same proposal), empty for the first. Each list shows at most 20 entries
@@ -699,8 +698,8 @@ func RevisionComment(r Revision) string {
 	ref := Reference(r.Proposal, r.Revision)
 	parts := []string{
 		"**SuiteWard contract change " + ref + "**",
-		fmt.Sprintf("This pull request changes the protected files against the canonical contract V%d. SuiteWard proposes the change as %s for the owner's approval.", r.Canonical, ref),
-		"- Base canonical version: V" + strconv.Itoa(r.Canonical) + "\n" + tierLine(r.Tier),
+		fmt.Sprintf("This pull request changes the protected files, compared with V%d, the approved version of the contract. SuiteWard proposes the change as %s for the owner's approval.", r.Canonical, ref),
+		"- Approved version it changes: V" + strconv.Itoa(r.Canonical) + "\n" + tierLine(r.Tier),
 	}
 	parts = append(parts, changesSection(r)...)
 	if r.Reduced {
@@ -725,7 +724,7 @@ func receiptLine(r Revision) string {
 	if r.PullURL != "" {
 		results = "Results: [Pull request page](" + r.PullURL + ")."
 	}
-	return "Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. " +
+	return "Receipt: SuiteWard runs the tests this revision adds or changes, on this commit and on the code before the change, and shows what it saw. " +
 		"It is evidence, not a verdict. " + results + " The `SuiteWard / Receipt` check carries the counts."
 }
 
@@ -740,7 +739,7 @@ func approvalParts(r Revision, ref string) []string {
 		case "before-approval":
 			parts = append(parts, "Approving waits until the receipt is complete.")
 		case "required":
-			lead, command = "This comment is a record, not an approval. Approving needs a mode and a receipt that meets it:", modeApproveCommand(ref)
+			lead, command = "This comment is a record, not an approval. To approve, name a mode (the kind of change) that the receipt meets, and comment:", modeApproveCommand(ref)
 		}
 	}
 	return append(parts, lead, command)
@@ -823,7 +822,8 @@ func reductionParts(r Revision) []string {
 		case isExclude:
 			excludes = append(excludes, p)
 		case ExecutionEntry(entry):
-			levels = append(levels, strings.TrimPrefix(entry, "execution "))
+			level := strings.TrimPrefix(entry, "execution ")
+			levels = append(levels, strings.Replace(level, "canonical:", "approved tests:", 1))
 		default:
 			rules = append(rules, strings.TrimPrefix(entry, "rule "))
 		}
@@ -831,13 +831,13 @@ func reductionParts(r Revision) []string {
 	lead := "This revision reduces the protected scope."
 	switch {
 	case r.lowersPolicyOnly():
-		lead = "This revision lowers the execution policy."
+		lead = "This revision lowers the test requirements."
 	case len(levels) > 0 || (r.ReducedOmitted && r.LowersPolicy):
-		lead = "This revision reduces the protected scope and lowers the execution policy."
+		lead = "This revision reduces the protected scope and lowers the test requirements."
 	}
 	parts := []string{"**" + lead + "** Review it carefully before approving."}
 	if r.ReducedOmitted {
-		omitted := "The detail of this reduction was omitted because it did not fit in this comment. Compare `.suiteward.yml` with the canonical one before approving."
+		omitted := "The details of this reduction do not fit in this comment, so they are left out. Before approving, compare `.suiteward.yml` with the one in the approved version."
 		if r.ReducedPathsTotal > 0 {
 			omitted += fmt.Sprintf(" Paths no longer covered: %d.", r.ReducedPathsTotal)
 		}
@@ -853,7 +853,7 @@ func reductionParts(r Revision) []string {
 		parts = append(parts, listingAndMore("Paths that the scope no longer covers", r.ReducedPaths, r.ReducedPathsTotal))
 	}
 	if len(levels) > 0 {
-		parts = append(parts, listing("Execution policy lowered", levels, len(levels)))
+		parts = append(parts, listing("Test requirements lowered", levels, len(levels)))
 	}
 	return parts
 }
@@ -861,12 +861,12 @@ func reductionParts(r Revision) []string {
 // BootstrapNotice renders the comment that tells the owner how to start or skip the bootstrap.
 func BootstrapNotice() string {
 	return paragraphs(
-		"SuiteWard has no canonical contract yet. This pull request is not assessed against a contract.",
+		"SuiteWard has no approved contract yet. This pull request is not checked against a contract.",
 		"To start the first contract, the owner comments `/suiteward propose` on the pull request that should carry the first contract. "+
-			"SuiteWard then proposes the protected files of the default branch when it has a `.suiteward.yml`, otherwise those of that pull request, for the owner's approval.",
+			"SuiteWard then proposes the protected files of the default branch if it has a `.suiteward.yml`, and otherwise those of that pull request. The owner approves the proposal.",
 		"To see a suggested `.suiteward.yml` for this pull request first, the owner comments `/suiteward suggest`. It grants nothing and needs no code.",
 		"To let this pull request merge before the first contract, the owner comments `/suiteward skip <code>` with a current code from the authenticator app. "+
-			"Nothing is assessed then.",
+			"SuiteWard then checks nothing for this pull request.",
 	)
 }
 
@@ -875,13 +875,13 @@ func BootstrapNotice() string {
 func BootstrapCancelled(proposal, revision int) string {
 	ref := Reference(proposal, revision)
 	return paragraphs(
-		"The bootstrap proposal "+ref+" was cancelled because the protected files changed after SuiteWard proposed it. SuiteWard does not propose again by itself.",
+		"The proposal "+ref+" for the first contract was cancelled, because the protected files changed after SuiteWard proposed it. SuiteWard does not propose again by itself.",
 		"To propose the current files, comment `/suiteward propose` again.",
 	)
 }
 
 // commitNote ends every sentence that sends the owner to GitHub's editor.
-const commitNote = "SuiteWard never commits it for you: the commit is yours."
+const commitNote = "SuiteWard does not make the commit for you. You make it."
 
 // editorStep is the paragraph that sends the owner to GitHub's editor: lead says what to change and where, link is the Markdown link.
 func editorStep(lead, link string) string {
@@ -893,16 +893,16 @@ func pasteStep(repo, branch, action string) string {
 	return "To change `.suiteward.yml` on this pull request's branch, " + editorLinkText(repo, branch) + " and " + action + ". " + commitNote
 }
 
-// pasteAction is what the owner does in the editor: paste a declaration that the comment shows, add the patterns that it lists, or
-// either, when it shows a declaration for one choice and patterns for the other.
+// pasteAction is what the owner does in the editor: paste the file that the comment shows, add the patterns that it lists, or
+// either, when it shows a file for one choice and patterns for the other.
 func pasteAction(declaration, patterns bool) string {
 	switch {
 	case declaration && patterns:
-		return "paste a declaration or add the patterns to its lists"
+		return "paste the suggested file or add the patterns to its lists"
 	case patterns:
 		return "add the patterns to its lists"
 	}
-	return "paste the declaration"
+	return "paste the suggested file"
 }
 
 // refusalStep is the paragraph that links to GitHub's editor for .suiteward.yml on the branch of the file a refusal asks to fix, led by lead; none
@@ -934,35 +934,35 @@ type refusalSet struct {
 }
 
 const (
-	forkReason    = "this pull request comes from a fork, and pull requests from forks are not supported yet"
+	forkReason    = "this pull request comes from a fork, and SuiteWard does not support pull requests from forks yet"
 	notOpenReason = "this pull request is no longer open"
 )
 
 // refusals is the one table of the refusals that an outcome may carry: ValidateAck reads which fit, and Acknowledge their text.
 var refusals = map[Outcome]refusalSet{
 	ProposeRefused: {"/suiteward propose", map[Refusal]refusalText{
-		CanonicalPresent: {"this repository already has a canonical contract, so there is no first contract to propose",
+		CanonicalPresent: {"this repository already has an approved contract, so there is no first contract to propose",
 			"Changes to the protected files are proposed, for your approval, on the pull request that makes them.", ""},
 		Fork:    {forkReason, "Open the pull request from a branch of this repository, then comment `/suiteward propose` there.", ""},
 		NotOpen: {notOpenReason, "Comment `/suiteward propose` on an open pull request into the default branch.", ""},
-		BaseNotTarget: {"this pull request does not target the default branch, so its merge could never become the first contract",
+		BaseNotTarget: {"this pull request does not merge into the default branch, so it could never become the first contract",
 			"Open the pull request into the default branch, then comment `/suiteward propose` there.", ""},
-		EmptyInventory: {"no file matches the include rules of `.suiteward.yml`, so there is nothing to protect",
+		EmptyInventory: {"no file matches the `include` rules of `.suiteward.yml`, so there is nothing to protect",
 			"Fix the `include` rules so they match the files you want protected, then comment `/suiteward propose` again.", ""},
-		InvalidSource: {"SuiteWard could not read the files to protect as a contract: the `.suiteward.yml` declaration is invalid, a protected path is a link, or the repository tree is too large",
-			"Fix the declaration or the files, then comment `/suiteward propose` again.", "If the declaration is the problem, to change"},
+		InvalidSource: {"SuiteWard could not read the files to protect (the `.suiteward.yml` file is invalid, a protected path is a link, or the repository is too large)",
+			"Fix the `.suiteward.yml` file or the files, then comment `/suiteward propose` again.", "If the file is the problem, to change"},
 	}},
 	SkipRefused: {"/suiteward skip", map[Refusal]refusalText{
-		CanonicalPresent: {"this repository already has a canonical contract, so there is nothing to skip", "Pull requests are assessed against that contract.", ""},
+		CanonicalPresent: {"this repository already has an approved contract, so there is nothing to skip", "SuiteWard checks pull requests against that contract.", ""},
 		Fork:             {forkReason, "Open the pull request from a branch of this repository.", ""},
-		Carrier: {"this pull request carries the first contract proposal",
-			"Review the bootstrap summary on this pull request, or comment `/suiteward propose` on another pull request to move the first contract there.", ""},
+		Carrier: {"this pull request carries the proposal of the first contract",
+			"Review the summary of the first contract on this pull request, or comment `/suiteward propose` on another pull request to move the first contract there.", ""},
 	}},
 	SuggestRefused: {"/suiteward suggest", map[Refusal]refusalText{
 		Fork:    {forkReason, "Open the pull request from a branch of this repository, then comment `/suiteward suggest` there.", ""},
 		NotOpen: {notOpenReason, "Comment `/suiteward suggest` on an open pull request.", ""},
-		InvalidSource: {"SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest a declaration",
-			"Fix the files or the declaration, then comment `/suiteward suggest` again.", ""},
+		InvalidSource: {"SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest changes to it",
+			"Fix the files or the `.suiteward.yml` file, then comment `/suiteward suggest` again.", ""},
 	}},
 	ModeRefused: {"/suiteward mode", map[Refusal]refusalText{
 		Fork:    {forkReason, "Open the pull request from a branch of this repository, then comment `/suiteward mode <fix|feature|refactor>` there.", ""},
@@ -972,9 +972,9 @@ var refusals = map[Outcome]refusalSet{
 	UnblockRefused: {"/suiteward unblock", map[Refusal]refusalText{
 		Fork:    {forkReason, "Open the pull request from a branch of this repository. " + codeUsedAgain, ""},
 		NotOpen: {notOpenReason, "Comment `/suiteward unblock <code>` on an open pull request. " + codeUsedAgain, ""},
-		NotUnavailable: {"no run of this head is unavailable, so there is nothing to unblock",
-			"An unblock lifts a run that is unavailable, or that waits for a test runner that is not responding. " +
-				"It does not lift a run that is failing or complete, or that waits for GitHub or for a test runner that responds. " + codeUsedAgain, ""},
+		NotUnavailable: {"none of the tests of this commit failed to run, so there is nothing to unblock",
+			"An unblock applies only to tests that could not run, or that wait for a test runner that is not responding. " +
+				"It does nothing for tests that have finished, whether they pass or fail, or that wait for GitHub or for a test runner that is responding. " + codeUsedAgain, ""},
 		// RunnerResponding is told in the contract's own words, not in the template of refused (see refusal): reason is the whole first paragraph.
 		RunnerResponding: {"The test runner is responding, so the tests of this commit will run. Nothing was unblocked.", codeUsedAgain, ""},
 	}},
@@ -992,7 +992,7 @@ func refusal(a Ack) string {
 	}
 	if a.Outcome == SuggestRefused && a.Refusal == InvalidSource && a.Base != 0 {
 		_, file := baseNames(a.Base)
-		text = refusalText{file + " is not a valid declaration", "Fix the declaration, then comment `/suiteward suggest` again.", "To change"}
+		text = refusalText{file + " is not valid", "Fix it, then comment `/suiteward suggest` again.", "To change"}
 	}
 	return refused(set.command, text.reason, text.next+refusalStep(a, text.edit))
 }
@@ -1031,20 +1031,20 @@ func SuggestDeclaration(a DeclarationSuggestion) string {
 	must(ValidateSuggestion(a))
 	usable, runner := suggestableOnly(a.Patterns), suggestableOnly(a.Runner)
 	left := len(a.Patterns) + len(a.Runner) - len(usable) - len(runner)
-	intro := "SuiteWard suggests this declaration, built from the test-like paths of this repository. Review it and change it as needed:"
+	intro := "SuiteWard suggests this `.suiteward.yml`, built from the test-like files of this repository. Review it and change it as needed:"
 	if a.Suggest {
-		intro = "SuiteWard suggests this declaration for this pull request, built from the test-like paths of this repository. Review it and change it as needed:"
+		intro = "SuiteWard suggests this `.suiteward.yml` for this pull request, built from the test-like files of this repository. Review it and change it as needed:"
 	}
 	if len(usable)+len(runner) == 0 {
 		usable = []string{"path/to/tests/**"}
-		intro = "SuiteWard found no test-like path to suggest, so this is a minimal file. Replace the placeholder with patterns that match your tests:"
+		intro = "SuiteWard found no test-like file to suggest, so this is a minimal file. Replace the placeholder with patterns that match your tests:"
 	}
 	declaration := "version: 1\n" + yamlList("include", usable) + yamlList("runner", runner)
-	first := "`/suiteward propose` was not processed: SuiteWard found no `.suiteward.yml` on the default branch or in the head of this pull request, " +
-		"so it cannot tell which files to protect and proposed nothing. Nothing changed."
+	first := "`/suiteward propose` was not processed: SuiteWard found no `.suiteward.yml` file (the file that lists the files to protect) on the default branch or in this pull request, " +
+		"so it cannot tell which files to protect. It proposed nothing. Nothing changed."
 	last := "After the file is on this branch, comment `/suiteward propose` again."
 	if a.Suggest { // nothing was refused, and no declaration exists
-		first = "`/suiteward suggest`: SuiteWard found no `.suiteward.yml` on the default branch or in the head of this pull request, so no files are protected yet. Nothing changed."
+		first = "`/suiteward suggest`: SuiteWard found no `.suiteward.yml` file (the file that lists the files to protect) on the default branch or in this pull request, so no files are protected yet. Nothing changed."
 		last = "After the file is on this branch, comment `/suiteward propose` to start the first contract."
 	}
 	parts := []string{first, intro + "\n\n" + fenced(declaration)}

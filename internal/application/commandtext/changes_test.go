@@ -46,8 +46,8 @@ func revisionWith(t *testing.T, tier commandtext.Tier, changes ...report.FileCha
 }
 
 const smallChangeComment = "**SuiteWard contract change P7-R3**\n\n" +
-	"This pull request changes the protected files against the canonical contract V4. SuiteWard proposes the change as P7-R3 for the owner's approval.\n\n" +
-	"- Base canonical version: V4\n- Installation tier: `isolated`\n\n" +
+	"This pull request changes the protected files, compared with V4, the approved version of the contract. SuiteWard proposes the change as P7-R3 for the owner's approval.\n\n" +
+	"- Approved version it changes: V4\n- Installation tier: `isolated`\n\n" +
 	"**What changed in the protected files.** SuiteWard counts the changed lines. It also points out marker lines, which are lines to look at, such as a removed assertion or an added skip. It does not judge them.\n\n" +
 	"- Files: 1 added, 1 modified, 0 removed\n- Lines: +5/−1 (counted in 2 of 2 files)\n- Marker lines seen: 1 removed assertion line, 1 added skip line\n\n" +
 	"Changed files, most changed lines first:\n\n```\n+2/−1  modified  tests/a_test.go\n+3/−0  added     tests/new_test.go\n```\n\n" +

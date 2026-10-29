@@ -27,7 +27,7 @@ func cmtInvalidPayload(kind string, change func(map[string]any)) json.RawMessage
 
 func TestCommentPublisherRendersTheInvalidSourceOfEachKind(t *testing.T) {
 	for _, tc := range []struct{ kind, says string }{
-		{"declaration", "not a valid declaration"},
+		{"declaration", "is not valid"},
 		{"link", "```\nspec_link\n```"},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
@@ -41,7 +41,7 @@ func TestCommentPublisherRendersTheInvalidSourceOfEachKind(t *testing.T) {
 			if len(posts) != 1 || posts[0].repo != cmtRepo || posts[0].number != cmtPull {
 				t.Fatalf("posts %v, want one on %s#%d", posts, cmtRepo, cmtPull)
 			}
-			if !strings.Contains(posts[0].body, tc.says) || !strings.Contains(posts[0].body, "stays in force") || !commandtext.HasMarker(posts[0].body, cmtInstance, cmtInvalidKey) {
+			if !strings.Contains(posts[0].body, tc.says) || !strings.Contains(posts[0].body, "stays as it is") || !commandtext.HasMarker(posts[0].body, cmtInstance, cmtInvalidKey) {
 				t.Fatalf("body lacks %q or the canonical's standing or its marker:\n%s", tc.says, posts[0].body)
 			}
 		})

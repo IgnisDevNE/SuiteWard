@@ -13,7 +13,7 @@ import (
 const (
 	receiptURL = "http://127.0.0.1:8080/receipts/acme/widgets/7" // the old page, which the revision comment no longer links
 
-	receiptLead = "Receipt: SuiteWard runs the tests this revision adds or changes, on the head and on the code before the change, and shows what it saw. It is evidence, not a verdict. "
+	receiptLead = "Receipt: SuiteWard runs the tests this revision adds or changes, on this commit and on the code before the change, and shows what it saw. It is evidence, not a verdict. "
 	receiptTail = "The `SuiteWard / Receipt` check carries the counts."
 )
 
@@ -84,7 +84,7 @@ func TestRevisionCommentOfABeforeApprovalReceiptSaysThatApprovingWaitsForTheRece
 // Under required the approve needs a mode: the copyable command has its placeholder, in place of the usual one.
 func TestRevisionCommentOfARequiredReceiptOffersTheCommandWithAModePlaceholder(t *testing.T) {
 	body := revisionText(t, receiptRevision(t, "required"))
-	needs := strings.Index(body, "Approving needs a mode and a receipt that meets it:")
+	needs := strings.Index(body, "To approve, name a mode (the kind of change) that the receipt meets, and comment:")
 	command := strings.Index(body, "```\n/suiteward approve P7-R3 <fix|feature|refactor> <code>\n```")
 	if needs < 0 || command <= needs {
 		t.Errorf("the comment does not offer the command with the mode, after saying what approving needs:\n%s", body)
@@ -140,9 +140,9 @@ func TestRevisionCommentOfAnOmittedReductionSaysWhatItLowers(t *testing.T) {
 		r.Reduced, r.ReducedOmitted, r.LowersPolicy, r.ReducesScope = true, true, policy, scope
 		return r
 	}
-	const notice = "The detail of this reduction was omitted because it did not fit in this comment."
+	const notice = "The details of this reduction do not fit in this comment, so they are left out."
 	body := revisionText(t, omitted(true, false))
-	for _, want := range []string{"**This revision lowers the execution policy.**", notice, "- Files: 1 added, 0 modified, 2 removed\n"} {
+	for _, want := range []string{"**This revision lowers the test requirements.**", notice, "- Files: 1 added, 0 modified, 2 removed\n"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body lacks %q:\n%s", want, body)
 		}
@@ -152,7 +152,7 @@ func TestRevisionCommentOfAnOmittedReductionSaysWhatItLowers(t *testing.T) {
 	}
 
 	both := revisionText(t, omitted(true, true))
-	if !strings.Contains(both, "**This revision reduces the protected scope and lowers the execution policy.**") || !strings.Contains(both, notice) ||
+	if !strings.Contains(both, "**This revision reduces the protected scope and lowers the test requirements.**") || !strings.Contains(both, notice) ||
 		!strings.Contains(both, "2 removed from the protected files") {
 		t.Errorf("a revision that does both does not say so:\n%s", both)
 	}

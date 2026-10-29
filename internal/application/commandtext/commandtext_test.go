@@ -328,93 +328,93 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"approved and requirement met",
 			commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Source: source, Owner: owner, Eligible: true},
-			[]string{"Approval recorded for P42-R3 by @octo-owner.", "The approval requirement for P42-R3 is met.", "To withdraw this approval, comment:", "/suiteward revoke P42-R3 <code>", "`<code>`"},
-			[]string{"not met", "eligible", "separate comment", "confirms"},
+			[]string{"Approval recorded for P42-R3 by @octo-owner.", "P42-R3 has the approval it needs.", "To withdraw this approval, comment:", "/suiteward revoke P42-R3 <code>", "`<code>`"},
+			[]string{"not met", "does not have", "eligible", "separate comment", "confirms"},
 		},
 		{
 			"approved and requirement not yet met",
 			commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Source: source, Owner: owner},
-			[]string{"Approval recorded for P42-R3 by @octo-owner.", "The approval requirement for P42-R3 is not met yet.", "/suiteward revoke P42-R3 <code>"},
-			[]string{"is met", "eligible", "other requirements"},
+			[]string{"Approval recorded for P42-R3 by @octo-owner.", "P42-R3 does not have the approval it needs yet.", "/suiteward revoke P42-R3 <code>"},
+			[]string{"is met", "has the approval", "eligible", "other requirements"},
 		},
 		{
 			"revoked and still eligible",
 			commandtext.Ack{Outcome: commandtext.Revoked, Proposal: 7, Revision: 1, Source: source, Owner: owner, Eligible: true},
-			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "Your approval no longer counts.", "The approval requirement for P7-R1 is still met through other valid approval.", "/suiteward approve P7-R1 <code>"},
-			[]string{"is not met", "eligible", "/suiteward revoke"},
+			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "Your approval no longer counts.", "P7-R1 still has the approval it needs, from another valid approval.", "/suiteward approve P7-R1 <code>"},
+			[]string{"is not met", "does not have", "eligible", "/suiteward revoke"},
 		},
 		{
 			"revoked and no longer eligible",
 			commandtext.Ack{Outcome: commandtext.Revoked, Proposal: 7, Revision: 1, Source: source, Owner: owner},
-			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "Your approval no longer counts.", "The approval requirement for P7-R1 is not met."},
-			[]string{"still met", "eligible", "waits", "/suiteward revoke"},
+			[]string{"Revocation recorded for P7-R1 by @octo-owner.", "Your approval no longer counts.", "P7-R1 does not have the approval it needs."},
+			[]string{"still met", "still has", "eligible", "waits", "/suiteward revoke"},
 		},
 		{
 			"no active approval",
 			commandtext.Ack{Outcome: commandtext.NoActiveApproval, Proposal: 7, Revision: 2, Source: source, Owner: owner},
-			[]string{"No active approval by @octo-owner for P7-R2 to withdraw; nothing changed.", "The approval requirement for P7-R2 is not met."},
+			[]string{"@octo-owner has no active approval of P7-R2, so there is nothing to withdraw. Nothing changed.", "P7-R2 does not have the approval it needs.", "There is nothing to do."},
 			[]string{"eligible", "/suiteward revoke"},
 		},
 		{
 			"no active approval while eligible",
 			commandtext.Ack{Outcome: commandtext.NoActiveApproval, Proposal: 7, Revision: 2, Source: source, Owner: owner, Eligible: true},
-			[]string{"No active approval by @octo-owner for P7-R2 to withdraw; nothing changed.", "The approval requirement for P7-R2 is met."},
-			[]string{"not met", "eligible"},
+			[]string{"@octo-owner has no active approval of P7-R2, so there is nothing to withdraw. Nothing changed.", "P7-R2 has the approval it needs."},
+			[]string{"not met", "does not have", "eligible"},
 		},
 		{
 			"rejected unauthorized",
 			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.Unauthorized, Proposal: 3, Revision: 1, Source: source, Owner: owner},
-			[]string{"Command for P3-R1 rejected by policy: @octo-owner is not authorized for this action under the project's policy. Nothing changed.", "The approval requirement for P3-R1 is not met."},
+			[]string{"Your command for P3-R1 was refused: @octo-owner is not allowed to do this. Nothing changed.", "P3-R1 does not have the approval it needs.", "Only the owner enrolled in SuiteWard can approve or revoke."},
 			[]string{"eligible", "/suiteward revoke"},
 		},
 		{
 			"rejected unknown revision",
 			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.UnknownRevision, Proposal: 3, Revision: 9, Source: source, Owner: owner},
-			[]string{"Command for P3-R9 rejected by policy: P3-R9 is not a revision of this project. Nothing changed.", "Check the reference"},
+			[]string{"Your command for P3-R9 was refused: P3-R9 is not a revision that SuiteWard knows. Nothing changed.", "Check the reference"},
 			nil,
 		},
 		{
 			"rejected superseded revision",
 			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.SupersededRevision, Proposal: 3, Revision: 1, Source: source, Owner: owner},
-			[]string{"Command for P3-R1 rejected by policy: P3-R1 has been superseded by a newer revision. Nothing changed.", "latest revision"},
+			[]string{"Your command for P3-R1 was refused: a newer revision has replaced P3-R1. Nothing changed.", "latest revision"},
 			nil,
 		},
 		{
 			"rejected context mismatch",
 			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.ContextMismatch, Proposal: 3, Revision: 1, Source: source, Owner: owner},
-			[]string{"Command for P3-R1 rejected by policy: P3-R1 no longer matches its source or integration target. Nothing changed."},
+			[]string{"Your command for P3-R1 was refused: P3-R1 no longer matches its pull request or the branch it merges into. Nothing changed."},
 			nil,
 		},
 		{
 			"rejected policy mismatch",
 			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.PolicyMismatch, Proposal: 3, Revision: 1, Source: source, Owner: owner},
-			[]string{"Command for P3-R1 rejected by policy: the project's policy changed after P3-R1 was proposed. Nothing changed."},
+			[]string{"Your command for P3-R1 was refused: the approval rules of this project changed after P3-R1 was proposed. Nothing changed."},
 			nil,
 		},
 		{
 			"rejected obsolete command while eligible",
 			commandtext.Ack{Outcome: commandtext.Rejected, Rejection: commandtext.ObsoleteCommand, Proposal: 3, Revision: 1, Source: source, Owner: owner, Eligible: true},
-			[]string{"Command for P3-R1 rejected by policy: a later command for P3-R1 was already processed. Nothing changed.", "The approval requirement for P3-R1 is met."},
+			[]string{"Your command for P3-R1 was refused: SuiteWard already processed a later command for P3-R1. Nothing changed.", "P3-R1 has the approval it needs."},
 			nil,
 		},
 		{
 			"malformed unknown verb",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.UnknownVerb, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: the action must be `approve`, `revoke`, `propose`, `skip`, `suggest`, `mode` or `unblock`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`", "`/suiteward propose`", "`/suiteward skip <code>`", "`/suiteward suggest`",
+			[]string{"Your `/suiteward` command was not understood: the word after `/suiteward` must be `approve`, `revoke`, `propose`, `skip`, `suggest`, `mode` or `unblock`. Nothing changed.", "`/suiteward approve <ref> <code>`", "`/suiteward revoke <ref> <code>`", "`/suiteward propose`", "`/suiteward skip <code>`", "`/suiteward suggest`",
 				"`/suiteward mode <fix|feature|refactor>`", "`/suiteward unblock <code>`"},
 			[]string{"eligible"},
 		},
 		{
 			"malformed missing mode",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.MissingMode, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: the mode is missing, it must be `fix`, `feature` or `refactor`. Nothing changed.", "`/suiteward mode <fix|feature|refactor>`"},
+			[]string{"Your `/suiteward` command was not understood: the mode (the kind of change) is missing: it must be `fix`, `feature` or `refactor`. Nothing changed.", "`/suiteward mode <fix|feature|refactor>`"},
 			[]string{"eligible", "code is missing"},
 		},
 		{
 			"malformed bad mode",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.BadMode, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: the mode must be `fix`, `feature` or `refactor`. Nothing changed.", "`/suiteward mode <fix|feature|refactor>`"},
-			[]string{"eligible", "6 digits"},
+			[]string{"Your `/suiteward` command was not understood: the mode (the kind of change) must be `fix`, `feature` or `refactor`. Nothing changed.", "`/suiteward mode <fix|feature|refactor>`"},
+			[]string{"eligible", "six digits"},
 		},
 		{
 			"malformed missing reference",
@@ -431,68 +431,68 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"malformed missing code",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.MissingCode, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: the 6-digit confirmation code is missing. Nothing changed."},
+			[]string{"Your `/suiteward` command was not understood: the six-digit code from your authenticator app is missing. Nothing changed."},
 			nil,
 		},
 		{
 			"malformed bad code",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.BadCode, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: the confirmation code must be exactly 6 digits. Nothing changed."},
+			[]string{"Your `/suiteward` command was not understood: the code must be exactly six digits. Nothing changed."},
 			nil,
 		},
 		{
 			"malformed extra text",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.ExtraText, Source: source, Owner: owner},
-			[]string{"Your `/suiteward` command was not understood: nothing may follow the end of the command. Nothing changed."},
+			[]string{"Your `/suiteward` command was not understood: there is extra text after the command. Nothing changed."},
 			nil,
 		},
 		{
 			"invalid code",
 			commandtext.Ack{Outcome: commandtext.InvalidCode, Proposal: 4, Revision: 2, Source: source, Owner: owner},
-			[]string{"The confirmation code for P4-R2 was not accepted, so the command had no effect. The `SuiteWard / Contract` check may now show as failed until you comment a corrected command with a current code, or push."},
+			[]string{"The code for P4-R2 was not accepted, so the command did nothing. This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with a current code from your authenticator app, or push a new commit."},
 			[]string{"eligible"},
 		},
 		{
 			"replayed code",
 			commandtext.Ack{Outcome: commandtext.ReplayedCode, Proposal: 4, Revision: 2, Source: source, Owner: owner},
-			[]string{"The confirmation code for P4-R2 was already used, so the command had no effect; each code works only once. The `SuiteWard / Contract` check may now show as failed until you comment a corrected command with a new code, or push.", "new code"},
+			[]string{"The code for P4-R2 was already used, so the command did nothing. Each code works only once. This needs your action: the `SuiteWard / Contract` check may show as failed until you comment the command again with a new code, or push a new commit.", "new code"},
 			[]string{"eligible"},
 		},
 		{
 			"no suite",
 			commandtext.Ack{Outcome: commandtext.NoSuite, Proposal: 1, Revision: 1, Source: source, Owner: owner},
-			[]string{"P1-R1 was not processed: this repository's SuiteWard bootstrap is still pending, so nothing changed.", "comment `/suiteward propose`"},
+			[]string{"Your command for P1-R1 was not processed, because SuiteWard has not finished setting up this repository. Nothing changed.", "comment `/suiteward propose`"},
 			[]string{"eligible"},
 		},
 		{
 			"other pull request",
 			commandtext.Ack{Outcome: commandtext.OtherPullRequest, Proposal: 4, Revision: 2, Source: source, Owner: owner},
-			[]string{"P4-R2 belongs to another pull request; comment the command on that pull request. Nothing changed."},
+			[]string{"P4-R2 belongs to another pull request. Comment your command on that pull request instead. Nothing changed."},
 			[]string{"eligible", "check"},
 		},
 		{
 			"edited first",
 			commandtext.Ack{Outcome: commandtext.EditedFirst, Source: source, Owner: owner},
-			[]string{"Your comment was edited before SuiteWard first read it, so it was not processed as a command; nothing changed.", "new comment"},
+			[]string{"SuiteWard does not treat this comment as a command, because it was edited before SuiteWard first read it. Nothing changed.", "new comment"},
 			[]string{"eligible"},
 		},
 		{
 			// True whether or not an approval was active, so it never says one was withdrawn.
 			"revoked after promotion",
 			commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Proposal: 7, Revision: 1, Source: source, Owner: owner},
-			[]string{"Revoke command for P7-R1 by @octo-owner was recorded.", "P7-R1 is already promoted", "canonical version remains unchanged", "does not undo the promotion", "separately approved rollback"},
+			[]string{"Your revoke command for P7-R1 (@octo-owner) was recorded, but it changes nothing.", "P7-R1 is already merged and is part of the approved version", "revoking cannot undo it", "open a new pull request that restores the earlier files", "its own approval"},
 			[]string{"awaiting valid approval", "eligible", "no longer counts", "withdrawn", "Revocation recorded", "/suiteward"},
 		},
 		{
 			"approved after promotion",
 			commandtext.Ack{Outcome: commandtext.ApprovedAfterPromotion, Proposal: 7, Revision: 1, Source: source, Owner: owner},
-			[]string{"Approval recorded for P7-R1 by @octo-owner.", "P7-R1 is already promoted", "canonical version remains unchanged", "No further action is needed", "separately approved rollback"},
+			[]string{"Approval recorded for P7-R1 by @octo-owner.", "P7-R1 is already merged and is part of the approved version", "so nothing changes", "There is nothing more to do", "open a new pull request that restores the earlier files"},
 			[]string{"awaiting", "eligible", "withdraw", "/suiteward", "<code>"},
 		},
 		{
 			"bootstrap promoted",
 			commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Version: 1, Owner: owner},
-			[]string{"Bootstrap complete: P1-R1, approved by @octo-owner, is now canonical version V1.", "recorded an integrity assessment of the approved files at the pinned origin commit."},
+			[]string{"Setup is complete: P1-R1, approved by @octo-owner, is now V1, the approved version of the contract.", "SuiteWard checked the approved files at the exact commit that was approved, and recorded the result."},
 			[]string{"eligible", "/suiteward"},
 		},
 	}
@@ -635,10 +635,10 @@ func TestBootstrapSummary(t *testing.T) {
 			"all paths listed, isolated",
 			summary(3, pathList(3), commandtext.Isolated),
 			[]string{
-				"SuiteWard bootstrap proposal P1-R1", "Origin commit: `" + origin + "` on branch `main`",
+				"SuiteWard proposes the first contract: P1-R1", "Commit: `" + origin + "` on branch `main`",
 				"Protected files: 3\n", "tests/case_a_test.go\ntests/case_b_test.go\ntests/case_c_test.go",
 				"tests/**\nfixtures/", "tests/tmp/", "Installation tier: `isolated`",
-				"/suiteward approve P1-R1 <code>", "`<code>`", "does not approve the other changes in this PR",
+				"/suiteward approve P1-R1 <code>", "`<code>`", "does not approve the other changes in this pull request",
 			},
 			[]string{coLocated, "not listed"},
 		},
@@ -657,7 +657,7 @@ func TestBootstrapSummary(t *testing.T) {
 		{
 			"no protected files",
 			commandtext.Summary{Proposal: 2, Revision: 1, Origin: origin, Branch: "trunk", Tier: commandtext.Isolated},
-			[]string{"SuiteWard bootstrap proposal P2-R1", "Protected files: 0\n", "on branch `trunk`", "/suiteward approve P2-R1 <code>"},
+			[]string{"SuiteWard proposes the first contract: P2-R1", "Protected files: 0\n", "on branch `trunk`", "/suiteward approve P2-R1 <code>"},
 			[]string{"not listed"},
 		},
 		{
@@ -1086,18 +1086,18 @@ func TestBootstrapSummaryCountsTheRulesTheCallerDidNotCarry(t *testing.T) {
 
 // The default-branch text is pinned: M1.7b adds a source, and the branch text stays as it was. A summary without runner rules states none.
 func TestBootstrapSummaryOfTheBranchKeepsItsExactText(t *testing.T) {
-	want := "**SuiteWard bootstrap proposal P1-R1**\n\n" +
-		"SuiteWard proposes this repository's protected baseline as P1-R1. Nothing is canonical yet.\n\n" +
-		"- Origin commit: `" + origin + "` on branch `main` (pinned: it does not move if the branch advances)\n" +
+	want := "**SuiteWard proposes the first contract: P1-R1**\n\n" +
+		"SuiteWard proposes the protected files of this repository as its first contract, P1-R1. Nothing is approved yet.\n\n" +
+		"- Commit: `" + origin + "` on branch `main` (this exact commit is proposed, even if the branch moves on)\n" +
 		"- Protected files: 1\n" +
 		"- Installation tier: `isolated`\n\n" +
 		"Inventory:\n\n```\ntests/case_a_test.go\n```\n\n" +
 		"Scope include rules:\n\n```\ntests/**\nfixtures/\n```\n\n" +
 		"Scope runner rules: none.\n\n" +
 		"Scope exclude rules:\n\n```\ntests/tmp/\n```\n\n" +
-		"Review the inventory and the scope. To approve this exact baseline, comment:\n\n" +
+		"Review the inventory and the rules. To approve this exact proposal, comment:\n\n" +
 		"```\n/suiteward approve P1-R1 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\n" +
-		"Approving P1-R1 does not approve the other changes in this PR.\n"
+		"Approving P1-R1 does not approve the other changes in this pull request.\n"
 	for name, source := range map[string]commandtext.Source{"zero": 0, "branch": commandtext.SourceBranch} {
 		s := summary(1, pathList(1), commandtext.Isolated)
 		s.Source = source
@@ -1116,9 +1116,9 @@ func pullSummary(tier commandtext.Tier) commandtext.Summary {
 func TestBootstrapSummaryOfAPullRequestStatesWhatApprovingDoes(t *testing.T) {
 	body := render(t, func() string { return commandtext.BootstrapSummary(pullSummary(commandtext.Isolated)) })
 	for _, w := range []string{
-		"SuiteWard bootstrap proposal P1-R1", "`" + origin + "`", "exact head of this pull request", "Nothing is canonical yet",
+		"SuiteWard proposes the first contract: P1-R1", "`" + origin + "`", "exact commit of this pull request", "Nothing is approved yet",
 		"Protected files: 3\n", "tests/case_a_test.go", "tests/**", "Installation tier: `isolated`",
-		"Approving P1-R1 lets this pull request merge", "only from the exact merge commit after the merge",
+		"Approving P1-R1 lets this pull request merge", "using the exact merge commit",
 		"A later push that changes the protected files needs a new approval",
 		"```\n/suiteward approve P1-R1 <code>\n```",
 	} {
@@ -1253,18 +1253,18 @@ func TestBootstrapSummaryWithRunnerRulesFitsInAComment(t *testing.T) {
 
 // The same text as the branch golden above, with the runner section a declaration's runner rules add.
 func TestBootstrapSummaryWithRunnerRulesHasItsExactText(t *testing.T) {
-	want := "**SuiteWard bootstrap proposal P1-R1**\n\n" +
-		"SuiteWard proposes this repository's protected baseline as P1-R1. Nothing is canonical yet.\n\n" +
-		"- Origin commit: `" + origin + "` on branch `main` (pinned: it does not move if the branch advances)\n" +
+	want := "**SuiteWard proposes the first contract: P1-R1**\n\n" +
+		"SuiteWard proposes the protected files of this repository as its first contract, P1-R1. Nothing is approved yet.\n\n" +
+		"- Commit: `" + origin + "` on branch `main` (this exact commit is proposed, even if the branch moves on)\n" +
 		"- Protected files: 1\n" +
 		"- Installation tier: `isolated`\n\n" +
 		"Inventory:\n\n```\ntests/case_a_test.go\n```\n\n" +
 		"Scope include rules:\n\n```\ntests/**\nfixtures/\n```\n\n" +
 		"Scope runner rules:\n\n```\npytest.ini\nconftest.py\n```\n\n" +
 		"Scope exclude rules:\n\n```\ntests/tmp/\n```\n\n" +
-		"Review the inventory and the scope. To approve this exact baseline, comment:\n\n" +
+		"Review the inventory and the rules. To approve this exact proposal, comment:\n\n" +
 		"```\n/suiteward approve P1-R1 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app.\n\n" +
-		"Approving P1-R1 does not approve the other changes in this PR.\n"
+		"Approving P1-R1 does not approve the other changes in this pull request.\n"
 	s := summary(1, pathList(1), commandtext.Isolated)
 	s.Runner = []string{"pytest.ini", "conftest.py"}
 	if got := render(t, func() string { return commandtext.BootstrapSummary(s) }); got != want {

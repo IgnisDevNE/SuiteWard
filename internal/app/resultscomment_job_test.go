@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/checks"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
+	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
@@ -598,4 +601,83 @@ func TestChecksKeepTheContractCheckWhenOnlyTheReadsOfTheCommentsFail(t *testing.
 	}
 
 	w.want(5, checks.Failure, "invalid-source", 1)
+}
+
+// testsFailOnNth is an execution store whose nth read of the tests of a job fails, and no other.
+type testsFailOnNth struct {
+	execution.Store
+	n, calls int
+}
+
+func (s *testsFailOnNth) Tests(ctx context.Context, jobID int64) ([]execution.Test, error) {
+	s.calls++
+	if s.calls == s.n {
+		return nil, errors.New("the store is down")
+	}
+	return s.Store.Tests(ctx, jobID)
+}
+
+// weakenedPass is what the counts of an awaiting check read for a head whose receipt edits TestC00, which fails in its approved version: the two jobs are complete, and the
+// Set of the step is final.
+func weakenedPass(t *testing.T) (w *cjJobWorld, s *pullState, x *executionRun, set domain.Set) {
+	t.Helper()
+	w = newExecWorld(t, execDecl)
+	w.execPullFive(execHeadFiles(execDecl, "v2"))
+	canonical, receipt := w.onlyJob(5, cjHead2, execution.PlanCanonical), w.onlyJob(5, cjHead2, execution.PlanReceipt)
+	edited := execution.Test{Package: ".", Name: "TestC00", File: "a_test.go", Kind: execution.KindChanged, State: "detects", HeadRuns: []string{"pass"}, BaseRuns: []string{"fail"}}
+	w.finish(canonical, canonicalTests("fail", "pass"))
+	w.finish(receipt, []execution.Test{edited})
+	canonicalInSet, _ := w.jobByID(canonical.ID).InSet(false)
+	receiptInSet, _ := w.jobByID(receipt.ID).InSet(false)
+	set = domain.Set{CanonicalLevel: domain.CanonicalLevelRequired, ReceiptLevel: domain.ReceiptLevelRequired, ReceiptApplies: true, ReceiptDecided: true, HeadReason: domain.HeadReasonApprovalMissing,
+		CanonicalJob: canonicalInSet, ReceiptJob: receiptInSet}
+	x = &executionRun{known: true, policy: executionPolicy{canonical: domain.CanonicalLevelRequired, receipt: domain.ReceiptLevelRequired}}
+	s = &pullState{p: owner.ProjectPolicy{RepositoryID: bootRepoID}, pull: githubsync.PullState{Number: 5, HeadSHA: cjHead2}, suite: suiteView{manifest: w.canonicalManifest()}}
+	return w, s, x, set
+}
+
+// A weakened count that cannot be read this time is not a weakened count of 0: the check would go out with the generic sentence, and the next pass would find the job counted
+// and never write it again. The pass keeps what was stored and counts nothing, so that the next one counts again, with the count.
+func TestChecksKeepTheStoredCountedJobWhenTheWeakenedReadFailsOnce(t *testing.T) {
+	w, s, x, set := weakenedPass(t)
+	const stored = 7
+	s.sameHead, s.record = true, checks.Record{Result: checks.Result{Reason: reasonApprovalMissing, CountedJob: stored}}
+	w.check.executions = &testsFailOnNth{Store: w.jobs, n: 2} // the first read of the tests of the receipt job, which the weakened count makes
+
+	d := &pullDecision{result: checks.Result{Reason: reasonApprovalMissing}}
+	executed := executionOutcome{set: set}
+	if err := w.check.approvalCounts(t.Context(), s, x, d, &executed); err == nil {
+		t.Fatal("approvalCounts found nothing to report of a read that failed")
+	}
+	if executed.counts != nil || d.result.CountedJob != stored {
+		t.Errorf("counts %+v and counted job %d after the failed read, want no counts and the stored job %d", executed.counts, d.result.CountedJob, stored)
+	}
+
+	d = &pullDecision{result: checks.Result{Reason: reasonApprovalMissing}}
+	executed = executionOutcome{set: set}
+	if err := w.check.approvalCounts(t.Context(), s, x, d, &executed); err != nil {
+		t.Fatal(err)
+	}
+	if executed.counts == nil || d.result.CountedJob != set.CanonicalJob.ID || executed.weakened != 1 {
+		t.Errorf("counts %+v, counted job %d and weakened %d on the next pass, want the counts, job %d and 1", executed.counts, d.result.CountedJob, executed.weakened, set.CanonicalJob.ID)
+	}
+}
+
+// The step that decides whether a head has an earlier set asks the domain unless it can tell, from two digests that are both there, that the head is not approved: a job with
+// no governing manifest is a caller that did not fill it, and two missing digests are never equal.
+func TestChecksAskTheDomainForTheEarlierSetUnlessTheHeadIsPlainlyNotApproved(t *testing.T) {
+	w := newExecWorld(t, execDecl)
+	set := domain.Set{CanonicalLevel: domain.CanonicalLevelRequired, ReceiptLevel: domain.ReceiptLevelOff, ReceiptDecided: true, CanonicalJob: domain.Job{ID: 3, State: domain.JobComplete}}
+	s := &pullState{p: owner.ProjectPolicy{RepositoryID: bootRepoID}, pull: githubsync.PullState{Number: 5, HeadSHA: cjHead2}}
+
+	if _, ok, err := w.check.earlierSet(t.Context(), s, set); !errors.Is(err, domain.ErrNoGoverningDigest) || ok {
+		t.Errorf("earlierSet of a job and a canonical with no digest = %v, %v; want ErrNoGoverningDigest", ok, err)
+	}
+
+	s.suite.manifest = w.canonicalManifest()
+	set.CanonicalJob.Governing = s.suite.manifest
+	w.check.executions = headJobsFail{w.jobs} // a head that is not approved needs no read of its jobs
+	if _, ok, err := w.check.earlierSet(t.Context(), s, set); err != nil || ok {
+		t.Errorf("earlierSet of a job that the canonical's manifest governs = %v, %v; want none and no read", ok, err)
+	}
 }

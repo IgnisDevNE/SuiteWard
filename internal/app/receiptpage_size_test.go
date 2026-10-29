@@ -234,20 +234,24 @@ func TestPullPageCutsEachTableOfTestsAtItsBudgetAndCountsTheRowsItDoesNotShow(t 
 	w.wantText(html.UnescapeString(raw), "does anything.</td><td>-</td><td>10000</td></tr>") // the counts of the table by state are complete
 }
 
-// A weakened row comes before the other rows of its group, and a flagged state comes before the passes, so that a budget never drops a weakened row or a flagged one before a
-// passing one, however late it sorts. The fillers are the failing tests of the approved run and the DETECTS tests of the receipt, so that only the order inside a group keeps the
-// weakened rows. (Under the contract's order a weakened DETECTS row can go before the rows of INERT, NEW API, SKIPPED and EXCLUDED: they come before the group of DETECTS.)
+// A weakened row is never cut before any other row of its table, however late its group comes: a table filled by the groups before it still keeps it. The weakened rows of the
+// approved run are an approved test that fails, one that is missing and one that is flaky, behind 9,997 other failing tests that fill the budget; those of the receipt are three
+// DETECTS tests, the last group, behind 9,995 INERT tests. A flagged row (FAILS) of the first group is kept too, and each group writes its weakened rows first.
 func TestPullPageNeverCutsAWeakenedRowOrAFlaggedRowBeforeAPassingOne(t *testing.T) {
 	w := newPageWorld(t)
 	w.pages.timeout = largePageTimeout
 	pkg, name, file := plainLimits()
 	approved := hugeTests(execution.KindDeclared, "fail", pkg, name, file)
-	changes := hugeTests(execution.KindAdded, "detects", pkg, name, file)
+	changes := hugeTests(execution.KindAdded, "inert", pkg, name, file)
 	for i := range approved {
-		approved[i].HeadRuns, changes[i].BaseRuns = []string{"fail"}, []string{"fail"}
+		approved[i].HeadRuns = []string{"fail"}
 	}
-	for i := 0; i < 3; i++ { // the last three sort last, and are an approved test that fails and this change edits, and a receipt test that detects it
-		changes[execution.MaxTests-1-i].Kind = execution.KindChanged
+	last := func(i int) string { return fmt.Sprintf("Test%0190d", execution.MaxTests-1-i) }
+	approved[execution.MaxTests-1].State, approved[execution.MaxTests-1].HeadRuns = "missing", []string{"absent"}
+	approved[execution.MaxTests-2].State, approved[execution.MaxTests-2].HeadRuns = "flaky", []string{"pass", "fail", "pass"}
+	for i := 0; i < 3; i++ { // the last three sort last: this change edits each of them, and its receipt test passes where the approved version fails
+		c := &changes[execution.MaxTests-1-i]
+		c.Kind, c.State, c.HeadRuns, c.BaseRuns = execution.KindChanged, "detects", []string{"pass"}, []string{"fail"}
 	}
 	changes[0].State, changes[0].HeadRuns = "fails", []string{"fail"} // sorts first, and is flagged
 	changes[execution.MaxTests-4].State, changes[execution.MaxTests-4].HeadRuns = "fails", []string{"fail"}
@@ -258,26 +262,26 @@ func TestPullPageNeverCutsAWeakenedRowOrAFlaggedRowBeforeAPassingOne(t *testing.
 		t.Fatalf("the approved table shows all %d rows: the budget did not cut it", shown)
 	}
 	for i := 0; i < 3; i++ {
-		last := fmt.Sprintf("Test%0190d", execution.MaxTests-1-i)
-		if !strings.Contains(canonical, last+"</td>") {
-			t.Errorf("the weakened test %s sorts last and is not on the page", last)
+		if !strings.Contains(canonical, last(i)+"</td>") {
+			t.Errorf("the weakened test %s sorts last and is not on the page", last(i))
 		}
 	}
+	w.wantText(canonical, "<summary>MISSING (1)</summary>", "<summary>FLAKY (1)</summary>")
 	if got := strings.Count(canonical, "Weakened: this change edits this test."); got != 3 {
 		t.Errorf("%d weakened rows in the approved table, want 3", got)
 	}
+	w.wantInOrder(canonical, last(2)+"</td>", fmt.Sprintf("Test%0190d</td>", 0)) // in its group the weakened row is written first
 	receipt, shown := groupsOfSection(t, raw, "Tests this change adds or edits")
 	if shown >= execution.MaxTests {
 		t.Fatalf("the table of the receipt shows all %d rows: the budget did not cut it", shown)
 	}
-	w.wantInOrder(receipt, "<td>FAILS</td>", "<td>DETECTS</td>") // the flagged state comes before the passes
+	w.wantInOrder(receipt, "<td>FAILS</td>", "<td>INERT</td>", "<td>DETECTS</td>") // the groups keep their order
 	if got := strings.Count(receipt, "<td>FAILS</td>"); got != 2 {
 		t.Errorf("%d FAILS rows, want both of them whatever the budget cut", got)
 	}
 	for i := 0; i < 3; i++ {
-		last := fmt.Sprintf("Test%0190d", execution.MaxTests-1-i)
-		if !strings.Contains(receipt, last+"</td>") {
-			t.Errorf("the weakened test %s sorts last and is not in the table of the receipt", last)
+		if !strings.Contains(receipt, last(i)+"</td>") {
+			t.Errorf("the weakened test %s sorts last and is not in the table of the receipt", last(i))
 		}
 	}
 	if got := strings.Count(receipt, "Weakened: the approved version of this test fails on this commit."); got != 3 {

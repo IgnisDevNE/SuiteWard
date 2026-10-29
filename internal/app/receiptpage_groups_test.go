@@ -147,7 +147,8 @@ func TestPullPageStyleNeverBreaksTheStateColumnOrAHeaderInsideAWord(t *testing.T
 	for _, r := range rules {
 		for _, selector := range strings.Split(r[1], ",") {
 			selector = strings.TrimSpace(selector)
-			if selector != "th" && !strings.HasSuffix(selector, "td:first-child") {
+			// a rule for every cell reaches the state column and the headers too, so it may not break inside a word
+			if selector != "th" && selector != "td" && selector != "*" && !strings.HasSuffix(selector, "td:first-child") {
 				continue
 			}
 			if strings.Contains(r[2], "overflow-wrap: anywhere") || strings.Contains(r[2], "word-break: break-all") {
@@ -174,4 +175,12 @@ func TestPullPageStyleNeverBreaksTheStateColumnOrAHeaderInsideAWord(t *testing.T
 	if tables, boxed := strings.Count(page, "<table>"), strings.Count(page, `<div class="scroll"><table>`); tables == 0 || tables != boxed {
 		t.Errorf("%d tables and %d in a box of their own that scrolls, want all of them", tables, boxed)
 	}
+}
+
+// The groups start closed, so the sentence of the top says where the weakened tests are, in plain words, after the count sentence of the checks and the comments.
+func TestPullPageSaysWhereTheWeakenedTestsAreNowThatTheGroupsAreClosed(t *testing.T) {
+	w := weakenedWorld(t)
+	page := w.text()
+	w.wantText(page, weakenedTwo+" Open the groups below to see them: each one is marked Weakened.")
+	w.wantNoText(page, "The tables below mark these tests.")
 }

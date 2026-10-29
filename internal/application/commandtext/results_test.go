@@ -180,7 +180,7 @@ func TestResultsCommentStatesTheReceipt(t *testing.T) {
 		not  []string
 	}{
 		"every state": {commandtext.ReceiptRun{Counts: execution.ReceiptCounts{Detects: 1, Inert: 2, NewAPI: 3, Fails: 4, Missing: 5, Flaky: 6, Skipped: 7, Excluded: 8}},
-			[]string{list("Tests this change adds or edits: 28.", 1, 2, 3, 4, 5, 6, 7)}, []string{"cannot be read", "Lines to look at", "no test that SuiteWard can run"}},
+			[]string{list("Tests this change adds or edits: 28.", 1, 2, 3, 4, 5, 6, 7)}, []string{"Changed test files that cannot be read", "Lines to look at", "no test that SuiteWard can run"}},
 		"an empty receipt": {commandtext.ReceiptRun{}, []string{"This change adds or edits no test that SuiteWard can run."}, []string{"Tests this change adds or edits:", "- Skipped"}},
 		"a receipt of excluded tests only": {commandtext.ReceiptRun{Counts: execution.ReceiptCounts{Excluded: 2}},
 			[]string{"This change adds or edits no test that SuiteWard can run."}, []string{"Tests this change adds or edits:"}},

@@ -146,6 +146,19 @@ func executionText(e CheckExecution) string {
 // should read the change before approving, because a change that edits a test can make it pass by checking less.
 const blockingEditText = "At least one approved test fails, is missing or is flaky on this head. If this change edits that test, read the change before you approve: an edited test can pass by checking less."
 
+// WeakenedSentence is what a text says of n approved tests that this change edits and that fail, are missing or are flaky in the version that was approved, and what to
+// do (docs/contracts/runtime.md, "The weakened signal"): an edited test can pass by checking less. It is stated for a count above 0 only.
+func WeakenedSentence(n int) string {
+	if n < 1 {
+		panic(fmt.Sprintf("commandtext: no weakened test to state, a count of %d", n))
+	}
+	count := "1 approved test that this change edits fails, is missing or is flaky on this commit, in the version that was approved."
+	if n > 1 {
+		count = fmt.Sprintf("%d approved tests that this change edits fail, are missing or are flaky on this commit, in the version that was approved.", n)
+	}
+	return count + " A test that is edited can pass by checking less. Read the edit before you approve."
+}
+
 // closingText ends a summary: the usual one reports on the protected contract only, and the one of canonical: required reports on the run of the approved tests too.
 func closingText(c Check) string {
 	if c.Execution != nil || c.Unblocked || slices.Contains(canonicalReasons, c.Reason) {

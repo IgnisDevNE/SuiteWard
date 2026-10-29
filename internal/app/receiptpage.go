@@ -22,7 +22,7 @@ import (
 // written as escapes. It replaced the receipt page of M2.1, whose route now answers 308 (receiptMoved); the types and the files keep the name of the receipt page.
 
 // receiptTimeout bounds a request for the page: the wait for its turn, the reads and the build. It is a real deadline, never a fake clock's, and below the 30 s the server
-// gives a response.
+// gives a response. The page builder holds it (receiptPages.timeout), and the build of the largest page takes about 0.3 s without instrumentation.
 const receiptTimeout = 20 * time.Second
 
 // errReceiptNotFound says that the pull request is not one that the synchronization observed.
@@ -59,7 +59,7 @@ func (a *api) pull(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), receiptTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), a.receipts.requestTimeout())
 	defer cancel()
 	state, enrolled, err := a.owners.Current(ctx)
 	if err != nil {
@@ -113,5 +113,5 @@ type receiptPages struct {
 func (p *receiptPages) requestTimeout() time.Duration { return p.timeout }
 
 func newReceiptPages(suites governance.UnitOfWork, contents governance.ContentReader, executions execution.Store, pulls pullLister, previews previewReader, tier string) *receiptPages {
-	return &receiptPages{suites: suites, contents: contents, executions: executions, pulls: pulls, previews: previews, tier: tier, limit: maxPullPage, now: time.Now}
+	return &receiptPages{suites: suites, contents: contents, executions: executions, pulls: pulls, previews: previews, tier: tier, limit: maxPullPage, timeout: receiptTimeout, now: time.Now}
 }

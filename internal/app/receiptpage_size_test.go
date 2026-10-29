@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
@@ -134,6 +135,10 @@ func TestPullPageFailsWhenTheRequestEndsWhileItBuildsTheReport(t *testing.T) {
 
 // ---- the size rule ----
 
+// largePageTimeout is the deadline of a request for the largest page that the budgets allow. Such a page takes about 0.3 s, but under the race detector with atomic coverage over
+// every package it takes 13 to 17 s on a fast machine and more than the 20 s of production on a slow runner (CI run 40893018282): these tests check the page, not the runner's speed.
+const largePageTimeout = 5 * time.Minute
+
 // hugeTests are the 10,000 tests that a result may hold, each with a package, a name and a file at the limits of the store.
 func hugeTests(kind, state string, pkg, name, file func(i int) string) []execution.Test {
 	tests := make([]execution.Test, execution.MaxTests)
@@ -174,6 +179,7 @@ func tableOfSection(t *testing.T, raw, heading string) (table string, rows int) 
 
 func TestPullPageCutsEachTableOfTestsAtItsBudgetAndCountsTheRowsItDoesNotShow(t *testing.T) {
 	w := newPageWorld(t)
+	w.pages.timeout = largePageTimeout
 	pkg, name, file := plainLimits()
 	w.completed(hugeTests(execution.KindDeclared, "pass", pkg, name, file), hugeTests(execution.KindAdded, "inert", pkg, name, file))
 	response := w.get("127.0.0.1:8080", pullPath)
@@ -206,6 +212,7 @@ func TestPullPageCutsEachTableOfTestsAtItsBudgetAndCountsTheRowsItDoesNotShow(t 
 // The weakened rows and then the flagged ones come first, so that a budget never drops one of them, however late they sort.
 func TestPullPageNeverCutsAWeakenedRowOrAFlaggedRowBeforeAPassingOne(t *testing.T) {
 	w := newPageWorld(t)
+	w.pages.timeout = largePageTimeout
 	pkg, name, file := plainLimits()
 	approved := hugeTests(execution.KindDeclared, "pass", pkg, name, file)
 	changes := hugeTests(execution.KindAdded, "inert", pkg, name, file)
@@ -243,6 +250,7 @@ func hostile(n int, c string) string { return strings.Repeat(c, n) }
 
 func TestPullPageStaysUnderItsBudgetsWhateverTheRepositoryAndTheTestRunnerSay(t *testing.T) {
 	w := newPageWorld(t)
+	w.pages.timeout = largePageTimeout
 	files := execHeadFiles(receiptDecl, "v2")
 	for i := range 150 { // the files that the receipt covers: the page lists 100 of them, each at the longest path that a job keeps
 		files["tests/"+hostile(900, "&")+fmt.Sprintf("%03d_test.go", i)] = "package a\n"

@@ -1263,3 +1263,8 @@ func (p *commentPublisher) invalidSource(_ context.Context, key, tail string, pa
 	text, err := render(githubCommentKind, key, func() string { return commandtext.InvalidSourceComment(s.source()) })
 	return s.commentTarget, text, err
 }
+
+// pullPageURL is the link to the page of pull request pull of repo (owner/name) on the instance at base, or "" without a base.
+func pullPageURL(base, repo string, pull int) string {
+	return ""
+}

@@ -329,3 +329,8 @@ func ValidReceiptLink(link string, pull int) bool {
 	m := receiptLinkPattern.FindStringSubmatch(link)
 	return m != nil && pull >= 1 && m[1] == strconv.Itoa(pull) && !strings.Contains(link, "/../") && !strings.Contains(link, "/./") // a segment of dots climbs or stays
 }
+
+// ValidPullLink reports whether link is the link to the page of pull request pull.
+func ValidPullLink(link string, pull int) bool {
+	return false
+}

@@ -41,7 +41,7 @@ func (r *Resolver) chooseInstallation(d Deps) error {
 		return nil
 	case len(found) == 1:
 		r.say("This computer has one listed SuiteWard installation, so the command uses it. Its settings file is %s.\n", printable(found[0].Settings))
-		r.choose(d, found[0])
+		r.choose(d, found[0], found)
 		return nil
 	case !r.term.IsTerminal || unattended(r.flags):
 		files := make([]string, len(found))
@@ -54,7 +54,7 @@ func (r *Resolver) chooseInstallation(d Deps) error {
 	if err != nil {
 		return err
 	}
-	r.choose(d, picked)
+	r.choose(d, picked, found)
 	return nil
 }
 
@@ -121,15 +121,31 @@ func (r *Resolver) pickInstallation(d Deps, found []candidate, stale int) (candi
 
 // choose makes c the installation of the run. Only what the default would not give is set: its settings file and its token file. The type and
 // the engine are not: the settings file of a candidate exists and names them, and a list that went stale or was edited must not override it.
-func (r *Resolver) choose(d Deps, c candidate) {
+// The per-user default token file, with the executor beside it, goes with the default installation. A second installation whose entry records it keeps it only when no
+// other listed installation uses it (found has every candidate): then it is that installation's own, and without it the run would refuse at instanceTokenFile for a flag
+// that nobody typed. Otherwise it stays unset: an upgrade refuses, and an uninstall keeps the main instance's token and executor.
+func (r *Resolver) choose(d Deps, c candidate, found []candidate) {
 	r.chosen = map[string]string{}
 	if !c.isDefault {
 		r.chosen["settings"] = c.Settings
 	}
-	if c.TokenFile != "" {
-		if def, err := defaultTokenFile(d); err != nil || !samePath(d.GOOS, def, c.TokenFile) { // with no default to compare to, the entry's is the one
-			r.chosen["token-file"] = c.TokenFile
+	if c.TokenFile == "" {
+		return
+	}
+	def, err := defaultTokenFile(d)
+	if err != nil || !samePath(d.GOOS, def, c.TokenFile) { // with no default to compare to, the entry's is the one
+		r.chosen["token-file"] = c.TokenFile
+		return
+	}
+	shared := slices.ContainsFunc(found, func(o candidate) bool {
+		used := o.TokenFile
+		if used == "" && o.isDefault {
+			used = def // the default installation uses the per-user default token file unless its entry records another
 		}
+		return !samePath(d.GOOS, o.Settings, c.Settings) && used != "" && samePath(d.GOOS, used, def)
+	})
+	if !c.isDefault && !shared {
+		r.chosen["token-file"] = c.TokenFile
 	}
 }
 

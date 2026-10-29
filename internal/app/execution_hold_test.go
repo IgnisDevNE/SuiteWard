@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -89,5 +90,29 @@ func TestChecksStillReplaceAnUnblockedExecutorNotConfiguredJobOnceATokenIsConfig
 	}
 	if got := w.headJobs(5, cjHead2, execution.PlanReceipt); len(got) != 2 || got[1].State != execution.StatePending {
 		t.Errorf("receipt jobs %+v, want a fresh pending job next to the unblocked one", got)
+	}
+}
+
+// staleUnblocks is an execution store whose read of the unblock rows is the one a pass made before the owner's unblock committed: it answers that no job was unblocked.
+type staleUnblocks struct{ execution.Store }
+
+func (staleUnblocks) Unblocked(context.Context, int64, time.Time) (bool, error) { return false, nil }
+
+// The commands job and the checks job run side by side: the checks job reads that a no-executor job was not unblocked, the owner's unblock commits, and then the checks
+// job creates the replacement. The store holds the replacement back, as the hold says (docs/contracts/runtime.md, "An unblock and a replacement of one job never both take
+// effect"), and the job stays the one of its binding.
+func TestChecksDoNotReplaceANoExecutorJobWhoseUnblockCommittedAfterThePassReadIt(t *testing.T) {
+	w, canonical, receipt := noExecutorWorld(t)
+	w.unblock(5, 500, cjHead2, canonical, receipt)
+	w.check.executions = staleUnblocks{w.check.executions}
+	w.check.liveness.Saw(canonical.FinishedAt.Add(time.Hour)) // a real executor request, later than the end of both jobs
+
+	w.mustCheck()
+
+	if got := w.headJobs(5, cjHead2, execution.PlanCanonical); len(got) != 1 {
+		t.Errorf("%d canonical jobs after a pass that read the unblock too early, want the unblocked one alone", len(got))
+	}
+	if got := w.headJobs(5, cjHead2, execution.PlanReceipt); len(got) != 1 {
+		t.Errorf("%d receipt jobs after a pass that read the unblock too early, want the unblocked one alone", len(got))
 	}
 }

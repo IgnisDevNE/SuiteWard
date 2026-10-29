@@ -275,6 +275,10 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		{"an unblock of a job that is no longer as observed ends nothing and writes nothing", ubChanged},
 		{"an unblock waits for a lease that holds a job, and a pending job is never both leased and ended", ubLeaseRace},
 		{"the unblock rows of a head are read with their times since the enrollment, and the job that a command ended is told by them", ubHeadUnblocks},
+		{"a job that the owner unblocked is not replaced, and the store returns it and writes nothing", rpHeld},
+		{"a replacement names a job it replaces, and refuses one it cannot", rpInvalid},
+		{"the unblock of a job that was replaced fails as changed and writes nothing", rpUnblockAfter},
+		{"an unblock and the replacement of the same job never both take effect", rpRace},
 		{"an approval receipt is written with its ledger entry or not at all", apApproval},
 		{"a canceled context writes nothing", jbCanceled},
 	}

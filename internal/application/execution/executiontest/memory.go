@@ -68,6 +68,19 @@ func (m *Memory) Enqueue(ctx context.Context, n execution.NewJob) (execution.Job
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if n.Replaces != 0 {
+		old, ok := m.jobs[n.Replaces]
+		if !ok {
+			return execution.Job{}, false, fmt.Errorf("%w: job %d does not exist", execution.ErrInvalidRequest, n.Replaces)
+		}
+		held, err := n.CheckReplaces(old, m.unblocked(old.ID, n.UnblockedSince))
+		if err != nil {
+			return execution.Job{}, false, err
+		}
+		if held {
+			return clone(old), false, nil
+		}
+	}
 	job := n.Job()
 	for _, existing := range m.jobs {
 		if existing.Key == job.Key && existing.Current() {
@@ -347,13 +360,18 @@ func (m *Memory) HeadJobs(ctx context.Context, repositoryID int64, pull int, hea
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.headJobs(repositoryID, pull, headSHA, plan), nil
+}
+
+// headJobs is HeadJobs with the lock held.
+func (m *Memory) headJobs(repositoryID int64, pull int, headSHA string, plan execution.Plan) []execution.Job {
 	jobs := []execution.Job{}
 	for _, id := range m.sortedIDs() {
 		if j := m.jobs[id]; j.RepositoryID == repositoryID && j.PullNumber == pull && j.HeadSHA == headSHA && j.Plan == plan {
 			jobs = append(jobs, clone(j))
 		}
 	}
-	return jobs, nil
+	return jobs
 }
 
 // OpenJobs implements execution.Store.
@@ -418,12 +436,17 @@ func (m *Memory) Unblocked(ctx context.Context, jobID int64, since time.Time) (b
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.unblocked(jobID, since), nil
+}
+
+// unblocked is Unblocked with the lock held.
+func (m *Memory) unblocked(jobID int64, since time.Time) bool {
 	for _, u := range m.unblocks {
 		if slices.Contains(u.jobs, jobID) && !u.createdAt.Before(since) {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 // HeadUnblocks implements execution.Store.
@@ -509,7 +532,8 @@ func (m *Memory) RecordUnblock(ctx context.Context, e commands.Entry, ack *gover
 		}
 	}
 	for _, o := range jobs {
-		if !m.jobs[o.ID].Observed(o) {
+		job := m.jobs[o.ID]
+		if !job.Observed(o) || job.ReplacedBy(m.headJobs(job.RepositoryID, job.PullNumber, job.HeadSHA, job.Plan)) {
 			return fmt.Errorf("%w: job %d", execution.ErrJobChanged, o.ID)
 		}
 	}

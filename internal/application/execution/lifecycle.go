@@ -63,11 +63,30 @@ func (s Spec) Key() string {
 
 // Current reports whether the job holds its key: it is not cancelled, and not unavailable for executor-not-configured or no-executor,
 // which a fresh job replaces once an executor is configured or seen.
-func (j Job) Current() bool {
-	if j.State == StateCancelled {
-		return false
+func (j Job) Current() bool { return j.State != StateCancelled && !j.Replaceable() }
+
+// Replaceable reports whether a fresh job may replace the job: it is unavailable for executor-not-configured or no-executor.
+func (j Job) Replaceable() bool {
+	return j.State == StateUnavailable && (j.Reason == ReasonNotConfigured || j.Reason == ReasonNoExecutor)
+}
+
+// HeldByUnblock reports whether an unblock of the owner keeps a fresh job from replacing the job (docs/contracts/runtime.md, "The early unblock and its hold"): it ended for
+// no-executor and an unblock row names it (unblocked says so, for the current enrollment). A job that ended for executor-not-configured is replaced whatever the owner did.
+func (j Job) HeldByUnblock(unblocked bool) bool {
+	return unblocked && j.State == StateUnavailable && j.Reason == ReasonNoExecutor
+}
+
+// CheckReplaces is what a store decides with the job that n replaces locked and read as old: ErrInvalidRequest unless old is a job of the binding of n that a fresh job may
+// replace, and held when an unblock keeps it from being replaced (unblocked: an unblock row names old since n.UnblockedSince). A held replacement writes nothing.
+func (n NewJob) CheckReplaces(old Job, unblocked bool) (held bool, err error) {
+	switch {
+	case old.RepositoryID != n.RepositoryID || old.PullNumber != n.PullNumber || old.HeadSHA != n.HeadSHA || old.Plan != n.Plan ||
+		old.GoverningDigest != n.GoverningDigest || old.DeclarationDigest != n.DeclarationDigest:
+		return false, invalid("job %d is not a job of the binding of the job that replaces it", old.ID)
+	case !old.Replaceable():
+		return false, invalid("job %d is %s for %q: only a job unavailable for executor-not-configured or no-executor is replaced", old.ID, old.State, old.Reason)
 	}
-	return j.State != StateUnavailable || (j.Reason != ReasonNotConfigured && j.Reason != ReasonNoExecutor)
+	return old.HeldByUnblock(unblocked), nil
 }
 
 // Job is the job that n creates, without its id.
@@ -138,6 +157,15 @@ func (j Job) UnblockEnded(at time.Time) Job {
 // and the lease id and makes the job wait for GitHub, which the unblock does not end.
 func (j Job) Observed(o UnblockJob) bool {
 	return j.State == o.State && j.LeaseID == o.LeaseID && (j.State == StateUnavailable || j.WaitsForRunner())
+}
+
+// ReplacedBy reports whether a newer job has replaced the job: one of head, the jobs of its pull request, head and plan, that was created after it, is not cancelled and
+// runs under its binding (the governing manifest and the canonical declaration, as the checks job finds the holder of a binding). A cancelled replacement replaces nothing:
+// the gates read the older job again. The merge base is no part of the binding, so a receipt job whose replacement has another one is replaced all the same.
+func (j Job) ReplacedBy(head []Job) bool {
+	return slices.ContainsFunc(head, func(k Job) bool {
+		return k.ID > j.ID && k.State != StateCancelled && k.GoverningDigest == j.GoverningDigest && k.DeclarationDigest == j.DeclarationDigest
+	})
 }
 
 // EndedBy reports whether an unblock ended the job and not the sweep (docs/contracts/runtime.md, "The early unblock and its hold", "`ended` is derived, not stored"):

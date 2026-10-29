@@ -472,6 +472,112 @@ func TestARefusalNeverNamesASettingsFileThatWasNotTyped(t *testing.T) {
 	}
 }
 
+// sharedTokenWorld is a computer with a second installation whose entry records the per-user default token file, and a default installation as the case says: "none" (no
+// default settings file), "own token" (an entry that records a token file of its own), "no entry" or "default token" (an entry that records the default token file). It
+// returns the one machine for the default token file, the picker and the command (each call of choiceDeps makes a new one), the default token file and the second settings file.
+func sharedTokenWorld(t *testing.T, defaultInstallation string) (d Deps, tokenFile, second string) {
+	t.Helper()
+	useDefaultConfigDir(t)
+	d = choiceDeps(t)
+	tokenFile, err := defaultTokenFile(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := colocatedSettings()
+	s.Connection, s.HTTPPort, s.MCPPort = "pm", 27081, 27091
+	other := colocatedSettings()
+	other.Connection, other.HTTPPort, other.MCPPort = "pm2", 28081, 28091
+	if defaultInstallation != "none" {
+		defaultPath := defaultSettingsOf(t, s)
+		switch defaultInstallation {
+		case "own token":
+			err = recordInstallation(runtime.GOOS, defaultPath, filepath.Join(t.TempDir(), "mcp-token"), s, "")
+		case "default token":
+			err = recordInstallation(runtime.GOOS, defaultPath, tokenFile, s, "")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	second = settingsOf(t, other)
+	if err := recordInstallation(runtime.GOOS, second, tokenFile, other, "5e6f7a8b"); err != nil {
+		t.Fatal(err)
+	}
+	return d, tokenFile, second
+}
+
+// A second installation may use the per-user default token file, as long as it says so (instanceTokenFile accepts it with --token-file) and no other installation uses
+// that file. The picker keeps it for that installation, so that the command it picked does not refuse for a flag that nobody typed.
+func TestAChosenSecondInstallationKeepsTheDefaultTokenFileWhenNoOtherInstallationUsesIt(t *testing.T) {
+	for _, defaultInstallation := range []string{"own token", "none"} {
+		t.Run("the default installation: "+defaultInstallation, func(t *testing.T) {
+			d, tokenFile, second := sharedTokenWorld(t, defaultInstallation)
+			r, _ := plainResolver(t, nil, nil, second+"\n") // with no default installation there is one listed installation, and no question
+			if err := r.chooseInstallation(d); err != nil {
+				t.Fatal(err)
+			}
+			if r.chosen["settings"] != second || r.chosen["token-file"] != tokenFile {
+				t.Errorf("chosen is %v, want the second installation's settings file and its token file %q", r.chosen, tokenFile)
+			}
+			if got, err := instanceTokenFile(r, Env{Deps: d}, installTarget{settingsPath: second}); err != nil || got != tokenFile {
+				t.Errorf("instanceTokenFile = %q, %v; want the token file %q: a flagless upgrade of the chosen installation must not refuse", got, err, tokenFile)
+			}
+		})
+	}
+}
+
+// The per-user default token file goes with the default installation, whose executor is next to it: a second installation that records it is not given it by the picker,
+// whatever its entry says, so that a command with no flag refuses (an upgrade) or keeps the main instance's token and executor (an uninstall) as it did.
+func TestTheDefaultTokenFileStaysWithTheDefaultInstallationWhenAnotherOneRecordsIt(t *testing.T) {
+	for _, defaultInstallation := range []string{"no entry", "default token"} {
+		t.Run("the default installation: "+defaultInstallation, func(t *testing.T) {
+			d, _, second := sharedTokenWorld(t, defaultInstallation)
+			r, _ := plainResolver(t, nil, nil, second+"\n")
+			if err := r.chooseInstallation(d); err != nil {
+				t.Fatal(err)
+			}
+			if r.chosen["settings"] != second {
+				t.Errorf("chosen is %v, want the second installation's settings file", r.chosen)
+			}
+			if file, set := r.chosen["token-file"]; set {
+				t.Errorf("the picker set the token file %q, which is the default installation's", file)
+			}
+			if _, err := instanceTokenFile(r, Env{Deps: d}, installTarget{settingsPath: second}); err == nil || !strings.Contains(err.Error(), "second instance") {
+				t.Errorf("instanceTokenFile = %v; want the refusal for a second instance with no token file of its own", err)
+			}
+		})
+	}
+}
+
+// A flagless purge of a picked second installation whose entry records the default token file, next to a listed default installation, keeps the main instance's
+// executor and token copy and says so: the default token file is the main instance's, and the second installation's own stack is removed all the same.
+func TestAFlaglessPurgeOfASecondInstallationThatRecordsTheDefaultTokenFileKeepsTheMainInstancesExecutorAndToken(t *testing.T) {
+	h := purgeHarness(t) // the second installation: its stack, its settings file and its own token copy
+	unit, content := mainInstanceExecutor(t, h)
+	mainToken, err := defaultTokenFile(h.f.deps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultSettingsOf(t, colocatedSettings()) // the main instance: the default settings file, with no entry
+	if err := recordInstallation(runtime.GOOS, h.settingsPath(), mainToken, colocatedSettings(), testInstance); err != nil {
+		t.Fatal(err)
+	}
+	env := h.consoleOf(true, h.settingsPath()+"\n"+testInstance+"\n")
+	if err := Uninstall(context.Background(), []string{"--plain", "--purge"}, env); err != nil {
+		t.Fatalf("%v\n%s", err, h.out.String())
+	}
+	if exists(h.settingsPath()) {
+		t.Error("the purge did not run: the settings file of the picked installation is still there")
+	}
+	if !exists(mainToken) || !exists(executorTokenFile(mainToken)) || !exists(filepath.Join(executorDirOf(mainToken), "suiteward-executor")) {
+		t.Error("the purge removed the token copy or the executor of the main instance")
+	}
+	assertMainExecutorUntouched(t, h, unit, content)
+	if want := "Kept the access token file " + mainToken; !strings.Contains(h.out.String(), want) {
+		t.Errorf("the output lacks %q:\n%s", want, h.out.String())
+	}
+}
+
 // Every command that works on an installation asks, and refuses where nobody can be asked, before it touches anything.
 func TestEveryCommandThatWorksOnAnInstallationRefusesSeveralWhereNobodyCanAsk(t *testing.T) {
 	for _, args := range [][]string{

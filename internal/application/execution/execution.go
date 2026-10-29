@@ -120,6 +120,11 @@ type NewJob struct {
 	Spec
 	Unavailable Reason
 	At          time.Time // the creation time; also the first time a lease may be granted and, when unavailable, the end
+
+	// Replaces is the id of the job that this one replaces (zero for none): the job that held the binding of Spec and ended unavailable for executor-not-configured or
+	// no-executor. UnblockedSince is the current enrollment's enrolled_at, from which an unblock of that job holds it (required with Replaces, and only then).
+	Replaces       int64
+	UnblockedSince time.Time
 }
 
 // Job is a stored job. A zero time is an absent one.

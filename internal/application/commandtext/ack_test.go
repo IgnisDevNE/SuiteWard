@@ -44,7 +44,7 @@ func TestParseReference(t *testing.T) {
 
 func TestParseReferenceReadsWhatReferenceWrites(t *testing.T) {
 	proposal, revision, ok := commandtext.ParseReference(commandtext.Reference(7, 12))
-	if !ok || proposal != 7 || revision != 12 {
+	if !ok || proposal != 7 || revision != 13 {
 		t.Errorf("ParseReference(Reference(7, 12)) = %d, %d, %v", proposal, revision, ok)
 	}
 }

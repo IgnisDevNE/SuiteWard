@@ -89,3 +89,4 @@ Kept with no phase and no date (the orchestrator's proposal that the owner appro
 - **To verify before scheduling:** the carried items of [M1.6a](phases/M1.6a.md), [M1.6b](phases/M1.6b.md) and [M1.7](phases/M1.7.md) with no later record of a fix, among them the flaky `TestProbeWithoutAServerTimesOut` of M1.6a.
 
 <!-- UAT 7.3 throwaway: do not merge. -->
+<!-- UAT 7.3 throwaway, second head. -->

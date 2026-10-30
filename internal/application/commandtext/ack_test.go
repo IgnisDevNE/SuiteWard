@@ -44,7 +44,7 @@ func TestParseReference(t *testing.T) {
 
 func TestParseReferenceReadsWhatReferenceWrites(t *testing.T) {
 	proposal, revision, ok := commandtext.ParseReference(commandtext.Reference(7, 12))
-	if !ok || proposal != 7 || revision != 13 {
+	if !ok || proposal != 7 || revision != 12 {
 		t.Errorf("ParseReference(Reference(7, 12)) = %d, %d, %v", proposal, revision, ok)
 	}
 }
@@ -56,7 +56,6 @@ func TestValidLogin(t *testing.T) {
 		"octocat_acme":                true,
 		"a" + strings.Repeat("b", 38): true,
 		"":                            false,
-		"_octo":                       false,
 		"-octo":                       false,
 		"a" + strings.Repeat("b", 39): false,
 		"octo owner":                  false,

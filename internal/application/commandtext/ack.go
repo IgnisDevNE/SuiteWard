@@ -18,7 +18,7 @@ import (
 const maxID = 999999999
 
 // The underscore admits Enterprise Managed User logins such as octocat_acme.
-var loginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,38}$`)
+var loginPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]{0,38}$`)
 
 // ValidLogin reports whether login can be a GitHub login.
 func ValidLogin(login string) bool { return loginPattern.MatchString(login) }

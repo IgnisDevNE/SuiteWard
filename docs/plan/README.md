@@ -87,3 +87,5 @@ Kept with no phase and no date (the orchestrator's proposal that the owner appro
 - **Results and reports** (owner, 2026-10-29, from the M2.1b acceptance test): a dashboard for the report, with the results ingested and shown better than on a static page; a way to reach the report on the isolated tier without a port forward (to analyze: a report reached through the owner's TOTP code, or a login once the managed service runs); a check that shows the run of the approved tests while it runs, never required, since under `advisory` that run has no check of its own today; and quieter logs of the test runner (Podman's `conmon` logs one warning per retry while it feeds a sandbox's standard input).
 - **The product** (owner, 2026-10-29): the product's website, and the documentation of the solution as a site of its own.
 - **To verify before scheduling:** the carried items of [M1.6a](phases/M1.6a.md), [M1.6b](phases/M1.6b.md) and [M1.7](phases/M1.7.md) with no later record of a fix, among them the flaky `TestProbeWithoutAServerTimesOut` of M1.6a.
+
+<!-- UAT 7.3 throwaway: do not merge. -->

@@ -198,11 +198,13 @@ func (i installation) named() string {
 	return "the instance with the settings file `" + i.Settings + "`" + engine
 }
 
-// otherHolders are the listed installations that may hold the test runner that plan finds registered for another instance. Only an installation
-// on this computer has one, and the installation whose executor folder is the plan's is this instance. Where the definition names the program
-// (Linux, macOS) the holder is the installation whose program it names; the task of Windows is not read (foreign), so every other installation may
-// hold it. An entry with no token file of its own has none to name, except the default installation, whose executor is beside the default one: the
-// entry that comes back carries the token file that was worked out.
+// otherHolders are the listed installations that hold the test runner that plan finds registered for another instance. Only a co-located
+// installation has one, and the installation whose executor folder is the plan's is this instance. An installation holds it when foreign, asked of
+// its own plan, says it is not another's: where the definition names the program (Linux, macOS) the one whose program it names, and on Windows,
+// where the task is not read, the one whose own executor folder holds the wrapper and the task definition that an install leaves there. Never one by
+// elimination alone: the list keeps the last write, so an instance of an older release may have no entry, and naming the only other entry would send
+// the person to remove the wrong instance. An entry with no token file of its own has no executor folder to read, except the default installation,
+// whose executor is beside the default token file: the entry that comes back carries the token file that was worked out.
 func (d Deps) otherHolders(plan executorPlan) ([]installation, error) {
 	found, _, err := installationCandidates(d.GOOS)
 	if err != nil {
@@ -217,21 +219,20 @@ func (d Deps) otherHolders(plan executorPlan) ([]installation, error) {
 		if c.TokenFile == "" && c.isDefault {
 			c.TokenFile = def
 		}
-		thisInstance := c.TokenFile != "" && samePath(d.GOOS, executorDirOf(c.TokenFile), plan.dir)
-		if c.Tier != config.TierCoLocated || thisInstance {
+		if c.Tier != config.TierCoLocated || c.TokenFile == "" {
 			continue
 		}
-		if d.GOOS != "windows" {
-			if c.TokenFile == "" {
-				continue // its program is not known, so the definition cannot name it
-			}
-			// foreign reads the program and the definition of the plan alone; the definition exists, because the plan found it foreign.
-			theirs := executorPlan{goos: d.GOOS, definition: plan.definition, binary: filepath.Join(executorDirOf(c.TokenFile), executorBinaryName(d.GOOS))}
-			if other, err := theirs.foreign(true); err != nil {
-				return nil, err
-			} else if other {
-				continue
-			}
+		theirs, err := planExecutor(d, c.TokenFile, Settings{}, "") // foreign reads its program, its definition and its two files, not its settings
+		if err != nil {
+			return nil, err
+		}
+		if samePath(d.GOOS, theirs.dir, plan.dir) {
+			continue
+		}
+		if other, err := theirs.foreign(true); err != nil {
+			return nil, err
+		} else if other {
+			continue
 		}
 		holders = append(holders, c.installation)
 	}
@@ -240,8 +241,8 @@ func (d Deps) otherHolders(plan executorPlan) ([]installation, error) {
 
 // runnerHolder is what a text says of the instance that holds the computer's test runner, when this run finds it registered for another instance:
 // who goes right after "another instance" and is empty when no listed installation is known to hold it, and remove is the command that removes the
-// instance. A list that cannot be read is said, not hidden. Several installations that may hold it are listed, and the removal then names none:
-// the person adds the flags of the right one.
+// instance. A list that cannot be read is said, not hidden. Several installations that hold it (on Windows, whose task is not read) are listed, and
+// the removal then names none: the person adds the flags of the right one.
 func (d Deps) runnerHolder(plan executorPlan) (who, remove string) {
 	holders, err := d.otherHolders(plan)
 	remove = d.removeOtherInstance()
@@ -251,10 +252,7 @@ func (d Deps) runnerHolder(plan executorPlan) (who, remove string) {
 	case len(holders) == 0:
 		return "", remove
 	case len(holders) == 1:
-		if holders[0].TokenFile != "" { // without it the uninstall would keep the test runner, as beside a token file that may be another's
-			remove = d.removeInstance(holders[0])
-		}
-		return " (" + holders[0].named() + ")", remove
+		return " (" + holders[0].named() + ")", d.removeInstance(holders[0])
 	}
 	names := make([]string, len(holders))
 	for i, h := range holders {

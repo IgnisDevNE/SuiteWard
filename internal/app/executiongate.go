@@ -21,8 +21,9 @@ type executionOutcome struct {
 	counts  *checkExecution
 	receipt receiptDecision
 	silent  bool
-	// pastLeaseWait: the silence is at least the lease wait, so the sweep of the next pass ends the jobs that wait for the runner as no-executor (Job.Swept, the rule of
-	// sweep), and the comment of that pass says the tests did not run. The comment of this pass reads it, so that "keeps trying" is not followed by "did not run".
+	// pastLeaseWait: the silence is at least the lease wait, so the sweep of the next pass ends the jobs that wait for the runner as unavailable (Job.Swept, the rule of
+	// sweep: no-executor, or the reason of a lapsed lease at its last attempt), and the comment of that pass says the tests did not run. The comment of this pass reads it,
+	// so that "keeps trying" is not followed by "did not run".
 	pastLeaseWait bool
 
 	// What the comments of the head and the counts of an awaiting check read: the Set of the head (headSetOf; zero for a step that failed or a head that no run decides, which is

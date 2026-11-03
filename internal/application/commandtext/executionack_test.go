@@ -58,7 +58,9 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"receipt unavailable",
 			refused(execution.ReasonReceiptUnavailable, execution.ModeNone),
-			[]string{"Your approval of P4-R2 by @octo-owner was refused: the tests of the receipt could not run on this commit. " + codeUsed, "To run the tests again, push a new commit. To approve this commit without a receipt instead, comment:", "```\n/suiteward unblock <code>\n```", "Then comment the approve again, with the next code.", "An unblock applies only to tests that could not run, or that wait for a test runner that is not responding.", nextCode},
+			[]string{"Your approval of P4-R2 by @octo-owner was refused: the tests of the receipt could not run on this commit. " + codeUsed, "To run the tests again, push a new commit. To approve this commit without a receipt instead, comment:\n\n```\n/suiteward unblock <code>\n```\n\n" +
+				"Replace `<code>` with a current code from your authenticator app.\n\n" +
+				"Then comment the approve again, with the next code. An unblock applies only to tests that could not run, or that wait for a test runner that is not responding.\n\n" + nextCode},
 			[]string{"mode", "eligible"},
 		},
 		{

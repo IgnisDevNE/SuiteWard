@@ -76,9 +76,13 @@ func TestRequiredCheckSummaryStatesTheCanonicalRunItIsWaitingForOrCouldNotMake(t
 }
 
 func TestRequiredCheckSummaryOfAnUnavailableRunOffersTheUnblockAndOfAPendingOneDoesNot(t *testing.T) {
+	// The command is followed, in one paragraph, by what the code is and what the unblock costs, in the words of the comments' offer (M2.1c, SW-47).
+	const offer = "```\n/suiteward unblock <code>\n```\n\n" +
+		"Replace `<code>` with a current code from your authenticator app. The checks of this commit then stop waiting for these tests, and they do not run for this commit. A new push runs them.\n\n" +
+		requiredClosing
 	for _, reason := range []string{"canonical-unavailable", "canonical-not-responding"} {
-		if _, summary := checkText(t, requiredCheck(reason)); !strings.Contains(summary, "```\n/suiteward unblock <code>\n```") {
-			t.Errorf("%s: the summary does not offer the unblock:\n%s", reason, summary)
+		if _, summary := checkText(t, requiredCheck(reason)); !strings.Contains(summary, offer) {
+			t.Errorf("%s: the summary does not offer the unblock in the words of the comments:\n%s", reason, summary)
 		}
 	}
 	for _, reason := range []string{"canonical-pending", "canonical-failing"} {

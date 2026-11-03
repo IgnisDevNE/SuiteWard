@@ -322,7 +322,9 @@ func TestCheckSummaryRefusesTheNeutralState(t *testing.T) {
 
 const (
 	receiptNotRespondingText = "The test runner has not answered for about half a minute, so the receipt of this commit has not run. SuiteWard keeps trying. This check has no result yet."
-	receiptUnblockOffer      = "To approve without the receipt, the owner can comment `/suiteward unblock <code>`."
+	// receiptUnblockOffer says what the code is and what the unblock costs, in the words of the comments' offer (M2.1c, SW-47).
+	receiptUnblockOffer = "To approve without the receipt, the owner can comment `/suiteward unblock <code>`, where `<code>` is a current code from the authenticator app. " +
+		"The receipt then does not run for this commit, and a new push runs it."
 )
 
 // A receipt that waits for a runner that does not respond says so, keeps the evidence sentence and the tier, and offers the unblock only where the receipt gate would

@@ -130,6 +130,9 @@ type Ack struct {
 	Plans Plans
 	// Ended are the plans whose open job the unblock ended (the test runner was not responding): a subset of Plans, and none for every other outcome.
 	Ended Plans
+	// Canonical is the canonical level of the V1 that BootstrapPromoted announces. None (zero) is a message from before the level was carried and says
+	// nothing about runs, like off; it is none for every other outcome.
+	Canonical execution.CanonicalLevel
 }
 
 // Plans says which plans of a head an unblock lifted: its canonical run, its receipt, or both.

@@ -53,8 +53,10 @@ const (
 	// evidenceSentence closes every summary but the one of a receipt that does not apply. The check is written before the runs are final, so it speaks of what the test runner saw, not of results that it may not have.
 	evidenceSentence         = "What the test runner saw is evidence, not a verdict."
 	receiptUnblockedSentence = "The owner unblocked this commit. Its receipt could not run, so the tests of this change did not run."
-	// receiptUnblockOffer ends the text of receipt-not-responding where the receipt gate would refuse an approve.
-	receiptUnblockOffer = "To approve without the receipt, the owner can comment `/suiteward unblock <code>`."
+	// receiptUnblockOffer ends the text of receipt-not-responding where the receipt gate would refuse an approve. It names the code and what the unblock does, in the words of the
+	// comments' offer (unblockOffer).
+	receiptUnblockOffer = "To approve without the receipt, the owner can comment `/suiteward unblock <code>`, where `<code>` is a current code from the authenticator app. " +
+		"The receipt then does not run for this commit, and a new push runs it."
 	// receiptNotRunNext is what a receipt that was not run says to do: the neutral check does not fail the pull request, and a new push runs the receipt again. Where the receipt is
 	// required the approve is refused until the owner unblocks the commit, which the comment of the pull request gives the command for; an unblocked commit does not say it again.
 	receiptNotRunNext    = "This check does not fail the pull request. A new push runs the receipt again."

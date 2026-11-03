@@ -588,7 +588,7 @@ func TestBootstrapPromotesAnApprovedBaselineOnce(t *testing.T) {
 	}
 	w.requireOutbox(promotedKey, summaryKey)
 	payload := w.payload(promotedKey)
-	want := map[string]any{"repositoryId": float64(1001), "repo": bootRepo, "pull": float64(4), "reference": "P1-R1", "version": "V1"}
+	want := map[string]any{"repositoryId": float64(1001), "repo": bootRepo, "pull": float64(4), "reference": "P1-R1", "version": "V1", "canonical": "off"} // the declaration names no profile
 	if !maps.Equal(payload, want) {
 		t.Fatalf("promoted payload = %v, want %v", payload, want)
 	}

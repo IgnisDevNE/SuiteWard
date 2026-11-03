@@ -89,7 +89,7 @@ const (
 //     MalformedCommand and EditedFirst, which have no trustworthy reference and
 //     must leave both zero.
 //   - Rejection is set only for Rejected, Malformed only for MalformedCommand,
-//     Version (V<n>) only for BootstrapPromoted.
+//     Version (V<n>) and Canonical only for BootstrapPromoted.
 //   - Owner is the owner's GitHub login.
 //   - Source is the id of the comment that carried the command; the body links
 //     to it. It is required, except for BootstrapPromoted, which a later job
@@ -327,11 +327,30 @@ func bootstrapAck(a Ack) string {
 		return paragraphs("`/suiteward suggest`: " + subject + " already covers every test-like file of this pull request, so there is nothing to suggest. Nothing changed.\n" +
 			"This answer is not an approval.")
 	case BootstrapPromoted:
-		return paragraphs(fmt.Sprintf("Setup is complete: %s, approved by %s, is now V%d, the approved version of the contract.\n", ref, who, a.Version) +
+		promoted := fmt.Sprintf("Setup is complete: %s, approved by %s, is now V%d, the approved version of the contract.\n", ref, who, a.Version) +
 			"SuiteWard checked the approved files at the exact commit that was approved, and recorded the result.\n" +
-			"From now on, a change to the protected files needs a new proposal and your approval.")
+			"From now on, a change to the protected files needs a new proposal and your approval."
+		if runs := promotedRuns(a.Canonical); runs != "" {
+			return paragraphs(promoted, runs)
+		}
+		return paragraphs(promoted)
 	}
 	return notInGroup(a.Outcome)
+}
+
+// promotedRuns is what the V1 comment says about the runs of the approved tests (M2.1c, SW-2), and "" where it says nothing: canonical off, and a message queued before the
+// level was carried. It does not say that any run happened, only that they happen from now on.
+func promotedRuns(level execution.CanonicalLevel) string {
+	const runs = "From now on, SuiteWard runs the approved tests on every open pull request and on every push. A results comment follows when a run ends."
+	switch level {
+	case 0, execution.CanonicalLevelOff:
+		return ""
+	case execution.CanonicalLevelAdvisory:
+		return runs
+	case execution.CanonicalLevelRequired:
+		return runs + " The checks of a commit wait for its run."
+	}
+	panic(fmt.Sprintf("commandtext: unknown canonical level %d", level))
 }
 
 // mustReference is the reference ValidateAck accepted for a, "" for an outcome that names none.

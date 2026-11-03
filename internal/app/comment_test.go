@@ -27,6 +27,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/config"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 const (
@@ -324,9 +325,9 @@ func TestCommentPublisherRendersEveryKeyKind(t *testing.T) {
 			return commandtext.BootstrapSummary(cmtMust(inputs.summary()))
 		}},
 		{"bootstrap promotion", func(*cmtWorld) governance.OutboxMessage {
-			return cmtMust(newPromotedMessage(cmtTarget(), "P1-R1"))
+			return cmtMust(newPromotedMessage(cmtTarget(), "P1-R1", domain.CanonicalLevelAdvisory))
 		}, func(*cmtWorld) string {
-			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Version: 1, Owner: cmtOwner})
+			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Version: 1, Owner: cmtOwner, Canonical: domain.CanonicalLevelAdvisory})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -356,7 +357,7 @@ func TestCommentPublisherPostsOncePerMarker(t *testing.T) {
 
 func TestCommentPublisherSkipsAnExistingMarker(t *testing.T) {
 	w := newCmtWorld(t)
-	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1"))
+	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1", domain.CanonicalLevelOff))
 	// A comment that an earlier delivery posted before it crashed.
 	w.writer.existing(cmtBotID, "Bootstrap complete.\n\n"+commandtext.Marker(cmtInstance, message.Key)+"\n")
 
@@ -368,8 +369,8 @@ func TestCommentPublisherSkipsAnExistingMarker(t *testing.T) {
 }
 
 func TestCommentPublisherIgnoresOtherMarkers(t *testing.T) {
-	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1"))
-	other := cmtMust(newPromotedMessage(cmtTarget(), "P2-R1"))
+	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1", domain.CanonicalLevelOff))
+	other := cmtMust(newPromotedMessage(cmtTarget(), "P2-R1", domain.CanonicalLevelOff))
 	for _, tc := range []struct {
 		name   string
 		author int64
@@ -503,7 +504,7 @@ func TestCommentPublisherRefusesWhatDoesNotMatchItsKey(t *testing.T) {
 		return cmtMust(json.Marshal(m))
 	}
 	summary := cmtMust(newSummaryMessage(cmtTarget(), cmtSummaryInputs()))
-	promoted := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1"))
+	promoted := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1", domain.CanonicalLevelOff))
 	for _, tc := range []struct {
 		name    string
 		key     string
@@ -577,7 +578,7 @@ func TestCommentPublisherErrorsWithoutAReceiptOrASuite(t *testing.T) {
 func TestCommentPublisherErrorsWithoutAnEnrolledOwnerForThePromotion(t *testing.T) {
 	w := newCmtWorld(t)
 	w.pub.owners = ownertest.NewMemory() // nobody enrolled
-	if err := w.deliver(cmtMust(newPromotedMessage(cmtTarget(), "P1-R1"))); err == nil {
+	if err := w.deliver(cmtMust(newPromotedMessage(cmtTarget(), "P1-R1", domain.CanonicalLevelOff))); err == nil {
 		t.Fatal("publish succeeded without an owner to name")
 	}
 }
@@ -597,7 +598,7 @@ func TestCommentPublisherReturnsGitHubErrorsAsStatusOnly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCmtWorld(t)
 			tc.set(w.writer, tc.err)
-			err := w.deliver(cmtMust(newPromotedMessage(cmtTarget(), "P1-R1")))
+			err := w.deliver(cmtMust(newPromotedMessage(cmtTarget(), "P1-R1", domain.CanonicalLevelOff)))
 			if err == nil {
 				t.Fatal("publish succeeded")
 			}
@@ -648,7 +649,7 @@ func TestCommentPublisherReturnsABotIdentityFailureAndRetriesIt(t *testing.T) {
 		}
 		return cmtBotID, nil
 	})
-	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1"))
+	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1", domain.CanonicalLevelOff))
 
 	err := w.deliver(message)
 	if err == nil || strings.Contains(err.Error(), cmtLeakText) || !strings.Contains(err.Error(), "502") {
@@ -659,7 +660,7 @@ func TestCommentPublisherReturnsABotIdentityFailureAndRetriesIt(t *testing.T) {
 	}
 	failing.Store(false)
 	w.mustDeliver(message)
-	w.mustDeliver(cmtMust(newPromotedMessage(cmtTarget(), "P2-R1")))
+	w.mustDeliver(cmtMust(newPromotedMessage(cmtTarget(), "P2-R1", domain.CanonicalLevelOff)))
 	if calls.Load() != 2 {
 		t.Fatalf("the identity was resolved %d times, want 2", calls.Load())
 	}
@@ -675,13 +676,13 @@ func TestCommentPublisherReadsTheInstanceOnceAndRetriesAfterAFailure(t *testing.
 		}
 		return cmtInstance, nil
 	})
-	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1"))
+	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1", domain.CanonicalLevelOff))
 
 	if err := w.deliver(message); err == nil {
 		t.Fatal("publish succeeded while the instance id could not be read")
 	}
 	w.mustDeliver(message)
-	w.mustDeliver(cmtMust(newPromotedMessage(cmtTarget(), "P2-R1")))
+	w.mustDeliver(cmtMust(newPromotedMessage(cmtTarget(), "P2-R1", domain.CanonicalLevelOff)))
 	if calls != 2 {
 		t.Fatalf("read the instance %d times, want 2", calls)
 	}
@@ -712,7 +713,7 @@ func TestCommentPublisherIsSafeForConcurrentDeliveries(t *testing.T) {
 	var wg sync.WaitGroup
 	for n := 1; n <= 16; n++ {
 		wg.Go(func() {
-			if err := w.deliver(cmtMust(newPromotedMessage(cmtTarget(), fmt.Sprintf("P%d-R1", n)))); err != nil {
+			if err := w.deliver(cmtMust(newPromotedMessage(cmtTarget(), fmt.Sprintf("P%d-R1", n), domain.CanonicalLevelOff))); err != nil {
 				t.Errorf("publish: %v", err)
 			}
 		})
@@ -942,7 +943,7 @@ func (o ownerWith) Current(context.Context) (owner.State, bool, error) {
 func TestCommentPublisherDoesNotQuoteAnOwnerLoginTheRendererRefuses(t *testing.T) {
 	w := newCmtWorld(t)
 	w.pub.owners = ownerWith(owner.State{Owner: owner.Owner{AccountID: cmtOwnerID, Login: "bad login " + cmtLeakText}})
-	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1"))
+	message := cmtMust(newPromotedMessage(cmtTarget(), "P1-R1", domain.CanonicalLevelOff))
 
 	err := w.deliver(message)
 

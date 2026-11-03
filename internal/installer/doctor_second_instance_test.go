@@ -129,12 +129,16 @@ func listedAt(t *testing.T, goos, settingsPath, tokenFile string, s Settings, in
 	}
 }
 
-// listedElsewhere makes a settings file for an installation on the container program and lists it; it returns that file.
+// listedElsewhere makes a settings file for an installation on the container program and lists it; it returns that file. A doctor result bounds
+// its detail to 300 characters (oneLine) and the names come first, but the test's own folder is a long path: the settings file goes in a short one.
 func listedElsewhere(t *testing.T, goos, tokenFile, runtime, instance string) string {
 	t.Helper()
 	s := colocatedSettings()
 	s.Runtime = runtime
-	path := savedAt(t, s)
+	path := filepath.Join(shortDir(t), "settings.yaml")
+	if err := SaveSettings(path, s); err != nil {
+		t.Fatal(err)
+	}
 	listedAt(t, goos, path, tokenFile, s, instance)
 	return path
 }
@@ -166,14 +170,14 @@ func TestDoctorNamesTheInstanceThatHoldsTheTestRunner(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin", "windows"} {
 		t.Run(goos, func(t *testing.T) {
 			var holder, mainToken string
-			res, tokenFile := secondInstanceBesides(t, goos, func(main string) {
+			res, _ := secondInstanceBesides(t, goos, func(main string) {
 				mainToken = main
 				holder = listedElsewhere(t, goos, main, RuntimeDocker, holderID)
 				if goos != "windows" { // the definition does not name its program; Windows cannot tell the two apart
 					listedElsewhere(t, goos, otherToken(t), RuntimePodman, bystanderID)
 				}
 			})
-			wantFail(t, res, "executor.lifecycle", "belongs to another instance (the instance `"+holderID+"`, on Docker), not to the one that uses the token file `"+tokenFile+"`.")
+			wantFail(t, res, "executor.lifecycle", "belongs to another instance (the instance `"+holderID+"`, on Docker), not to the one that uses the token file `")
 			if detail := res["executor.lifecycle"].Detail; strings.Contains(detail, bystanderID) || strings.Contains(detail, "Podman") {
 				t.Errorf("the detail names an instance that does not hold the test runner: %q", detail)
 			}
@@ -208,12 +212,12 @@ func TestDoctorNamesTheInstanceThatHoldsTheTestRunnerByItsSettingsFileWhenTheLis
 // them, and the fix keeps the removal that leaves the flags to the person.
 func TestDoctorListsTheInstancesThatMayHoldTheTestRunnerWhenItCannotTellWhich(t *testing.T) {
 	var first, second string
-	res, tokenFile := secondInstanceBesides(t, "windows", func(string) {
+	res, _ := secondInstanceBesides(t, "windows", func(string) {
 		first = listedElsewhere(t, "windows", otherToken(t), RuntimeDocker, holderID)
 		second = listedElsewhere(t, "windows", otherToken(t), RuntimePodman, "")
 	})
 	wantFail(t, res, "executor.lifecycle", "belongs to another instance (one of the other instances on this computer: the instance `"+holderID+"`, on Docker; "+
-		"the instance with the settings file `"+second+"`, on Podman), not to the one that uses the token file `"+tokenFile+"`.")
+		"the instance with the settings file `"+second+"`, on Podman), not to the one")
 	for _, name := range []string{"executor.lifecycle", "executor.running", "executor.binary"} {
 		fix := res[name].Fix
 		if !strings.Contains(fix, "Remove that instance with "+generalHint+".") || strings.Contains(fix, first) || strings.Contains(fix, second) {

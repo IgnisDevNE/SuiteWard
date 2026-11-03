@@ -383,6 +383,28 @@ func TestResultsCommentOffersTheApproveAnywayOnlyUnderARequiredReceiptThatAwaits
 	}
 }
 
+// The kinds block is replaced only where it would stand: a receipt that is empty, did not run or is not wanted never had one, so the approve keeps its intro there.
+func TestResultsCommentKeepsTheApproveIntroWhereThereIsNoKindsBlockToReplace(t *testing.T) {
+	failing := withFailingApprovedTests(execution.CanonicalCounts{Pass: 8, Fail: 1}, 1)
+	approve := func(r *commandtext.Results) { r.Next, r.ApproveMode, r.ApprovalMissing = execution.NextApprove, true, true }
+	for name, edit := range map[string]func(*commandtext.Results){
+		"the receipt is empty": func(r *commandtext.Results) { r.Receipt.Counts = execution.ReceiptCounts{} },
+		"the receipt did not run and the owner unblocked it": func(r *commandtext.Results) {
+			r.Receipt, r.Unblocked = unavailableReceipt("timeout"), commandtext.Plans{Receipt: true}
+		},
+		"the receipt is not wanted": func(r *commandtext.Results) {
+			r.Receipt, r.ReceiptLevel, r.ApproveMode = nil, execution.ReceiptLevelOff, false
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(failing, approve, edit))
+			if !hasParagraph(body, approveModeIntro) || strings.Contains(body, "anyway") || strings.Contains(body, "does not say which kind") || strings.Count(body, "/suiteward approve") != 1 {
+				t.Errorf("the approve lost its intro, or the comment withholds kinds that it never stated:\n%s", body)
+			}
+		})
+	}
+}
+
 // A head whose approved tests do not fail, and whose change weakens none, keeps the kinds block as it was, even when the receipt's own tests fail.
 func TestResultsCommentKeepsTheKindsWhenTheApprovedTestsDoNotFail(t *testing.T) {
 	for name, edit := range map[string]func(*commandtext.Results){
@@ -771,6 +793,9 @@ var resultsSituations = map[string]func(*commandtext.Results){
 		r.Canonical, r.Receipt, r.Next, r.ApprovalMissing = unavailableCanonical("no-executor"), unavailableReceipt("no-executor"), execution.NextUnblock, true
 	},
 	"weakened": func(r *commandtext.Results) { r.Weakened, r.Next, r.ApprovalMissing = 2, execution.NextApprove, true },
+	"approved tests fail, the approve names a mode": func(r *commandtext.Results) {
+		r.Canonical.Counts, r.Weakened, r.Next, r.ApproveMode, r.ApprovalMissing = execution.CanonicalCounts{Pass: 8, Fail: 1, Missing: 1}, 1, execution.NextApprove, true, true
+	},
 	"files that cannot be read and lines to look at": func(r *commandtext.Results) {
 		r.Receipt.Counts.Unparsed, r.Receipt.Markers, r.Next = 1, 3, execution.NextFix
 	},

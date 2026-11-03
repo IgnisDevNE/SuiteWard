@@ -253,3 +253,41 @@ func TestNoTextSaysThatSuiteWardDoesNotRunTests(t *testing.T) {
 		}
 	}
 }
+
+// A Markdown table is one paragraph whose every line is a row of the same number of cells: a raw `|` or a line break in a cell breaks it, and a table that does not start
+// its paragraph is not drawn (GitHub wants a blank line before it). The rule holds for every text of the package, and the three families that state the receipt reach a table.
+func TestEveryTableOfTheTextsIsWellFormed(t *testing.T) {
+	families := map[string]bool{"results ": false, "receipt ": false, "ack receipt refused, mode ": false}
+	for name, body := range everyBody(t) {
+		for _, paragraph := range strings.Split(body, "\n\n") {
+			lines := strings.Split(strings.TrimRight(paragraph, "\n"), "\n")
+			if !strings.HasPrefix(lines[0], "|") {
+				for _, line := range lines {
+					if strings.HasPrefix(line, "|") {
+						t.Errorf("%s: a row of a table does not start its paragraph, so no table is drawn: %q", name, line)
+					}
+				}
+				continue
+			}
+			for family := range families {
+				if strings.HasPrefix(name, family) {
+					families[family] = true
+				}
+			}
+			pipes := strings.Count(lines[0], "|")
+			if len(lines) < 3 || strings.Trim(lines[1], "|- ") != "" {
+				t.Errorf("%s: a table with no separator row, or with no row:\n%s", name, paragraph)
+			}
+			for _, line := range lines {
+				if !strings.HasPrefix(line, "| ") || !strings.HasSuffix(line, " |") || strings.Count(line, "|") != pipes {
+					t.Errorf("%s: a row of %d cells holds a raw pipe or a line break: %q\n%s", name, pipes-1, line, paragraph)
+				}
+			}
+		}
+	}
+	for family, reached := range families {
+		if !reached {
+			t.Errorf("no text of the family %q has a table", family)
+		}
+	}
+}

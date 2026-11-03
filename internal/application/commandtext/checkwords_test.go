@@ -23,10 +23,15 @@ func TestTheCountsOfTheCheckSummariesAreThoseOfTheResultsComment(t *testing.T) {
 	if !strings.Contains(comment, approved) {
 		t.Errorf("the comment does not say the counts of the approved tests as the check does (%q):\n%s", approved, comment)
 	}
-	for _, paragraph := range commandtext.ReceiptFacts(receipt, 9) {
+	facts := commandtext.ReceiptFacts(receipt, 9)
+	for _, paragraph := range facts {
 		if !strings.Contains(comment, paragraph) {
 			t.Errorf("the comment does not say the counts of the receipt as the check does (%q):\n%s", paragraph, comment)
 		}
+	}
+	// The check says the table of the comment, not a list of its own: the number of tests, then the table, as two paragraphs.
+	if want := countsParagraphs(receipt.Evaluated(), 3, 2, 1, 2, 1, 6, 4); len(facts) < 2 || facts[0] != want[0] || facts[1] != want[1] {
+		t.Errorf("the counts of the receipt in the check are\n%q\nwant them to open with\n%q", facts, want)
 	}
 	empty := commandtext.ExecutionText(commandtext.CheckExecution{})
 	if want := "Approved tests: none are declared, so none ran."; empty != want {

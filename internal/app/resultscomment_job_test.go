@@ -503,6 +503,28 @@ func TestChecksAddTheResultsCommentAndNoSecondNotRespondingCommentWhenTheWaitEnd
 	w.wantComments("results:", resultsKeyOf(4, bootHead, job.ID, 0))
 }
 
+// A head whose job is created while the runner has been silent for the whole lease wait gets one comment, the results comment that says that the tests did not run: the
+// sweep of the next pass ends the job, so a comment that says "SuiteWard keeps trying" would be followed by "did not run" 30 s later. The check of the pass still says
+// that the runner does not respond.
+func TestChecksWriteOnlyTheResultsCommentForAHeadWhoseJobWaitsWhileTheRunnerIsSilentForTheLeaseWait(t *testing.T) {
+	w := gateWorld(t)
+	w.silentFor(w.check.executor.LeaseWait) // the first pass creates the job and reads the silence of the lease wait, to the instant
+	w.mustCheck()
+	job := w.onlyJob(4, bootHead, execution.PlanCanonical)
+	if job.State != execution.StatePending {
+		t.Fatalf("the job is %s, want pending: the pass created it and the sweep of the next pass ends it", job.State)
+	}
+	w.want(4, checks.InProgress, "canonical-not-responding", 1) // the checks are unchanged
+	w.wantComments("not-responding:")
+
+	w.mustCheck()
+
+	requireFinal(t, w.onlyJob(4, bootHead, execution.PlanCanonical), execution.ReasonNoExecutor)
+	w.wantComments("not-responding:")
+	w.wantComments("results:", resultsKeyOf(4, bootHead, job.ID, 0))
+	w.wantComments("runner-back:")
+}
+
 func TestChecksWriteTheNotRespondingCommentOfAHeadWhoseReceiptJobWaits(t *testing.T) {
 	w := newExecWorld(t, execDecl)
 	w.execPullFive(execHeadFiles(execDecl, "v2"))

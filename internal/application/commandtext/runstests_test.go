@@ -2,6 +2,7 @@ package commandtext_test
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -251,6 +252,25 @@ func TestNoTextSaysThatSuiteWardDoesNotRunTests(t *testing.T) {
 				t.Errorf("%s: the body says %q:\n%s", name, phrase, body)
 			}
 		}
+	}
+}
+
+// The comments of a run that waits or did not run are in plain words (M2.1c, SW-1 and SW-28; docs/plan/phases/M2.1c.md, texts 4 and 5): none says a reason code, a job, a lease or
+// an executor, which only the machinery of a run knows.
+func TestTheCommentsOfARunThatWaitsOrDidNotRunUseNoWordOfTheMachinery(t *testing.T) {
+	machinery := regexp.MustCompile(`(?i)\b(jobs?|leases?|executors?|canonical)\b`)
+	reached := 0
+	for name, body := range everyBody(t) {
+		if !strings.HasPrefix(name, "not responding") && !strings.HasPrefix(name, "results did not run") && !strings.HasPrefix(name, "results unblocked") {
+			continue
+		}
+		reached++
+		if word := machinery.FindString(body); word != "" {
+			t.Errorf("%s: the body says %q:\n%s", name, word, body)
+		}
+	}
+	if reached < 10 {
+		t.Errorf("only %d bodies were checked: the test no longer reaches the comments of a run that waits or did not run", reached)
 	}
 }
 

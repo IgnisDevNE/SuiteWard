@@ -20,7 +20,8 @@ const (
 	linkNote = "This link opens on the computer that runs SuiteWard. If SuiteWard runs on a separate server, forward that server's HTTP port to your computer first. To open the link in a new tab, Ctrl+click it (Cmd+click on a Mac, or middle-click)."
 
 	resultsEvidence = "These results are what the test runner saw. They are evidence, not a verdict."
-	unblockOffer    = "To go on without these tests, the owner can comment `/suiteward unblock <code>`. That lets this commit pass its checks without them. A new push runs them."
+	// The offer of the unblock (M2.1c, SW-1; docs/plan/phases/M2.1c.md, text 4), shared by the results comment and the not-responding comment.
+	unblockOffer = "To go on without these tests, the owner can comment `/suiteward unblock <code>`, where `<code>` is a current code from the authenticator app. That lets this commit pass its checks without them, and they do not run for this commit. A new push runs them."
 )
 
 // The link and the tables of the results comment (M2.1c, SW-21; docs/plan/phases/M2.1c.md, texts 2 and 3), written out so that the tests pin them.
@@ -619,6 +620,86 @@ func TestResultsCommentNamesTheNextStep(t *testing.T) {
 	})
 }
 
+// A head whose runs did not run and that leaves nothing to the owner (M2.1c, SW-28; docs/plan/phases/M2.1c.md, text 5) says by reason whether the tests run, and when: an unblock
+// ends it for this commit, a runner that did not answer or is not set up runs them later, and any other reason waits for a new push. A head with nothing that did not run keeps
+// "Nothing to do for now.".
+func TestResultsCommentSaysWhetherTheTestsThatDidNotRunRunAgain(t *testing.T) {
+	const (
+		unblocked   = "Nothing runs them for this commit now. A new push runs the tests."
+		whenAnswers = "SuiteWard runs them when the test runner answers again."
+		onceSetUp   = "SuiteWard runs them once the test runner is set up."
+		newPush     = "A new push runs them."
+		nothing     = "Nothing to do for now."
+	)
+	// advisoryRuns is a head whose runs, under advisory levels, did not run for the reasons named (empty: the run is complete), with nothing for the owner to do.
+	advisoryRuns := func(canonical, receipt string) func(*commandtext.Results) {
+		return func(r *commandtext.Results) {
+			r.CanonicalLevel, r.ReceiptLevel, r.Next = execution.CanonicalLevelAdvisory, execution.ReceiptLevelAdvisory, execution.NextNone
+			if canonical != "" {
+				r.Canonical = unavailableCanonical(canonical)
+			}
+			if receipt != "" {
+				r.Receipt = unavailableReceipt(receipt)
+			}
+		}
+	}
+	unblock := func(canonical, receipt string, plans commandtext.Plans) func(*commandtext.Results) {
+		return func(r *commandtext.Results) {
+			advisoryRuns(canonical, receipt)(r)
+			r.Unblocked = plans
+		}
+	}
+	for name, tc := range map[string]struct {
+		edit func(*commandtext.Results)
+		want string
+	}{
+		"the approved tests: the test runner did not answer":      {advisoryRuns("no-executor", ""), whenAnswers},
+		"the receipt: the test runner did not answer":             {advisoryRuns("", "no-executor"), whenAnswers},
+		"both: the test runner did not answer":                    {advisoryRuns("no-executor", "no-executor"), whenAnswers},
+		"the approved tests: no test runner is set up":            {advisoryRuns("executor-not-configured", ""), onceSetUp},
+		"both: no test runner is set up":                          {advisoryRuns("executor-not-configured", "executor-not-configured"), onceSetUp},
+		"one did not get an answer, the other has no runner":      {advisoryRuns("no-executor", "executor-not-configured"), onceSetUp},
+		"the approved tests: another reason":                      {advisoryRuns("timeout", ""), newPush},
+		"the receipt: another reason":                             {advisoryRuns("", "resource-limit"), newPush},
+		"one for no answer, the other for another reason":         {advisoryRuns("no-executor", "timeout"), newPush},
+		"one with no runner set up, the other for another reason": {advisoryRuns("executor-not-configured", "timeout"), newPush},
+		"the approved tests were unblocked":                       {unblock("no-executor", "", commandtext.Plans{Canonical: true}), unblocked},
+		"the unblock beats the reason":                            {unblock("timeout", "", commandtext.Plans{Canonical: true}), unblocked},
+		"one was unblocked and the other was not":                 {unblock("no-executor", "no-executor", commandtext.Plans{Canonical: true}), unblocked},
+		"both were unblocked":                                     {unblock("executor-not-configured", "no-executor", commandtext.Plans{Canonical: true, Receipt: true}), unblocked},
+		"under required, the approved tests were unblocked": {func(r *commandtext.Results) {
+			r.Canonical, r.Unblocked = unavailableCanonical("no-executor"), commandtext.Plans{Canonical: true}
+		}, unblocked},
+		"every run ran, under advisory": {advisoryRuns("", ""), nothing},
+		"every run ran, under required": {func(*commandtext.Results) {}, nothing},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(tc.edit))
+			if !hasParagraph(body, tc.want) {
+				t.Errorf("the comment lacks the paragraph %q:\n%s", tc.want, body)
+			}
+			for _, other := range []string{unblocked, whenAnswers, onceSetUp, newPush, nothing} {
+				if other != tc.want && hasParagraph(body, other) {
+					t.Errorf("the comment says %q beside %q:\n%s", other, tc.want, body)
+				}
+			}
+		})
+	}
+	// Only a next step of nothing says it: the unblock and a fix keep their own words. The offer of the unblock ends with "A new push runs them.", so the check is by paragraph.
+	t.Run("a next step that is not nothing says none of them", func(t *testing.T) {
+		for _, next := range []execution.Next{execution.NextUnblock, execution.NextFix} {
+			body := resultsText(t, results(func(r *commandtext.Results) {
+				r.Canonical, r.Next = unavailableCanonical("no-executor"), next
+			}))
+			for _, sentence := range []string{unblocked, whenAnswers, onceSetUp, newPush, nothing} {
+				if hasParagraph(body, sentence) {
+					t.Errorf("the next step %v says %q:\n%s", next, sentence, body)
+				}
+			}
+		}
+	})
+}
+
 func TestResultsCommentEndsWithTheEvidenceSentenceAndTheTier(t *testing.T) {
 	isolated := resultsText(t, results())
 	if !strings.HasSuffix(isolated, "\n\n"+resultsEvidence+"\n") || strings.Contains(isolated, commandtext.CoLocatedNotice) {
@@ -795,23 +876,33 @@ func TestNotRespondingCommentTellsTheTestsAreWaitingAndWhatToCheck(t *testing.T)
 		bold    = "**The test runner is not responding.**"
 		waiting = "The tests for this commit (`0123456`) are waiting. SuiteWard has not heard from the test runner for about half a minute."
 		problem = "This is a problem only if it lasts. SuiteWard keeps trying, and the tests start when the test runner answers. Check that it is running on the machine that runs SuiteWard. If it stays silent, SuiteWard stops waiting after a while and says so."
+		// M2.1c, SW-1 (docs/plan/phases/M2.1c.md, text 4): with something held, the offer follows the sentence that says so; with nothing held, one paragraph says that nothing
+		// waits and that an unblock is not needed.
+		holds        = "The checks of this commit wait for these tests. " + unblockOffer
+		holdsNothing = "Nothing waits for these tests. An unblock is not needed here: it would only keep these tests from running when the test runner answers again."
 	)
 	notResponding := func(unblock bool, link string) string {
 		return render(t, func() string {
 			return commandtext.NotRespondingComment(commandtext.NotResponding{Head: resultsHead, Pull: 7, Unblock: unblock, PullURL: link})
 		})
 	}
-	want := strings.Join([]string{bold, waiting, problem, unblockOffer, "Details: [pull request page](" + resultsLink + ").", linkNote}, "\n\n") + "\n"
+	want := strings.Join([]string{bold, waiting, problem, holds, "Details: [pull request page](" + resultsLink + ").", linkNote}, "\n\n") + "\n"
 	if got := notResponding(true, resultsLink); got != want {
 		t.Errorf("the comment with the offer is\n%s\nwant\n%s", got, want)
 	}
-	wantPlain := strings.Join([]string{bold, waiting, problem, "Details: [pull request page](" + resultsLink + ").", linkNote}, "\n\n") + "\n"
+	wantPlain := strings.Join([]string{bold, waiting, problem, holdsNothing, "Details: [pull request page](" + resultsLink + ").", linkNote}, "\n\n") + "\n"
 	if got := notResponding(false, resultsLink); got != wantPlain {
 		t.Errorf("the comment without the offer is\n%s\nwant\n%s", got, wantPlain)
 	}
+	if got := notResponding(false, resultsLink); strings.Contains(got, "/suiteward") || strings.Contains(strings.ToLower(got), "nothing to do") {
+		t.Errorf("the comment without the offer offers the command, or says that the owner has nothing to do:\n%s", got)
+	}
 	const noLink = "SuiteWard has no web address set, so this comment has no link. The checks of this commit carry the counts."
-	if got := notResponding(true, ""); !strings.HasSuffix(got, unblockOffer+"\n\n"+noLink+"\n") || strings.Contains(got, "Details:") {
+	if got := notResponding(true, ""); !strings.HasSuffix(got, holds+"\n\n"+noLink+"\n") || strings.Contains(got, "Details:") {
 		t.Errorf("a comment with no base address does not say so:\n%s", got)
+	}
+	if got := notResponding(false, ""); !strings.HasSuffix(got, holdsNothing+"\n\n"+noLink+"\n") || strings.Contains(got, "Details:") {
+		t.Errorf("a comment with no base address and no offer does not say so:\n%s", got)
 	}
 	for name, n := range map[string]commandtext.NotResponding{
 		"a head that is short":                {Head: "0123456", Pull: 7},
@@ -901,6 +992,15 @@ var resultsSituations = map[string]func(*commandtext.Results){
 	},
 	"unblocked": func(r *commandtext.Results) {
 		r.Canonical, r.Unblocked = unavailableCanonical("no-executor"), commandtext.Plans{Canonical: true}
+	},
+	"did not run, the test runner did not answer": func(r *commandtext.Results) {
+		r.CanonicalLevel, r.ReceiptLevel, r.Canonical, r.Receipt = execution.CanonicalLevelAdvisory, execution.ReceiptLevelAdvisory, unavailableCanonical("no-executor"), unavailableReceipt("no-executor")
+	},
+	"did not run, no test runner is set up": func(r *commandtext.Results) {
+		r.CanonicalLevel, r.ReceiptLevel, r.Canonical = execution.CanonicalLevelAdvisory, execution.ReceiptLevelAdvisory, unavailableCanonical("executor-not-configured")
+	},
+	"did not run, another reason": func(r *commandtext.Results) {
+		r.CanonicalLevel, r.ReceiptLevel, r.Receipt = execution.CanonicalLevelAdvisory, execution.ReceiptLevelAdvisory, unavailableReceipt("timeout")
 	},
 	"ended": func(r *commandtext.Results) {
 		r.Canonical, r.Receipt, r.Unblocked, r.Ended = unavailableCanonical("no-executor"), unavailableReceipt("no-executor"), commandtext.Plans{Canonical: true, Receipt: true}, commandtext.Plans{Canonical: true, Receipt: true}

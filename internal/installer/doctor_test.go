@@ -587,7 +587,7 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 		want  []string
 	}{
 		{"the engine does not answer", colocated{over: []rule{{match: "info --format", err: errors.New("connection refused")}}}, "runtime", []string{"connection refused"}},
-		{"a rootful connection", colocated{over: []rule{{match: "info --format", out: "false\n"}}}, "runtime", []string{"rootless"}},
+		{"a rootful connection", colocated{over: []rule{{match: "info --format", out: "false\n"}}}, "runtime", []string{"rootful"}},
 		{"an unhealthy database", colocated{state: map[string]map[string]any{ContainerDB: doctorStateOf("running", 0, "unhealthy")}}, "containers", []string{ContainerDB, "unhealthy"}},
 		{"a stopped service", colocated{state: map[string]map[string]any{ContainerServe: doctorStateOf("exited", 137, "")}}, "containers", []string{ContainerServe, "exited"}},
 		{"a migrate container that failed", colocated{migrate: doctorStateOf("exited", 3, "")}, "containers", []string{ContainerMigrate, "exit"}},

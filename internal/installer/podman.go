@@ -11,6 +11,9 @@ import (
 // A machine connection that reaches the rootless socket of the machine's user.
 var rootlessSocket = regexp.MustCompile(`/run/user/[0-9]+/podman/podman\.sock$`)
 
+// rootRefusal tells the person who ran the command as root what to do: a few sentences, so it ends with a period.
+const rootRefusal = "SuiteWard does not run as root. Nothing was changed. Run the command again as your own user, without sudo, so that Podman runs without administrator rights."
+
 // Podman drives rootless Podman.
 type Podman struct {
 	cli
@@ -43,6 +46,9 @@ func NewPodman(ctx context.Context, d Deps, connection string) (Runtime, error) 
 		return nil, fmt.Errorf("the Podman connection is unavailable: %w", err)
 	}
 	if strings.TrimSpace(string(out)) != "true" {
+		if connection == "" { // Linux with no connection: no machine to pick one of, so the command ran as root
+			return nil, fmt.Errorf("%w: %s", ErrRootful, rootRefusal)
+		}
 		return nil, fmt.Errorf("%w: SuiteWard needs a Podman connection that runs without administrator rights (rootless), so nothing was changed: select the machine's rootless connection with --connection NAME", ErrRootful)
 	}
 	return p, nil

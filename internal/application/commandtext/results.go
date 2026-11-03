@@ -69,7 +69,7 @@ const (
 	// unblockOffer is the sentence that offers the owner's unblock, in the results comment and in the not-responding comment: it names the code, what the unblock does and that the tests stay unrun.
 	unblockOffer = "To go on without these tests, the owner can comment `/suiteward unblock <code>`, where `<code>` is a current code from the authenticator app. " +
 		"That lets this commit pass its checks without them, and they do not run for this commit. A new push runs them."
-	// waitsText and holdsNothingText open the not-responding comment's last paragraph: the offer follows what is held, and nothing held says that an unblock is not needed.
+	// waitsText and holdsNothingText are the not-responding comment's paragraph about the unblock, before its link: the offer follows waitsText, and holdsNothingText says that nothing is held and an unblock is not needed.
 	waitsText        = "The checks of this commit wait for these tests."
 	holdsNothingText = "Nothing waits for these tests. An unblock is not needed here: it would only keep these tests from running when the test runner answers again."
 	// approvalText says what an approval does to approved tests that did not run: the approved head gets another run, under the approved version.

@@ -522,9 +522,10 @@ func TestDoctorAsksThePodmanVersionOfTheConnectionNewPodmanResolved(t *testing.T
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			asked := "--connection " + c.connection + " version --format {{json .}}"
-			over := append(c.over,
-				rule{match: "=" + asked, out: podmanVersions("4.9.3", "4.9.3")},
-				rule{match: "=version --format {{json .}}", out: podmanVersions("6.1.4", "6.1.4")})
+			over := slices.Concat(c.over, []rule{
+				{match: "=" + asked, out: podmanVersions("4.9.3", "4.9.3")},
+				{match: "=version --format {{json .}}", out: podmanVersions("6.1.4", "6.1.4")},
+			})
 			f, s := colocated{goos: c.goos, over: over}.build(t)
 			s.Connection = ""
 			f.env["CONTAINER_CONNECTION"] = c.env

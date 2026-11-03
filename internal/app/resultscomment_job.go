@@ -83,10 +83,11 @@ func (j *checksJob) remember(key string) {
 }
 
 // notRespondingComment writes the comment of a head that reads not responding: the runner is silent, as the pass read it, and a wanted job waits for it. The key names the
-// waiting jobs, so a runner that goes quiet twice during one set of jobs gets one comment.
+// waiting jobs, so a runner that goes quiet twice during one set of jobs gets one comment. A pass that read the silence at the lease wait or more writes none (the jobs
+// are created, or still wait, in a pass that the sweep of the next one answers): the head gets the comment that says the tests did not run, and no key is remembered here.
 func (j *checksJob) notRespondingComment(ctx context.Context, s *pullState, executed executionOutcome) error {
 	waiting, reading := executed.set.NotResponding(executed.silent)
-	if !reading {
+	if !reading || executed.pastLeaseWait {
 		return nil
 	}
 	p := notRespondingPayload{commentTarget: s.target(), Head: s.pull.HeadSHA, Tier: s.tier, CanonicalJob: waiting.Jobs.Canonical, ReceiptJob: waiting.Jobs.Receipt, Unblock: waiting.Unblock}

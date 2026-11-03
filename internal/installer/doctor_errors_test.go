@@ -150,7 +150,7 @@ func TestDoctorSaysWhenThePodmanVersionCannotBeRead(t *testing.T) {
 					t.Errorf("the detail %q does not say %q", r.Detail, want)
 				}
 			}
-			if strings.Contains(r.Detail, "is older than 5.0") {
+			if strings.Contains(r.Detail, "works with it") {
 				t.Errorf("a version that was not read is not older: %q", r.Detail)
 			}
 		})

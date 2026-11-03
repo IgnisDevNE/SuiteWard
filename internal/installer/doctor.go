@@ -28,8 +28,9 @@ import (
 //
 // It reads the settings at settingsPath (the default location when empty), checks the engine, the containers or units, the
 // pins, the ports and /status of the instance those settings describe, runs `suiteward check --json` in the service
-// container and merges its results. It prints `ok <name>`, `WARN <name>: <detail> — <fix>` (a pass that needs a look) or `FAIL <name>: <detail> — <fix>` per result (the same style as
-// `check`), or with jsonOut the array of {name, ok, detail, fix}, which also carries the detail of the passing checks. On a
+// container and merges its results. It prints `ok <name>` (`ok <name>: <note>` for a pass that has a note: the runtime row of an older Podman),
+// `WARN <name>: <detail> — <fix>` (a pass that needs a look) or `FAIL <name>: <detail> — <fix>` per result (the same style as
+// `check`), or with jsonOut the array of {name, ok, detail, fix}, which also carries the detail of the passing checks and, where there is one, the note. On a
 // full screen the results are lines of the screen, ended by the counts ("N ok, N warnings, N failures"), and the caller holds the page
 // until Enter (doctorCommand). The exit code is 0 when everything passed and 1 otherwise. Doctor only reads: it never creates, starts, stops or removes anything.
 func Doctor(ctx context.Context, deps Deps, settingsPath, tokenFile string, out io.Writer, jsonOut bool) int {
@@ -70,6 +71,9 @@ type doctorResult struct {
 	Detail  string `json:"detail"`
 	Fix     string `json:"fix"`
 	Warning bool   `json:"warning,omitempty"` // a passing result that needs a look; it does not change the exit code
+	// Note is something a plain pass says of itself without a warning: it is written beside the name (`ok runtime: <note>`) and counts as an ok.
+	// Only doctor's own runtime row has one, so the service's rows, which have no such key, are written as before.
+	Note string `json:"note,omitempty"`
 	// Commands are the subcommands of this program that Fix of a row of the service names by its bare name: `suiteward check --json` says which,
 	// because the service cannot know the flags of the instance (see commands). An older service sends none.
 	Commands []string `json:"commands,omitempty"`
@@ -77,6 +81,14 @@ type doctorResult struct {
 
 // needsALook says that a result is not a plain pass: a failure, or a pass that doctor warns about.
 func (r doctorResult) needsALook() bool { return !r.OK || r.Warning }
+
+// passText is what follows the mark of a plain pass: its name, and its note when it has one.
+func (r doctorResult) passText() string {
+	if r.Note == "" {
+		return r.Name
+	}
+	return r.Name + ": " + r.Note
+}
 
 // line is how a result that needs a look is written: WARN for a pass that needs a look, FAIL for a failure.
 func (r doctorResult) line() string {
@@ -111,7 +123,7 @@ func writeDoctor(w io.Writer, results []doctorResult, jsonOut bool) error {
 			if r.needsALook() {
 				scr.Warn("%s\n", r.line())
 			} else {
-				scr.Check("%s", r.Name)
+				scr.Check("%s", r.passText())
 			}
 		}
 		passed, warned, failed := doctorCounts(results)
@@ -123,7 +135,7 @@ func writeDoctor(w io.Writer, results []doctorResult, jsonOut bool) error {
 		if r.needsALook() {
 			b.WriteString(r.line() + "\n")
 		} else {
-			b.WriteString("ok " + r.Name + "\n")
+			b.WriteString("ok " + r.passText() + "\n")
 		}
 	}
 	_, err := io.WriteString(w, b.String())
@@ -190,8 +202,11 @@ type doctor struct {
 	refusedFolder error // co-located Windows: why an install would refuse the folder of the test runner (refuseNew), when it would
 }
 
-func (d *doctor) pass(name, detail string) {
-	d.results = append(d.results, doctorResult{Name: name, OK: true, Detail: detail})
+func (d *doctor) pass(name, detail string) { d.passNote(name, detail, "") }
+
+// passNote reports a pass that says one thing more of itself, which is not a warning.
+func (d *doctor) passNote(name, detail, note string) {
+	d.results = append(d.results, doctorResult{Name: name, OK: true, Detail: detail, Note: note})
 }
 
 func (d *doctor) fail(name, detail, fix string) {
@@ -351,20 +366,19 @@ func (d *doctor) checkRuntime(ctx context.Context) {
 	if d.deps.GOOS == "windows" {
 		detail += "; the Windows Docker pipe (docker_engine) is answered by " + d.pipeOwner(ctx)
 	}
+	var note string
 	if d.s.Runtime == RuntimePodman && d.s.Tier != config.TierIsolated {
-		if note := d.podmanNote(ctx); note != "" {
-			detail += ". " + note
-		}
+		note = podmanNote(ctx, rt.(*Podman)) // NewPodman answers a *Podman
 	}
-	d.pass("runtime", detail)
+	d.passNote("runtime", detail, note)
 }
 
 // podmanNote is what the runtime row says of the version of a co-located Podman, which has no floor: Podman 4.9 (Ubuntu 24.04's
 // package) does not report a sandbox killed for memory as such, and the executor reads its exit status 137 the same. The row stays a
 // pass, so an older Podman is a note and not a warning, and a version that cannot be read is said so. The isolated tier has its floor
 // of 5.5 at the host step.
-func (d *doctor) podmanNote(ctx context.Context) string {
-	version, err := d.podmanVersion(ctx)
+func podmanNote(ctx context.Context, p *Podman) string {
+	version, err := podmanVersion(ctx, p)
 	switch {
 	case err != nil:
 		return "SuiteWard could not check whether Podman is older than 5.0, because its version could not be read (" + oneLine(err.Error()) + ")."
@@ -375,13 +389,10 @@ func (d *doctor) podmanNote(ctx context.Context) string {
 }
 
 // podmanVersion is the version of the engine behind the connection: the server's, else the client's, as the sandbox's Info reads it
-// (a Podman machine reports its engine as the server, a local Podman a client alone).
-func (d *doctor) podmanVersion(ctx context.Context) (string, error) {
-	args := []string{"version", "--format", "{{json .}}"}
-	if d.s.Connection != "" {
-		args = append([]string{"--connection", d.s.Connection}, args...)
-	}
-	out, err := d.deps.Exec(ctx, "podman", args, nil)
+// (a Podman machine reports its engine as the server, a local Podman a client alone). It is asked through p, so of the connection NewPodman
+// resolved, whoever named it: the settings, CONTAINER_CONNECTION, or the machine's one rootless connection off Linux.
+func podmanVersion(ctx context.Context, p *Podman) (string, error) {
+	out, err := p.run(ctx, nil, "version", "--format", "{{json .}}")
 	if err != nil {
 		return "", err
 	}

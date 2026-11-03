@@ -364,7 +364,7 @@ func TestDoctorHealthyColocatedDocker(t *testing.T) {
 const olderPodmanNote = "Podman 4.9.3 is older than 5.0. SuiteWard works with it, but a newer Podman says more clearly when a test is stopped for using too much memory."
 
 // A co-located Podman older than 5.0 is neither a failure nor a warning (Ubuntu 24.04 ships 4.9.3, and a warning there would
-// stay forever with nothing to act on): the runtime row passes and says so in its detail. The version is the server's, else the client's.
+// stay forever with nothing to act on): the runtime row passes and says so in its note. The version is the server's, else the client's.
 func TestDoctorNotesAColocatedPodmanOlderThan5(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -393,11 +393,11 @@ func TestDoctorNotesAColocatedPodmanOlderThan5(t *testing.T) {
 			if r.needsALook() {
 				t.Errorf("the runtime row is a pass that needs no look, so no warning is counted: %+v", r)
 			}
-			if got := strings.Contains(r.Detail, olderPodmanNote); got != c.noted {
-				t.Errorf("the note is in the detail: %v, want %v: %q", got, c.noted, r.Detail)
+			if got := r.Note == olderPodmanNote; got != c.noted {
+				t.Errorf("the note is the older-Podman one: %v, want %v: %q", got, c.noted, r.Note)
 			}
-			if !c.noted && (strings.Contains(r.Detail, "older than") || strings.Contains(r.Detail, "could not be read")) {
-				t.Errorf("a note without a reason: %q", r.Detail)
+			if !c.noted && r.Note != "" {
+				t.Errorf("a note without a reason: %q", r.Note)
 			}
 			// On Windows the probe of the Docker pipe asks `docker version` too: only Podman's own command counts here.
 			asked := slices.DeleteFunc(f.find("version --format"), func(c call) bool { return c.name != "podman" })

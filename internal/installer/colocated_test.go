@@ -1270,6 +1270,9 @@ func TestInstallDoesNotLinkRestartForAMachineUserThatIsNotAPlainName(t *testing.
 	if !strings.Contains(note, "x;reboot") {
 		t.Errorf("the note does not say that the user name is the reason: %q", note)
 	}
+	if !strings.Contains(note, "systemctl --user enable podman-restart.service") || strings.Contains(note, "sudo") {
+		t.Errorf("the note does not give the generic fix: %q", note)
+	}
 }
 
 func TestInstallReportsWhenPodmanRestartCannotBeEnabled(t *testing.T) {

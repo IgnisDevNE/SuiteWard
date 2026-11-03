@@ -643,6 +643,12 @@ func TestDoctorRestartFixNamesWhatWorks(t *testing.T) {
 		if strings.Contains(res["restart"].Fix, "WSL") {
 			t.Errorf("the fix names a machine kind it does not need:\n%s", res["restart"].Fix)
 		}
+		// What the person reads is the printed line, not the structured fix.
+		f, s = colocated{goos: "windows", over: off}.build(t)
+		_, text := runDoctorRaw(t, f, s, false)
+		if want := "FAIL restart: "; !strings.Contains(text, want) || !strings.Contains(text, res["restart"].Fix) {
+			t.Errorf("the printed doctor output lacks the restart fix %q:\n%s", res["restart"].Fix, text)
+		}
 	})
 	// A re-run leaves a running, healthy Docker container alone, so `suiteward install` alone would not change its policy: the
 	// containers are removed first (the data stays), and then the install creates them as the release defines them.

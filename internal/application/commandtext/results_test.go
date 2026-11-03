@@ -275,6 +275,167 @@ func TestResultsCommentSaysWhichKindsOfChangeTheReceiptMeets(t *testing.T) {
 	})
 }
 
+// While the approved tests fail or this change weakens one, the comment does not say which kind of change the receipt meets (SW-22, M2.1c decision 1 and text 1): the receipt
+// judges only the tests of the change, and a "met" beside those counts reads as a pass.
+const (
+	kindsWithheldTail = ", so this comment does not say which kind of change (`fix`, `feature`, `refactor`) this change is. The details are in the report."
+	approveAnyway     = "If you want to approve this revision anyway, name the kind of change that the report shows as met, and comment:"
+	approveModeIntro  = "To approve this exact revision, comment:"
+	approveNamesKind  = "To approve, name a kind of change that is met."
+)
+
+// withFailingApprovedTests edits a head so that its approved tests ran with the counts, and this change weakens weakened of them.
+func withFailingApprovedTests(counts execution.CanonicalCounts, weakened int) func(*commandtext.Results) {
+	return func(r *commandtext.Results) { r.Canonical.Counts, r.Weakened = counts, weakened }
+}
+
+func TestResultsCommentDoesNotSayWhichKindsAreMetWhileTheApprovedTestsFail(t *testing.T) {
+	for name, tc := range map[string]struct {
+		counts   execution.CanonicalCounts
+		weakened int
+		want     string
+	}{
+		"failed and weakened":     {execution.CanonicalCounts{Pass: 5, Fail: 3}, 1, "The approved tests failed (3 failed, 1 weakened)" + kindsWithheldTail},
+		"failed and no result":    {execution.CanonicalCounts{Pass: 5, Fail: 1, Missing: 2}, 0, "The approved tests failed (1 failed, 2 gave no result)" + kindsWithheldTail},
+		"different results":       {execution.CanonicalCounts{Pass: 5, Flaky: 2}, 0, "The approved tests failed (2 gave different results)" + kindsWithheldTail},
+		"every count":             {execution.CanonicalCounts{Pass: 5, Fail: 1, Missing: 2, Flaky: 3}, 4, "The approved tests failed (1 failed, 2 gave no result, 3 gave different results, 4 weakened)" + kindsWithheldTail},
+		"one weakened test only":  {execution.CanonicalCounts{Pass: 8}, 1, "This change weakens an approved test (1 weakened)" + kindsWithheldTail},
+		"two weakened tests only": {execution.CanonicalCounts{Pass: 8}, 2, "This change weakens approved tests (2 weakened)" + kindsWithheldTail},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(withFailingApprovedTests(tc.counts, tc.weakened)))
+			if !hasParagraph(body, tc.want) {
+				t.Errorf("the comment lacks the paragraph %q:\n%s", tc.want, body)
+			}
+			for _, n := range []string{"Does the receipt meet each kind of change?", ": met.", ": not met.", approveNamesKind} {
+				if strings.Contains(body, n) {
+					t.Errorf("the comment says %q beside failing approved tests:\n%s", n, body)
+				}
+			}
+			if tc.weakened > 0 {
+				if weakened := commandtext.WeakenedSentence(tc.weakened) + " The page names them."; !hasParagraph(body, weakened) {
+					t.Errorf("the comment lacks the paragraph of the weakened tests %q:\n%s", weakened, body)
+				}
+			}
+		})
+	}
+}
+
+func TestResultsCommentOffersTheApproveAnywayOnlyUnderARequiredReceiptThatAwaitsIt(t *testing.T) {
+	const blocked = "An approve would be refused now, because the receipt meets no kind of change, and a refused approve uses its code. To fix this, change the code or the tests and push a new commit."
+	const plain = "```\n/suiteward approve P3-R2 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app."
+	const mode = "```\n/suiteward approve P3-R2 <fix|feature|refactor> <code>\n```\n\nReplace `<fix|feature|refactor>` with the mode of this change and `<code>` with a current code from your authenticator app."
+	failing := withFailingApprovedTests(execution.CanonicalCounts{Pass: 8, Fail: 1}, 0)
+	weakened := withFailingApprovedTests(execution.CanonicalCounts{Pass: 9}, 1)
+	approve := func(level execution.ReceiptLevel, namesMode bool) func(*commandtext.Results) {
+		return func(r *commandtext.Results) {
+			r.ReceiptLevel, r.Next, r.ApproveMode, r.ApprovalMissing = level, execution.NextApprove, namesMode, true
+		}
+	}
+	for name, tc := range map[string]struct {
+		edits    []func(*commandtext.Results)
+		withheld bool     // the comment says that it does not say which kind of change this is
+		want     []string // text that the comment has
+		not      []string // text that the comment lacks
+		commands int      // how many approve commands it shows
+	}{
+		"required, approve with a mode, approved tests fail": {[]func(*commandtext.Results){failing, approve(execution.ReceiptLevelRequired, true)}, true,
+			[]string{approveAnyway, mode}, []string{approveModeIntro, approveNamesKind}, 1},
+		"required, approve with a mode, a weakened test": {[]func(*commandtext.Results){weakened, approve(execution.ReceiptLevelRequired, true)}, true,
+			[]string{approveAnyway, mode}, []string{approveModeIntro, approveNamesKind}, 1},
+		"required, approve with no mode, approved tests fail": {[]func(*commandtext.Results){failing, approve(execution.ReceiptLevelRequired, false)}, true,
+			[]string{approveModeIntro, plain}, []string{"anyway", approveNamesKind}, 1},
+		"required, approve with a mode, nothing fails": {[]func(*commandtext.Results){approve(execution.ReceiptLevelRequired, true)}, false,
+			[]string{approveModeIntro, mode, approveNamesKind}, []string{"anyway", "does not say which kind"}, 1},
+		"required, blocked": {[]func(*commandtext.Results){failing, func(r *commandtext.Results) {
+			r.Receipt.Counts, r.Next, r.ApprovalMissing = execution.ReceiptCounts{Skipped: 1}, execution.NextBlocked, true
+		}}, true, []string{blocked}, []string{"anyway", "/suiteward approve", approveNamesKind}, 0},
+		"required, fix": {[]func(*commandtext.Results){failing, func(r *commandtext.Results) { r.Next = execution.NextFix }}, true,
+			[]string{"To fix this, change the code or the tests and push a new commit."}, []string{"anyway", "/suiteward approve", approveNamesKind}, 0},
+		"required, nothing to do": {[]func(*commandtext.Results){failing, func(r *commandtext.Results) { r.Next = execution.NextNone }}, true,
+			[]string{"Nothing to do for now."}, []string{"anyway", "/suiteward approve", approveNamesKind}, 0},
+		"advisory, approve with no mode": {[]func(*commandtext.Results){failing, approve(execution.ReceiptLevelAdvisory, false)}, true,
+			[]string{approveModeIntro, plain}, []string{"anyway", approveNamesKind}, 1},
+		"before-approval, approve with no mode": {[]func(*commandtext.Results){failing, approve(execution.ReceiptLevelBeforeApproval, false)}, true,
+			[]string{approveModeIntro, plain}, []string{"anyway", approveNamesKind}, 1},
+		"advisory, approve with a mode": {[]func(*commandtext.Results){failing, approve(execution.ReceiptLevelAdvisory, true)}, true,
+			[]string{approveModeIntro, mode}, []string{"anyway", approveNamesKind}, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(tc.edits...))
+			if got := strings.Contains(body, "so this comment does not say which kind of change"); got != tc.withheld {
+				t.Errorf("the comment says that it does not say which kind of change this is = %v, want %v:\n%s", got, tc.withheld, body)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(body, w) {
+					t.Errorf("the comment lacks %q:\n%s", w, body)
+				}
+			}
+			for _, n := range tc.not {
+				if strings.Contains(body, n) {
+					t.Errorf("the comment says %q:\n%s", n, body)
+				}
+			}
+			if got := strings.Count(body, "/suiteward approve"); got != tc.commands {
+				t.Errorf("the comment shows %d approve commands, want %d:\n%s", got, tc.commands, body)
+			}
+		})
+	}
+}
+
+// The kinds block is replaced only where it would stand: a receipt that is empty, did not run or is not wanted never had one, so the approve keeps its intro there.
+func TestResultsCommentKeepsTheApproveIntroWhereThereIsNoKindsBlockToReplace(t *testing.T) {
+	failing := withFailingApprovedTests(execution.CanonicalCounts{Pass: 8, Fail: 1}, 1)
+	approve := func(r *commandtext.Results) {
+		r.Next, r.ApproveMode, r.ApprovalMissing = execution.NextApprove, true, true
+	}
+	for name, edit := range map[string]func(*commandtext.Results){
+		"the receipt is empty": func(r *commandtext.Results) { r.Receipt.Counts = execution.ReceiptCounts{} },
+		"the receipt did not run and the owner unblocked it": func(r *commandtext.Results) {
+			r.Receipt, r.Unblocked = unavailableReceipt("timeout"), commandtext.Plans{Receipt: true}
+		},
+		"the receipt is not wanted": func(r *commandtext.Results) {
+			r.Receipt, r.ReceiptLevel, r.ApproveMode = nil, execution.ReceiptLevelOff, false
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(failing, approve, edit))
+			if !hasParagraph(body, approveModeIntro) || strings.Contains(body, "anyway") || strings.Contains(body, "does not say which kind") || strings.Count(body, "/suiteward approve") != 1 {
+				t.Errorf("the approve lost its intro, or the comment withholds kinds that it never stated:\n%s", body)
+			}
+		})
+	}
+}
+
+// A head whose approved tests do not fail, and whose change weakens none, keeps the kinds block as it was, even when the receipt's own tests fail.
+func TestResultsCommentKeepsTheKindsWhenTheApprovedTestsDoNotFail(t *testing.T) {
+	for name, edit := range map[string]func(*commandtext.Results){
+		"the approved tests pass": func(*commandtext.Results) {},
+		"the tests of the change fail": func(r *commandtext.Results) {
+			r.Receipt.Counts, r.Next = execution.ReceiptCounts{Detects: 1, Fails: 1}, execution.NextFix
+		},
+		"the approved tests are skipped or excluded": func(r *commandtext.Results) {
+			r.Canonical.Counts = execution.CanonicalCounts{Skipped: 2, Excluded: 1}
+		},
+		"the approved tests did not run": func(r *commandtext.Results) {
+			r.Canonical, r.Next = unavailableCanonical("timeout"), execution.NextUnblock
+		},
+		"the approved tests are not wanted": func(r *commandtext.Results) { r.Canonical, r.CanonicalLevel = nil, execution.CanonicalLevelOff },
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(edit))
+			for _, w := range []string{"Does the receipt meet each kind of change?\n- `fix`: ", "- `refactor`: ", approveNamesKind} {
+				if !strings.Contains(body, w) {
+					t.Errorf("the comment lacks %q:\n%s", w, body)
+				}
+			}
+			if strings.Contains(body, "does not say which kind") {
+				t.Errorf("the comment withholds the kinds of change:\n%s", body)
+			}
+		})
+	}
+}
+
 func TestResultsCommentStatesTheCountOfWeakenedTestsAndWhatToDo(t *testing.T) {
 	const generic = " A test that is edited can pass by checking less. Read the edit before you approve. The page names them."
 	for name, tc := range map[string]struct {
@@ -634,6 +795,9 @@ var resultsSituations = map[string]func(*commandtext.Results){
 		r.Canonical, r.Receipt, r.Next, r.ApprovalMissing = unavailableCanonical("no-executor"), unavailableReceipt("no-executor"), execution.NextUnblock, true
 	},
 	"weakened": func(r *commandtext.Results) { r.Weakened, r.Next, r.ApprovalMissing = 2, execution.NextApprove, true },
+	"approved tests fail, the approve names a mode": func(r *commandtext.Results) {
+		r.Canonical.Counts, r.Weakened, r.Next, r.ApproveMode, r.ApprovalMissing = execution.CanonicalCounts{Pass: 8, Fail: 1, Missing: 1}, 1, execution.NextApprove, true, true
+	},
 	"files that cannot be read and lines to look at": func(r *commandtext.Results) {
 		r.Receipt.Counts.Unparsed, r.Receipt.Markers, r.Next = 1, 3, execution.NextFix
 	},

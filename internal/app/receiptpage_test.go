@@ -371,7 +371,7 @@ func TestReceiptPageAsksWhetherTheReceiptAppliesBeforeItReadsItsJob(t *testing.T
 	response := w.get("127.0.0.1:8080", pullPath)
 
 	page := html.UnescapeString(response.Body.String())
-	if response.Code != http.StatusOK || strings.Contains(page, "<h2>Tests this change adds or edits</h2>") {
+	if response.Code != http.StatusOK || strings.Contains(page, ">Tests this change adds or edits</h2>") {
 		t.Errorf("status %d: the page shows the receipt of a revision whose receipt does not apply:\n%s", response.Code, page)
 	}
 	w.wantText(page, "This revision changes no file that the approved patterns match, so it has no receipt.")

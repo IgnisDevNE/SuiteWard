@@ -143,22 +143,10 @@ func validateReceiptCheck(c ReceiptCheck) (receiptReason, error) {
 }
 
 // ReceiptFacts are the paragraphs that state the counts of a receipt that completed, in the words of the results comment: the tests that the change adds or edits by what they
-// show, then one paragraph of notes (the tests that SuiteWard cannot run, the changed test files that cannot be read and the lines to look at, each only when there are some).
-// The results comment says the same sentences, with a link to the page where the lines are listed.
+// show (their number and the table of the comment), then one paragraph of notes (the tests that SuiteWard cannot run, the changed test files that cannot be read and the lines to
+// look at, each only when there are some). The results comment says the same sentences, with a link to the page where the lines are listed.
 func ReceiptFacts(n execution.ReceiptCounts, markers int) []string {
-	var parts []string
-	if n.Evaluated() == 0 {
-		parts = append(parts, "This change adds or edits no test that SuiteWard can run.")
-	} else {
-		parts = append(parts, fmt.Sprintf("Tests this change adds or edits: %d.\n"+
-			"- Fail before the change and pass now, so they show the change works: %d\n"+
-			"- Pass before and after, so they show nothing: %d\n"+
-			"- Use code that the old code lacks, so they could not run before the change: %d\n"+
-			"- Fail with this change: %d\n"+
-			"- Give no result: %d\n"+
-			"- Give different results when run again: %d\n"+
-			"- Skipped: %d", n.Evaluated(), n.Detects, n.Inert, n.NewAPI, n.Fails, n.Missing, n.Flaky, n.Skipped))
-	}
+	parts := receiptCounts(n)
 	var notes []string
 	if n.Excluded > 0 {
 		notes = append(notes, counted(n.Excluded, "test that this change adds or edits cannot be run by SuiteWard and is not covered", "tests that this change adds or edits cannot be run by SuiteWard and are not covered")+".")

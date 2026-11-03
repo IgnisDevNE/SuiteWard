@@ -169,14 +169,14 @@ func TestAnInstallThatFindsTheExecutorOfAnotherInstanceNamesTheInstanceThatHolds
 	}
 }
 
-// On Windows the task is not read: several other installations are listed, with the removal that leaves the flags to the person. This instance's
+// On Windows the task is not read: several other installations that hold a test runner are listed, with the removal that leaves the flags to the person. This instance's
 // own entry, which the install has just written, is not one of them.
 func TestAnInstallOnWindowsListsTheInstancesThatMayHoldTheTestRunner(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
 	defaultTokenPlace(t, h) // the configuration folder is the test's own
 	h.first("/Query /TN SuiteWard Executor", "")
-	first := listedElsewhere(t, "windows", otherToken(t), RuntimeDocker, holderID)
-	second := listedElsewhere(t, "windows", otherToken(t), RuntimePodman, "")
+	first := listedElsewhere(t, "windows", owning(t, otherToken(t)), RuntimeDocker, holderID)
+	second := listedElsewhere(t, "windows", owning(t, otherToken(t)), RuntimePodman, "")
 	if err := h.podman(); err != nil {
 		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
 	}
@@ -184,6 +184,32 @@ func TestAnInstallOnWindowsListsTheInstancesThatMayHoldTheTestRunner(t *testing.
 	want := refusal(who, generalHint, (Deps{instance: h.named()}).suggest("install"))
 	if out := h.out.String(); !strings.Contains(out, want) || strings.Contains(out, first) {
 		t.Errorf("the output lacks %q, or names the settings file of an instance that has an id:\n%s", want, out)
+	}
+}
+
+// On Windows a listed installation counts only when its own executor folder holds the wrapper and the task definition: the list keeps the last
+// write, and an instance of an older release may have no entry, so the only other entry is not named by elimination.
+func TestAnInstallOnWindowsNamesOnlyAnInstanceWhoseExecutorFolderHoldsATestRunner(t *testing.T) {
+	for name, holderListed := range map[string]bool{"the other installation holds none": false, "one of two holds one": true} {
+		t.Run(name, func(t *testing.T) {
+			h := machineHarnessOn(t, "windows")
+			defaultTokenPlace(t, h) // the configuration folder is the test's own
+			h.first("/Query /TN SuiteWard Executor", "")
+			listedElsewhere(t, "windows", otherToken(t), RuntimePodman, bystanderID)
+			who, remove := "", generalHint
+			if holderListed {
+				token := owning(t, otherToken(t))
+				holder := listedElsewhere(t, "windows", token, RuntimeDocker, holderID)
+				who, remove = " (the instance `"+holderID+"`, on Docker)", removing(holder, token)
+			}
+			if err := h.podman(); err != nil {
+				t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
+			}
+			want := refusal(who, remove, (Deps{instance: h.named()}).suggest("install"))
+			if out := h.out.String(); !strings.Contains(out, want) || strings.Contains(out, bystanderID) {
+				t.Errorf("the output lacks %q, or names an installation whose executor folder holds no test runner:\n%s", want, out)
+			}
+		})
 	}
 }
 

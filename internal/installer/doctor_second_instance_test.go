@@ -146,6 +146,20 @@ func listedElsewhere(t *testing.T, goos, tokenFile, runtime, instance string) st
 // otherToken is the token file of an installation that is not the main one.
 func otherToken(t *testing.T) string { return filepath.Join(t.TempDir(), "mcp-token") }
 
+// owning puts down, in the executor folder beside tokenFile, what an installed test runner leaves there on Windows: the wrapper and the definition
+// of the task. The task is not read, so these files are the only sign that the instance of that token file made the registered test runner.
+func owning(t *testing.T, tokenFile string) string {
+	t.Helper()
+	dir := executorDirOf(tokenFile)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{executorWrapperName, "task.xml"} {
+		writeFile(t, filepath.Join(dir, name), "left by an install")
+	}
+	return tokenFile
+}
+
 // secondInstanceBesides is the doctor of a second instance, whose service has not seen an executor for ten minutes, on a computer whose registered
 // test runner starts the program of the main instance (the one beside the default token file). The second instance is in the list. list adds the
 // others and gets the main instance's token file. The results come with the token file that the doctor was given.
@@ -208,13 +222,13 @@ func TestDoctorNamesTheInstanceThatHoldsTheTestRunnerByItsSettingsFileWhenTheLis
 	}
 }
 
-// On Windows the task is not read, so with several other installations listed the failure says that the test runner is one of theirs and lists
+// On Windows the task is not read, so with several other installations that hold a test runner the failure says that the test runner is one of theirs and lists
 // them, and the fix keeps the removal that leaves the flags to the person.
 func TestDoctorListsTheInstancesThatMayHoldTheTestRunnerWhenItCannotTellWhich(t *testing.T) {
 	var first, second string
 	res, _ := secondInstanceBesides(t, "windows", func(string) {
-		first = listedElsewhere(t, "windows", otherToken(t), RuntimeDocker, holderID)
-		second = listedElsewhere(t, "windows", otherToken(t), RuntimePodman, "")
+		first = listedElsewhere(t, "windows", owning(t, otherToken(t)), RuntimeDocker, holderID)
+		second = listedElsewhere(t, "windows", owning(t, otherToken(t)), RuntimePodman, "")
 	})
 	wantFail(t, res, "executor.lifecycle", "belongs to another instance (one of the other instances on this computer: the instance `"+holderID+"`, on Docker; "+
 		"the instance with the settings file `"+second+"`, on Podman), not to the one")
@@ -223,6 +237,24 @@ func TestDoctorListsTheInstancesThatMayHoldTheTestRunnerWhenItCannotTellWhich(t 
 		if !strings.Contains(fix, "Remove that instance with "+generalHint+".") || strings.Contains(fix, first) || strings.Contains(fix, second) {
 			t.Errorf("%s: the fix %q must keep the general removal", name, fix)
 		}
+	}
+}
+
+// On Windows a listed installation counts only when its own executor folder holds the wrapper and the task definition: of two others, the one
+// without them is not named, whatever its container program.
+func TestDoctorNamesOnlyTheInstanceOnWindowsWhoseExecutorFolderHoldsATestRunner(t *testing.T) {
+	var holder, holderToken string
+	res, _ := secondInstanceBesides(t, "windows", func(string) {
+		holderToken = owning(t, otherToken(t))
+		holder = listedElsewhere(t, "windows", holderToken, RuntimeDocker, holderID)
+		listedElsewhere(t, "windows", otherToken(t), RuntimePodman, bystanderID)
+	})
+	wantFail(t, res, "executor.lifecycle", "belongs to another instance (the instance `"+holderID+"`, on Docker), not to the one that uses the token file `")
+	if detail := res["executor.lifecycle"].Detail; strings.Contains(detail, bystanderID) || strings.Contains(detail, "Podman") {
+		t.Errorf("the detail names an instance whose executor folder holds no test runner: %q", detail)
+	}
+	if fix := res["executor.lifecycle"].Fix; !strings.Contains(fix, "Remove that instance with "+removing(holder, holderToken)+".") {
+		t.Errorf("the fix %q must carry the removal that selects the instance", fix)
 	}
 }
 
@@ -235,6 +267,9 @@ func TestDoctorKeepsItsWordsWhenTheListDoesNotNameTheInstanceThatHoldsTheTestRun
 		"only this instance is listed": {"windows", func(*testing.T, string) {}},
 		"another instance whose program the definition does not name": {"linux", func(t *testing.T, _ string) {
 			listedElsewhere(t, "linux", otherToken(t), RuntimePodman, bystanderID)
+		}},
+		"another instance on Windows whose executor folder holds no test runner": {"windows", func(t *testing.T, _ string) {
+			listedElsewhere(t, "windows", otherToken(t), RuntimePodman, bystanderID) // the list keeps the last write: the test runner may be an unlisted instance's
 		}},
 		"an installation on a separate server has no test runner": {"windows", func(t *testing.T, main string) {
 			s := colocatedSettings()

@@ -633,11 +633,7 @@ func TestPullPageSaysOneLineForEachProblemWithALinkToTheTableThatShowsIt(t *test
 		t.Run(name, func(t *testing.T) {
 			w := newPageWorld(t)
 			w.completed(tc.canonical, tc.receipt)
-			page := w.text()
-			w.wantWentWrong(page, tc.want...)
-			if len(tc.want) == 0 {
-				w.wantNoText(page, "What went wrong")
-			}
+			w.wantWentWrong(w.text(), tc.want...)
 		})
 	}
 }

@@ -602,6 +602,42 @@ func TestBootstrapPromotesAnApprovedBaselineOnce(t *testing.T) {
 	}
 }
 
+// The promotion message carries the canonical level of the declaration that became V1, so that the V1 comment says whether the approved tests run from now on (SW-2,
+// docs/plan/phases/M2.1c.md, text 6). A declaration that names no profile runs nothing, and its level is off.
+func TestBootstrapPromotionCarriesTheCanonicalLevelOfTheDeclaration(t *testing.T) {
+	const head = "version: 1\ninclude: [/tests/**]\n"
+	for name, tc := range map[string]struct{ declaration, level string }{
+		"no execution block":                      {head, "off"},
+		"an empty execution block":                {head + "execution: {}\n", "off"},
+		"a profile alone is advisory":             {head + "execution:\n  profile: go\n", "advisory"},
+		"canonical required":                      {head + "execution:\n  profile: go\n  canonical: required\n", "required"},
+		"canonical off":                           {head + "execution:\n  profile: go\n  canonical: off\n", "off"},
+		"canonical off beside a receipt level":    {head + "execution:\n  profile: go\n  canonical: off\n  receipt: required\n", "off"},
+		"canonical advisory beside a receipt off": {head + "execution:\n  profile: go\n  canonical: advisory\n  receipt: off\n", "advisory"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := bootFiles("v1")
+			files[".suiteward.yml"] = tc.declaration
+			w := newBootWorld(t)
+			w.openPulls(bootRepo, 4)
+			w.seedSuite("branch:main")
+			w.reader.repo(bootRepo).trees[bootHead] = &bootTree{files: files} // the origin is the tree that was proposed, or its integrity check fails
+			proposeBaseline(t, w.suites, w.content, bootRepoID, bootRepo, contract.OriginBranch, 4, bootHead, files)
+			w.approve()
+
+			w.mustRun()
+
+			if version, found := w.canonical(); !found || version != "V1" {
+				t.Fatalf("canonical = %q (found %v), want V1\nlogs: %s", version, found, w.logs)
+			}
+			want := map[string]any{"repositoryId": float64(1001), "repo": bootRepo, "pull": float64(4), "reference": "P1-R1", "version": "V1", "canonical": tc.level}
+			if payload := w.payload(promotedKey); !maps.Equal(payload, want) {
+				t.Fatalf("promoted payload = %v, want %v", payload, want)
+			}
+		})
+	}
+}
+
 // Operation ids are global: two repositories that each bootstrap their first baseline must not collide on P1-R1.
 func TestBootstrapPromotesTheFirstBaselineOfEachRepository(t *testing.T) {
 	w := newBootWorld(t, withRepos(bootRepo, bootOtherRepo))

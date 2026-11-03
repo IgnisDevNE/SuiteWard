@@ -3,11 +3,13 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
 // The payloads of bootstrap-notice and bootstrap-cancelled are built from raw JSON here, so the test pins their key names.
@@ -89,6 +91,73 @@ func TestCommentPublisherRefusesABootstrapNoticeOrCancelledCommentThatDoesNotMat
 				if strings.Contains(err.Error(), leak) {
 					t.Fatalf("the error %q holds payload text %q", err, leak)
 				}
+			}
+			if len(w.writer.posts()) != 0 || len(w.writer.listed) != 0 {
+				t.Fatal("GitHub was called for a payload that was refused")
+			}
+		})
+	}
+}
+
+// cmtBootPromoted is a bootstrap-promoted message built from raw JSON, with the keys of extra added: the test pins the name and the values of the level.
+func cmtBootPromoted(extra map[string]any) governance.OutboxMessage {
+	payload := map[string]any{"repositoryId": cmtRepoID, "repo": cmtRepo, "pull": cmtPull, "reference": "P1-R1", "version": "V1"}
+	maps.Copy(payload, extra)
+	return cmtRaw(fmt.Sprintf("bootstrap-promoted:%d:P1-R1", cmtRepoID), payload)
+}
+
+// The V1 comment says that the approved tests run from now on where the canonical level of the promoted declaration runs them (SW-2, docs/plan/phases/M2.1c.md, text 6), and is
+// what it was where the level does not and for a message queued before the level was carried, which has no such key.
+func TestCommentPublisherSaysThatTheApprovedTestsRunWhereTheCanonicalLevelRunsThem(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		extra  map[string]any
+		level  domain.CanonicalLevel // the level the comment is rendered for; none for the message without the key
+		runs   bool
+		checks bool // the comment says that the checks of a commit wait for its run
+	}{
+		{"a message from before the level was carried", nil, 0, false, false},
+		{"canonical off", map[string]any{"canonical": "off"}, domain.CanonicalLevelOff, false, false},
+		{"canonical advisory", map[string]any{"canonical": "advisory"}, domain.CanonicalLevelAdvisory, true, false},
+		{"canonical required", map[string]any{"canonical": "required"}, domain.CanonicalLevelRequired, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newCmtWorld(t)
+			message := cmtBootPromoted(tc.extra)
+
+			w.mustDeliver(message)
+
+			w.wantPost(message.Key, commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Version: 1, Owner: cmtOwner, Canonical: tc.level}))
+			body := w.writer.posts()[0].body
+			if got := strings.Contains(body, "SuiteWard runs the approved tests on every open pull request and on every push."); got != tc.runs {
+				t.Errorf("the comment says that the tests run: %v, want %v:\n%s", got, tc.runs, body)
+			}
+			if got := strings.Contains(body, "The checks of a commit wait for its run."); got != tc.checks {
+				t.Errorf("the comment says that the checks wait for the run: %v, want %v:\n%s", got, tc.checks, body)
+			}
+		})
+	}
+}
+
+// A level that is not one of the three is refused at decode, as the other fields of the payload are, and the error never quotes the payload.
+func TestCommentPublisherRefusesAPromotionWhoseCanonicalLevelIsNotKnown(t *testing.T) {
+	for name, level := range map[string]any{
+		"a word that is not a level":   cmtLeakText,
+		"a level in another spelling":  "Advisory",
+		"a level of another policy":    "before-approval",
+		"a number":                     2,
+		"a level that is not a string": true,
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCmtWorld(t)
+
+			err := w.deliver(cmtBootPromoted(map[string]any{"canonical": level}))
+
+			if err == nil {
+				t.Fatal("publish succeeded")
+			}
+			if strings.Contains(err.Error(), cmtLeakText) {
+				t.Fatalf("the error %q holds payload text", err)
 			}
 			if len(w.writer.posts()) != 0 || len(w.writer.listed) != 0 {
 				t.Fatal("GitHub was called for a payload that was refused")

@@ -85,6 +85,27 @@ func TestValidateAckRefusesAnOutcomeOrAReasonThatIsNone(t *testing.T) {
 	}
 }
 
+// The canonical level of a promotion is none (a message that predates it) or a level the execution package names; no other outcome carries one.
+func TestValidateAckTakesACanonicalLevelOnlyOnAPromotion(t *testing.T) {
+	promoted := commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Version: 1, Proposal: 4, Revision: 2, Owner: owner}
+	for _, level := range []execution.CanonicalLevel{0, execution.CanonicalLevelOff, execution.CanonicalLevelAdvisory, execution.CanonicalLevelRequired} {
+		ack := promoted
+		ack.Canonical = level
+		if err := commandtext.ValidateAck(ack); err != nil {
+			t.Errorf("canonical level %d on a promotion: ValidateAck refuses it: %v", level, err)
+		}
+	}
+	for name, ack := range map[string]commandtext.Ack{
+		"an unknown level on a promotion": {Outcome: commandtext.BootstrapPromoted, Version: 1, Proposal: 4, Revision: 2, Owner: owner, Canonical: execution.CanonicalLevelRequired + 1},
+		"a level on an approval":          {Outcome: commandtext.Approved, Proposal: 4, Revision: 2, Source: source, Owner: owner, Canonical: execution.CanonicalLevelAdvisory},
+		"a level on a mode":               {Outcome: commandtext.ModeSet, Mode: execution.ModeFix, Source: source, Owner: owner, Canonical: execution.CanonicalLevelRequired},
+	} {
+		if commandtext.ValidateAck(ack) == nil {
+			t.Errorf("%s: ValidateAck accepts it", name)
+		}
+	}
+}
+
 // Acknowledge panics on what ValidateAck refuses and on nothing else.
 func TestValidateAckAcceptsEveryOutcomeThatAcknowledgeRenders(t *testing.T) {
 	ref := commandtext.Ack{Proposal: 4, Revision: 2, Source: source, Owner: owner}

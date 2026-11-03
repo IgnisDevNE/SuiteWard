@@ -204,6 +204,9 @@ func addAcks(t *testing.T, add func(name string, f func() string)) {
 	ack("propose failed", commandtext.Ack{Outcome: commandtext.ProposeFailed})
 	ack("skipped", commandtext.Ack{Outcome: commandtext.Skipped})
 	ack("bootstrap promoted", commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Version: 1, Proposal: 4, Revision: 2})
+	for _, level := range []execution.CanonicalLevel{execution.CanonicalLevelOff, execution.CanonicalLevelAdvisory, execution.CanonicalLevelRequired} {
+		ack("bootstrap promoted, canonical "+level.String(), commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Version: 1, Proposal: 4, Revision: 2, Canonical: level})
+	}
 	for _, base := range []commandtext.ScopeBase{commandtext.BasePull, commandtext.BaseContract, commandtext.BaseDefaultBranch} {
 		ack("nothing uncovered "+fmt.Sprint(base), commandtext.Ack{Outcome: commandtext.NothingUncovered, Base: base})
 	}
@@ -256,11 +259,12 @@ func TestNoTextSaysThatSuiteWardDoesNotRunTests(t *testing.T) {
 }
 
 // The comments of a run that waits or did not run are in plain words (M2.1c, SW-1 and SW-28; docs/plan/phases/M2.1c.md, texts 4 and 5): none says a reason code, a job, a lease or
-// an executor, which only the machinery of a run knows. The checks and the refusal that offer the unblock in the words of the comments (SW-47, text 4) are in plain words too.
+// an executor, which only the machinery of a run knows. The checks and the refusal that offer the unblock in the words of the comments (SW-47, text 4) are in plain words too, and so
+// is the V1 comment that says the approved tests run now (SW-2, text 6), at every canonical level.
 func TestTheCommentsOfARunThatWaitsOrDidNotRunUseNoWordOfTheMachinery(t *testing.T) {
 	machinery := regexp.MustCompile(`(?i)\b(jobs?|leases?|executors?|canonical)\b`)
 	prefixes := []string{"not responding", "results did not run", "results unblocked",
-		"check canonical-unavailable", "check canonical-not-responding", "receipt not responding, with the unblock offer", "ack receipt refused receipt-unavailable"}
+		"check canonical-unavailable", "check canonical-not-responding", "receipt not responding, with the unblock offer", "ack receipt refused receipt-unavailable", "ack bootstrap promoted"}
 	reached := map[string]int{}
 	for name, body := range everyBody(t) {
 		for _, prefix := range prefixes {

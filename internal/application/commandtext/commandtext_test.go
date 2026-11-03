@@ -495,6 +495,25 @@ func TestAcknowledge(t *testing.T) {
 			[]string{"Setup is complete: P1-R1, approved by @octo-owner, is now V1, the approved version of the contract.", "SuiteWard checked the approved files at the exact commit that was approved, and recorded the result."},
 			[]string{"eligible", "/suiteward"},
 		},
+		{
+			// M2.1c, SW-2 (docs/plan/phases/M2.1c.md, text 6): the tests of the approved version run from now on.
+			"bootstrap promoted under an advisory canonical level",
+			commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Version: 1, Owner: owner, Canonical: execution.CanonicalLevelAdvisory},
+			[]string{"Setup is complete: P1-R1, approved by @octo-owner, is now V1, the approved version of the contract.", fromNowOnRuns},
+			[]string{"eligible", "/suiteward", checksWaitForRun},
+		},
+		{
+			"bootstrap promoted under a required canonical level",
+			commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Version: 1, Owner: owner, Canonical: execution.CanonicalLevelRequired},
+			[]string{"Setup is complete: P1-R1, approved by @octo-owner, is now V1, the approved version of the contract.", fromNowOnRuns + " " + checksWaitForRun},
+			[]string{"eligible", "/suiteward"},
+		},
+		{
+			"bootstrap promoted under a canonical level that is off",
+			commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Version: 1, Owner: owner, Canonical: execution.CanonicalLevelOff},
+			[]string{"Setup is complete: P1-R1, approved by @octo-owner, is now V1, the approved version of the contract."},
+			[]string{"eligible", "/suiteward", "runs the approved tests", "results comment", "wait for its run"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -548,6 +567,38 @@ func checkReplyLink(t *testing.T, outcome commandtext.Outcome, body string) {
 	}
 }
 
+// The words of text 6 of M2.1c, which the owner fixed (SW-2).
+const (
+	fromNowOnRuns    = "From now on, SuiteWard runs the approved tests on every open pull request and on every push. A results comment follows when a run ends."
+	checksWaitForRun = "The checks of a commit wait for its run."
+
+	// promotedToday is the V1 comment as it was before SW-2 and as it stays without a run: a profile-less declaration, canonical off, and a payload that predates the level.
+	promotedToday = "Setup is complete: P1-R1, approved by @octo-owner, is now V1, the approved version of the contract.\n" +
+		"SuiteWard checked the approved files at the exact commit that was approved, and recorded the result.\n" +
+		"From now on, a change to the protected files needs a new proposal and your approval.\n"
+)
+
+// The V1 comment adds a paragraph about the runs only where the canonical level runs them, and is byte for byte what it was everywhere else.
+func TestBootstrapPromotedSaysThatTheApprovedTestsRunOnlyWhereTheyDo(t *testing.T) {
+	withRuns := strings.TrimSuffix(promotedToday, "\n") + "\n\n" + fromNowOnRuns
+	for name, tc := range map[string]struct {
+		level execution.CanonicalLevel
+		want  string
+	}{
+		"a payload that predates the level": {0, promotedToday},
+		"canonical off":                     {execution.CanonicalLevelOff, promotedToday},
+		"canonical advisory":                {execution.CanonicalLevelAdvisory, withRuns + "\n"},
+		"canonical required":                {execution.CanonicalLevelRequired, withRuns + " " + checksWaitForRun + "\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ack := commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Version: 1, Owner: owner, Canonical: tc.level}
+			if got := render(t, func() string { return commandtext.Acknowledge(ack) }); got != tc.want {
+				t.Errorf("the comment is:\n%q\nwant:\n%q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestApprovalRevokeLineIsInsideCode(t *testing.T) {
 	body := render(t, func() string {
 		return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.Approved, Proposal: 42, Revision: 3, Source: source, Owner: owner})
@@ -586,6 +637,8 @@ func TestAcknowledgePanicsOnImpossibleState(t *testing.T) {
 		{"no source on malformed", commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.BadCode, Owner: owner}},
 		{"no source on edited first", commandtext.Ack{Outcome: commandtext.EditedFirst, Owner: owner}},
 		{"source on bootstrap promoted", commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Version: 1, Source: source, Owner: owner}},
+		{"unknown canonical level on bootstrap promoted", commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: 1, Revision: 1, Version: 1, Owner: owner, Canonical: 99}},
+		{"canonical level on approval", commandtext.Ack{Outcome: commandtext.Approved, Proposal: 1, Revision: 1, Source: source, Owner: owner, Canonical: execution.CanonicalLevelAdvisory}},
 		{"revoked after promotion without reference", commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Source: source, Owner: owner}},
 		{"eligibility after promotion", commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Proposal: 1, Revision: 1, Source: source, Owner: owner, Eligible: true}},
 		{"rejection after promotion", commandtext.Ack{Outcome: commandtext.RevokedAfterPromotion, Rejection: commandtext.Unauthorized, Proposal: 1, Revision: 1, Source: source, Owner: owner}},

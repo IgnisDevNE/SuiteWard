@@ -120,6 +120,42 @@ func TestDoctorRuntimeFixes(t *testing.T) {
 	}
 }
 
+// The fix of a rootful Podman is the one of the refusal: on Linux with no connection set (in the settings or in CONTAINER_CONNECTION) the person
+// ran SuiteWard as root; anywhere else a connection was chosen, and the fix is to choose the rootless one.
+func TestDoctorRootfulFixSaysWhatToDoWhereItHappens(t *testing.T) {
+	const asRoot = "Run SuiteWard as the user who installed it, not as root or with sudo."
+	const aConnection = "`connection:` in the settings file"
+	cases := []struct {
+		name       string
+		goos       string
+		connection string // the connection of the settings; "" on Linux is none
+		env        string
+		fix        string
+		notFix     string
+	}{
+		{"Linux with no connection", "linux", "", "", asRoot, aConnection},
+		{"Linux with a connection in the settings", "linux", "named", "", aConnection, asRoot},
+		{"Linux with the connection of the environment", "linux", "", "from-env", aConnection, asRoot},
+		{"a machine", "windows", "", "", aConnection, asRoot},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, s := colocated{goos: c.goos, over: []rule{{match: "info --format", out: "false\n"}}}.build(t)
+			if c.goos == "linux" {
+				s.Connection = c.connection
+			}
+			if c.env != "" {
+				f.env["CONTAINER_CONNECTION"] = c.env
+			}
+			_, res, _ := runDoctor(t, f, s)
+			wantFail(t, res, "runtime", "rootful")
+			if fix := res["runtime"].Fix; !strings.Contains(fix, c.fix) || strings.Contains(fix, c.notFix) {
+				t.Errorf("fix %q does not say %q, or says %q", fix, c.fix, c.notFix)
+			}
+		})
+	}
+}
+
 // A Podman whose version cannot be read still answers, so the runtime row stays a pass; its note says that it could not tell, and why, and it
 // is on the plain output line like the note of an older Podman.
 func TestDoctorSaysWhenThePodmanVersionCannotBeRead(t *testing.T) {

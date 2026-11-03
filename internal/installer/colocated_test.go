@@ -1318,13 +1318,68 @@ func TestInstallDockerNeedsConfirmationAndNamesTheReasons(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "--accept-docker") {
 		t.Fatalf("got %v", err)
 	}
-	if len(h.f.calls) != 0 {
-		t.Errorf("the engine was called before the confirmation: %v", h.f.lines())
+	if len(h.f.find("version --format")) == 0 {
+		t.Errorf("Docker was not asked whether it answers before the question: %v", h.f.lines())
 	}
+	h.mustNotMutate()
 	for _, want := range []string{"Podman", "root", "secrets"} {
 		if !strings.Contains(h.out.String(), want) {
 			t.Errorf("the warning lacks %q:\n%s", want, h.out.String())
 		}
+	}
+}
+
+// A Docker that does not answer costs no "yes": the install stops with the engine's error, and the risk question is never shown.
+func TestInstallDockerThatDoesNotAnswerStopsBeforeTheRiskQuestion(t *testing.T) {
+	h := dockerHarness(t, "windows")
+	h.f.rules = append([]rule{{match: "version --format", err: errors.New("the pipe is closed")}}, h.f.rules...)
+	err := h.install("--runtime", "docker", "--image", testImage) // no --accept-docker: the question would be asked
+	if err == nil || !strings.Contains(err.Error(), "does not answer") || !strings.Contains(err.Error(), "the pipe is closed") {
+		t.Fatalf("got %v, want the error of a Docker that does not answer", err)
+	}
+	if strings.Contains(err.Error(), "did not confirm") || strings.Contains(h.out.String(), "Docker works on this computer") {
+		t.Errorf("the risk question was asked of a Docker that does not answer:\n%v\n%s", err, h.out.String())
+	}
+	h.mustNotMutate()
+}
+
+// The question comes after Docker has answered, so nothing of it is on the screen when the engine is asked.
+func TestInstallDockerAsksTheRiskQuestionAfterDockerAnswers(t *testing.T) {
+	h := dockerHarness(t, "windows")
+	env := h.newEnv()
+	inner, shown, asked := env.Deps.Exec, "", false
+	env.Deps.Exec = func(ctx context.Context, name string, a []string, stdin io.Reader) ([]byte, error) {
+		if !asked {
+			asked, shown = true, h.out.String()
+		}
+		return inner(ctx, name, a, stdin)
+	}
+	err := Install(context.Background(), []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "docker", "--image", testImage, "--accept-docker=false"}, env)
+	if err == nil || !strings.Contains(err.Error(), "did not confirm Docker") {
+		t.Fatalf("got %v, want the refusal of a no", err)
+	}
+	if !asked {
+		t.Fatal("Docker was never asked whether it answers")
+	}
+	if strings.Contains(shown, "Docker works on this computer") {
+		t.Errorf("the warning was shown before Docker was asked:\n%s", shown)
+	}
+	if !strings.Contains(h.out.String(), "Docker works on this computer") {
+		t.Errorf("the warning was not shown after Docker answered:\n%s", h.out.String())
+	}
+	h.mustNotMutate()
+}
+
+// Only an install asks: a command that works on what is installed (confirm false) opens a Docker that answers without the question.
+func TestOpenRuntimeDoesNotAskTheDockerQuestionOfACommandThatDoesNotInstall(t *testing.T) {
+	h := dockerHarness(t, "windows")
+	r := newTestResolver(t, nil, nil, Terminal{In: strings.NewReader(""), Out: &h.out})
+	rt, _, err := openRuntime(context.Background(), r, h.newEnv(), Settings{Runtime: RuntimeDocker}, false)
+	if err != nil || rt.Name() != RuntimeDocker {
+		t.Fatalf("got %v, %v", rt, err)
+	}
+	if strings.Contains(h.out.String(), "Docker works on this computer") {
+		t.Errorf("a command that does not install asked the question:\n%s", h.out.String())
 	}
 }
 

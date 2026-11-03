@@ -35,7 +35,7 @@ func registerAnotherInstancesExecutor(t *testing.T, f *fakeEngine) string {
 		}
 		writeFile(t, definition, content)
 	}
-	return filepath.Join(t.TempDir(), "mcp-token")
+	return filepath.Join(shortDir(t), "mcp-token") // a failure names it, and a detail is bounded to 300 characters: it must not grow with the temp folder
 }
 
 func TestDoctorOfASecondInstanceSaysThatTheExecutorIsRegisteredForAnotherInstance(t *testing.T) {

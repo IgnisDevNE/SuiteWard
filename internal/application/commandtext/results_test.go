@@ -386,7 +386,9 @@ func TestResultsCommentOffersTheApproveAnywayOnlyUnderARequiredReceiptThatAwaits
 // The kinds block is replaced only where it would stand: a receipt that is empty, did not run or is not wanted never had one, so the approve keeps its intro there.
 func TestResultsCommentKeepsTheApproveIntroWhereThereIsNoKindsBlockToReplace(t *testing.T) {
 	failing := withFailingApprovedTests(execution.CanonicalCounts{Pass: 8, Fail: 1}, 1)
-	approve := func(r *commandtext.Results) { r.Next, r.ApproveMode, r.ApprovalMissing = execution.NextApprove, true, true }
+	approve := func(r *commandtext.Results) {
+		r.Next, r.ApproveMode, r.ApprovalMissing = execution.NextApprove, true, true
+	}
 	for name, edit := range map[string]func(*commandtext.Results){
 		"the receipt is empty": func(r *commandtext.Results) { r.Receipt.Counts = execution.ReceiptCounts{} },
 		"the receipt did not run and the owner unblocked it": func(r *commandtext.Results) {

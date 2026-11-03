@@ -364,7 +364,7 @@ func TestDoctorHealthyColocatedDocker(t *testing.T) {
 const olderPodmanNote = "Podman 4.9.3 is older than 5.0. SuiteWard works with it, but a newer Podman says more clearly when a test is stopped for using too much memory."
 
 // A co-located Podman older than 5.0 is neither a failure nor a warning (Ubuntu 24.04 ships 4.9.3, and a warning there would
-// stay forever with nothing to act on): the runtime row passes and says so in its detail. The version is the server's, else the client's.
+// stay forever with nothing to act on): the runtime row passes and says so in its note. The version is the server's, else the client's.
 func TestDoctorNotesAColocatedPodmanOlderThan5(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -393,16 +393,150 @@ func TestDoctorNotesAColocatedPodmanOlderThan5(t *testing.T) {
 			if r.needsALook() {
 				t.Errorf("the runtime row is a pass that needs no look, so no warning is counted: %+v", r)
 			}
-			if got := strings.Contains(r.Detail, olderPodmanNote); got != c.noted {
-				t.Errorf("the note is in the detail: %v, want %v: %q", got, c.noted, r.Detail)
+			if got := r.Note == olderPodmanNote; got != c.noted {
+				t.Errorf("the note is the older-Podman one: %v, want %v: %q", got, c.noted, r.Note)
 			}
-			if !c.noted && (strings.Contains(r.Detail, "older than") || strings.Contains(r.Detail, "could not be read")) {
-				t.Errorf("a note without a reason: %q", r.Detail)
+			if !c.noted && r.Note != "" {
+				t.Errorf("a note without a reason: %q", r.Note)
 			}
 			// On Windows the probe of the Docker pipe asks `docker version` too: only Podman's own command counts here.
 			asked := slices.DeleteFunc(f.find("version --format"), func(c call) bool { return c.name != "podman" })
 			if len(asked) != 1 || asked[0].line() != c.command {
 				t.Errorf("want the one command `podman %s`, got %v", c.command, asked)
+			}
+		})
+	}
+}
+
+// olderPodman is the fake of a co-located Podman 4.9.3, which gets the note.
+var olderPodman = rule{match: "version --format", out: podmanVersions("4.9.3", "4.9.3")}
+
+// The note of an older Podman is on the line of the passing runtime row, in plain text: `ok runtime: <note>`. It is a pass, so the exit code is 0
+// and no WARN line appears, and no other row changes: the output is the one of a newer Podman with that one line replaced.
+func TestDoctorPlainOutputShowsThePodmanNoteOnTheRuntimeRow(t *testing.T) {
+	f, s := colocated{}.build(t)
+	code, newer := runDoctorRaw(t, f, s, false)
+	if code != 0 || !strings.Contains(newer, "\nok runtime\n") {
+		t.Fatalf("a newer Podman: exit %d, want 0 and the line `ok runtime` in:\n%s", code, newer)
+	}
+	f, s = colocated{over: []rule{olderPodman}}.build(t)
+	code, text := runDoctorRaw(t, f, s, false)
+	if code != 0 {
+		t.Errorf("exit %d for a Podman 4.9.3, a note is not a failure:\n%s", code, text)
+	}
+	if want := strings.Replace(newer, "\nok runtime\n", "\nok runtime: "+olderPodmanNote+"\n", 1); text != want {
+		t.Errorf("the plain output is\n%s\nwant the output of a newer Podman with the runtime line `ok runtime: <note>`:\n%s", text, want)
+	}
+	if strings.Contains(text, "WARN") {
+		t.Errorf("a note is not a warning:\n%s", text)
+	}
+}
+
+// On a full screen the note is on the check line of the runtime row, which the scrollback keeps, and the counts treat the row as the pass it is.
+func TestDoctorFullScreenShowsThePodmanNoteOnTheRuntimeRow(t *testing.T) {
+	run := func(t *testing.T, over ...rule) (code int, tail string) {
+		t.Helper()
+		f, s := colocated{over: over}.build(t)
+		path := filepath.Join(t.TempDir(), "settings.yaml")
+		if err := SaveSettings(path, s); err != nil {
+			t.Fatal(err)
+		}
+		c := newTermConsole(&bytes.Buffer{})
+		env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, OpenScreen: c.open}
+		var stderr bytes.Buffer
+		code = Main(liveContext(t), []string{"doctor", "--settings", path, "--token-file", coloTokenFile(t, f)}, env, &stderr)
+		if stderr.Len() != 0 {
+			t.Errorf("stderr is %q", stderr.String())
+		}
+		return code, c.tail()
+	}
+	_, tail := run(t)
+	if !strings.Contains("\n"+tail, "\n✓ runtime\n") {
+		t.Fatalf("a newer Podman: the check line of the runtime row is missing from:\n%s", tail)
+	}
+	code, tail := run(t, olderPodman)
+	if code != 0 {
+		t.Errorf("exit %d for a Podman 4.9.3, a note is not a failure", code)
+	}
+	if want := "\n✓ runtime: " + olderPodmanNote + "\n"; !strings.Contains("\n"+tail, want) {
+		t.Errorf("the scrollback lacks %q:\n%s", want, tail)
+	}
+	checks := strings.Count("\n"+tail, "\n✓ ")
+	if counts := fmt.Sprintf("%d ok, 0 warnings, 0 failures", checks); !strings.HasSuffix(strings.TrimSpace(tail), counts) {
+		t.Errorf("the scrollback does not end with %q:\n%s", counts, tail)
+	}
+}
+
+// `doctor --json` keeps the note apart from the detail, under `note`, and only the runtime row has the key: the rows that
+// `suiteward check --json` sends have none, and they still decode and are listed as before.
+func TestDoctorJSONCarriesThePodmanNoteUnderItsOwnKey(t *testing.T) {
+	rows := func(over ...rule) map[string]map[string]any {
+		f, s := colocated{over: over}.build(t)
+		_, raw := runDoctorRaw(t, f, s, true)
+		var list []map[string]any
+		if err := json.Unmarshal([]byte(raw), &list); err != nil {
+			t.Fatalf("doctor --json printed %q: %v", raw, err)
+		}
+		byName := map[string]map[string]any{}
+		for _, r := range list {
+			byName[r["name"].(string)] = r
+		}
+		return byName
+	}
+	older := rows(olderPodman)
+	if got := older["runtime"]["note"]; got != olderPodmanNote {
+		t.Errorf("the runtime row says note %v, want %q", got, olderPodmanNote)
+	}
+	if detail, _ := older["runtime"]["detail"].(string); strings.Contains(detail, "older than") {
+		t.Errorf("the note is in the detail too: %q", detail)
+	}
+	if older["runtime"]["ok"] != true {
+		t.Errorf("the runtime row is a pass: %v", older["runtime"])
+	}
+	for name, r := range older {
+		if _, has := r["note"]; has && name != "runtime" {
+			t.Errorf("the row %s has a note: %v", name, r)
+		}
+	}
+	if r, ok := older["github.app"]; !ok || r["ok"] != true {
+		t.Errorf("a row of `suiteward check --json` without a note is lost or changed: %v", r)
+	}
+	if _, has := rows()["runtime"]["note"]; has {
+		t.Error("a newer Podman has a note key")
+	}
+}
+
+// The version is asked of the connection that NewPodman chose, whoever named it: with no connection in the settings, off Linux that is the one
+// rootless machine connection, and anywhere CONTAINER_CONNECTION. The fake answers 4.9.3 on that connection and 6.1.4 on the engine's default.
+func TestDoctorAsksThePodmanVersionOfTheConnectionNewPodmanResolved(t *testing.T) {
+	cases := []struct {
+		name       string
+		goos       string
+		env        string
+		connection string
+		over       []rule
+	}{
+		{"the only rootless machine connection", "windows", "", "podman-machine-default", []rule{{match: "system connection list", out: machineConnections}}},
+		{"CONTAINER_CONNECTION", "linux", "edge", "edge", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			asked := "--connection " + c.connection + " version --format {{json .}}"
+			over := slices.Concat(c.over, []rule{
+				{match: "=" + asked, out: podmanVersions("4.9.3", "4.9.3")},
+				{match: "=version --format {{json .}}", out: podmanVersions("6.1.4", "6.1.4")},
+			})
+			f, s := colocated{goos: c.goos, over: over}.build(t)
+			s.Connection = ""
+			f.env["CONTAINER_CONNECTION"] = c.env
+			_, text := runDoctorRaw(t, f, s, false)
+			if want := "\nok runtime: " + olderPodmanNote + "\n"; !strings.Contains("\n"+text, want) {
+				t.Errorf("the output lacks %q, though the connection %s answers 4.9.3:\n%s", want, c.connection, text)
+			}
+			// On Windows the probe of the Docker pipe asks `docker version` too: only Podman's own command counts here.
+			versions := slices.DeleteFunc(f.find("version --format"), func(c call) bool { return c.name != "podman" })
+			if len(versions) != 1 || versions[0].line() != asked {
+				t.Errorf("want the one command `podman %s`, got %v", asked, versions)
 			}
 		})
 	}

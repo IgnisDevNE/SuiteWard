@@ -120,7 +120,8 @@ func TestDoctorRuntimeFixes(t *testing.T) {
 	}
 }
 
-// A Podman whose version cannot be read still answers, so the runtime row stays a pass; it says that it could not tell, and why.
+// A Podman whose version cannot be read still answers, so the runtime row stays a pass; its note says that it could not tell, and why, and it
+// is on the plain output line like the note of an older Podman.
 func TestDoctorSaysWhenThePodmanVersionCannotBeRead(t *testing.T) {
 	cases := []struct {
 		name string
@@ -146,12 +147,16 @@ func TestDoctorSaysWhenThePodmanVersionCannotBeRead(t *testing.T) {
 				t.Errorf("the runtime row is a pass that needs no look: %+v", r)
 			}
 			for _, want := range []string{"its version could not be read", c.why} {
-				if !strings.Contains(r.Detail, want) {
-					t.Errorf("the detail %q does not say %q", r.Detail, want)
+				if !strings.Contains(r.Note, want) {
+					t.Errorf("the note %q does not say %q", r.Note, want)
 				}
 			}
-			if strings.Contains(r.Detail, "works with it") {
-				t.Errorf("a version that was not read is not older: %q", r.Detail)
+			if strings.Contains(r.Note, "works with it") {
+				t.Errorf("a version that was not read is not older: %q", r.Note)
+			}
+			f, s = colocated{over: []rule{c.rule}}.build(t)
+			if _, text := runDoctorRaw(t, f, s, false); !strings.Contains("\n"+text, "\nok runtime: "+r.Note+"\n") {
+				t.Errorf("the plain output does not carry the note %q:\n%s", r.Note, text)
 			}
 		})
 	}

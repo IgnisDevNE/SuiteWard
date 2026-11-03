@@ -25,6 +25,7 @@ type pullView struct {
 	Empty                             []string
 	Notes                             []string // the situation of each run
 	States                            stateSection
+	Wrong                             []pageLink // "What went wrong": a link for each problem, none when nothing went wrong
 	Approved, Receipt                 testsSection
 	Kinds                             kindsSection
 	Evidence                          table
@@ -53,6 +54,7 @@ type listBlock struct {
 
 type kindsSection struct {
 	Table   table // the zero table when there is no receipt to judge
+	NoneMet bool  // a receipt was judged and no kind of change is met
 	Preview string
 }
 
@@ -232,6 +234,7 @@ func (p *receiptPages) tables(v *pullView, canonical, receipt pageRun, weak map[
 			return err
 		}
 	}
+	v.Wrong = wentWrong(ccounts, rcounts, len(weak))
 	if v.Approved, err = canonicalSection(canonical, ccounts, weak); err != nil {
 		return err
 	}
@@ -240,6 +243,41 @@ func (p *receiptPages) tables(v *pullView, canonical, receipt pageRun, weak map[
 	}
 	v.States, err = statesOf(canonical, ccounts, receipt, rcounts)
 	return err
+}
+
+// The links of "What went wrong": the headings of the sections that show the tests, and of the kinds of change. The template gives each of them this id; the ids are fixed words.
+const (
+	approvedHref = "#approved-tests"
+	changeHref   = "#change-tests"
+	kindsHref    = "#kinds-of-change"
+)
+
+// noKindSentence is the line of a receipt that was judged and meets no kind of change.
+const noKindSentence = "The receipt meets no kind of change."
+
+// wentWrong is the lines of "What went wrong" that the counts give: one for each problem, in the order of the counts of the comment (the approved tests, then the tests of the
+// change), each a link to the table that shows it. A run that has no results has no counts, so it has no line. The line of the kinds follows from the kinds of change.
+func wentWrong(cc domain.CanonicalCounts, rc domain.ReceiptCounts, weakened int) []pageLink {
+	var links []pageLink
+	for _, p := range []struct {
+		n         int
+		one, many string // many holds the count as %d
+		href      string
+	}{
+		{cc.Fail, "1 approved test failed.", "%d approved tests failed.", approvedHref},
+		{cc.Missing, "1 approved test gave no result.", "%d approved tests gave no result.", approvedHref},
+		{cc.Flaky, "1 approved test gave different results when it ran again.", "%d approved tests gave different results when they ran again.", approvedHref},
+		{weakened, "1 approved test is weakened by this change.", "%d approved tests are weakened by this change.", approvedHref},
+		{rc.Fails, "1 test this change adds or edits fails.", "%d tests this change adds or edits fail.", changeHref},
+	} {
+		switch {
+		case p.n == 1:
+			links = append(links, pageLink{Href: p.href, Text: p.one})
+		case p.n > 1:
+			links = append(links, pageLink{Href: p.href, Text: fmt.Sprintf(p.many, p.n)})
+		}
+	}
+	return links
 }
 
 // statesOf is the table of the tests by state, with what each state means, and the sentences that count what the rows do not.

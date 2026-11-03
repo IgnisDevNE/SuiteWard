@@ -205,6 +205,9 @@ func (p *receiptPages) read(ctx context.Context, state owner.State, project owne
 	if v.Kinds, err = kindsOf(h.receipt); err != nil {
 		return pullView{}, err
 	}
+	if v.Kinds.NoneMet {
+		v.Wrong = append(v.Wrong, pageLink{Href: kindsHref, Text: noKindSentence})
+	}
 	if v.Kinds.Preview, err = p.previewOf(ctx, state, project, number); err != nil {
 		return pullView{}, err
 	}
@@ -329,6 +332,7 @@ func kindsOf(receipt pageRun) (kindsSection, error) {
 		return kindsSection{}, err
 	}
 	var rows [][]string
+	anyMet := false
 	for _, mode := range []domain.Mode{domain.ModeFix, domain.ModeFeature, domain.ModeRefactor} {
 		summary, err := counts.Summarize(mode)
 		if err != nil { // the three modes are modes
@@ -341,11 +345,12 @@ func kindsOf(receipt pageRun) (kindsSection, error) {
 		row := []string{mode.String(), "Not met", why}
 		if met {
 			row[1], row[2] = "Met", "-"
+			anyMet = true
 		}
 		rows = append(rows, row)
 	}
 	kinds, _, err := tableOf([]string{"Kind", "Met", "Why"}, rows, unbudgeted)
-	return kindsSection{Table: kinds}, err
+	return kindsSection{Table: kinds, NoneMet: !anyMet}, err
 }
 
 // evidenceOf is the table of the evidence binding of each run: what each was made of, the governing manifest and its source, the policy levels, the profile, the test

@@ -58,6 +58,8 @@ This verifies that the image was built and signed by this repository's release w
 
 [ADR 0028](0028-canonical-execution-and-the-receipt.md) records the design of M2 and settles its open decisions for Go. M2 arrives one ecosystem at a time (M2.1 Go, M2.2 Python, M2.3 TypeScript), and the `DockerExecutionBackend` above is built as a separate executor process that drives a container runtime CLI, so the service never receives a runtime socket. An installation that requires execution does not accept integrity-only evidence when the executor is unavailable.
 
+*Note 2026-11-03 (owner, [D-ROADMAP](../plan/decisions.md#d-roadmap-the-order-after-m21)): the ecosystems after Go changed. M2.2 is C/C++ and M2.3 is Kotlin/Android; Python and TypeScript wait in the backlog.*
+
 ## Alternatives and consequences
 
 - **Execution-first MVP:** earlier execution assurance, with a larger initial operating and isolation burden.

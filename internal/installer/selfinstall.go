@@ -181,6 +181,88 @@ func (d Deps) removeOtherInstance() string {
 	return "`" + d.otherInstance().suggest("uninstall") + "` (pass that instance's `--settings` and `--token-file`; the default instance needs neither)"
 }
 
+// removeInstance is the removal of one instance that the list of installations names: its command carries the flags that select it, so that it
+// can be copied as it is.
+func (d Deps) removeInstance(i installation) string {
+	d.instance = instanceArgs{settings: i.Settings, tokenFile: i.TokenFile}
+	return "`" + d.suggest("uninstall") + "`"
+}
+
+// named is how a text calls a listed installation: by its instance id (the 8 characters /status shows) or, when the list has none, by its settings
+// file, and by its container program (the list holds podman or docker only: an entry is checked when it is read).
+func (i installation) named() string {
+	engine := ", on " + strings.ToUpper(i.Runtime[:1]) + i.Runtime[1:]
+	if i.Instance != "" {
+		return "the instance `" + i.Instance + "`" + engine
+	}
+	return "the instance with the settings file `" + i.Settings + "`" + engine
+}
+
+// otherHolders are the listed installations that may hold the test runner that plan finds registered for another instance. Only an installation
+// on this computer has one, and the installation whose executor folder is the plan's is this instance. Where the definition names the program
+// (Linux, macOS) the holder is the installation whose program it names; the task of Windows is not read (foreign), so every other installation may
+// hold it. An entry with no token file of its own has none to name, except the default installation, whose executor is beside the default one: the
+// entry that comes back carries the token file that was worked out.
+func (d Deps) otherHolders(plan executorPlan) ([]installation, error) {
+	found, _, err := installationCandidates(d.GOOS)
+	if err != nil {
+		return nil, err
+	}
+	def, err := defaultTokenFile(d)
+	if err != nil {
+		return nil, err
+	}
+	var holders []installation
+	for _, c := range found {
+		if c.TokenFile == "" && c.isDefault {
+			c.TokenFile = def
+		}
+		thisInstance := c.TokenFile != "" && samePath(d.GOOS, executorDirOf(c.TokenFile), plan.dir)
+		if c.Tier != config.TierCoLocated || thisInstance {
+			continue
+		}
+		if d.GOOS != "windows" {
+			if c.TokenFile == "" {
+				continue // its program is not known, so the definition cannot name it
+			}
+			// foreign reads the program and the definition of the plan alone; the definition exists, because the plan found it foreign.
+			theirs := executorPlan{goos: d.GOOS, definition: plan.definition, binary: filepath.Join(executorDirOf(c.TokenFile), executorBinaryName(d.GOOS))}
+			if other, err := theirs.foreign(true); err != nil {
+				return nil, err
+			} else if other {
+				continue
+			}
+		}
+		holders = append(holders, c.installation)
+	}
+	return holders, nil
+}
+
+// runnerHolder is what a text says of the instance that holds the computer's test runner, when this run finds it registered for another instance:
+// who goes right after "another instance" and is empty when no listed installation is known to hold it, and remove is the command that removes the
+// instance. A list that cannot be read is said, not hidden. Several installations that may hold it are listed, and the removal then names none:
+// the person adds the flags of the right one.
+func (d Deps) runnerHolder(plan executorPlan) (who, remove string) {
+	holders, err := d.otherHolders(plan)
+	remove = d.removeOtherInstance()
+	switch {
+	case err != nil:
+		return " (which one is not known: " + err.Error() + ")", remove
+	case len(holders) == 0:
+		return "", remove
+	case len(holders) == 1:
+		if holders[0].TokenFile != "" { // without it the uninstall would keep the test runner, as beside a token file that may be another's
+			remove = d.removeInstance(holders[0])
+		}
+		return " (" + holders[0].named() + ")", remove
+	}
+	names := make([]string, len(holders))
+	for i, h := range holders {
+		names[i] = h.named()
+	}
+	return " (one of the other instances on this computer: " + strings.Join(names, "; ") + ")", remove
+}
+
 // commandName is the Deps.Command of the running program: executable is os.Executable and lookPath is exec.LookPath. A hint that says
 // `suiteward doctor` is a command only where the shell finds this program by that name, as it does after the release is installed on the
 // PATH. A release downloaded to a folder is not there, and it is run by its path: the path is quoted for a shell (quoteArg), and PowerShell,

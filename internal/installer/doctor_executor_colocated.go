@@ -39,8 +39,9 @@ func (d *doctor) executorFix() string {
 }
 
 // anotherInstanceFix is the fix of an executor that is registered for another instance: an install of this one skips it, so it is that instance's removal that frees the place.
-func (d *doctor) anotherInstanceFix() string {
-	return "A computer has one test runner, and it belongs to another instance. Remove that instance with " + d.deps.removeOtherInstance() + ". Then run `" + d.deps.suggest("install") + "` again for this one. Until then the install leaves the other test runner alone."
+// remove is the command that removes it (runnerHolder).
+func (d *doctor) anotherInstanceFix(remove string) string {
+	return "A computer has one test runner, and it belongs to another instance. Remove that instance with " + remove + ". Then run `" + d.deps.suggest("install") + "` again for this one. Until then the install leaves the other test runner alone."
 }
 
 // executorTokenFile is the token file that the files of the executor are beside: the one --token-file names, else the default place of this user's
@@ -91,8 +92,11 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 		return
 	}
 	fix, notRunning := d.executorFix(), plan.startHint()
+	who := ""  // which instance it is, when the list of installations says
 	if other { // no install makes this instance an executor of its own while that one is registered
-		fix = d.anotherInstanceFix()
+		var remove string
+		who, remove = d.deps.runnerHolder(plan)
+		fix = d.anotherInstanceFix(remove)
 		notRunning = fix
 	}
 	d.checkExecutorToken(plan) // the install makes the token copy and the service's token whatever becomes of the executor, so its fix stays the install's
@@ -105,7 +109,7 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	case stateErr != nil:
 		d.fail("executor.lifecycle", "Doctor could not ask the operating system about the test runner: "+stateErr.Error(), d.executorFix())
 	case other:
-		d.fail("executor.lifecycle", "The test runner on this computer belongs to another instance, not to the one that uses the token file `"+tokenFile+"`. A computer has one test runner.", fix)
+		d.fail("executor.lifecycle", "The test runner on this computer belongs to another instance"+who+", not to the one that uses the token file `"+tokenFile+"`. A computer has one test runner.", fix)
 	case !registered:
 		d.fail("executor.lifecycle", "The test runner is not set up on this computer. It should be "+executorMechanism(plan.goos)+".", d.executorFix())
 	case definitionErr != nil:

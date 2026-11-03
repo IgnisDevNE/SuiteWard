@@ -171,11 +171,12 @@ Set `SUITEWARD_VERSION` to the same tag: the script is the same file in every re
   - Phase [M2.1b](docs/plan/phases/M2.1b.md), results communication, is merged ([#62](https://github.com/IgnisDevNE/SuiteWard/pull/62)) and released as the pre-release `v0.5.0-alpha.2`, the latest. It adds a results comment on every pull request of a repository with an execution profile, one page per pull request with tables, a signal for an approved test that a change edits and that fails in its approved version, a test runner that is not responding with the early `/suiteward unblock`, an installer that asks which installation when there are several, and plain wording for every comment, check summary and page. It also fixes the host step on AlmaLinux 9 with SELinux enforcing and a first co-located install on Podman 4.9. This repository now names `execution: {profile: go}`, advisory, so its approved tests are set to run on every pull request. The AWS host that governed it was removed, and a new one governs in its place. Seen live: the isolated tier on that host with the published alpha (the host step, `doctor` with 27 ok, the smoke test, the bootstrap and the second version), and a co-located install without GitHub on Ubuntu 24.04 with Podman 4.9.3. Not seen yet: the results features on that host, the co-located tier with GitHub (Docker, Podman and Linux), a task started by a real logon, the Windows test runner restarting about 5 seconds after it stops, macOS and a real Constrained Language Mode refusal. The [install guide](docs/install.md#limits-of-canonical-execution) says what was seen and lists the limits.
 - **Security:** see [SECURITY.md](SECURITY.md), the [threat model](docs/security/threat-model.md), and [`scripts/verify-release.ps1`](scripts/verify-release.ps1), which verifies a release's signature and provenance.
 - **After the MVP**, in this order:
-  - canonical execution for Python (M2.2) and TypeScript (M2.3), then execution maturity (M2.4);
-  - security and trust (M3), then a verification phase that ends with the first beta release;
+  - the fixes from the M2.1b acceptance test (M2.1c);
+  - canonical execution for C and C++ (M2.2) and Kotlin and Android (M2.3), then execution maturity (M2.4) and results visibility (M2.5);
+  - security and trust (M3), with backups to storage the owner provides, then a verification phase that ends with the first beta release;
   - the managed service, after the beta, with the full change report on the check's Details page.
 
-  With no phase yet: the rest of the backup work (remote storage that the owner provides, scheduled backups, and a restore with a recovery mode), the rest of the change report (a link to each file's diff), and reading runner settings inside configuration files. The roadmap is in the [delivery plan](docs/plan/README.md#roadmap).
+  With no phase yet: Python and TypeScript, the rest of the change report (a link to each file's diff), and reading runner settings inside configuration files. The roadmap is in the [delivery plan](docs/plan/README.md#roadmap).
 
 ## Architecture
 

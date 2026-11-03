@@ -230,6 +230,7 @@ var lineClasses = map[report.LineKind]string{report.LineContext: "ctx", report.L
 // lines of a diff, and the pull request page, for the lines of the non-test files that the test runner reports. The kinds of the two sets do not overlap.
 var markerLabels = map[string]string{
 	string(report.MarkRemovedAssertion): "Removed assertion line",
+	string(report.MarkRemovedCase):      "Removed test case",
 	string(report.MarkAddedSkip):        "Added skip line",
 	string(report.MarkFocus):            "Added focus line",
 	string(report.MarkDeletedTest):      "Removed test declaration",

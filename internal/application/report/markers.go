@@ -9,10 +9,12 @@ import (
 // rules are what marks a line in one language. Each pattern is looked for in the whole line. A pattern that starts
 // with a letter, digit or underscore must not continue an identifier ("assert" is in "assertEqual" but not in
 // "reassert"); the others (".only(", "@skip") may follow anything. A pattern written with a leading ^ is the name of a
-// function that is called bare: it must not follow a "." either, so that "it(" is not in "regex.test(".
+// function that is called bare: it must not follow a "." either, so that "it(" is not in "regex.test(". tableRows
+// says that a removed line shaped like a row of a table test is marked, which only the Go rules of a test file do.
 type rules struct {
 	assertion, skip, focus []string
 	declaresTest           func(line string) bool
+	tableRows              bool
 }
 
 var (
@@ -37,12 +39,17 @@ var (
 
 	// A Go test function, or a method of a test suite.
 	goTest = regexp.MustCompile(`^\s*func\s+(\([^)]*\)\s*)?Test`)
+
+	// A row of a Go table: a keyed entry ("key": value,) or a struct literal on one line ({"x", 1}, with its comma unless it is the last).
+	goTableRow = regexp.MustCompile(`^\s*(?:"(?:[^"\\]|\\.)*"\s*:.*,|\{.*\},?)\s*$`)
 )
 
 func rulesFor(file string) rules {
 	switch strings.ToLower(path.Ext(file)) {
 	case ".go":
-		return goRules
+		r := goRules
+		r.tableRows = isTestPath(file) // shortcut: Go only, since the other languages have no rule for a row yet
+		return r
 	case ".py":
 		return pythonRules
 	case ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs":
@@ -51,14 +58,17 @@ func rulesFor(file string) rules {
 	return fallbackRules
 }
 
-// kinds are the markers of one changed line: a removed line can be an assertion or a test declaration, an added
-// line a skip or a focus.
+// kinds are the markers of one changed line, in the order of the MarkerKind constants: a removed line can be an
+// assertion, a row of a table test or a test declaration, an added line a skip or a focus.
 func (r rules) kinds(k LineKind, line string) []MarkerKind {
 	var out []MarkerKind
 	switch k {
 	case LineRemoved:
 		if found(line, r.assertion) {
 			out = append(out, MarkRemovedAssertion)
+		}
+		if r.tableRows && goTableRow.MatchString(line) {
+			out = append(out, MarkRemovedCase)
 		}
 		if r.declaresTest(line) {
 			out = append(out, MarkDeletedTest)

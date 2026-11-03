@@ -79,6 +79,7 @@ type MarkerKind string
 
 const (
 	MarkRemovedAssertion MarkerKind = "removed-assertion"
+	MarkRemovedCase      MarkerKind = "removed-case" // a removed row of a Go test's table: a keyed entry or a struct literal on one line
 	MarkAddedSkip        MarkerKind = "added-skip"
 	MarkFocus            MarkerKind = "focus"
 	MarkDeletedTest      MarkerKind = "deleted-test"
@@ -90,7 +91,7 @@ const (
 // it is 0, with no Text, for MarkTestFileRemoved. Text is the trimmed line, cut to 200 bytes. A line that the other
 // side has too, as many times and compared without the space around it, only moved or was reindented and gets no
 // marker. A file's markers come in this order: MarkTestFileRemoved, the removals by old line, the additions by new
-// line.
+// line; the kinds of one line come in the order of the constants above.
 type Marker struct {
 	Kind MarkerKind
 	Path string

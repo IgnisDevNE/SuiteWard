@@ -223,13 +223,58 @@ func receiptText(run ReceiptRun, page string) []string {
 	return parts
 }
 
-// kindsText says which kinds of change the receipt meets and why not, in the words of the page. A receipt that did not run, or has nothing to judge, meets none and says
-// nothing.
+// judged says that the receipt ran and has tests to judge, so the comment has something to say of the kinds of change.
+func (r Results) judged() bool {
+	return r.Receipt != nil && r.Receipt.Unavailable == "" && !r.Receipt.Counts.Empty()
+}
+
+// approvedCounts are the counts of the approved tests: none for a run that is not wanted or did not run.
+func (r Results) approvedCounts() execution.CanonicalCounts {
+	if r.Canonical == nil {
+		return execution.CanonicalCounts{}
+	}
+	return r.Canonical.Counts
+}
+
+// approvedTestsFail says that the approved tests have a failed, missing or flaky test, or that this change weakens one.
+func (r Results) approvedTestsFail() bool {
+	c := r.approvedCounts()
+	return c.Fail+c.Missing+c.Flaky > 0 || r.Weakened > 0
+}
+
+// kindsWithheldText replaces the kinds of change while the approved tests fail: the receipt judges only the tests of the change, and a "met" beside these counts reads as a
+// pass. It names the counts above zero and sends the reader to the report.
+func kindsWithheldText(r Results) string {
+	c := r.approvedCounts()
+	var counts []string
+	for _, n := range []struct {
+		n    int
+		what string
+	}{{c.Fail, "failed"}, {c.Missing, "gave no result"}, {c.Flaky, "gave different results"}, {r.Weakened, "weakened"}} {
+		if n.n > 0 {
+			counts = append(counts, fmt.Sprintf("%d %s", n.n, n.what))
+		}
+	}
+	opening := "The approved tests failed"
+	if c.Fail+c.Missing+c.Flaky == 0 {
+		opening = "This change weakens approved tests"
+		if r.Weakened == 1 {
+			opening = "This change weakens an approved test"
+		}
+	}
+	return opening + " (" + strings.Join(counts, ", ") + "), so this comment does not say which kind of change (`fix`, `feature`, `refactor`) this change is. The details are in the report."
+}
+
+// kindsText says which kinds of change the receipt meets and why not, in the words of the page, or that it does not while the approved tests fail. A receipt that did not
+// run, or has nothing to judge, meets none and says nothing.
 func kindsText(r Results) []string {
-	c := r.Receipt.Counts
-	if r.Receipt.Unavailable != "" || c.Empty() {
+	if !r.judged() {
 		return nil
 	}
+	if r.approvedTestsFail() {
+		return []string{kindsWithheldText(r)}
+	}
+	c := r.Receipt.Counts
 	lines := []string{"Does the receipt meet each kind of change?"}
 	for _, mode := range []execution.Mode{execution.ModeFix, execution.ModeFeature, execution.ModeRefactor} {
 		summary, err := c.Summarize(mode)
@@ -285,11 +330,14 @@ func nextText(r Results) []string {
 	switch r.Next {
 	case execution.NextApprove:
 		ref := Reference(r.Proposal, r.Revision)
-		command := codeCommand("approve", ref)
+		command, intro := codeCommand("approve", ref), "To approve this exact revision, comment:"
 		if r.ApproveMode {
 			command = modeApproveCommand(ref)
+			if r.ReceiptLevel == execution.ReceiptLevelRequired && r.judged() && r.approvedTestsFail() { // kindsText names no kind here, so the approve is the owner's call
+				intro = "If you want to approve this revision anyway, name the kind of change that the report shows as met, and comment:"
+			}
 		}
-		return []string{"To approve this exact revision, comment:", command}
+		return []string{intro, command}
 	case execution.NextBlocked:
 		return []string{blockedText}
 	case execution.NextFix:

@@ -351,7 +351,49 @@ func (d *doctor) checkRuntime(ctx context.Context) {
 	if d.deps.GOOS == "windows" {
 		detail += "; the Windows Docker pipe (docker_engine) is answered by " + d.pipeOwner(ctx)
 	}
+	if d.s.Runtime == RuntimePodman && d.s.Tier != config.TierIsolated {
+		if note := d.podmanNote(ctx); note != "" {
+			detail += ". " + note
+		}
+	}
 	d.pass("runtime", detail)
+}
+
+// podmanNote is what the runtime row says of the version of a co-located Podman, which has no floor: Podman 4.9 (Ubuntu 24.04's
+// package) does not report a sandbox killed for memory as such, and the executor reads its exit status 137 the same. The row stays a
+// pass, so an older Podman is a note and not a warning, and a version that cannot be read is said so. The isolated tier has its floor
+// of 5.5 at the host step.
+func (d *doctor) podmanNote(ctx context.Context) string {
+	version, err := d.podmanVersion(ctx)
+	switch {
+	case err != nil:
+		return "SuiteWard could not check whether Podman is older than 5.0, because its version could not be read (" + oneLine(err.Error()) + ")."
+	case !podmanAtLeast(version, 5, 0):
+		return "Podman " + version + " is older than 5.0. SuiteWard works with it, but a newer Podman says more clearly when a test is stopped for using too much memory."
+	}
+	return ""
+}
+
+// podmanVersion is the version of the engine behind the connection: the server's, else the client's, as the sandbox's Info reads it
+// (a Podman machine reports its engine as the server, a local Podman a client alone).
+func (d *doctor) podmanVersion(ctx context.Context) (string, error) {
+	args := []string{"version", "--format", "{{json .}}"}
+	if d.s.Connection != "" {
+		args = append([]string{"--connection", d.s.Connection}, args...)
+	}
+	out, err := d.deps.Exec(ctx, "podman", args, nil)
+	if err != nil {
+		return "", err
+	}
+	var v struct{ Client, Server struct{ Version string } }
+	if err := json.Unmarshal(out, &v); err != nil {
+		return "", fmt.Errorf("read the answer: %w", err)
+	}
+	version := podmanVersionText.FindString(cmp.Or(v.Server.Version, v.Client.Version))
+	if version == "" {
+		return "", errors.New("it reported no version number")
+	}
+	return version, nil
 }
 
 func (d *doctor) runtimeFix(err error) string {

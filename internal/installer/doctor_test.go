@@ -240,6 +240,16 @@ func doctorStateOf(status string, exit int, health string) map[string]any {
 	return state
 }
 
+// podmanVersions is what `podman version --format {{json .}}` prints: the client's version and, when a server answers (a
+// Podman machine), the server's.
+func podmanVersions(client, server string) string {
+	out := fmt.Sprintf(`{"Client":{"Version":%q}`, client)
+	if server != "" {
+		out += fmt.Sprintf(`,"Server":{"Version":%q}`, server)
+	}
+	return out + "}"
+}
+
 // colocated builds the fake of a healthy co-located stack; every field is a way to break it.
 type colocated struct {
 	goos     string
@@ -308,7 +318,7 @@ func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 	if s.Runtime == RuntimeDocker {
 		f.on("version --format", dockerDesktopServer+"\n").on("info --format", `["name=seccomp"]`+"\n")
 	} else {
-		f.on("info --format", "true\n")
+		f.on("info --format", "true\n").on("version --format", podmanVersions("6.1.4", "6.1.4"))
 	}
 	f.on("podman-restart.service", "LoadState=loaded\nUnitFileState=enabled\n")
 	f.on("-un", "suiteward\n").on("show-user suiteward", "Linger=yes\n")
@@ -348,6 +358,73 @@ func TestDoctorHealthyColocatedDocker(t *testing.T) {
 	}
 	if _, has := res["linger"]; has {
 		t.Error("a linger check for Docker, which has its own daemon")
+	}
+}
+
+const olderPodmanNote = "Podman 4.9.3 is older than 5.0. SuiteWard works with it, but a newer Podman says more clearly when a test is stopped for using too much memory."
+
+// A co-located Podman older than 5.0 is neither a failure nor a warning (Ubuntu 24.04 ships 4.9.3, and a warning there would
+// stay forever with nothing to act on): the runtime row passes and says so in its detail. The version is the server's, else the client's.
+func TestDoctorNotesAColocatedPodmanOlderThan5(t *testing.T) {
+	cases := []struct {
+		name    string
+		goos    string
+		answer  string
+		noted   bool
+		command string // the one version command, as its argument line
+	}{
+		{"a 4.9.3 server", "linux", podmanVersions("4.9.3", "4.9.3"), true, "version --format {{json .}}"},
+		{"a client alone of 4.9.3", "linux", podmanVersions("4.9.3", ""), true, "version --format {{json .}}"},
+		{"a machine of 4.9.3 under a client of 6.1.4", "windows", podmanVersions("6.1.4", "4.9.3"), true, "--connection podman-machine-default version --format {{json .}}"},
+		{"a machine of 6.1.4 under a client of 4.9.3", "windows", podmanVersions("4.9.3", "6.1.4"), false, "--connection podman-machine-default version --format {{json .}}"},
+		{"a 5.0.0 server", "linux", podmanVersions("5.0.0", "5.0.0"), false, "version --format {{json .}}"},
+		{"a 6.1.4 server", "linux", podmanVersions("6.1.4", "6.1.4"), false, "version --format {{json .}}"},
+		{"a client alone of 6.1.4", "linux", podmanVersions("6.1.4", ""), false, "version --format {{json .}}"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, s := colocated{goos: c.goos, over: []rule{{match: "version --format", out: c.answer}}}.build(t)
+			code, res, _ := runDoctor(t, f, s)
+			if code != 0 {
+				t.Errorf("exit %d, results %+v", code, res)
+			}
+			wantOK(t, res, "runtime")
+			r := res["runtime"]
+			if r.needsALook() {
+				t.Errorf("the runtime row is a pass that needs no look, so no warning is counted: %+v", r)
+			}
+			if got := strings.Contains(r.Detail, olderPodmanNote); got != c.noted {
+				t.Errorf("the note is in the detail: %v, want %v: %q", got, c.noted, r.Detail)
+			}
+			if !c.noted && (strings.Contains(r.Detail, "older than") || strings.Contains(r.Detail, "could not be read")) {
+				t.Errorf("a note without a reason: %q", r.Detail)
+			}
+			// On Windows the probe of the Docker pipe asks `docker version` too: only Podman's own command counts here.
+			asked := slices.DeleteFunc(f.find("version --format"), func(c call) bool { return c.name != "podman" })
+			if len(asked) != 1 || asked[0].line() != c.command {
+				t.Errorf("want the one command `podman %s`, got %v", c.command, asked)
+			}
+		})
+	}
+}
+
+// Docker has its own version, which nothing here judges, and the isolated tier has its floor of 5.5 at the host step: neither row changes.
+func TestDoctorAddsNoPodmanNoteToDockerOrToTheIsolatedTier(t *testing.T) {
+	f, s := colocated{engine: RuntimeDocker}.build(t)
+	_, res, _ := runDoctor(t, f, s)
+	wantOK(t, res, "runtime")
+	if got, want := res["runtime"].Detail, "Docker Desktop 4.50.0 (209931) 29.9.2"; got != want {
+		t.Errorf("the Docker runtime row is %q, want %q", got, want)
+	}
+	if calls := f.find("version --format"); len(calls) != 1 {
+		t.Errorf("Docker is asked its version once, to be identified: %v", calls)
+	}
+
+	f, s = isolatedRig{}.build(t)
+	_, res, _ = runDoctor(t, f, s)
+	wantOK(t, res, "runtime")
+	if calls := f.find("version --format"); len(calls) != 0 {
+		t.Errorf("the isolated tier asks no version: %v", calls)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/inventory"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/owner"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
+	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
@@ -107,8 +108,17 @@ func (s bootstrapSummaryInputs) summary() (commandtext.Summary, error) {
 // bootstrapPromotedPayload is the payload of bootstrap-promoted:<repository id>:P<n>-R1.
 type bootstrapPromotedPayload struct {
 	commentTarget
-	Reference string `json:"reference"` // P<n>-R<m>
-	Version   string `json:"version"`   // V1
+	Reference string `json:"reference"`           // P<n>-R<m>
+	Version   string `json:"version"`             // V1
+	Canonical string `json:"canonical,omitempty"` // off, advisory or required: the canonical level of the declaration that became V1; absent in a message queued before M2.1c
+}
+
+// level reads the canonical level of the payload: none for a message queued before the level was carried, which the comment renders without the line about the runs.
+func (b bootstrapPromotedPayload) level() (domain.CanonicalLevel, error) {
+	if b.Canonical == "" {
+		return 0, nil
+	}
+	return domain.ParseCanonicalLevel(b.Canonical)
 }
 
 // bootstrapNoticePayload is the payload of bootstrap-notice:<repository id>:<pull>: the pull request to say how to start or skip on.
@@ -182,9 +192,9 @@ func newSummaryMessage(target commentTarget, inputs bootstrapSummaryInputs) (gov
 	return governance.OutboxMessage{Key: key, Kind: githubCommentKind, Payload: payload}, nil
 }
 
-// newPromotedMessage builds the bootstrap-promoted message of the baseline reference (P<n>-R<m>).
-func newPromotedMessage(target commentTarget, reference string) (governance.OutboxMessage, error) {
-	payload, err := json.Marshal(bootstrapPromotedPayload{commentTarget: target, Reference: reference, Version: string(firstVersion)})
+// newPromotedMessage builds the bootstrap-promoted message of the baseline reference (P<n>-R<m>), whose declaration has the canonical level canonical.
+func newPromotedMessage(target commentTarget, reference string, canonical domain.CanonicalLevel) (governance.OutboxMessage, error) {
+	payload, err := json.Marshal(bootstrapPromotedPayload{commentTarget: target, Reference: reference, Version: string(firstVersion), Canonical: canonical.String()})
 	if err != nil {
 		return governance.OutboxMessage{}, fmt.Errorf("encode the bootstrap promotion: %w", err)
 	}
@@ -546,6 +556,20 @@ func (b *bootstrapJob) promote(ctx context.Context, p owner.ProjectPolicy, s bas
 	return b.bootstrap(ctx, p, s, inv)
 }
 
+// promotedLevel is the canonical level of the declaration that becomes V1: off when it names no profile, because nothing runs then (docs/contracts/runtime.md, "The effective
+// policy").
+func promotedLevel(inv inventory.Inventory) (domain.CanonicalLevel, error) {
+	policy, named := inv.Scope().Declaration().Execution()
+	if !named {
+		return domain.CanonicalLevelOff, nil
+	}
+	canonical, _, err := executionLevels(policy)
+	if err != nil {
+		return 0, fmt.Errorf("the levels of the declaration of the origin: %w", err) // ParseDeclaration validated it: an impossible state
+	}
+	return canonical, nil
+}
+
 func (b *bootstrapJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, s baselineState, inv inventory.Inventory) error {
 	proposed, err := inv.Contract()
 	if err != nil {
@@ -561,7 +585,11 @@ func (b *bootstrapJob) bootstrap(ctx context.Context, p owner.ProjectPolicy, s b
 		return err
 	}
 	reference := fmt.Sprintf("%s-%s", s.reference.ProposalID, s.reference.RevisionID)
-	message, err := newPromotedMessage(commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull}, reference)
+	canonical, err := promotedLevel(inv)
+	if err != nil {
+		return err
+	}
+	message, err := newPromotedMessage(commentTarget{RepositoryID: p.RepositoryID, Repo: p.Repo, Pull: pull}, reference, canonical)
 	if err != nil {
 		return err
 	}

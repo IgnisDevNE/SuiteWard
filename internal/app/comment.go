@@ -863,7 +863,8 @@ func (p *commentPublisher) promoted(ctx context.Context, key, tail string, paylo
 		return commentTarget{}, "", err
 	}
 	proposal, revision, ok := commandtext.ParseReference(tail)
-	if !ok || b.validate() != nil || b.Reference != tail || b.Version != string(firstVersion) {
+	canonical, levelErr := b.level()
+	if !ok || b.validate() != nil || b.Reference != tail || b.Version != string(firstVersion) || levelErr != nil {
 		return commentTarget{}, "", keyError(githubCommentKind, key, "the payload does not match its key")
 	}
 	state, enrolled, err := p.owners.Current(ctx)
@@ -874,7 +875,7 @@ func (p *commentPublisher) promoted(ctx context.Context, key, tail string, paylo
 		return commentTarget{}, "", keyError(githubCommentKind, key, "no owner is enrolled")
 	}
 	text, err := render(githubCommentKind, key, func() string {
-		return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: proposal, Revision: revision, Version: 1, Owner: state.Owner.Login})
+		return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Proposal: proposal, Revision: revision, Version: 1, Owner: state.Owner.Login, Canonical: canonical})
 	})
 	return b.commentTarget, text, err
 }

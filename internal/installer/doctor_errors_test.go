@@ -120,6 +120,43 @@ func TestDoctorRuntimeFixes(t *testing.T) {
 	}
 }
 
+// A Podman whose version cannot be read still answers, so the runtime row stays a pass; it says that it could not tell, and why.
+func TestDoctorSaysWhenThePodmanVersionCannotBeRead(t *testing.T) {
+	cases := []struct {
+		name string
+		rule rule
+		why  string
+	}{
+		{"the command fails", rule{match: "version --format", err: errors.New("connection reset")}, "connection reset"},
+		{"the answer is not JSON", rule{match: "version --format", out: "podman version 4.9.3"}, "read the answer"},
+		{"the answer is empty", rule{match: "version --format"}, "read the answer"},
+		{"the answer holds no version", rule{match: "version --format", out: `{"Client":{}}`}, "no version number"},
+		{"the version has no number", rule{match: "version --format", out: podmanVersions("dev", "")}, "no version number"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, s := colocated{over: []rule{c.rule}}.build(t)
+			code, res, _ := runDoctor(t, f, s)
+			if code != 0 {
+				t.Errorf("exit %d, results %+v", code, res)
+			}
+			wantOK(t, res, "runtime", "containers")
+			r := res["runtime"]
+			if r.needsALook() {
+				t.Errorf("the runtime row is a pass that needs no look: %+v", r)
+			}
+			for _, want := range []string{"its version could not be read", c.why} {
+				if !strings.Contains(r.Detail, want) {
+					t.Errorf("the detail %q does not say %q", r.Detail, want)
+				}
+			}
+			if strings.Contains(r.Detail, "is older than 5.0") {
+				t.Errorf("a version that was not read is not older: %q", r.Detail)
+			}
+		})
+	}
+}
+
 func TestDoctorContainerProblems(t *testing.T) {
 	noRestart := func(name string, obj map[string]any) {
 		if name == ContainerDB {

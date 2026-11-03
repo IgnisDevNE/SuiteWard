@@ -156,16 +156,15 @@ func plainLimits() (pkg, name, file func(i int) string) {
 		func(int) string { return strings.Repeat("f", 1000) + "_test.go" }
 }
 
-// rawSection is the part of the raw page under <h2>heading</h2>, up to the next <h2>.
+// rawSection is the part of the raw page under the heading, up to the next <h2.
 func rawSection(t *testing.T, raw, heading string) string {
 	t.Helper()
-	open := "<h2>" + heading + "</h2>"
-	start := strings.Index(raw, open)
-	if start < 0 {
+	at := headingOf(heading).FindStringIndex(raw)
+	if at == nil {
 		t.Fatalf("no section %q", heading)
 	}
-	rest := raw[start+len(open):]
-	if end := strings.Index(rest, "<h2>"); end >= 0 {
+	rest := raw[at[1]:]
+	if end := strings.Index(rest, "<h2"); end >= 0 {
 		rest = rest[:end]
 	}
 	return rest
@@ -386,6 +385,28 @@ func TestPullPageStaysUnderItsBudgetsWhateverTheRepositoryAndTheTestRunnerSay(t 
 	}
 	text := html.UnescapeString(raw)
 	w.wantText(text, "Files: 550 added, 1 modified, 0 removed") // the counts of the report are complete: 150 + 400 added files, with tests/a_test.go modified
+}
+
+// "What went wrong" is part of the fixed part: its six lines hold a count and fixed words, so a result of the most tests that fail fills it no more than a result of one.
+func TestPullPageWhatWentWrongStaysSmallWhateverTheNumberOfFailingTests(t *testing.T) {
+	w := newPageWorld(t)
+	w.pages.timeout = largePageTimeout
+	failing := func(kind, state string) []execution.Test {
+		tests := make([]execution.Test, execution.MaxTests)
+		for i := range tests {
+			tests[i] = execution.Test{Package: ".", Name: fmt.Sprintf("Test%05d", i), File: "a_test.go", Kind: kind, State: state, HeadRuns: []string{"fail"}}
+			if kind == execution.KindAdded {
+				tests[i].BaseRuns = []string{"pass"}
+			}
+		}
+		return tests
+	}
+	w.completed(failing(execution.KindDeclared, "fail"), failing(execution.KindAdded, "fails"))
+	page := w.text()
+	w.wantWentWrong(page, wrongLine{"10000 approved tests failed.", approvedHeading}, wrongLine{"10000 tests this change adds or edits fail.", changeHeading}, wrongLine{noKindLine, kindsHeading})
+	if n := len(w.section(page, "What went wrong")); n > 1<<10 {
+		t.Errorf("the section has %d bytes, want a few hundred at most", n)
+	}
 }
 
 // The cap is a guard that the budgets keep unreachable. When it is passed all the same, the answer is 503 and the fixed text, never 413, and the cause is logged.

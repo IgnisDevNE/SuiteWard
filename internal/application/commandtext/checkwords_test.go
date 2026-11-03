@@ -38,3 +38,31 @@ func TestTheCountsOfTheCheckSummariesAreThoseOfTheResultsComment(t *testing.T) {
 		t.Errorf("ExecutionText of a run with no declared test = %q, want %q", empty, want)
 	}
 }
+
+// The unblock is offered in the same words by the comment, the Receipt check, the Contract check and the refusal of an approve (M2.1c, SW-47; docs/plan/phases/M2.1c.md, text 4): a
+// reader meets one offer, which says what the code is and that the tests do not run for this commit.
+func TestTheUnblockOfTheChecksAndTheRefusalIsOfferedInTheWordsOfTheComment(t *testing.T) {
+	const codeIs = "`<code>` is a current code from the authenticator app."
+	comment := resultsText(t, results(func(r *commandtext.Results) {
+		r.Canonical, r.Receipt, r.Next = unavailableCanonical("no-executor"), nil, execution.NextUnblock
+	}))
+	c := receiptOf("receipt-not-responding")
+	c.OffersUnblock = true
+	_, receipt := receiptText(t, c)
+	for name, body := range map[string]string{"comment": comment, "Receipt check": receipt} {
+		if !strings.Contains(body, "`/suiteward unblock <code>`, where "+codeIs) {
+			t.Errorf("the %s does not say what the code is as the offer of the comments does:\n%s", name, body)
+		}
+	}
+	// The checks that show the command to copy say it as the approve command does, and say what the unblock costs.
+	_, contract := checkText(t, requiredCheck("canonical-unavailable"))
+	ack := commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.ReceiptRefused, Source: source, Owner: owner, Proposal: 4, Revision: 2, Gate: execution.ReasonReceiptUnavailable})
+	for name, body := range map[string]string{"Contract check": contract, "refusal": ack} {
+		if !strings.Contains(body, "Replace `<code>` with a current code from your authenticator app.") {
+			t.Errorf("the %s does not say what the code is as the approve command does:\n%s", name, body)
+		}
+	}
+	if !strings.Contains(contract, "they do not run for this commit. A new push runs them.") || !strings.Contains(receipt, "does not run for this commit, and a new push runs it.") {
+		t.Errorf("a check does not say that the tests do not run for this commit after an unblock:\n%s\n%s", contract, receipt)
+	}
+}

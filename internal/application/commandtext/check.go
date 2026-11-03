@@ -134,6 +134,9 @@ var canonicalReasons = []string{"canonical-pending", "canonical-not-responding",
 // unblockedText is what the summary says of a commit whose unavailable canonical run the owner unblocked.
 const unblockedText = "The owner unblocked this commit. The approved tests could not run on it, so this check passes without them."
 
+// unblockCostText follows the copyable unblock command of a check that waits for the approved tests: what the unblock does, in the words of the comments' offer (unblockOffer).
+const unblockCostText = "The checks of this commit then stop waiting for these tests, and they do not run for this commit. A new push runs them."
+
 // executionText states the counts of a complete canonical run in the words of the results comment, and only the counts: no test name, no path. A run with no declared test ran no test.
 func executionText(e CheckExecution) string {
 	return canonicalText(CanonicalRun{Counts: execution.CanonicalCounts{Pass: e.Passed, Fail: e.Failed, Skipped: e.Skipped, Missing: e.Missing, Flaky: e.Flaky, Excluded: e.Excluded}})
@@ -225,7 +228,7 @@ func CheckSummary(c Check) (title, summary string) {
 	case c.Reason == "approval-missing":
 		command = codeCommand("approve", ref)
 	case c.Reason == "canonical-unavailable", c.Reason == "canonical-not-responding":
-		command = copyable("/suiteward unblock <code>")
+		command = copyable("/suiteward unblock <code>") + " " + unblockCostText
 	}
 	parts = append(parts, next)
 	if command != "" {

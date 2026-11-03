@@ -28,7 +28,6 @@ func bare(outcome commandtext.Outcome) commandtext.Ack {
 const (
 	codeUsed     = "The code was used and nothing was approved."
 	nextCode     = "The next attempt needs the next code"
-	countsLine   = "Tests this change adds or edits: 7.\n- Fail before the change and pass now, so they show the change works: 0\n- Pass before and after, so they show nothing: 2\n- Use code that the old code lacks, so they could not run before the change: 1\n- Fail with this change: 1\n- Give no result: 0\n- Give different results when run again: 0\n- Skipped: 3"
 	forkText     = "this pull request comes from a fork, and SuiteWard does not support pull requests from forks yet. Nothing changed."
 	notOpenText  = "this pull request is no longer open. Nothing changed."
 	codeWasUsed  = "The code was used"
@@ -39,6 +38,9 @@ const (
 	// notLifted is what an unblock does not lift, in the refusal for want of anything to lift.
 	notLifted = "An unblock applies only to tests that could not run, or that wait for a test runner that is not responding. It does nothing for tests that have finished, whether they pass or fail, or that wait for GitHub or for a test runner that is responding."
 )
+
+// countsLine is the receipt of summaryNotMet in the words of the results comment: the number of tests, then the table of what they show.
+var countsLine = strings.Join(countsParagraphs(7, 0, 2, 1, 1, 0, 0, 3), "\n\n")
 
 func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 	cases := []struct {
@@ -203,9 +205,7 @@ func TestAcknowledgeAnUnmetModeStatesEveryCount(t *testing.T) {
 	a.Markers = 1
 	body := render(t, func() string { return commandtext.Acknowledge(a) })
 	for _, want := range []string{
-		"Tests this change adds or edits: 81.\n- Fail before the change and pass now, so they show the change works: 12\n- Pass before and after, so they show nothing: 34\n" +
-			"- Use code that the old code lacks, so they could not run before the change: 5\n- Fail with this change: 6\n- Give no result: 7\n" +
-			"- Give different results when run again: 8\n- Skipped: 9",
+		strings.Join(countsParagraphs(81, 12, 34, 5, 6, 7, 8, 9), "\n\n"),
 		"Lines to look at: 1. They are listed on the pull request page.",
 		"Tests that SuiteWard cannot run, so the receipt does not cover them: 10.",
 	} {

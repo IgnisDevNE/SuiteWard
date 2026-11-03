@@ -140,14 +140,7 @@ func TestReceiptCheckSummaryOpensWithTheTextOfItsReason(t *testing.T) {
 func TestReceiptCheckSummaryStatesEveryCountInTheWordsOfTheResultsComment(t *testing.T) {
 	_, complete := receiptText(t, receiptOf("receipt-complete"))
 	for _, w := range []string{
-		"Tests this change adds or edits: 16.\n" +
-			"- Fail before the change and pass now, so they show the change works: 3\n" +
-			"- Pass before and after, so they show nothing: 2\n" +
-			"- Use code that the old code lacks, so they could not run before the change: 1\n" +
-			"- Fail with this change: 0\n" +
-			"- Give no result: 0\n" +
-			"- Give different results when run again: 6\n" +
-			"- Skipped: 4\n\n" +
+		strings.Join(countsParagraphs(16, 3, 2, 1, 0, 0, 6, 4), "\n\n") + "\n\n" +
 			"5 tests that this change adds or edits cannot be run by SuiteWard and are not covered. Lines to look at: 8.\n\n",
 	} {
 		if !strings.Contains(complete, w) {
@@ -156,14 +149,7 @@ func TestReceiptCheckSummaryStatesEveryCountInTheWordsOfTheResultsComment(t *tes
 	}
 	_, failing := receiptText(t, receiptOf("receipt-failing"))
 	for _, w := range []string{
-		"Tests this change adds or edits: 19.\n" +
-			"- Fail before the change and pass now, so they show the change works: 3\n" +
-			"- Pass before and after, so they show nothing: 2\n" +
-			"- Use code that the old code lacks, so they could not run before the change: 1\n" +
-			"- Fail with this change: 2\n" +
-			"- Give no result: 1\n" +
-			"- Give different results when run again: 6\n" +
-			"- Skipped: 4\n\n" +
+		strings.Join(countsParagraphs(19, 3, 2, 1, 2, 1, 6, 4), "\n\n") + "\n\n" +
 			"5 tests that this change adds or edits cannot be run by SuiteWard and are not covered. Changed test files that cannot be read: 7. Lines to look at: 9.\n\n",
 	} {
 		if !strings.Contains(failing, w) {
@@ -177,7 +163,7 @@ func TestReceiptCheckSummaryLeavesOutTheNotesThatHaveNothingToSay(t *testing.T) 
 	c := receiptOf("receipt-complete")
 	c.Counts, c.Markers = execution.ReceiptCounts{Detects: 1, Excluded: 1}, 0
 	_, summary := receiptText(t, c)
-	if !strings.Contains(summary, "- Skipped: 0\n\n1 test that this change adds or edits cannot be run by SuiteWard and is not covered.\n\n") || strings.Contains(summary, "Lines to look at") ||
+	if !strings.Contains(summary, "| Skipped | 0 |\n\n1 test that this change adds or edits cannot be run by SuiteWard and is not covered.\n\n") || strings.Contains(summary, "Lines to look at") ||
 		strings.Contains(summary, "cannot be read") {
 		t.Errorf("summary:\n%s", summary)
 	}

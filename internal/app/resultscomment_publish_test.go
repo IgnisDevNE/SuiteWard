@@ -75,13 +75,17 @@ func TestTheResultsCommentIsPostedFromItsPayloadWithTheLinkOfThePullRequestPage(
 	for _, want := range []string{
 		"SuiteWard ran the tests for this commit (`0123456`). Nothing needs your attention.",
 		"Approved tests: 12 tests ran. 9 passed. 0 failed. 0 gave no result. 0 gave different results when they ran again. 3 were skipped.",
-		"Tests this change adds or edits: 3.\n- Fail before the change and pass now, so they show the change works: 2",
-		"- `fix`: met.", "Nothing to do for now.",
-		"Details: [pull request page](http://127.0.0.1:8080/pulls/acme/widgets/7).",
+		"3 were skipped.\n\nSee the full report here: [pull request page](http://127.0.0.1:8080/pulls/acme/widgets/7).\n\nThis link opens on the computer that runs SuiteWard.",
+		"Tests this change adds or edits: 3.\n\n| What the test shows | Tests |\n| --- | --- |\n| Fail before the change and pass now, so they show the change works | 2 |",
+		"Does the receipt meet each kind of change? It looks only at the tests this change adds or edits.\n\n| Kind of change | Met? | Why not |\n| --- | --- | --- |\n| `fix` | Yes |  |",
+		"Nothing to do for now.",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the comment lacks %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "Details:") || strings.Contains(body, "- `fix`: met.") {
+		t.Errorf("the comment keeps the old link line or the old list of kinds:\n%s", body)
 	}
 }
 
@@ -89,7 +93,9 @@ func TestTheResultsCommentWithoutABaseAddressSaysSo(t *testing.T) {
 	w := newCmtWorld(t)
 	key, payload := rcResults(nil)
 	body := w.mustPost(key, payload)
-	if !strings.Contains(body, "SuiteWard has no web address set, so this comment has no link. The checks of this commit carry the counts.") || strings.Contains(body, "Details:") {
+	// The sentence takes the place of the link: right after the approved counts.
+	if !strings.Contains(body, "3 were skipped.\n\nSuiteWard has no web address set, so this comment has no link. The checks of this commit carry the counts.\n\nTests this change adds or edits: 3.") ||
+		strings.Contains(body, "Details:") || strings.Contains(body, "See the full report here") {
 		t.Errorf("the comment of an instance with no base address:\n%s", body)
 	}
 }
@@ -101,7 +107,7 @@ func TestTheResultsCommentKeepsItsTextWhenItsLinkIsRefused(t *testing.T) {
 		w.pub.reportBase = base
 		key, payload := rcResults(nil)
 		body := w.mustPost(key, payload)
-		if !strings.Contains(body, "Nothing needs your attention.") || strings.Contains(body, "Details:") || !strings.Contains(body, "has no web address set") {
+		if !strings.Contains(body, "Nothing needs your attention.") || strings.Contains(body, "Details:") || strings.Contains(body, "See the full report here") || !strings.Contains(body, "has no web address set") {
 			t.Errorf("base %q: the text was lost or kept a refused link:\n%s", base, body)
 		}
 		if !strings.Contains(w.logs.String(), "link") {

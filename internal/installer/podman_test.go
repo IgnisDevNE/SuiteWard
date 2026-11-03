@@ -118,6 +118,9 @@ func TestPodmanRefusalOfARootfulPodmanSaysWhatToDoWhereItHappens(t *testing.T) {
 			if !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), c.notWant) {
 				t.Errorf("the refusal reads %q, want it to say %q and not %q", err, c.want, c.notWant)
 			}
+			if plain := "this Podman runs with administrator rights (rootful): "; !strings.HasPrefix(err.Error(), plain) {
+				t.Errorf("the refusal reads %q, want it to open with the plain words %q", err, plain)
+			}
 		})
 	}
 }

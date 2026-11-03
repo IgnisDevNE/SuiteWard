@@ -22,10 +22,11 @@ func markersOf(t *testing.T, path, line string, remove bool) []report.Marker {
 func TestMarkersPerPattern(t *testing.T) {
 	t.Parallel()
 	const (
-		assertion = report.MarkRemovedAssertion
-		skip      = report.MarkAddedSkip
-		focus     = report.MarkFocus
-		test      = report.MarkDeletedTest
+		assertion   = report.MarkRemovedAssertion
+		skip        = report.MarkAddedSkip
+		focus       = report.MarkFocus
+		test        = report.MarkDeletedTest
+		removedCase = report.MarkerKind("removed-case")
 	)
 	cases := []struct {
 		path, line string
@@ -50,6 +51,14 @@ func TestMarkersPerPattern(t *testing.T) {
 		{"x_test.go", "\tb.Skip(\"later\")", false, skip},
 		{"x_test.go", "\ttb.Skipf(\"later\")", false, skip},
 		{"x_test.go", "func (s *Suite) TestFoo() {", true, test},
+
+		{"x_test.go", "\t\"_octo\": false,", true, removedCase},
+		{"x_test.go", "\t\"a b\": {want: 1},", true, removedCase},
+		{"x_test.go", "\t\"a\\\"b\": 1,  \t", true, removedCase}, // an escaped quote in the key, and space after the comma
+		{"x_test.go", "\t{name: \"x\", want: 1},", true, removedCase},
+		{"x_test.go", "\t{\"x\", 1},", true, removedCase},
+		{"x_test.go", "\t{\"x\", 1}", true, removedCase}, // the last row of a literal that is on one line has no comma
+		{"tests/helpers.go", "\t\"a\": 1,", true, removedCase},
 
 		{"test_x.py", "    assert x == 1", true, assertion},
 		{"test_x.py", "    assert(x == 1)", true, assertion},
@@ -119,6 +128,22 @@ func TestMarkersAreKeyedByLanguage(t *testing.T) {
 		{"x.ts", "foo.it('x')", true},                   // a method, not the test function
 		{"x.ts", "model.fit(x, y)", false},              // a method, not a focused test
 		{"x.ts", "page.xit('x')", false},                // likewise for a skip
+
+		{"x.go", "\t\"_octo\": false,", true},                      // a table row of a Go file that is no test file
+		{"x.go", "\t{name: \"x\", want: 1},", true},                // likewise for a struct literal row
+		{"test_x.py", "    \"a\": 1,", true},                       // Go only: a removed entry of a Python test
+		{"test_x.py", "    {\"a\": 1},", true},                     // likewise for a literal row
+		{"x.test.ts", "  \"a\": 1,", true},                         // and of a TypeScript test
+		{"x.test.ts", "  {a: 1},", true},                           // and a literal row of it
+		{"x_test.go", "\t\"_octo\": false,", false},                // an added row is no marker
+		{"x_test.go", "\t{\"x\", 1},", false},                      // likewise for an added literal row
+		{"x_test.go", "\t{", true},                                 // the opening of a case that spans lines
+		{"x_test.go", "\t},", true},                                // and its end
+		{"x_test.go", "\t}", true},                                 // a closing brace
+		{"x_test.go", "\t\"_octo\": false", true},                  // an entry has its comma
+		{"x_test.go", "\tname: \"x\",", true},                      // a field, not a keyed entry of a table
+		{"x_test.go", "\t\"a b\",", true},                          // an element, not an entry
+		{"x_test.go", "\tt.Run(\"a\", func(t *testing.T) {", true}, // a call
 	} {
 		if got := markersOf(t, c.path, c.line, c.remove); len(got) != 0 {
 			t.Errorf("%s %q: got %+v, want none", c.path, c.line, got)
@@ -202,6 +227,57 @@ func TestMarkersOfOneLineKeepAKindOrder(t *testing.T) {
 		{Kind: report.MarkRemovedAssertion, Path: "x.ts", Line: 2, Text: "it('x', () => expect(1).toBe(1))"},
 		{Kind: report.MarkDeletedTest, Path: "x.ts", Line: 2, Text: "it('x', () => expect(1).toBe(1))"},
 	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestMarkersOfARowThatAssertsKeepAKindOrder(t *testing.T) {
+	t.Parallel()
+	got := markersOf(t, "x_test.go", "\t{assert.True(t, x)},", true)
+	want := []report.Marker{
+		{Kind: report.MarkRemovedAssertion, Path: "x_test.go", Line: 2, Text: "{assert.True(t, x)},"},
+		{Kind: "removed-case", Path: "x_test.go", Line: 2, Text: "{assert.True(t, x)},"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestMarkerOfARemovedRowIgnoresTheLineEnding(t *testing.T) {
+	t.Parallel()
+	got := one(t, mod("x_test.go", "keep\r\n\t\"_octo\": false,\r\n", "keep\r\n")).Markers
+	want := []report.Marker{{Kind: "removed-case", Path: "x_test.go", Line: 2, Text: "\"_octo\": false,"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestMarkersIgnoreARowThatOnlyMoved(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, old, proposed string
+	}{
+		{"a row moved", "\t\"a\": 1,\n\t\"b\": 2,\n\tx\n", "\t\"b\": 2,\n\tx\n\t\"a\": 1,\n"},
+		{"a row reindented", "\"a\": 1,\nx\n", "\t\"a\": 1,\nx\n"},
+		{"a literal row moved", "\t{\"a\", 1},\n\t{\"b\", 2},\n\tx\n", "\t{\"b\", 2},\n\tx\n\t{\"a\", 1},\n"},
+	} {
+		if got := one(t, mod("x_test.go", tc.old, tc.proposed)).Markers; len(got) != 0 {
+			t.Errorf("%s: got %+v, want none", tc.name, got)
+		}
+	}
+}
+
+// The case of the M2.1b acceptance test (a pull request removed the row "_octo" of TestValidLogin): one marker, and no other.
+func TestMarkerOfARemovedCaseOfATableTest(t *testing.T) {
+	t.Parallel()
+	const (
+		head = "package commandtext_test\n\nfunc TestValidLogin(t *testing.T) {\n\tfor login, want := range map[string]bool{\n\t\t\"octo-owner\": true,\n"
+		row  = "\t\t\"_octo\":      false,\n"
+		tail = "\t\t\"-octo\":      false,\n\t} {\n\t\tif got := commandtext.ValidLogin(login); got != want {\n\t\t\tt.Errorf(\"ValidLogin(%q) = %v, want %v\", login, got, want)\n\t\t}\n\t}\n}\n"
+	)
+	got := one(t, mod("ack_test.go", head+row+tail, head+tail)).Markers
+	want := []report.Marker{{Kind: "removed-case", Path: "ack_test.go", Line: 6, Text: "\"_octo\":      false,"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}

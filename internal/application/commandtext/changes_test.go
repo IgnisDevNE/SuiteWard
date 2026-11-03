@@ -253,6 +253,7 @@ func TestRevisionCommentPanicsOnChangesThatCannotBeStated(t *testing.T) {
 		"more than 20 changed files":            func(r *commandtext.Revision) { r.Changes.Top = make([]commandtext.ChangedFile, 21) },
 		"more than 10 files not shown":          func(r *commandtext.Revision) { r.Changes.NotShown = make([]commandtext.NotShown, 11) },
 		"a negative count":                      func(r *commandtext.Revision) { r.Changes.LinesRemoved = -1 },
+		"a negative marker count":               func(r *commandtext.Revision) { r.Changes.Markers.RemovedCases = -1 },
 		"more counted files than changed files": func(r *commandtext.Revision) { r.Changes.Counted = 3 },
 		"a listed file that was not counted":    func(r *commandtext.Revision) { r.Changes.Counted = 1 },
 		"a changed file of an unknown status":   func(r *commandtext.Revision) { r.Changes.Top[0].Status = "renamed" },

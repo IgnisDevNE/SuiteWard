@@ -153,12 +153,10 @@ func openRuntime(ctx context.Context, r *Resolver, env Env, saved Settings, conf
 	connection := r.preset("connection", savedConnection)
 	var rt Runtime
 	if name == RuntimeDocker {
-		if confirm {
-			if err := confirmDocker(r); err != nil {
-				return nil, "", err
-			}
+		// Docker answers before the risk question, so that a stopped Docker costs no "yes".
+		if rt, err = NewDocker(ctx, env.Deps, DockerOptions{Context: connection}); err == nil && confirm {
+			err = confirmDocker(r)
 		}
-		rt, err = NewDocker(ctx, env.Deps, DockerOptions{Context: connection})
 	} else {
 		if connection, err = podmanConnection(ctx, env.Deps, connection); err != nil {
 			return nil, "", err

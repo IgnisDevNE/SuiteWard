@@ -410,6 +410,9 @@ func podmanVersion(ctx context.Context, p *Podman) (string, error) {
 func (d *doctor) runtimeFix(err error) string {
 	switch {
 	case errors.Is(err, ErrRootful):
+		if d.deps.GOOS == "linux" && cmp.Or(d.s.Connection, d.deps.Getenv("CONTAINER_CONNECTION")) == "" { // the connection NewPodman used: none
+			return "Run SuiteWard as the user who installed it, not as root or with sudo."
+		}
 		return "Choose the machine's rootless connection (the one that does not run as the administrator) with `connection:` in the settings file."
 	case errors.Is(err, ErrNotDocker):
 		return "Set `connection:` in the settings file to Docker's own context, or install again with `--runtime podman`."

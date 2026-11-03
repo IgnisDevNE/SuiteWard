@@ -42,9 +42,9 @@ const interruptedKey = "\x00interrupted"
 
 // addDoctor runs the checks of `suiteward doctor` against the instance the settings file describes, as the last step of an install or an
 // upgrade, and adds what they found: the Doctor row (the counts, why doctor did not run, that it was skipped, or that it was interrupted),
-// a warning with its fix for each result that needs a look, a Note row for each passing result that carries a note, and, when there is
-// something to look at, how to check again. A failed check is
-// not a failed install: it never fails the run. A Ctrl-C is the exception, as it is for doctor itself: one during the checks ends the
+// a warning with its fix for each result that needs a look, when there is something to look at how to check again, and last a Note row for
+// each passing result that carries a note. A failed check is not a failed install: it never fails the run. A Ctrl-C is the exception, as it
+// is for doctor itself: one during the checks ends the
 // command as interrupted, and the checks it cancelled are not counted. One that came before them only skips them ("skipped (Ctrl-C)"), as
 // it skips the wait for the service. again is the command that checks again.
 func (s *summaryRows) addDoctor(ctx context.Context, env Env, settingsPath, tokenFile, again string) {
@@ -69,17 +69,21 @@ func (s *summaryRows) addDoctor(ctx context.Context, env Env, settingsPath, toke
 	passed, warned, failed := doctorCounts(results)
 	s.add("Doctor", fmt.Sprintf("%d ok, %d warnings, %d failures", passed, warned, failed))
 	dir := filepath.Dir(settingsPath)
+	var notes []string
 	for _, r := range results {
 		s.dropImported(r, dir)
 		if r.needsALook() {
 			r.Fix = importRulesetFix(r, dir)
 			s.warn(r.line())
-		} else {
-			s.add("Note", r.Note)
+		} else if r.Note != "" {
+			notes = append(notes, r.Note)
 		}
 	}
 	if warned+failed > 0 {
 		s.add("Check again", again)
+	}
+	for _, note := range notes { // last, so that a page too small for everything trims a note before the command that checks again
+		s.add("Note", note)
 	}
 }
 

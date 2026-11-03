@@ -48,7 +48,7 @@ func rulesFor(file string) rules {
 	switch strings.ToLower(path.Ext(file)) {
 	case ".go":
 		r := goRules
-		r.tableRows = isTestPath(file) // shortcut: Go only, the C++ and Kotlin rows come with their profiles (M2.2, M2.3)
+		r.tableRows = isTestPath(file) // shortcut: Go only, the rows of another language come with its profile (C++ M2.2, Kotlin M2.3)
 		return r
 	case ".py":
 		return pythonRules

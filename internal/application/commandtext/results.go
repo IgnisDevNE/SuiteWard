@@ -3,6 +3,7 @@ package commandtext
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -65,8 +66,12 @@ const (
 
 	resultsEvidence = "These results are what the test runner saw. They are evidence, not a verdict."
 	informationText = "These results are for information. They do not hold this pull request."
-	// unblockOffer is the sentence that offers the owner's unblock, in the results comment and in the not-responding comment.
-	unblockOffer = "To go on without these tests, the owner can comment `/suiteward unblock <code>`. That lets this commit pass its checks without them. A new push runs them."
+	// unblockOffer is the sentence that offers the owner's unblock, in the results comment and in the not-responding comment: it names the code, what the unblock does and that the tests stay unrun.
+	unblockOffer = "To go on without these tests, the owner can comment `/suiteward unblock <code>`, where `<code>` is a current code from the authenticator app. " +
+		"That lets this commit pass its checks without them, and they do not run for this commit. A new push runs them."
+	// waitsText and holdsNothingText are the not-responding comment's paragraph about the unblock, before its link: the offer follows waitsText, and holdsNothingText says that nothing is held and an unblock is not needed.
+	waitsText        = "The checks of this commit wait for these tests."
+	holdsNothingText = "Nothing waits for these tests. An unblock is not needed here: it would only keep these tests from running when the test runner answers again."
 	// approvalText says what an approval does to approved tests that did not run: the approved head gets another run, under the approved version.
 	approvalText = "After the owner approves this revision, SuiteWard runs the approved tests again, as the tests of the approved version."
 
@@ -105,7 +110,7 @@ func ResultsComment(r Results) string {
 	return paragraphs(parts...)
 }
 
-// NotRespondingComment renders the not-responding comment of a head, which offers the unblock when a job that waits holds something back.
+// NotRespondingComment renders the not-responding comment of a head, which offers the unblock when a job that waits holds something back and says that nothing waits otherwise.
 func NotRespondingComment(n NotResponding) string {
 	must(validateHeadLink(n.Head, n.Pull, n.PullURL))
 	parts := []string{
@@ -115,7 +120,9 @@ func NotRespondingComment(n NotResponding) string {
 			"If it stays silent, SuiteWard stops waiting after a while and says so.",
 	}
 	if n.Unblock {
-		parts = append(parts, unblockOffer)
+		parts = append(parts, waitsText+" "+unblockOffer)
+	} else {
+		parts = append(parts, holdsNothingText)
 	}
 	return paragraphs(append(parts, linkParts("Details:", n.PullURL)...)...)
 }
@@ -342,6 +349,32 @@ func plansWords(p Plans) string {
 	return "the receipt"
 }
 
+// noneText is the next step of a head with nothing left to the owner. A run that did not run says whether, and when, the tests run, by the reasons of the runs that did not
+// run: an unblock ends it for this commit, a test runner that did not answer or is not set up runs them later, and any other reason waits for a new push.
+func noneText(r Results) string {
+	var reasons []string
+	if r.Canonical != nil && r.Canonical.Unavailable != "" {
+		reasons = append(reasons, r.Canonical.Unavailable)
+	}
+	if r.Receipt != nil && r.Receipt.Unavailable != "" {
+		reasons = append(reasons, r.Receipt.Unavailable)
+	}
+	allOf := func(codes ...string) bool {
+		return !slices.ContainsFunc(reasons, func(reason string) bool { return !slices.Contains(codes, reason) })
+	}
+	switch {
+	case len(reasons) == 0:
+		return "Nothing to do for now."
+	case r.Unblocked != (Plans{}):
+		return "Nothing runs them for this commit now. A new push runs the tests."
+	case allOf("no-executor"):
+		return "SuiteWard runs them when the test runner answers again."
+	case allOf("no-executor", "executor-not-configured"):
+		return "SuiteWard runs them once the test runner is set up."
+	}
+	return "A new push runs them."
+}
+
 // nextText is the next step. The unblock is its own step, which unblockText gives.
 func nextText(r Results) []string {
 	switch r.Next {
@@ -360,7 +393,7 @@ func nextText(r Results) []string {
 	case execution.NextFix:
 		return []string{fixText}
 	case execution.NextNone:
-		return []string{"Nothing to do for now."}
+		return []string{noneText(r)}
 	}
 	return nil
 }

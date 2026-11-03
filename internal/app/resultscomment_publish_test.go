@@ -308,6 +308,48 @@ func TestTheNotRespondingCommentIsPostedFromItsPayload(t *testing.T) {
 			if got := strings.Contains(body, "/suiteward unblock <code>"); got != unblock {
 				t.Errorf("the offer is present = %v, want %v:\n%s", got, unblock, body)
 			}
+			// M2.1c, SW-1: the owner reads that the checks wait and where the code comes from, or that nothing waits and that an unblock is not needed.
+			holds := "The checks of this commit wait for these tests. To go on without these tests, the owner can comment `/suiteward unblock <code>`, where `<code>` is a current code from the authenticator app."
+			holdsNothing := "Nothing waits for these tests. An unblock is not needed here: it would only keep these tests from running when the test runner answers again."
+			if got := strings.Contains(body, holds); got != unblock {
+				t.Errorf("the sentences of a head that waits are present = %v, want %v:\n%s", got, unblock, body)
+			}
+			if got := strings.Contains(body, holdsNothing); got != !unblock {
+				t.Errorf("the sentence of a head that holds nothing is present = %v, want %v:\n%s", got, !unblock, body)
+			}
+		})
+	}
+}
+
+// M2.1c, SW-28: a results comment of a head whose run did not run and that leaves nothing to the owner says from its payload whether the tests run again.
+func TestTheResultsCommentOfARunThatDidNotRunSaysWhetherItRunsAgain(t *testing.T) {
+	for name, tc := range map[string]struct {
+		edit func(map[string]any)
+		want string
+	}{
+		"the test runner did not answer": {func(p map[string]any) {
+			p["canonical"] = map[string]any{"status": "unavailable", "reason": "no-executor"}
+		},
+			"SuiteWard runs them when the test runner answers again."},
+		"no test runner is set up": {func(p map[string]any) {
+			p["canonical"] = map[string]any{"status": "unavailable", "reason": "executor-not-configured"}
+		}, "SuiteWard runs them once the test runner is set up."},
+		"another reason": {func(p map[string]any) { p["canonical"] = map[string]any{"status": "unavailable", "reason": "timeout"} }, "A new push runs them."},
+		"the owner unblocked it": {func(p map[string]any) {
+			p["canonical"] = map[string]any{"status": "unavailable", "reason": "no-executor"}
+			p["canonicalLevel"], p["unblocked"] = "required", []string{"canonical"}
+		}, "Nothing runs them for this commit now. A new push runs the tests."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCmtWorld(t)
+			key, payload := rcResults(func(p map[string]any) {
+				p["canonicalLevel"], p["receiptLevel"] = "advisory", "advisory"
+				tc.edit(p)
+			})
+			body := w.mustPost(key, payload)
+			if !strings.Contains(body, "\n\n"+tc.want+"\n\n") || strings.Contains(body, "Nothing to do for now.") {
+				t.Errorf("the next step is not %q, or the comment still says that there is nothing to do:\n%s", tc.want, body)
+			}
 		})
 	}
 }

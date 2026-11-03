@@ -278,6 +278,9 @@ func TestTheCommentsOfARunThatWaitsOrDidNotRunUseNoWordOfTheMachinery(t *testing
 			t.Errorf("no body named %q was checked: the test no longer reaches it", prefix)
 		}
 	}
+	if comments := reached[prefixes[0]] + reached[prefixes[1]] + reached[prefixes[2]]; comments < 10 {
+		t.Errorf("only %d bodies were checked: the test no longer reaches the comments of a run that waits or did not run", comments)
+	}
 }
 
 // A Markdown table is one paragraph whose every line is a row of the same number of cells: a raw `|` or a line break in a cell breaks it, and a table that does not start

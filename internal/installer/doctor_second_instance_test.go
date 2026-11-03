@@ -177,9 +177,9 @@ func secondInstanceBesides(t *testing.T, goos string, list func(mainToken string
 	return res, tokenFile
 }
 
-// Where the definition of the registered test runner names the program of one listed installation (Linux, macOS), or one other installation is
-// listed (Windows, which cannot read the task), the failure names that instance with its container program, and the fix carries the flags that
-// select it.
+// Where the definition of the registered test runner names the program of one listed installation (Linux, macOS), or the executor folder of one
+// listed installation holds the wrapper and the task (Windows, which cannot read the task), the failure names that instance with its container
+// program, and the fix carries the flags that select it.
 func TestDoctorNamesTheInstanceThatHoldsTheTestRunner(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin", "windows"} {
 		t.Run(goos, func(t *testing.T) {
@@ -187,7 +187,7 @@ func TestDoctorNamesTheInstanceThatHoldsTheTestRunner(t *testing.T) {
 			res, _ := secondInstanceBesides(t, goos, func(main string) {
 				mainToken = main
 				holder = listedElsewhere(t, goos, main, RuntimeDocker, holderID)
-				if goos != "windows" { // the definition does not name its program; Windows cannot tell the two apart
+				if goos != "windows" { // the definition does not name its program; on Windows a bystander without the two files is covered by TestDoctorNamesOnlyTheInstanceOnWindowsWhoseExecutorFolderHoldsATestRunner
 					listedElsewhere(t, goos, otherToken(t), RuntimePodman, bystanderID)
 				}
 			})

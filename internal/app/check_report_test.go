@@ -122,3 +122,16 @@ func TestCheckPublisherPostsNothingWhenTheDeliveryIsCancelledWhileTheReportIsBui
 		t.Fatalf("publish = %v with %d runs posted, want context.Canceled and none", err, len(w.runner.posts()))
 	}
 }
+
+func TestCheckPublisherCountsARemovedTestCaseAmongTheMarkerLines(t *testing.T) {
+	w := newChkWorld()
+	w.reports.err, w.reports.report = nil, revisionReport{Base: "V2", Report: removedCaseReport()}
+
+	if err := w.deliver(chkMessage(t, checks.InProgress, "approval-missing", "P1-R2")); err != nil {
+		t.Fatal(err)
+	}
+
+	if summary, want := w.posted(t), "- Marker lines seen: 1 removed test case line\n"; !strings.Contains(summary, want) {
+		t.Errorf("the summary lacks %q:\n%s", want, summary)
+	}
+}

@@ -387,3 +387,34 @@ func (f *fakeReports) turn(context.Context) (func(), error) { return func() {}, 
 func (f *fakeReports) build(ctx context.Context, ref contract.ProposalReference) (revisionReport, error) {
 	return f.revisionReport(ctx, ref)
 }
+
+// removedCaseReport is the report of a change that removed one row of the table of a test.
+func removedCaseReport() report.Report {
+	return report.Report{
+		Files: []report.File{{
+			Path: "internal/a_test.go", Status: report.Modified, CountsKnown: true, LinesRemoved: 1,
+			Hunks: []report.Hunk{{OldStart: 5, OldLines: 3, NewStart: 5, NewLines: 2, Lines: []report.Line{
+				{Kind: report.LineContext, Text: "\t\t\"octo\": true,"},
+				{Kind: report.LineRemoved, Text: "\t\t\"_octo\": false,"},
+				{Kind: report.LineContext, Text: "\t} {"},
+			}}},
+			Markers: []report.Marker{{Kind: "removed-case", Path: "internal/a_test.go", Line: 6, Text: `"_octo": false,`}},
+		}},
+		Totals: report.Totals{Files: map[report.Status]int{report.Modified: 1}, LinesRemoved: 1, Markers: map[report.MarkerKind]int{"removed-case": 1}},
+	}
+}
+
+func TestTheReportPageLabelsARemovedTestCase(t *testing.T) {
+	a, _ := reportAPI(t, &fakeReports{report: revisionReport{Base: "V1", Report: removedCaseReport()}})
+
+	body := html.UnescapeString(getReport(a, "127.0.0.1:8080", reportPath).Body.String()) // what a browser shows
+
+	for _, w := range []string{"Marker lines seen: 1 removed test case line", `<span class="kind">Removed test case</span> line 6: <code>"_octo": false,</code>`} {
+		if !strings.Contains(body, w) {
+			t.Errorf("the page lacks %q:\n%s", w, body)
+		}
+	}
+	if strings.Contains(body, "removed-case") {
+		t.Errorf("the page shows the code of the kind, not its label:\n%s", body)
+	}
+}

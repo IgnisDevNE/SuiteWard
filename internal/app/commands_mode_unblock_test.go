@@ -17,7 +17,8 @@ func TestCommandsJobAcknowledgesAMalformedModeCommand(t *testing.T) {
 	}{
 		"no mode":            {cjMarker + "\n/suiteward mode", commandtext.MissingMode},
 		"a bad mode":         {cjMarker + "\n/suiteward mode loud", commandtext.BadMode},
-		"extra text":         {cjMarker + "\n/suiteward mode fix now", commandtext.ExtraText},
+		"a mode word":        {cjMarker + "\n/suiteward mode fix", commandtext.BadMode},
+		"more than one word": {cjMarker + "\n/suiteward mode fix now", commandtext.BadMode},
 		"a code as the mode": {"/suiteward mode " + cjCode(created, 0), commandtext.BadMode},
 	} {
 		t.Run(name, func(t *testing.T) {

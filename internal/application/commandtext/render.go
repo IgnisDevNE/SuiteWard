@@ -295,9 +295,12 @@ func commandAck(a Ack) string {
 		return paragraphs(subject + " was not processed, because SuiteWard has not finished setting up this repository. Nothing changed.\n" +
 			"Wait for SuiteWard to finish setting up this repository, then comment `/suiteward propose` on the pull request that should carry the first contract.")
 	case MalformedCommand:
+		if a.Malformed == MissingMode || a.Malformed == BadMode { // a /suiteward mode line, whatever it says (M2.1c, SW-16, text 7): no mistake to fix, so no list of forms
+			return paragraphs("`/suiteward mode` is no longer a command. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`.")
+		}
 		return paragraphs("Your `/suiteward` command was not understood: " + malformedText(a.Malformed) + ". Nothing changed.\n" +
-			"Comment it again in one of these forms: `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>`, `/suiteward suggest`, " +
-			"`/suiteward mode <fix|feature|refactor>` or `/suiteward unblock <code>`. " +
+			"Comment it again in one of these forms: `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>`, `/suiteward suggest` " +
+			"or `/suiteward unblock <code>`. " +
 			"`<ref>` is the reference in SuiteWard's comment about the proposal. Where a command takes a code, use the current six-digit code from your authenticator app.")
 	case OtherPullRequest:
 		return paragraphs(ref + " belongs to another pull request. Comment your command on that pull request instead. Nothing changed.")
@@ -385,7 +388,7 @@ func rejectionText(r Rejection, ref, who string) (reason, next string) {
 func malformedText(r Reason) string {
 	switch r {
 	case UnknownVerb:
-		return "the word after `/suiteward` must be `approve`, `revoke`, `propose`, `skip`, `suggest`, `mode` or `unblock`"
+		return "the word after `/suiteward` must be `approve`, `revoke`, `propose`, `skip`, `suggest` or `unblock`"
 	case MissingReference:
 		return "the proposal reference is missing"
 	case BadReference:
@@ -396,12 +399,8 @@ func malformedText(r Reason) string {
 		return "the code must be exactly six digits"
 	case ExtraText:
 		return "there is extra text after the command"
-	case MissingMode:
-		return "the mode (the kind of change) is missing: it must be `fix`, `feature` or `refactor`"
-	case BadMode:
-		return "the mode (the kind of change) must be `fix`, `feature` or `refactor`"
 	}
-	panic(fmt.Sprintf("commandtext: unknown malformed reason %d", r))
+	panic(fmt.Sprintf("commandtext: unknown malformed reason %d", r)) // MissingMode and BadMode too: commandAck answers them with text 7
 }
 
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)

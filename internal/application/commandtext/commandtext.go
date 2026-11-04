@@ -62,8 +62,6 @@ const (
 	Skip
 	// Suggest takes neither reference nor code.
 	Suggest
-	// SetMode was /suiteward mode, which is no longer a command (M2.1c, SW-16): Parse never returns it. It stays only until the commands job stops handling it.
-	SetMode
 	// Unblock takes only a code, as Skip does.
 	Unblock
 )

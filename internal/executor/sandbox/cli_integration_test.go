@@ -77,7 +77,7 @@ type recorder struct {
 }
 
 func (r *recorder) exec(ctx context.Context, name string, args []string, stdin io.Reader, stdout io.Writer) (int, string, error) {
-	if i := slices.Index(args, "--name"); args[0] == "run" && i >= 0 {
+	if i := slices.Index(args, "--name"); subcommand(args) == "run" && i >= 0 {
 		r.mu.Lock()
 		r.names = append(r.names, args[i+1])
 		r.mu.Unlock()

@@ -2,6 +2,7 @@ package installer
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -298,21 +299,132 @@ func TestTheWrapperOfTheWindowsTaskEndsWhenItsPauseFails(t *testing.T) {
 	}
 }
 
-func TestTheInstallSaysThatTheExecutorOfWindowsHasNoWindow(t *testing.T) {
-	h := machineHarnessOn(t, "windows")
+// What the install tells a person about the test runner (SW-15): what runs the tests, when it starts, and that there is nothing to do. Each sentence
+// rests on the definition of its system: the logon trigger and the headless wrapper that starts the program again (Windows), the launch agent with
+// RunAtLoad and KeepAlive (macOS), the user unit with Restart=always (Linux). The unit starts with the user's systemd, not at start-up: the install
+// does not turn linger on (only the isolated host step does).
+const (
+	runnerTextWindows = "The tests run in a test runner that Windows starts when you sign in. It has no window and starts again by itself if it stops. You have nothing to do."
+	runnerTextMacOS   = "The tests run in a test runner that macOS starts when you sign in. It starts again by itself if it stops. You have nothing to do."
+	runnerTextLinux   = "The tests run in a test runner that your user's systemd starts. It starts again by itself if it stops. You have nothing to do."
+	runnerTextDocker  = "With Docker, the test runner needs Docker itself: the `docker` command of Podman (podman-docker) also works, but Docker's command line pointed at Podman does not."
+	// unpinnedMarker opens the sentence about the pin, which an install of a development build says after the block, because the person may act on it.
+	unpinnedMarker = "The test runner has not been checked against an official release."
+)
+
+// runnerCase is one operating system's install: how its harness is made, what the install says about the test runner there, and how the summary's row
+// words the mechanism.
+type runnerCase struct {
+	goos      string
+	harness   func(t *testing.T) *harness
+	text      string
+	mechanism string
+}
+
+func runnerCases() []runnerCase {
+	return []runnerCase{
+		{"windows", func(t *testing.T) *harness {
+			h := machineHarnessOn(t, "windows")
+			h.f.idleListing = true // a first install lists the programs that run once
+			return h
+		}, runnerTextWindows, "a scheduled task of your user, started at logon"},
+		{"darwin", func(t *testing.T) *harness {
+			h := machineHarnessOn(t, "darwin")
+			h.f.on("=-u", "501\n")
+			return h
+		}, runnerTextMacOS, "a launch agent of your user, started at login"},
+		{"linux", func(t *testing.T) *harness { return newHarness(t, "linux") }, runnerTextLinux, "a systemd user unit, started with your user manager"},
+	}
+}
+
+// runnerBlock is what the install prints about the test runner: from its first mention to the sentence about its pin, which the install of a development
+// build always says. The other lines of the install print ports, paths and durations of their own, so a detail is looked for only inside the block.
+func runnerBlock(t *testing.T, out string) string {
+	t.Helper()
+	start, end := strings.Index(out, "test runner"), strings.Index(out, unpinnedMarker)
+	if start < 0 || end < start {
+		t.Fatalf("the output has no block about the test runner that ends with the sentence about its pin:\n%s", out)
+	}
+	return out[start:end]
+}
+
+// saidBeforeThePin is what the install prints between the sentences of text and the sentence about the pin, which must come after them.
+func saidBeforeThePin(t *testing.T, out, text string) string {
+	t.Helper()
+	at, end := strings.Index(out, text), strings.Index(out, unpinnedMarker)
+	if at < 0 || end < at+len(text) {
+		t.Fatalf("the output lacks %q before the sentence about the pin:\n%s", text, runnerBlock(t, out))
+	}
+	return strings.TrimSpace(out[at+len(text) : end])
+}
+
+func TestTheInstallSaysInPlainWordsWhatRunsTheTests(t *testing.T) {
+	for _, c := range runnerCases() {
+		t.Run(c.goos, func(t *testing.T) {
+			h := c.harness(t)
+			if err := h.podman("--http-port", "18081", "--mcp-port", "18091"); err != nil {
+				t.Fatal(err)
+			}
+			out := h.out.String()
+			block := runnerBlock(t, out)
+			// The details that a person never acts on: where the token is, the address, how long the restart waits, the rule of one test runner for each
+			// container program, a window that shows. The summary's row, the guide and doctor hold the ones that matter to a person who looks.
+			for _, gone := range []string{executorTokenPath(h), "127.0.0.1", "seconds", "one test runner", "console window", "Closing the window", "a minute", "Docker"} {
+				if strings.Contains(block, gone) {
+					t.Errorf("the block still has %q, which a person does not act on:\n%s", gone, block)
+				}
+			}
+			if rest := saidBeforeThePin(t, out, c.text); rest != "" {
+				t.Errorf("the block says more than %q:\n%s", c.text, rest)
+			}
+		})
+	}
+}
+
+// Docker is the one engine where a person can pick the wrong command line, so its block keeps one sentence that says which one the test runner needs.
+func TestTheInstallOfADockerStackSaysInOneSentenceWhichDockerTheTestRunnerNeeds(t *testing.T) {
+	h := dockerHarness(t, "windows")
 	h.f.idleListing = true // a first install lists the programs that run once
-	if err := h.podman(); err != nil {
+	h.f.env["ProgramFiles"] = `C:\Program Files`
+	if err := h.docker("--connection", "desktop-linux"); err != nil {
 		t.Fatal(err)
 	}
 	out := h.out.String()
-	if !strings.Contains(out, "no window") {
-		t.Errorf("the output must say that the executor has no window:\n%s", out)
+	block := runnerBlock(t, out)
+	for _, gone := range []string{"does not know the options", "--runtime podman", "executor-token", "127.0.0.1", "one test runner"} {
+		if strings.Contains(block, gone) {
+			t.Errorf("the block still has %q, which a person does not act on:\n%s", gone, block)
+		}
 	}
-	if strings.Contains(out, "console window") || strings.Contains(out, "Closing the window") {
-		t.Errorf("the output still says that a window shows and that closing it stops the executor:\n%s", out)
+	if rest := saidBeforeThePin(t, out, runnerTextWindows); rest != runnerTextDocker {
+		t.Errorf("after what runs the tests, the block must say only %q, and then the pin's sentence:\n%s", runnerTextDocker, rest)
 	}
-	if !strings.Contains(out, "starts again after about 5 seconds") || strings.Contains(out, "after a minute") {
-		t.Errorf("the output must say that the test runner starts again after about 5 seconds, as the script makes it:\n%s", out)
+}
+
+// The summary shows, for a person who looks for them, how the operating system keeps the test runner running and where its program is: the block above
+// it no longer does.
+func TestTheSummaryRowOfTheTestRunnerNamesTheMechanismAndTheProgram(t *testing.T) {
+	for _, c := range runnerCases() {
+		t.Run(c.goos, func(t *testing.T) {
+			h := c.harness(t)
+			if err := h.podman(); err != nil {
+				t.Fatal(err)
+			}
+			env := h.newEnv()
+			rt, err := NewPodman(context.Background(), env.Deps, "pm")
+			if err != nil {
+				t.Fatal(err)
+			}
+			s, err := LoadSettings(h.settingsPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			install := &colocatedInstall{githubInstall: githubInstall{rt: rt, env: env, out: io.Discard, s: s}, tokenFile: h.tokenPath()}
+			install.setUpExecutor(context.Background())
+			if want := c.mechanism + "; " + h.executorBinary(); install.executorRow != want {
+				t.Errorf("the row of the summary is %q, want %q", install.executorRow, want)
+			}
+		})
 	}
 }
 
@@ -411,9 +523,6 @@ func TestTheExecutorOfADockerStackUsesTheEngineTheInstallerChose(t *testing.T) {
 		if !strings.Contains(wrapper, want) {
 			t.Errorf("the wrapper lacks %s:\n%s", want, wrapper)
 		}
-	}
-	if !strings.Contains(h.out.String(), "podman-docker") {
-		t.Errorf("the output must say that Docker's CLI on Podman's socket fails closed and that the podman-docker shim works:\n%s", h.out.String())
 	}
 }
 
@@ -541,15 +650,9 @@ func TestUninstallPurgeRemovesTheExecutorsTokenCopyToo(t *testing.T) {
 }
 
 // The executor removes every suiteward-sandbox container of its engine when it starts: two executors on one engine would remove each other's
-// sandboxes, so the installer says so where it installs one, on both tiers.
-func TestTheInstallsSayThatAnEngineHasOneExecutor(t *testing.T) {
-	h := newHarness(t, "linux")
-	if err := h.podman(); err != nil {
-		t.Fatal(err)
-	}
-	if out := h.out.String(); !strings.Contains(out, "only one test runner (the executor)") || !strings.Contains(out, "suiteward-sandbox-") {
-		t.Errorf("the co-located install must say that an engine has one test runner, and why:\n%s", out)
-	}
+// sandboxes, so the host step says so where it installs one. The co-located install leaves that to the guide (section 5.4), which a person reads
+// when a second one is on the way (SW-15).
+func TestTheHostStepSaysThatAContainerProgramHasOneExecutor(t *testing.T) {
 	host := newHostFake()
 	out, err := runHost(t, host, declineMetadataRule, false, "")
 	if err != nil {
@@ -813,8 +916,8 @@ func TestTheWrapperOfTheWindowsTaskSwitchesTheConsoleToUTF8First(t *testing.T) {
 	}
 }
 
-// The reduced assurance of the co-located installation is stated once, by the pages that introduce it and the summaries, and not by the executor's
-// install line, which keeps the facts: its token, the address it reaches, and that an engine has one test runner.
+// The reduced assurance of the co-located installation is stated once, by the pages that introduce it and the summaries, and not by the block
+// of the install about the test runner, which says what runs the tests and that there is nothing to do.
 func TestTheExecutorLineOfTheInstallDoesNotRepeatTheReducedAssurance(t *testing.T) {
 	h := newHarness(t, "linux")
 	if err := h.podman(); err != nil {
@@ -822,10 +925,7 @@ func TestTheExecutorLineOfTheInstallDoesNotRepeatTheReducedAssurance(t *testing.
 	}
 	out := h.out.String()
 	if strings.Contains(out, "less protected") || strings.Contains(out, "separate server") {
-		t.Errorf("the executor's install line repeats the reduced-assurance caveat:\n%s", out)
-	}
-	if !strings.Contains(out, "its own token") || !strings.Contains(out, "http://127.0.0.1:") {
-		t.Errorf("the executor's install line lost its token and its address:\n%s", out)
+		t.Errorf("the block about the test runner repeats the reduced-assurance caveat:\n%s", out)
 	}
 }
 

@@ -2,11 +2,15 @@ package app
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commandtext"
 )
+
+// modeNoLongerText is text 7 of M2.1c, which the owner fixed (SW-16): the whole answer to a /suiteward mode line.
+const modeNoLongerText = "`/suiteward mode` is no longer a command. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
 
 // The two malformed reasons of the mode verb have their codes: the job acknowledges the comment and does not fail on it.
 func TestCommandsJobAcknowledgesAMalformedModeCommand(t *testing.T) {
@@ -59,6 +63,10 @@ func TestCommentPublisherRendersTheMalformedReasonsOfTheMode(t *testing.T) {
 			w.mustDeliver(message)
 
 			w.wantPost(message.Key, commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: reason, Owner: cmtOwner, Source: cmtComment}))
+			// Text 7 of M2.1c, word for word: the comparison above only holds the renderer to itself.
+			if body := w.writer.posts()[0].body; !strings.Contains(body, modeNoLongerText) || strings.Contains(body, "not understood") {
+				t.Errorf("the comment for a mode line is not text 7:\n%s", body)
+			}
 		})
 	}
 }

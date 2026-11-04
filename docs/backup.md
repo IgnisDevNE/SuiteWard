@@ -509,7 +509,7 @@ Run every `podman` command in the PowerShell session where you selected the root
 
    Expect `status.json` to hold the status object, with `version`, `schemaVersion`, `owner` and `outbox`.
 
-   The port is published inside the Podman machine and may not answer from Windows, as the status command that `suiteward install` prints shows. A `curl.exe` that cannot connect keeps retrying for minutes: stop it with Ctrl-C, then run both commands through the Podman machine as its rootless user, `podman machine ssh --username user` (the default ssh user is `root`, which is the rootful store and does not hold this stack). Redirect on the Windows side to save the file:
+   The port is published inside the Podman machine and may not answer from Windows, as the status command that `suiteward install` prints shows. A `curl.exe` that cannot connect keeps retrying for minutes: stop it with Ctrl-C, then run both commands through the Podman machine as its rootless user, `podman machine ssh --username user` (the machine's default ssh user is `root` on older machines, which is the rootful store and does not hold this stack, and `user` on machine-os 6.1; naming `user` works on both). Redirect on the Windows side to save the file:
 
    ```powershell
    podman machine ssh --username user "curl --retry 10 --retry-connrefused -fsS http://127.0.0.1:<http port>/readyz"

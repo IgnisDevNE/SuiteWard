@@ -109,7 +109,7 @@ func checkCommand(t *testing.T, body string, c commandtext.Command) {
 		if c.Proposal != 0 || c.Revision != 0 || c.Code != "" {
 			t.Fatalf("verb %d carries a reference or a code: %+v from %q", c.Verb, c, body)
 		}
-	default: // SetMode too: a /suiteward mode line is malformed (M2.1c, SW-16)
+	default: // no verb for a /suiteward mode line either: it is malformed (M2.1c, SW-16)
 		t.Fatalf("unknown verb in %+v from %q", c, body)
 	}
 }

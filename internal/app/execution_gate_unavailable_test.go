@@ -34,7 +34,7 @@ func TestChecksCarryTheReasonOfAnUnavailableCanonicalRunInTheCheck(t *testing.T)
 		w := gateWorld(t)
 		w.execRun()
 		w.finish(w.onlyJob(4, bootHead, execution.PlanCanonical), nil, func(r *execution.Result) {
-			r.Report.Status, r.Report.Reason = execution.StateUnavailable, execution.ReasonToolchainMismatch
+			r.Status, r.Reason = execution.StateUnavailable, execution.ReasonToolchainMismatch
 		})
 		w.execRun()
 

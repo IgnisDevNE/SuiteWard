@@ -277,14 +277,24 @@ func checkRequired(c Check) error {
 		return fmt.Errorf("commandtext: %d weakened tests, which the %d blocking tests of the run do not show", c.Weakened, blocking)
 	case c.Weakened > 0 && c.Reason != "approval-missing":
 		return fmt.Errorf("commandtext: reason %q states no weakened test: only an approval that is missing does", c.Reason)
-	case c.Unavailable != "" && c.Reason != "canonical-unavailable":
-		return fmt.Errorf("commandtext: reason %q states no reason of an unavailable run: only canonical-unavailable does", c.Reason)
-	case c.Unavailable != "" && unavailableSentences[c.Unavailable] == "":
-		return errors.New("commandtext: the reason of the unavailable run is no code of the closed set")
 	case success && blocking > 0:
 		return errors.New("commandtext: a success with a failing, missing or flaky test")
 	case c.Reason == "canonical-failing" && blocking == 0:
 		return errors.New("commandtext: canonical-failing needs counts that show a failing, missing or flaky test")
+	}
+	return nil
+}
+
+// checkUnavailable reports why the reason of an unavailable run does not fit c: only canonical-unavailable names one, and it is a code of the closed set (the codes of the comments).
+// A check that names none is valid: the reason is not known to every pass that sends a check.
+func checkUnavailable(c Check) error {
+	switch {
+	case c.Unavailable == "":
+		return nil
+	case c.Reason != "canonical-unavailable":
+		return fmt.Errorf("commandtext: reason %q states no reason of an unavailable run: only canonical-unavailable does", c.Reason)
+	case unavailableSentences[c.Unavailable] == "":
+		return errors.New("commandtext: the reason of the unavailable run is no code of the closed set")
 	}
 	return nil
 }
@@ -295,7 +305,7 @@ func validateCheck(c Check) (checkReason, error) {
 	if !known || reason.state != c.State {
 		return reason, fmt.Errorf("commandtext: check reason %q does not fit state %d", c.Reason, c.State)
 	}
-	if err := errors.Join(checkCheckReference(c), checkRequired(c)); err != nil {
+	if err := errors.Join(checkCheckReference(c), checkRequired(c), checkUnavailable(c)); err != nil {
 		return reason, err
 	}
 	switch {

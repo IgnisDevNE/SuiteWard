@@ -335,11 +335,16 @@ func (d *doctor) checkMachine(ctx context.Context) {
 
 // machineStartCommand starts the Podman machine called name: the default machine, or none named, is what a bare
 // `podman machine start` starts.
-func machineStartCommand(name string) string {
+func machineStartCommand(name string) string { return machineCommand("start", name) }
+
+// machineStopCommand stops the Podman machine called name, with the same rule as machineStartCommand.
+func machineStopCommand(name string) string { return machineCommand("stop", name) }
+
+func machineCommand(verb, name string) string {
 	if name == "" || name == defaultMachine {
-		return "podman machine start"
+		return "podman machine " + verb
 	}
-	return "podman machine start " + name
+	return "podman machine " + verb + " " + name
 }
 
 // machineSSH runs one command in the Podman machine as its rootless user.
@@ -432,7 +437,7 @@ func (d *doctor) runtimeFix(err error) string {
 	case d.s.Runtime == RuntimeDocker:
 		return "Start Docker (Docker Desktop on Windows and macOS), then check that `docker version` answers."
 	case d.deps.GOOS != "linux":
-		return "Check the Podman machine with `podman machine list` and start it with `podman machine start`."
+		return "Check the Podman machine with `podman machine list` and start it with `" + machineStartCommand(d.machine.Name) + "`."
 	default:
 		return "Check that `podman info` works for your user."
 	}

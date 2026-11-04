@@ -275,7 +275,7 @@ func (d *doctor) checkExecutorLoopback(ctx context.Context) {
 	address := fmt.Sprintf("http://127.0.0.1:%d/readyz", d.s.HTTPPort)
 	if _, err := d.fetch(ctx, address); err != nil {
 		d.fail("executor.loopback", fmt.Sprintf("This computer cannot reach `127.0.0.1:%d`, the port that the Podman machine %s publishes (%v). The test runner cannot reach the service either, so its test runs end with `no-executor`. The owner can unblock each revision with `/suiteward unblock`.", d.s.HTTPPort, d.machine.Name, err),
-			"This is a known limit of the machine's port forwarding. Run `podman machine stop`, then `podman machine start`, then run doctor again. If it persists, the owner unblocks each revision with `/suiteward unblock`.")
+			"This is a known limit of the machine's port forwarding. Run `"+machineStopCommand(d.machine.Name)+"`, then `"+machineStartCommand(d.machine.Name)+"`, then run doctor again. If it persists, the owner unblocks each revision with `/suiteward unblock`.")
 		return
 	}
 	d.pass("executor.loopback", fmt.Sprintf("This computer reaches `127.0.0.1:%d`, the port that the Podman machine %s publishes.", d.s.HTTPPort, d.machine.Name))

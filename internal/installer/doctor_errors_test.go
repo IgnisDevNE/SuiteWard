@@ -120,6 +120,33 @@ func TestDoctorRuntimeFixes(t *testing.T) {
 	}
 }
 
+// A bare `podman machine start` starts the default machine, so the fix of a Podman machine that does not answer names the machine of this instance
+// unless it is the default one, or doctor does not know it (the isolated tier reaches the runtime check without a machine check). Every other word stays.
+func TestDoctorRuntimeFixStartsTheMachineOfTheInstance(t *testing.T) {
+	const fix = "Check the Podman machine with `podman machine list` and start it with `%s`."
+	for name, c := range map[string]struct{ machine, start string }{
+		"a machine of its own": {"sw-m21c", "podman machine start sw-m21c"},
+		"the default machine":  {defaultMachine, "podman machine start"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			list := fmt.Sprintf(`[{"Name":%q,"Running":true,"RemoteUsername":"user"}]`, c.machine)
+			f, s := colocated{goos: "windows", over: []rule{{match: "machine list", out: list}, {match: "info --format", err: errors.New("no socket")}}}.build(t)
+			s.Connection = c.machine
+			_, res, _ := runDoctor(t, f, s)
+			wantFail(t, res, "runtime")
+			if got, want := res["runtime"].Fix, fmt.Sprintf(fix, c.start); got != want {
+				t.Errorf("fix %q, want %q", got, want)
+			}
+		})
+	}
+	t.Run("no machine is known", func(t *testing.T) {
+		d := doctor{deps: Deps{GOOS: "windows"}, s: Settings{Runtime: RuntimePodman}}
+		if got, want := d.runtimeFix(errors.New("no socket")), fmt.Sprintf(fix, "podman machine start"); got != want {
+			t.Errorf("fix %q, want %q", got, want)
+		}
+	})
+}
+
 // The fix of a rootful Podman is the one of the refusal: on Linux with no connection set (in the settings or in CONTAINER_CONNECTION) the person
 // ran SuiteWard as root; anywhere else a connection was chosen, and the fix is to choose the rootless one.
 func TestDoctorRootfulFixSaysWhatToDoWhereItHappens(t *testing.T) {

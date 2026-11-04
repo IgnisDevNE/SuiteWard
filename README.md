@@ -97,7 +97,6 @@ flowchart LR
 | `/suiteward skip <code>` | Owner | Lets this pull request merge before any contract exists. |
 | `/suiteward approve P<n>-R<m> [fix\|feature\|refactor] <code>` | Owner | Approves that exact revision. The mode is optional, except under `receipt: required` for a receipt that is complete and not empty: an empty receipt, one that does not apply and an unblocked run that was unavailable need none ([the full rule](docs/install.md#running-the-tests-canonical-execution-and-the-receipt)). |
 | `/suiteward revoke P<n>-R<m> <code>` | Owner | Withdraws an approval before the merge. |
-| `/suiteward mode <fix\|feature\|refactor>` | Owner | Sets the mode that the pull request page previews. It needs no code, and no gate reads it. |
 | `/suiteward unblock <code>` | Owner | Lifts the runs of this pull request's head that could not be completed, or that wait for a test runner that is not responding, and nothing else. The runs it lifts are not run again; the next push runs as usual. |
 | `/suiteward suggest` | Owner | Replies with the test-like files and runner names the contract misses, and the updated declaration. It needs no code and grants nothing. |
 

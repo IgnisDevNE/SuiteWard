@@ -5,6 +5,7 @@
 - **Product:** SuiteWard
 - **Scope:** What SuiteWard says about its test runs and where: the comments of a head, the page of a pull request, the reason of each flagged test, the signal for a test that an edit weakened, a test runner that stops responding and the owner's early unblock, the installer that asks which installation, and the wording of every comment, check summary and page.
 - **Amends:** [ADR 0028](0028-canonical-execution-and-the-receipt.md) (the unblock never lifts a pending run, and an unblock does not carry over to a fresh job; ADR 0028 carries its own dated note).
+- **M2.1c note (2026-11-04):** three of the texts below changed in M2.1c (SW-22, SW-21, SW-16). See the [note](#note-2026-11-04-what-m21c-changed-in-these-texts) at the end.
 - **Related:** [ADR 0027](0027-agent-human-trust-separation.md), [D-ROADMAP](../plan/decisions.md#d-roadmap-the-order-after-m21) and D-APPROVAL-CONTEXT in the [decision register](../plan/decisions.md), the [M2.1 phase page](../plan/phases/M2.1.md) (decision 22), the [runtime contract](../contracts/runtime.md#results-communication-m21b-normative) and the [persistence contract](../contracts/persistence.md#execution-m21-normative).
 
 Names, numbers and texts that the contracts mark with † are choices of task A0 of M2.1b, made inside this decision. The integrator may change them under the register's rule on implementation choices. The points the owner decided, at the end, are not such choices.
@@ -34,7 +35,7 @@ The checks job writes `github_comment` messages. A comment is never edited. The 
 
 Each key names the jobs it reports. A fresh job gets its own comment: the job that the recovery rule makes after the runner returns, and the canonical job that the head gets under the approved version of the tests once the owner approves. The approval would therefore add a second results comment for the same head, and the first run after an upgrade would write one for every open pull request whose runs are already final. The owner decided (2026-10-28, points 4 and 5 below): the set that follows an approval is announced unless both it and the head's earlier final set have nothing to say (no failing test, no tests that did not run), and only when the head has such an earlier set, so that a head always gets at least one comment and a later comment can correct an earlier one; the burst after an upgrade or a long outage is accepted.
 
-A comment holds counts and the general situation, never a test name, a path or any text of the repository or of the runner (decision 3): what ran and what it found, how many tests are weakened and what to do, whether each kind of change (`fix`, `feature`, `refactor`) is met and why, the situation of a runner that does not respond, the next step, and the link to the pull request page. The payloads, the keys, the exact texts and the restart rules are in the [runtime contract](../contracts/runtime.md#the-comments-of-a-head).
+A comment holds counts and the general situation, never a test name, a path or any text of the repository or of the runner (decision 3): what ran and what it found, how many tests are weakened and what to do, whether each kind of change (`fix`, `feature`, `refactor`) is met and why (*amended 2026-11-04, M2.1c, SW-22: except while an approved test fails, is missing or is flaky, or a test is weakened; the comment then says that the approved tests failed and sends the reader to the report*), the situation of a runner that does not respond, the next step, and the link to the pull request page. The payloads, the keys, the exact texts and the restart rules are in the [runtime contract](../contracts/runtime.md#the-comments-of-a-head).
 
 Why one comment per head and not an edited one: the App cannot edit. Why a key bound to jobs: a comment that was posted must stay true of the run it reported, and a new run is a new fact.
 
@@ -44,7 +45,7 @@ Why one comment per head and not an edited one: the App cannot edit. Why a key b
 - the tests by state, with what each state means;
 - the tests of each run (state, test, package, file, the reason in words, the weakened marker);
 - the three kinds of change, met or not, and why;
-- the situation (running, not responding, not run, unblocked), the evidence binding, and the preview mode;
+- the situation (running, not responding, not run, unblocked), the evidence binding, and the preview mode (*amended 2026-11-04: M2.1c, SW-16, removed the preview mode with the `/suiteward mode` command, so the page states none*);
 - the change report of the revision without its hunks, with links to the full report of the revision and to the reports of the earlier revisions.
 
 `/receipts/{owner}/{repo}/{pull}` answers 308 to the new route, because posted comments link it. `/reports/{owner}/{repo}/P<n>-R<m>` stays the page of one revision, with the hunks. The guard rules do not change: a loopback `Host` only, the four headers, escaping, one page built at a time.
@@ -154,7 +155,7 @@ Decision 22 of M2.1: an installer that asks on screen what it can instead of tak
 | --- | --- | --- |
 | The Contract check: every reason, its title, text and next step, the closing sentence | `CheckSummary`, `checkReasons`, `closingText` | `commandtext/check.go` |
 | The canonical counts, F11a's sentence and the unblocked sentence | `executionText` (`ExecutionText`), `blockingEditText`, `unblockedText` | `check.go` |
-| The Receipt check: reasons, titles, the counts lines, the words of an unavailable reason and of a mode reason | `ReceiptCheckSummary`, `receiptReasons`, `ReceiptFacts`, `unavailableWords`, `modeReasons` | `commandtext/receiptcheck.go` |
+| The Receipt check: reasons, titles, the counts lines (*amended 2026-11-04: a table, not lines, since M2.1c, SW-21*), the words of an unavailable reason and of a mode reason | `ReceiptCheckSummary`, `receiptReasons`, `ReceiptFacts`, `unavailableWords`, `modeReasons` | `commandtext/receiptcheck.go` |
 | The page of a revision (its headings, sentences and the labels of its tables) | the report template and its builders | `internal/app/reportpage.go` and `commandtext/changes.go` |
 | The pull request page | written by task R2 from the reference wording of the contract; W2 only checks it against the rule | `internal/app` (new files) |
 
@@ -204,3 +205,11 @@ The points below were open when this record was written; the owner answered them
 6. **The diffs on the pull request page.** The owner asked for one report instead of two. Options: (a) one page with the diffs, collapsed, in their own budget, with a higher cap; (b) the page with the file table and no diffs, linking the revision's report, which keeps them (section 2). **The owner chose (b).**
 
 Deferred, with no date: asking for a folder when a second installation is created; choosing the backup of `restore` from the backups folder; a command that forgets a listed installation; the runner's silence in `/status`.
+
+## Note 2026-11-04: what M2.1c changed in these texts
+
+The [M2.1c phase](../plan/phases/M2.1c.md) changed three things that this record states. Everything else in it stands, and the marked lines above keep their words.
+
+- **Kinds of change (SW-22).** A results comment no longer says which kind is met while an approved test fails, is missing or is flaky, or a test is weakened. It says that the approved tests failed and sends the reader to the report.
+- **Tables and the link (SW-21).** The counts of the receipt are a table in the results comment, the Receipt check and the refusal of an approve, the kinds of change are a table in the results comment, and the link to the pull request page comes right after the approved counts.
+- **No preview mode (SW-16).** `/suiteward mode` is no longer a command, and the pull request page states no preview mode. A line that starts with it is `malformed` and its comment says so.

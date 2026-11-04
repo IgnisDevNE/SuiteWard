@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -321,15 +322,16 @@ func TestDoctorSaysThatARunningTestRunnerWaitsForItsContainerProgram(t *testing.
 		goos   string
 		engine string
 		over   []rule
+		ready  int // the service lives in the container program: with Docker stopped, nothing answers on its port
 		detail []string
 		fix    string
 	}{
-		{"a stopped Podman machine", "windows", "", []rule{{match: "machine list", out: stoppedList}}, []string{"container program", "podman-machine-default is not running"}, "podman machine start"},
-		{"a Docker that does not answer", "linux", RuntimeDocker, []rule{{match: "version --format", err: errors.New("Cannot connect to the Docker daemon")}}, []string{"container program", "does not answer"}, "Start Docker"},
+		{"a stopped Podman machine", "windows", "", []rule{{match: "machine list", out: stoppedList}}, 0, []string{"container program", "podman-machine-default is not running"}, "podman machine start"},
+		{"a Docker that does not answer", "linux", RuntimeDocker, []rule{{match: "version --format", err: errors.New("Cannot connect to the Docker daemon")}}, http.StatusServiceUnavailable, []string{"container program", "does not answer"}, "Start Docker"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			f, s := colocated{goos: c.goos, engine: c.engine, over: c.over}.build(t)
+			f, s := colocated{goos: c.goos, engine: c.engine, over: c.over, ready: c.ready}.build(t)
 			code, res, _ := runDoctor(t, f, s)
 			if code != 1 {
 				t.Errorf("exit %d, want 1", code)
@@ -337,6 +339,35 @@ func TestDoctorSaysThatARunningTestRunnerWaitsForItsContainerProgram(t *testing.
 			wantFail(t, res, "executor.running", append([]string{"The test runner is running", "waits", "needs no restart"}, c.detail...)...)
 			if fix := res["executor.running"].Fix; !strings.Contains(fix, c.fix) {
 				t.Errorf("the fix %q must say how to start the container program (%q)", fix, c.fix)
+			}
+		})
+	}
+}
+
+// A runtime check that fails while the service answers (a rootful Podman on Linux) does not say that the test runner's own connection fails: with
+// /status readable, the row is the usual one, from the process and the last sight of the service, and it never says that no test can run.
+func TestDoctorDoesNotSayThatNoTestCanRunWhileTheServiceAnswersAndOnlyTheRuntimeCheckFails(t *testing.T) {
+	rootful := []rule{{match: "info --format", out: "false\n"}}
+	cases := []struct {
+		name  string
+		since time.Duration
+		want  []string // what the detail says, when the row fails
+	}{
+		{"seen lately", 5 * time.Second, nil},
+		{"seen long ago", 10 * time.Minute, []string{"ago", "waits for its container program"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, s := colocated{over: rootful, status: coloStatus(c.since)}.build(t)
+			_, res, _ := runDoctor(t, f, s)
+			wantFail(t, res, "runtime", "rootful")
+			if c.want == nil {
+				wantOK(t, res, "executor.running")
+				return
+			}
+			wantFail(t, res, "executor.running", c.want...)
+			if d := res["executor.running"].Detail; strings.Contains(d, "no test can run") {
+				t.Errorf("the detail %q says that no test can run, and the service answers", d)
 			}
 		})
 	}

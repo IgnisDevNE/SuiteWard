@@ -140,7 +140,7 @@ func TestTheExecutorEndsItsRunWhenTheConsoleHostOfItsLoopIsStopped(t *testing.T)
 	if _, err := fmt.Sscanf(armed, "%d %d", &helper, &script); err != nil {
 		t.Fatalf("the mark %q of the executor does not hold its process ids: %v", armed, err)
 	}
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(3 * consoleHostPollMs * time.Millisecond) // past several waits that time out: a timed-out wait is not a host that is gone
 	if _, err := os.Stat(markFile(dir, "ended")); err == nil {
 		t.Fatal("the executor ended its run while its console host was running")
 	}

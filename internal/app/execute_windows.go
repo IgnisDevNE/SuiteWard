@@ -88,6 +88,9 @@ func openConsoleHost() (windows.Handle, bool, error) {
 	return host, true, nil
 }
 
+// consoleHostPollMs is how long one wait on the console host lasts, in milliseconds.
+const consoleHostPollMs = 1000
+
 // watchConsoleHost ends the run when the console host of the loop that started the executor exits. A stop of the scheduled task (Stop-ScheduledTask)
 // ends only that conhost.exe: the script and the executor live on without a console, and the script would start the executor again. The context it
 // returns is cancelled then, so the run ends as at the signal (the job in flight gets its grace, its sandbox is stopped, the exit is clean). It
@@ -104,7 +107,7 @@ func watchConsoleHost(ctx context.Context, log *slog.Logger) (context.Context, c
 			defer func() { _ = windows.CloseHandle(host) }()
 			// The wait is short so that the handle is closed here, after the run ended for another reason, and never while a wait uses it.
 			for ctx.Err() == nil {
-				event, err := windows.WaitForSingleObject(host, 1000)
+				event, err := windows.WaitForSingleObject(host, consoleHostPollMs)
 				switch {
 				case err != nil:
 					log.Warn(consoleHostUnwatched, "error", err)

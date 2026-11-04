@@ -42,6 +42,15 @@ var (
 	dbHealthInterval = 2 * time.Second
 )
 
+// workingFolder is how the isolated commands learn the folder they run from; a variable so that a test names a folder of its own.
+var workingFolder = os.Getwd
+
+// checkWorkingFolder refuses a run from a folder that the account cannot enter. Scaffold: the check comes with the next commit.
+func checkWorkingFolder() error {
+	_ = workingFolder
+	return nil
+}
+
 // generatorPath is the Podman quadlet generator, whose dry run lists every unit it reads.
 const generatorPath = "/usr/lib/systemd/system-generators/podman-system-generator"
 
@@ -64,6 +73,9 @@ func openIsolatedHost(ctx context.Context, s Settings, d Deps) (isolatedHost, er
 	}
 	if d.GOOS != "linux" {
 		return isolatedHost{}, fmt.Errorf("an installation on a separate server runs on Linux only, and this system is %s", d.GOOS)
+	}
+	if err := checkWorkingFolder(); err != nil {
+		return isolatedHost{}, err
 	}
 	run := func(name string, args ...string) (string, error) {
 		b, err := d.Exec(ctx, name, args, nil)

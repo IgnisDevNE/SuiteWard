@@ -97,16 +97,17 @@ func readExecutorToken(env Env) (config.Secret, error) {
 	return config.Secret(direct), nil
 }
 
-// executeDeps are the parts of `suiteward execute` that the tests replace: the container runtime, the sweep of its leftover containers
-// and the digest of the executor's own binary.
+// executeDeps are the parts of `suiteward execute` that the tests replace: the container runtime, the sweep of its leftover containers,
+// the digest of the executor's own binary and the watch that ends the run when the console host of the executor's loop is gone.
 type executeDeps struct {
 	runtime   func(binary string) sandbox.Runtime
 	sweep     func(binary string) func(context.Context) error
 	binarySum func() (string, error)
+	watch     func(ctx context.Context, log *slog.Logger) (context.Context, context.CancelFunc)
 }
 
 func osExecuteDeps() executeDeps {
-	return executeDeps{runtime: sandbox.NewCLI, sweep: executor.Sweeper, binarySum: func() (string, error) {
+	return executeDeps{runtime: sandbox.NewCLI, sweep: executor.Sweeper, watch: watchConsoleHost, binarySum: func() (string, error) {
 		path, err := os.Executable()
 		if err != nil {
 			return "", err

@@ -6,11 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/sandbox"
 )
@@ -181,6 +184,9 @@ func fakeDeps(rt fakeRuntime, sum string, sumErr error, swept *[]string) execute
 			return func(context.Context) error { *swept = append(*swept, binary); return nil }
 		},
 		binarySum: func() (string, error) { return sum, sumErr },
+		watch: func(ctx context.Context, _ *slog.Logger) (context.Context, context.CancelFunc) {
+			return context.WithCancel(ctx)
+		},
 	}
 }
 
@@ -199,6 +205,47 @@ func TestTheExecutorStopsCleanlyAtTheSignalAndSweepsWithTheConfiguredRuntime(t *
 	}
 	if strings.Contains(out.String(), executorToken) {
 		t.Errorf("the log holds the token: %s", out.String())
+	}
+}
+
+// The watch of the console host (SW-25) cancels the context that the run gets, so the run ends as at the signal: it stops asking for jobs and exits 0.
+func TestTheExecutorStopsCleanlyWhenTheWatchEndsTheRun(t *testing.T) {
+	var swept []string
+	deps := fakeDeps(fakeRuntime{}, strings.Repeat("ab", 32), nil, &swept)
+	deps.watch = func(ctx context.Context, _ *slog.Logger) (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(ctx)
+		cancel() // the console host of the loop is gone
+		return ctx, cancel
+	}
+	live, release := context.WithCancel(context.Background())
+	t.Cleanup(release) // a run that the watch does not end stops here, not when the test binary exits
+	env := executorEnv(map[string]string{"SUITEWARD_EXECUTOR_URL": "http://127.0.0.1:1"})
+	var out, errOut bytes.Buffer
+	done := make(chan int, 1)
+	go func() { done <- executeWith(live, nil, env, &out, &errOut, deps) }()
+	select {
+	case code := <-done:
+		if code != 0 || errOut.Len() != 0 {
+			t.Errorf("executeWith = %d, stderr %q; want a clean stop", code, errOut.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the executor kept running after the watch ended its run")
+	}
+}
+
+// Only the scheduled task of Windows has a console host to lose: elsewhere the watch ends nothing and says nothing (Windows has its own tests).
+func TestTheWatchOfTheConsoleHostDoesNothingOnOtherSystems(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows watches the console host of the loop: execute_windows_test.go")
+	}
+	var out bytes.Buffer
+	ctx, stop := watchConsoleHost(context.Background(), newLogger(&out, slog.LevelInfo))
+	if ctx.Err() != nil || out.Len() != 0 {
+		t.Errorf("the watch ended the run (%v) or logged %q on %s", ctx.Err(), out.String(), runtime.GOOS)
+	}
+	stop()
+	if ctx.Err() == nil {
+		t.Error("the context of the watch does not end when its caller stops it")
 	}
 }
 

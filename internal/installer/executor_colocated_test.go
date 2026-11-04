@@ -307,7 +307,7 @@ const (
 	runnerTextWindows = "The tests run in a test runner that Windows starts when you sign in. It has no window and starts again by itself if it stops. You have nothing to do."
 	runnerTextMacOS   = "The tests run in a test runner that macOS starts when you sign in. It starts again by itself if it stops. You have nothing to do."
 	runnerTextLinux   = "The tests run in a test runner that your user's systemd starts. It starts again by itself if it stops. You have nothing to do."
-	runnerTextDocker  = "With Docker, the test runner needs Docker itself: the `docker` command of Podman (podman-docker) also works, but Docker's command line pointed at Podman does not."
+	runnerTextDocker  = "With Docker, the test runner needs Docker itself: Docker's command line pointed at Podman does not work."
 	// unpinnedMarker opens the sentence about the pin, which an install of a development build says after the block, because the person may act on it.
 	unpinnedMarker = "The test runner has not been checked against an official release."
 )
@@ -369,7 +369,7 @@ func TestTheInstallSaysInPlainWordsWhatRunsTheTests(t *testing.T) {
 			block := runnerBlock(t, out)
 			// The details that a person never acts on: where the token is, the address, how long the restart waits, the rule of one test runner for each
 			// container program, a window that shows. The summary's row, the guide and doctor hold the ones that matter to a person who looks.
-			for _, gone := range []string{executorTokenPath(h), "127.0.0.1", "seconds", "one test runner", "console window", "Closing the window", "a minute", "Docker"} {
+			for _, gone := range []string{executorTokenPath(h), "127.0.0.1", "seconds", "one test runner", "console window", "Closing the window", "a minute", "Docker", "set up as"} {
 				if strings.Contains(block, gone) {
 					t.Errorf("the block still has %q, which a person does not act on:\n%s", gone, block)
 				}

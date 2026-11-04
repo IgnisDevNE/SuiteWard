@@ -205,7 +205,7 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 	c.executorRow = executorMechanism(plan.goos) + "; " + plan.binary
 	scr.Check("%s\n", executorRunText(plan.goos))
 	if c.s.Runtime == RuntimeDocker {
-		scr.Say("With Docker, the test runner needs Docker itself: the `docker` command of Podman (podman-docker) also works, but Docker's command line pointed at Podman does not.\n")
+		scr.Say("With Docker, the test runner needs Docker itself: Docker's command line pointed at Podman does not work.\n")
 	}
 	if c.executorPin == "" {
 		detail, fix := unpinnedExecutorText(d)

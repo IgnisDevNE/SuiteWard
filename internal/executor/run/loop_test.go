@@ -371,6 +371,29 @@ func TestASignalWhileTheContainerProgramIsAskedEndsRunWithoutAWaitingLine(t *tes
 	}
 }
 
+// The signal that ends a wait ends Run there: the executor does not ask the program once more, and does not go on to sweep and lease, even with
+// a program that would answer.
+func TestASignalDuringTheWaitEndsRunBeforeTheProgramIsAskedAgain(t *testing.T) {
+	logs := newLogRecorder()
+	rt := &infoRuntime{fakeRuntime: newRuntime(nil), fail: 1, name: "podman", version: "5.8.2"}
+	svc := newService(t, nil)
+	d := start(t, svc, rt, func(cfg *Config, d *driver) {
+		cfg.Log = slog.New(logs)
+		d.sleeps.reached = make(chan struct{})
+	})
+	wait(d, d.sleeps.reached)
+	d.cancel()
+	if err := d.stopped(); err != nil {
+		t.Errorf("Run = %v after a signal during the wait; want a clean stop", err)
+	}
+	if n := rt.timesAsked(); n != 1 {
+		t.Errorf("the program was asked %d times; want once, the signal ended the wait before a second ask", n)
+	}
+	if slices.Contains(logged(logs), answersLine) || d.swept.Load() != 0 || svc.leaseRequests() != 0 {
+		t.Error("the executor went on after the signal that ended its wait")
+	}
+}
+
 // A runtime that answers with a name the results cannot carry is not a program that is down: waiting does not help, so the executor stops, whether
 // it asked once or had to wait first.
 func TestARuntimeNameThatIsNotPrintableIsStillFatal(t *testing.T) {

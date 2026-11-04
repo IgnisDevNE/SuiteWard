@@ -825,8 +825,8 @@ func TestUpgradeAtTheInstalledReleaseRefreshesTheExecutor(t *testing.T) {
 	if len(u.f.find("--user enable --now suiteward-executor.service")) == 0 {
 		t.Errorf("the executor was not started again: %v", u.f.calls)
 	}
-	if out := u.out.String(); !strings.Contains(out, "Nothing to upgrade") || !strings.Contains(out, "executor") {
-		t.Errorf("the output must say that there is nothing to upgrade and what became of the executor:\n%s", out)
+	if out := u.out.String(); !strings.Contains(out, "Nothing to upgrade") || !strings.Contains(out, runnerTextLinux) {
+		t.Errorf("the output must say that there is nothing to upgrade and what runs the tests:\n%s", out)
 	}
 }
 

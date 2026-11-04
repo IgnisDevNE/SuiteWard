@@ -30,7 +30,6 @@ const (
 	nextCode     = "The next attempt needs the next code"
 	forkText     = "this pull request comes from a fork, and SuiteWard does not support pull requests from forks yet. Nothing changed."
 	notOpenText  = "this pull request is no longer open. Nothing changed."
-	modeGoneText = "`/suiteward mode` is no longer a command. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
 	codeWasUsed  = "The code was used"
 	unblockLifts = "The checks will say that the owner unblocked this commit and that its tests did not run."
 	// unblockStays is what an unblock leaves alone: tests that ran. It does not say that a run that is pending stays as it is, since an unblock ends a
@@ -38,6 +37,11 @@ const (
 	unblockStays = "The unblock changes no result: tests that have finished, whether they pass or fail, stay as they are."
 	// notLifted is what an unblock does not lift, in the refusal for want of anything to lift.
 	notLifted = "An unblock applies only to tests that could not run, or that wait for a test runner that is not responding. It does nothing for tests that have finished, whether they pass or fail, or that wait for GitHub or for a test runner that is responding."
+	// modeGoneText is text 7 of M2.1c, which the owner fixed (SW-16): the whole answer to a /suiteward mode line, whatever the line says, and the end of a
+	// mode-refused acknowledgment queued before the command was removed.
+	modeGoneText = "`/suiteward mode` is no longer a command. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
+	// modeSetText is the whole acknowledgment of a mode-set one queued before M2.1c: no mode was recorded, and the page and the store keep no preview.
+	modeSetText = "`/suiteward mode` is no longer a command, so this mode was not recorded. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
 )
 
 // countsLine is the receipt of summaryNotMet in the words of the results comment: the number of tests, then the table of what they show.
@@ -91,21 +95,22 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"mode set",
 			commandtext.Ack{Outcome: commandtext.ModeSet, Source: source, Owner: owner, Mode: execution.ModeFeature},
-			[]string{"Preview mode recorded for this pull request by @octo-owner: `feature`.", "The pull request page shows it", "no check and no approval uses it", "The mode that counts is the one you write in the approve command."},
-			[]string{"eligible", "/suiteward approve", "<code>"},
+			[]string{modeSetText},
+			[]string{"Preview", "preview", "pull request page", "The mode that counts", "eligible"},
 		},
 		{
-			// An acknowledgment queued before M2.1c: it keeps its reason, and no longer offers the command that is gone (SW-16, text 7).
+			// An acknowledgment queued before M2.1c: it keeps its reason, and no longer offers the command that is gone (SW-16, text 7). An approve does not
+			// work on a fork either, so the fork refusal sends the owner to a branch of this repository first.
 			"mode refused for a fork",
 			commandtext.Ack{Outcome: commandtext.ModeRefused, Source: source, Owner: owner, Refusal: commandtext.Fork},
-			[]string{"`/suiteward mode` was not processed: " + forkText, modeGoneText},
+			[]string{"`/suiteward mode` was not processed: " + forkText + "\nOpen the pull request from a branch of this repository. " + modeGoneText},
 			[]string{"`/suiteward mode <fix|feature|refactor>`", "then comment"},
 		},
 		{
 			"mode refused for a pull request that is not open",
 			commandtext.Ack{Outcome: commandtext.ModeRefused, Source: source, Owner: owner, Refusal: commandtext.NotOpen},
-			[]string{"`/suiteward mode` was not processed: " + notOpenText, modeGoneText},
-			[]string{"`/suiteward mode <fix|feature|refactor>`", "on an open pull request"},
+			[]string{"`/suiteward mode` was not processed: " + notOpenText + "\n" + modeGoneText},
+			[]string{"`/suiteward mode <fix|feature|refactor>`", "on an open pull request", "branch of this repository"},
 		},
 		{
 			"unblocked, canonical run",

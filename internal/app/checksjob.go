@@ -335,7 +335,7 @@ func (j *checksJob) pull(ctx context.Context, enrollment owner.State, p owner.Pr
 	if err := j.commentBeforeCheck(ctx, s, d); err != nil {
 		return "", err
 	}
-	if err := j.publishCheck(ctx, s, d.result, d.runners, executed.counts, executed.weakened, x.namesMode(d.result)); err != nil {
+	if err := j.publishCheck(ctx, s, d.result, d.runners, executed.counts, executed.weakened, x.namesMode(d.result), executed.unavailable); err != nil {
 		return "", err
 	}
 	if err := j.publishReceipt(ctx, s, executed.receipt); err != nil {
@@ -559,7 +559,7 @@ func (j *checksJob) commentBeforeCheck(ctx context.Context, s *pullState, d pull
 }
 
 // publishCheck publishes every run, also an unchanged result, which lets the ledger resend a message that ended failed.
-func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result checks.Result, runners *runnerSet, counts *checkExecution, weakened int, approveMode bool) error {
+func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result checks.Result, runners *runnerSet, counts *checkExecution, weakened int, approveMode bool, unavailable string) error {
 	_, _, err := j.ledger.Publish(ctx, result, j.now(), func(generation int64) (governance.OutboxMessage, error) {
 		if result.Reason == reasonRunnerUncovered { // applyRunnerBlock decided it from a runner set, so a republish has the files too
 			if runners == nil {
@@ -567,7 +567,7 @@ func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result check
 			}
 			return newCheckMessageWithPaths(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, runners.paths, len(runners.paths))
 		}
-		return newCheckMessageOf(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, nil, 0, counts, weakened, approveMode, "")
+		return newCheckMessageOf(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, nil, 0, counts, weakened, approveMode, unavailable)
 	})
 	if err != nil {
 		return fmt.Errorf("publish the check: %w", err)

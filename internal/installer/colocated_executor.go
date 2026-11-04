@@ -56,6 +56,21 @@ func executorMechanism(goos string) string {
 	}
 }
 
+// executorRunText is what the install says to a person about the test runner: what runs the tests, when it starts and that there is nothing to do.
+// Each sentence rests on the definition of its system: the logon trigger and the headless script that starts the program again (windowsTask,
+// windowsWrapper), the launch agent with RunAtLoad and KeepAlive (launchAgent), the user unit with Restart=always (userUnit). The unit starts with the
+// user's systemd, not at start-up: the install does not turn linger on (only the isolated host step does).
+func executorRunText(goos string) string {
+	switch goos {
+	case "windows":
+		return "The tests run in a test runner that Windows starts when you sign in. It has no window and starts again by itself if it stops. You have nothing to do."
+	case "darwin":
+		return "The tests run in a test runner that macOS starts when you sign in. It starts again by itself if it stops. You have nothing to do."
+	default:
+		return "The tests run in a test runner that your user's systemd starts. It starts again by itself if it stops. You have nothing to do."
+	}
+}
+
 // errProcessesNotListed is why a first install on Windows sets up no test runner: the listing of the programs that run fails, so the installer
 // could never stop or update one. Running the install again changes nothing, and setUpExecutor leaves that advice out. It follows the listing's
 // own error, which already says that the programs could not be listed and, when a policy stopped PowerShell, that it did: the note does not say
@@ -188,15 +203,10 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 		return
 	}
 	c.executorRow = executorMechanism(plan.goos) + "; " + plan.binary
-	scr.Check("The test runner (the executor) is set up as %s. It runs a copy of this program: %s.\n", executorMechanism(plan.goos), plan.binary)
-	if plan.goos == "windows" {
-		scr.Say("The test runner has no window. It runs in the background, and if it stops it starts again after about %d seconds.\n", executorRestartSeconds)
-	}
+	scr.Check("%s\n", executorRunText(plan.goos))
 	if c.s.Runtime == RuntimeDocker {
-		scr.Say("The test runner starts its sandboxes through Docker. Docker's own command line cannot drive Podman: it stops, because it does not know the options the sandboxes need. Podman's docker command (the podman-docker package) does work with Podman. To use Podman, install with `--runtime podman`.\n")
+		scr.Say("With Docker, the test runner needs Docker itself: the `docker` command of Podman (podman-docker) also works, but Docker's command line pointed at Podman does not.\n")
 	}
-	scr.Say("The test runner has one credential, its own token (%s), and it reaches SuiteWard at http://127.0.0.1:%d.\n", plan.tokenFile, c.s.HTTPPort)
-	scr.Say("Keep only one test runner (the executor) for each container program. When it starts, it removes every container of its container program whose name starts with %s, so a second test runner (one started by hand, say) would remove the sandboxes of the first.\n", sandboxNamePrefix)
 	if c.executorPin == "" {
 		detail, fix := unpinnedExecutorText(d)
 		scr.Say("%s %s\n", detail, fix)

@@ -129,6 +129,93 @@ func TestOpenIsolatedHostRefusesWhatItCannotUse(t *testing.T) {
 	}
 }
 
+// unreadableFolderText is the refusal of a working folder that the account cannot enter, word for word (decision 10 of
+// docs/plan/phases/M2.1c.md). The folder of `mktemp -d` is one: only the administrator who made it can enter it, and Podman stops there with
+// "cannot chdir".
+const unreadableFolderText = "SuiteWard cannot run from this folder, because the account that runs it cannot open it. Run `cd ~` first, then run the command again."
+
+// inFolder makes the isolated commands see folder as the folder they run from.
+func inFolder(t *testing.T, folder func() (string, error)) {
+	t.Helper()
+	was := workingFolder
+	workingFolder = folder
+	t.Cleanup(func() { workingFolder = was })
+}
+
+// unreachableFolders are the two ways the working folder fails: the system cannot name it (it was removed), or it names a folder that the
+// account cannot reach (a path that does not exist stands for one the account may not enter: stat stops on both).
+func unreachableFolders(t *testing.T) map[string]func() (string, error) {
+	t.Helper()
+	locked := filepath.Join(t.TempDir(), "locked")
+	return map[string]func() (string, error){
+		"the folder has no name":       func() (string, error) { return "", errors.New("getwd: no such file or directory") },
+		"the folder cannot be entered": func() (string, error) { return locked, nil },
+	}
+}
+
+func TestOpenIsolatedHostStopsFromAFolderTheAccountCannotOpenBeforeRunningAnything(t *testing.T) {
+	for name, folder := range unreachableFolders(t) {
+		t.Run(name, func(t *testing.T) {
+			inFolder(t, folder)
+			f := newIsoFake(t.TempDir())
+			_, err := openIsolatedHost(context.Background(), isolatedSettings(), f.deps())
+			if err == nil || err.Error() != unreadableFolderText {
+				t.Fatalf("openIsolatedHost = %v, want exactly %q", err, unreadableFolderText)
+			}
+			if len(f.calls) != 0 {
+				t.Errorf("a command ran before the refusal: %v", f.lines())
+			}
+		})
+	}
+}
+
+func TestOpenIsolatedHostOpensFromAReadableFolder(t *testing.T) {
+	inFolder(t, func() (string, error) { return t.TempDir(), nil })
+	f := newIsoFake(t.TempDir())
+	if _, err := openIsolatedHost(context.Background(), isolatedSettings(), f.deps()); err != nil {
+		t.Fatalf("openIsolatedHost from a readable folder = %v", err)
+	}
+	if !f.has("podman info") {
+		t.Errorf("Podman was not asked: %v", f.lines())
+	}
+}
+
+// The real trigger of the host that found this: a folder with no permission for the account (mode 0 stands for the other-account bits of the 0700
+// folder of `mktemp -d`), reached through the real working folder of the process.
+func TestOpenIsolatedHostStopsFromAFolderTheSystemWillNotLetTheAccountEnter(t *testing.T) {
+	if isWindows() || os.Geteuid() == 0 {
+		t.Skip("a folder without permissions stops only an account that is not root, on a system with modes")
+	}
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o500) })
+	f := newIsoFake(t.TempDir())
+	if _, err := openIsolatedHost(context.Background(), isolatedSettings(), f.deps()); err == nil || err.Error() != unreadableFolderText {
+		t.Fatalf("openIsolatedHost from a folder the account cannot enter = %v, want exactly %q", err, unreadableFolderText)
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("a command ran before the refusal: %v", f.lines())
+	}
+}
+
+func TestInstallIsolatedStopsFromAFolderTheAccountCannotOpen(t *testing.T) {
+	for name, folder := range unreachableFolders(t) {
+		t.Run(name, func(t *testing.T) {
+			inFolder(t, folder)
+			f := newIsoFake(t.TempDir())
+			if _, err := runIsolated(t, f, nil, ""); err == nil || err.Error() != unreadableFolderText {
+				t.Fatalf("install = %v, want exactly %q", err, unreadableFolderText)
+			}
+			if len(f.calls) != 0 {
+				t.Errorf("a command ran before the refusal: %v", f.lines())
+			}
+		})
+	}
+}
+
 func TestCheckAccountNamesWhatIsWrong(t *testing.T) {
 	home := t.TempDir() // absolute on every system; a colon in it (a drive) must not split the passwd line
 	answers := func(over map[string]func() (string, error)) func(string, ...string) (string, error) {

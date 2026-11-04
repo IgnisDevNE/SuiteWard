@@ -19,7 +19,7 @@ func executionAck(a Ack) string {
 	case ReceiptRefused:
 		return receiptRefusal(a)
 	case ModeSet: // only an acknowledgment queued before M2.1c: nothing records or shows a preview mode any more (SW-16, text 7 in its own words)
-		return paragraphs("`/suiteward mode` is no longer a command, so this mode was not recorded. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`.")
+		return paragraphs("`/suiteward mode` is no longer a command, so this mode is not used. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`.")
 	case Unblocked:
 		return paragraphs(
 			"Unblock recorded by "+who+" for the current commit of this pull request. Its checks no longer wait for "+plansWords(a.Plans)+"."+stoppedWaiting(a.Ended),

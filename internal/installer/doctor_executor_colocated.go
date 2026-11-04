@@ -143,10 +143,11 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	d.checkExecutorLoopback(ctx)
 }
 
-// failRunnerWaitsForContainerProgram is the result of a test runner that runs while the container program does not answer: doctor's own runtime
-// check failed (d.rt is nil, and the result named d.why says why). The service lives in that program, so /status cannot be read, and the test
-// runner, which asks the program for its version until it answers, waits for it and goes on by itself. The fix is the one of the result that found
-// the program down: the command that starts the Podman machine or Docker.
+// failRunnerWaitsForContainerProgram is the result of a test runner that runs while doctor's own runtime check failed (d.rt is nil, and the result
+// named d.why says why). The service lives in that program, so /status cannot be read, and a test runner that cannot reach its program asks for
+// its version until it answers, and goes on by itself. Doctor cannot tell whether the runner's own request fails too (a rootful Podman fails
+// doctor's check, not the runner's), so the row says what SuiteWard cannot use and what the runner does when it cannot reach the program. The
+// fix is the one of the result that found the program down: the command that starts the Podman machine or Docker.
 func (d *doctor) failRunnerWaitsForContainerProgram() {
 	i := slices.IndexFunc(d.results, func(r doctorResult) bool { return r.Name == d.why })
 	if i < 0 {
@@ -154,7 +155,7 @@ func (d *doctor) failRunnerWaitsForContainerProgram() {
 		return
 	}
 	why := d.results[i]
-	d.fail("executor.running", "The test runner is running, but it cannot use the container program: "+strings.TrimRight(why.Detail, ".")+". It does not give up: it waits and goes on by itself once the container program answers, so it needs no restart. Until then no test can run.", why.Fix)
+	d.fail("executor.running", "The test runner is running, but SuiteWard cannot use the container program: "+strings.TrimRight(why.Detail, ".")+". A test runner that cannot reach its container program waits and goes on by itself once it answers, so it needs no restart. Until then no test can run.", why.Fix)
 }
 
 // notSeenFix is the fix of a test runner that runs and that the service has not seen lately: its log says why, and an install makes the service

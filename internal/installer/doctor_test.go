@@ -974,6 +974,7 @@ func TestDoctorOfTheIsolatedTierSaysThatItsFolderCannotBeEntered(t *testing.T) {
 	if len(f.find("info --format")) != 0 {
 		t.Error("Podman ran from a folder the account cannot enter")
 	}
+	wantFail(t, res, "network", "not checked: runtime failed")
 
 	f, s = colocated{}.build(t)
 	_, res, _ = runDoctor(t, f, s)

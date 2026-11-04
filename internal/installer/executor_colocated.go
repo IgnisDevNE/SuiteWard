@@ -168,7 +168,8 @@ const executorRestartSeconds = 5
 // windowsWrapper is the script that the task runs: the console switches to UTF-8 (cmd reads the file in the code page of the console, which a profile with a
 // letter outside ASCII would break: the set lines, the program's path and the log redirect), then the environment of the executor, then the program, started again after a short pause whenever it ends
 // (Task Scheduler does not restart an action that exited: RestartOnFailure covers a start that failed). Its output goes to the log. The pause is
-// ping: timeout reads the console, which the task does not have.
+// ping: timeout reads the console, which the task does not have. A ping that fails ends the script: it fails once the console host is gone (a stop of
+// the task ends only that), and a loop that went on would start the program again with no pause at all.
 func (p executorPlan) windowsWrapper() string {
 	var b strings.Builder
 	b.WriteString("@echo off\r\n\"%SystemRoot%\\System32\\chcp.com\" 65001 >nul\r\nrem Written by `suiteward install`: the environment of the SuiteWard test runner, then the test runner, again after a pause when it ends. Do not put a credential here.\r\n")
@@ -182,7 +183,7 @@ func (p executorPlan) windowsWrapper() string {
 	log := cmdValue(p.log)
 	fmt.Fprintf(&b, ":again\r\n\"%s\" execute >> \"%s\" 2>&1\r\n", cmdValue(p.binary), log)
 	fmt.Fprintf(&b, ">> \"%s\" echo %%date%% %%time%% The test runner stopped. It starts again in %d seconds.\r\n", log, executorRestartSeconds)
-	fmt.Fprintf(&b, "\"%%SystemRoot%%\\System32\\ping.exe\" -n %d 127.0.0.1 >nul\r\ngoto again\r\n", executorRestartSeconds+1)
+	fmt.Fprintf(&b, "\"%%SystemRoot%%\\System32\\ping.exe\" -n %d 127.0.0.1 >nul || exit /b\r\ngoto again\r\n", executorRestartSeconds+1)
 	return b.String()
 }
 

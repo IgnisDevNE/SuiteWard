@@ -159,14 +159,17 @@ func executeWith(ctx context.Context, args []string, env Env, stdout, stderr io.
 		reportf(stderr, "cannot read the executor binary to name it in the results: %v\n", err)
 		return 1
 	}
+	log := newLogger(stdout, slog.LevelInfo)
 	ex, err := executor.New(executor.Config{
 		API: api, Runtime: deps.runtime(settings.runtime), Sweep: deps.sweep(settings.runtime),
-		Version: Version, BinarySHA256: sum, Log: newLogger(stdout, slog.LevelInfo),
+		Version: Version, BinarySHA256: sum, Log: log,
 	})
 	if err != nil {
 		reportf(stderr, "%v\n", err)
 		return 1
 	}
+	ctx, stop := deps.watch(ctx, log) // on Windows the run also ends, as at the signal, when the console host of its loop is gone
+	defer stop()
 	if err := ex.Run(ctx); err != nil {
 		reportf(stderr, "%v\n", err)
 		return 1

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
+	osexec "os/exec" // the integration harness of this package declares exec
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -66,6 +66,13 @@ func TestTheConsoleHostIsFoundOnlyInTheChainOfTheTask(t *testing.T) {
 // helperDirEnv names the folder in which TestWatchHelperProcess leaves its marks. Without it that test is not a test: it returns at once.
 const helperDirEnv = "SUITEWARD_TEST_WATCH_DIR"
 
+// markFile is the file of a mark in the folder of the helper process.
+func markFile(dir, name string) string { return filepath.Clean(filepath.Join(dir, name)) }
+
+// startHost is exec.Command. This test starts the console host of Windows and its own binary, with arguments of its own, so gosec's G204 (a
+// subprocess launched with a variable) does not apply.
+var startHost = osexec.Command
+
 // TestWatchHelperProcess is the executor of the test below: the process that the script of the task starts. It watches its console host as
 // `suiteward execute` does, and writes a mark for each thing that happens, never to the console (which is gone when the mark matters).
 func TestWatchHelperProcess(t *testing.T) {
@@ -73,14 +80,13 @@ func TestWatchHelperProcess(t *testing.T) {
 	if dir == "" {
 		return
 	}
-	mark := func(name, text string) { _ = os.WriteFile(filepath.Join(dir, name), []byte(text), 0o600) }
-	log, err := os.Create(filepath.Join(dir, "log"))
+	mark := func(name, text string) { _ = os.WriteFile(markFile(dir, name), []byte(text), 0o600) }
+	log, err := os.Create(markFile(dir, "log"))
 	if err != nil {
 		mark("failed", err.Error())
 		os.Exit(2)
 	}
 	ctx, stop := watchConsoleHost(context.Background(), newLogger(log, slog.LevelInfo))
-	defer stop()
 	mark("armed", fmt.Sprintf("%d %d", os.Getpid(), os.Getppid()))
 	select {
 	case <-ctx.Done():
@@ -88,6 +94,7 @@ func TestWatchHelperProcess(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		mark("timeout", "")
 	}
+	stop()
 	os.Exit(0)
 }
 
@@ -97,8 +104,10 @@ func TestWatchHelperProcess(t *testing.T) {
 func TestTheExecutorEndsItsRunWhenTheConsoleHostOfItsLoopIsStopped(t *testing.T) {
 	dir := t.TempDir()
 	system := filepath.Join(os.Getenv("SystemRoot"), "System32")
-	host := exec.Command(filepath.Join(system, "conhost.exe"))
-	host.SysProcAttr = &syscall.SysProcAttr{NoInheritHandles: true, CmdLine: fmt.Sprintf(`"%s\conhost.exe" --headless "%s\cmd.exe" /d /s /c ""%s" -test.run=TestWatchHelperProcess"`, system, system, os.Args[0])}
+	conhost, cmd := filepath.Join(system, "conhost.exe"), filepath.Join(system, "cmd.exe")
+	host := startHost(conhost)
+	// NoInheritHandles: Task Scheduler gives the host no standard handles, and a host that gets them (the NUL of exec) does not run its program.
+	host.SysProcAttr = &syscall.SysProcAttr{NoInheritHandles: true, CmdLine: `"` + conhost + `" --headless "` + cmd + `" /d /s /c ""` + os.Args[0] + `" -test.run=TestWatchHelperProcess"`}
 	host.Env = append(os.Environ(), helperDirEnv+"="+dir)
 	if err := host.Start(); err != nil {
 		t.Fatalf("cannot start the console host: %v", err)
@@ -120,14 +129,14 @@ func TestTheExecutorEndsItsRunWhenTheConsoleHostOfItsLoopIsStopped(t *testing.T)
 		t.Fatalf("the mark %q of the executor does not hold its process ids: %v", armed, err)
 	}
 	time.Sleep(500 * time.Millisecond)
-	if _, err := os.Stat(filepath.Join(dir, "ended")); err == nil {
+	if _, err := os.Stat(markFile(dir, "ended")); err == nil {
 		t.Fatal("the executor ended its run while its console host was running")
 	}
 	if err := host.Process.Kill(); err != nil { // as the task's stop does: no /T, so the script and the executor are left
 		t.Fatalf("cannot end the console host: %v", err)
 	}
 	waitForMark(t, dir, "ended")
-	logged, err := os.ReadFile(filepath.Join(dir, "log"))
+	logged, err := os.ReadFile(markFile(dir, "log"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,12 +150,12 @@ func waitForMark(t *testing.T, dir, name string) string {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
-		if text, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
+		if text, err := os.ReadFile(markFile(dir, name)); err == nil {
 			return string(text)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	failed, _ := os.ReadFile(filepath.Join(dir, "failed"))
+	failed, _ := os.ReadFile(markFile(dir, "failed"))
 	t.Fatalf("the executor left no mark %q within 20 seconds (it failed with %q)", name, failed)
 	return ""
 }

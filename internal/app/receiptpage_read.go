@@ -160,7 +160,7 @@ func (p *receiptPages) readHead(ctx context.Context, state owner.State, project 
 }
 
 // read reads what the page states of the pull request: its head as the synchronization last observed it (the last one recorded, for a pull request that is not open),
-// the revision it carries, the job of each plan for that head, the unblocks, the silence of the test runner and the preview mode.
+// the revision it carries, the job of each plan for that head, the unblocks and the silence of the test runner.
 func (p *receiptPages) read(ctx context.Context, state owner.State, project owner.ProjectPolicy, number int, deps pageDeps) (pullView, error) {
 	pulls, err := p.pulls.Pulls(ctx, project.Repo)
 	if err != nil {
@@ -208,9 +208,6 @@ func (p *receiptPages) read(ctx context.Context, state owner.State, project owne
 	if v.Kinds.NoneMet {
 		v.Wrong = append(v.Wrong, pageLink{Href: kindsHref, Text: noKindSentence})
 	}
-	if v.Kinds.Preview, err = p.previewOf(ctx, state, project, number); err != nil {
-		return pullView{}, err
-	}
 	if v.Evidence, err = evidenceOf(h.canonical, h.receipt); err != nil {
 		return pullView{}, err
 	}
@@ -218,18 +215,6 @@ func (p *receiptPages) read(ctx context.Context, state owner.State, project owne
 		v.Report, err = reportOf(ctx, deps, project.Repo, h.current, h.revisions)
 	}
 	return v, err
-}
-
-// previewOf says what the page states of the preview mode of the pull request.
-func (p *receiptPages) previewOf(ctx context.Context, state owner.State, project owner.ProjectPolicy, number int) (string, error) {
-	mode, found, err := p.previews.PreviewMode(ctx, project.RepositoryID, number, state.EnrolledAt)
-	if err != nil {
-		return "", fmt.Errorf("read the preview mode: %w", err)
-	}
-	if !found {
-		return "No preview mode is recorded for this pull request.", nil
-	}
-	return "Preview mode: " + commandtext.Visible(mode) + ". It is a preview: no check and no approval reads it.", nil
 }
 
 // shortSHA is the first seven characters of a commit.

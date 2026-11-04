@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/githubsync"
 	"github.com/IgnisDevNE/SuiteWard/internal/application/governance"
@@ -143,17 +144,26 @@ func TestChecksJobOnPostgreSQLGatesTheContractCheckAndDecidesTheReceipt(t *testi
 		t.Fatalf("the latest Receipt check message counts %s DETECTS, want 1", got)
 	}
 
-	// The receipt page reads the same rows, through the real stores: the tests of the receipt of pull 5 with their state, and the evidence of the run.
-	pages := &api{owners: store, receipts: newReceiptPages(store, artifacts, store.Execution(), store, store, owner.TierIsolated), reports: newChangeReports(store, artifacts),
+	// The receipt page reads the same rows, through the real stores: the tests of the receipt of pull 5 with their state, and the evidence of the run. A mode-set row of an earlier run of
+	// /suiteward mode is in the ledger since the enrollment, and the page states no preview mode (SW-16).
+	earlierMode := commands.Entry{RepositoryID: bootRepoID, CommentID: 9001, PullNumber: 5, AuthorID: bootOwnerID, CreatedAt: bootTime.Add(time.Second), BodyDigest: artifact.Hash([]byte("/suiteward mode feature")),
+		Disposition: commands.ModeSet, Mode: "feature", DecidedAt: bootTime.Add(time.Second)}
+	if err := store.Record(t.Context(), earlierMode, nil); err != nil {
+		t.Fatal(err)
+	}
+	pages := &api{owners: store, receipts: newReceiptPages(store, artifacts, store.Execution(), store, owner.TierIsolated), reports: newChangeReports(store, artifacts),
 		executorStatus: &executorStatus{liveness: execution.NewLiveness(time.Now())}, logger: logger}
 	response := httptest.NewRecorder()
 	newRouter(pages).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/pulls/acme/widgets/5", nil))
 	page := html.UnescapeString(response.Body.String())
 	for _, want := range []string{"Commit: " + cjHead2[:7] + " (full SHA: " + cjHead2 + ")", pageRow("State", "pending", "complete"), pageRow("DETECTS", "TestR00", ".", "a_test.go", "", ""), "<td>INERT</td><td>TestR01</td>",
-		pageRow("Test runner version", "-", "0.4.0-test"), pageRow("fix", "Met", "-"), "<td>refactor</td><td>Not met</td>", "No preview mode is recorded for this pull request.", "<h2>Change report</h2>"} {
+		pageRow("Test runner version", "-", "0.4.0-test"), pageRow("fix", "Met", "-"), "<td>refactor</td><td>Not met</td>", "<h2>Change report</h2>"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("the receipt page (status %d) lacks %q:\n%s", response.Code, want, page)
 		}
+	}
+	if strings.Contains(page, "review mode") {
+		t.Fatalf("the receipt page states a preview mode although none is shown any more:\n%s", page)
 	}
 
 	cycle(clock.Add(time.Second), map[int]string{4: bootHead}) // pull 5 closes: its canonical job is still pending

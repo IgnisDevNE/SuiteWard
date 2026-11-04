@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	enginePodman = "podman"             // what Info says of Podman, which runs the sandbox with one more flag
+	enginePodman = "podman"             // what Info says of Podman, which runs the sandbox with flags of its own
 	namePrefix   = "suiteward-sandbox-" // every sandbox container, so that a leftover can be found and swept
 	user         = "65534:65534"        // nobody: both images and both runtimes already know it (spike S0)
 	// script extracts the tar that arrives on the standard input, refuses to go on without the completion marker that ends it, goes to
@@ -143,7 +143,8 @@ func (c *cli) engineName(ctx context.Context) (string, error) {
 	return c.engine, nil
 }
 
-// runArgs is the whole of `run`: the properties of ADR 0028 section 11 and nothing else, the same for both engines but one flag.
+// runArgs is the whole of `run`: the properties of ADR 0028 section 11 and nothing else, the same for both engines but two flags that only
+// Podman takes.
 // There is no --rm, because the container must exist to be inspected for an out-of-memory kill; the runner removes it. There is no
 // --env either, because the image has an environment of its own: the script starts Argv through env -i with the assignments that
 // follow the work directory, so that Argv sees exactly Spec.Env.
@@ -156,6 +157,11 @@ func runArgs(engine, name string, s Spec) []string {
 	// the attached CLI still receives it, which is all the runner reads.
 	args := []string{"run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only", "--log-driver=none"}
 	if engine == enginePodman {
+		// --log-level=error is a global flag, so it goes before `run`. Podman passes it on to conmon, which then drops the warnings that bury the
+		// runner's journal while the source is streamed in ("Failed to write to fd container stdin": retries, not failures); errors still show.
+		// Docker has no conmon, and its --log-level is its client's. Through a Podman machine the flag reaches only the remote client: conmon runs
+		// in the machine at the service's own level.
+		args = append([]string{"--log-level=error"}, args...)
 		// Under --read-only Podman still mounts a writable tmpfs on /tmp, /var/tmp, /run and /dev/shm unless it is told not to.
 		args = append(args, "--read-only-tmpfs=false")
 	}

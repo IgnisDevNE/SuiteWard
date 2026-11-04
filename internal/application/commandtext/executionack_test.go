@@ -30,6 +30,7 @@ const (
 	nextCode     = "The next attempt needs the next code"
 	forkText     = "this pull request comes from a fork, and SuiteWard does not support pull requests from forks yet. Nothing changed."
 	notOpenText  = "this pull request is no longer open. Nothing changed."
+	modeGoneText = "`/suiteward mode` is no longer a command. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
 	codeWasUsed  = "The code was used"
 	unblockLifts = "The checks will say that the owner unblocked this commit and that its tests did not run."
 	// unblockStays is what an unblock leaves alone: tests that ran. It does not say that a run that is pending stays as it is, since an unblock ends a
@@ -94,16 +95,17 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 			[]string{"eligible", "/suiteward approve", "<code>"},
 		},
 		{
+			// An acknowledgment queued before M2.1c: it keeps its reason, and no longer offers the command that is gone (SW-16, text 7).
 			"mode refused for a fork",
 			commandtext.Ack{Outcome: commandtext.ModeRefused, Source: source, Owner: owner, Refusal: commandtext.Fork},
-			[]string{"`/suiteward mode` was not processed: " + forkText, "`/suiteward mode <fix|feature|refactor>`"},
-			[]string{"code", "approv"},
+			[]string{"`/suiteward mode` was not processed: " + forkText, modeGoneText},
+			[]string{"`/suiteward mode <fix|feature|refactor>`", "then comment"},
 		},
 		{
 			"mode refused for a pull request that is not open",
 			commandtext.Ack{Outcome: commandtext.ModeRefused, Source: source, Owner: owner, Refusal: commandtext.NotOpen},
-			[]string{"`/suiteward mode` was not processed: " + notOpenText, "`/suiteward mode <fix|feature|refactor>`"},
-			[]string{"code", "approv"},
+			[]string{"`/suiteward mode` was not processed: " + notOpenText, modeGoneText},
+			[]string{"`/suiteward mode <fix|feature|refactor>`", "on an open pull request"},
 		},
 		{
 			"unblocked, canonical run",

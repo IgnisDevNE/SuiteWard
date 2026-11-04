@@ -961,6 +961,25 @@ func (r isolatedRig) build(t *testing.T) (*fakeEngine, Settings) {
 	return f, s
 }
 
+// Doctor of the isolated tier, run from a folder its account cannot enter, says so on its runtime row, before Podman would stop there with "cannot
+// chdir … Permission denied", which names no cause. The co-located tier runs as the person's own account and is not checked.
+func TestDoctorOfTheIsolatedTierSaysThatItsFolderCannotBeEntered(t *testing.T) {
+	f, s := isolatedRig{}.build(t)
+	inFolder(t, func() (string, error) { return "", os.ErrPermission })
+	_, res, _ := runDoctor(t, f, s)
+	wantFail(t, res, "runtime", "SuiteWard cannot run from this folder, because the account that runs it cannot open it.")
+	if fix := res["runtime"].Fix; !strings.Contains(fix, "`cd ~`") {
+		t.Errorf("the fix does not say how to leave the folder: %q", fix)
+	}
+	if len(f.find("info --format")) != 0 {
+		t.Error("Podman ran from a folder the account cannot enter")
+	}
+
+	f, s = colocated{}.build(t)
+	_, res, _ = runDoctor(t, f, s)
+	wantOK(t, res, "runtime")
+}
+
 func TestDoctorHealthyIsolated(t *testing.T) {
 	f, s := isolatedRig{}.build(t)
 	code, res, _ := runDoctor(t, f, s)

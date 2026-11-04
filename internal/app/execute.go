@@ -135,7 +135,8 @@ func fileSum(path string) (string, error) {
 
 // runExecute is `suiteward execute`: the executor, a process of the machine that has the container runtime. It reads its three settings
 // and runs before any setting of the service is loaded. Exit 0 is a clean stop at the signal, 1 a fatal error (the settings, the refused
-// environment, no runtime), 2 a usage error.
+// environment, a runtime name that the results cannot carry), 2 a usage error. A container runtime that does not answer is not an error: the
+// executor waits for it (run.Executor.Run) and stops cleanly at the signal.
 func runExecute(ctx context.Context, args []string, env Env, stdout, stderr io.Writer) int {
 	return executeWith(ctx, args, env, stdout, stderr, osExecuteDeps())
 }

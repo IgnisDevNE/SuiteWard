@@ -166,7 +166,7 @@ func TestDoctorIsolatedExecutorRunning(t *testing.T) {
 		want []string
 		fix  string
 	}{
-		{"the service last saw an executor long ago", isolatedRig{lastSeen: 10 * time.Minute}, []string{"ago"}, "token"},
+		{"the service last saw an executor long ago", isolatedRig{lastSeen: 10 * time.Minute}, []string{"ago", "waits for its container program"}, "token"},
 		{"the service has no executor token", isolatedRig{executionOff: true}, []string{"EXECUTOR_TOKEN"}, "install host"},
 		{"the service is older than M2.1", isolatedRig{noExecution: true}, []string{"added the test runner"}, "install --upgrade"},
 	}

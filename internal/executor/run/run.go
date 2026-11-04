@@ -15,8 +15,9 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/sandbox"
 )
 
-// Pacing is how long the executor waits: after a lease request that found no job, between the lease requests that follow an error (the
-// wait doubles from Backoff up to MaxBackoff and starts again after an answer), and between heartbeats.
+// Pacing is how long the executor waits: after a lease request that found no job, between the lease requests that follow an error and between
+// the asks of a container runtime that does not answer (the wait doubles from Backoff up to MaxBackoff and starts again after an answer), and
+// between heartbeats.
 type Pacing struct {
 	Idle       time.Duration
 	Backoff    time.Duration
@@ -26,9 +27,10 @@ type Pacing struct {
 	Margin     time.Duration // how long before the deadline of an attempt the executor drops it
 }
 
-// DefaultPacing is the contract's: 5 s after a 204, a backoff of 5 s up to 20 s after an error, a heartbeat about every 10 s, and 30 s for a job
-// in flight after the signal, and an attempt dropped 30 s before its deadline. The backoff and the heartbeat keep a healthy executor from
-// leaving the service silent for NotRespondingAfter of internal/domain/execution (30 s), the silence after which a head reads "not responding".
+// DefaultPacing is the contract's: 5 s after a 204, a backoff of 5 s up to 20 s after an error (a container runtime that does not answer waits the
+// same), a heartbeat about every 10 s, and 30 s for a job in flight after the signal, and an attempt dropped 30 s before its deadline. The backoff
+// and the heartbeat keep a healthy executor from leaving the service silent for NotRespondingAfter of internal/domain/execution (30 s), the silence
+// after which a head reads "not responding": an executor that waits for its container runtime is not healthy, and is silent until it answers.
 var DefaultPacing = Pacing{Idle: 5 * time.Second, Backoff: 5 * time.Second, MaxBackoff: 20 * time.Second, Heartbeat: 10 * time.Second, Grace: 30 * time.Second, Margin: 30 * time.Second}
 
 // Proxy is the module proxy that the dependency prefetch reads, and the client that reads it.
@@ -131,13 +133,14 @@ func tickEvery(d time.Duration) (<-chan time.Time, func()) {
 	return ticker.C, ticker.Stop
 }
 
-// Run checks the runtime, sweeps the leftover containers and leases jobs until ctx ends. A clean stop is nil; an error is fatal. The
-// signal that ends ctx stops the leasing at once; the job in flight has the grace (30 s) to finish and post, and is then dropped, with its
-// container killed and nothing posted, so that its lease expires and the job is leased again. The supervisor's stop timeout must exceed the grace.
+// Run waits for the container runtime to answer, sweeps the leftover containers and leases jobs until ctx ends. A clean stop is nil; an error
+// is fatal, and a runtime that does not answer is not one (awaitRuntime). The signal that ends ctx stops the leasing at once; the job in
+// flight has the grace (30 s) to finish and post, and is then dropped, with its container killed and nothing posted, so that its lease expires
+// and the job is leased again. The supervisor's stop timeout must exceed the grace.
 func (e *Executor) Run(ctx context.Context) error {
-	name, version, err := e.cfg.Runtime.Info(ctx)
-	if err != nil {
-		return fmt.Errorf("no container runtime: %w", err)
+	name, version, ok := e.awaitRuntime(ctx)
+	if !ok {
+		return nil
 	}
 	e.runtime = name + " " + version
 	if !printable(e.runtime) {
@@ -165,6 +168,34 @@ func (e *Executor) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// awaitRuntime asks the container runtime until it answers, and between the asks waits as after a failed lease (Backoff, doubling up to
+// MaxBackoff): a container program that is not running yet (a Podman machine that a logon did not start) is a state that ends by itself, and
+// an executor that exited would only be started again by its supervisor and fill the log. It says so once when it starts to wait and once when
+// the program answers, and not at each ask. It reports false when ctx ended first.
+func (e *Executor) awaitRuntime(ctx context.Context) (string, string, bool) {
+	wait, waited := e.cfg.Pacing.Backoff, false
+	for {
+		name, version, err := e.cfg.Runtime.Info(ctx)
+		if err == nil {
+			if waited {
+				e.cfg.Log.Info("The container program answers again.")
+			}
+			return name, version, true
+		}
+		if ctx.Err() != nil {
+			return "", "", false
+		}
+		if !waited {
+			e.cfg.Log.Warn("The container program does not answer. The test runner waits for it and tries again.", "error", err)
+			waited = true
+		}
+		if e.cfg.Sleep(ctx, wait) != nil {
+			return "", "", false
+		}
+		wait = min(2*wait, e.cfg.Pacing.MaxBackoff)
+	}
 }
 
 // printable is true for 1 to 64 printable ASCII bytes.

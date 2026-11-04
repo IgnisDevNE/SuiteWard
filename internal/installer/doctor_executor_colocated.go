@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
@@ -119,23 +120,44 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	default:
 		d.pass("executor.lifecycle", "The test runner is set up as "+executorMechanism(plan.goos)+".")
 	}
-	d.checkExecutorRunning(ctx, func(context.Context) error {
-		switch {
-		case stateErr != nil:
-			return fmt.Errorf("doctor could not tell whether the test runner is running: %w", stateErr)
-		case other:
-			return errors.New("the test runner on this computer belongs to another instance, so none runs for this one")
-		case !running:
-			return errors.New("the test runner is not running")
-		}
-		return nil
-	}, runningFixes{
-		noToken:    d.installFix(),
-		notRunning: notRunning,
-		notSeen:    d.notSeenFix(plan),
-	})
+	_, statusRead := d.raw["status"]
+	if d.rt == nil && !statusRead && stateErr == nil && !other && running {
+		d.failRunnerWaitsForContainerProgram()
+	} else {
+		d.checkExecutorRunning(ctx, func(context.Context) error {
+			switch {
+			case stateErr != nil:
+				return fmt.Errorf("doctor could not tell whether the test runner is running: %w", stateErr)
+			case other:
+				return errors.New("the test runner on this computer belongs to another instance, so none runs for this one")
+			case !running:
+				return errors.New("the test runner is not running")
+			}
+			return nil
+		}, runningFixes{
+			noToken:    d.installFix(),
+			notRunning: notRunning,
+			notSeen:    d.notSeenFix(plan),
+		})
+	}
 	d.checkExecutorImage(ctx)
 	d.checkExecutorLoopback(ctx)
+}
+
+// failRunnerWaitsForContainerProgram is the result of a test runner that runs while doctor's own runtime check failed (d.rt is nil, and the result
+// named d.why says why) and /status could not be read: the service lives in that program, so with it down nothing answers. When /status is read, the
+// service works and the usual row stands (a rootful Podman fails doctor's check, not the runner's). A test runner that cannot reach its program asks
+// for its version until it answers, and goes on by itself; doctor cannot tell whether the runner's own request fails, so the row says what SuiteWard
+// cannot use and what the runner does when it cannot reach the program. The fix is the one of the result that found the program down: the command
+// that starts the Podman machine or Docker.
+func (d *doctor) failRunnerWaitsForContainerProgram() {
+	i := slices.IndexFunc(d.results, func(r doctorResult) bool { return r.Name == d.why })
+	if i < 0 {
+		d.fail("executor.running", "doctor could not find why the container program does not answer: it has no result named "+d.why, doctorBugFix)
+		return
+	}
+	why := d.results[i]
+	d.fail("executor.running", "The test runner is running, but SuiteWard cannot use the container program: "+strings.TrimRight(why.Detail, ".")+". A test runner that cannot reach its container program waits and goes on by itself once it answers, so it needs no restart. Until then no test can run.", why.Fix)
 }
 
 // notSeenFix is the fix of a test runner that runs and that the service has not seen lately: its log says why, and an install makes the service

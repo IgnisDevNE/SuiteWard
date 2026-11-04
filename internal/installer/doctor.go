@@ -342,6 +342,11 @@ func (d *doctor) machineSSH(ctx context.Context, command string) ([]byte, error)
 }
 
 func (d *doctor) checkRuntime(ctx context.Context) {
+	if d.s.Tier == config.TierIsolated && checkWorkingFolder() != nil { // Podman would stop with "cannot chdir", which names no cause
+		d.why = "runtime"
+		d.fail("runtime", "SuiteWard cannot run from this folder, because the account that runs it cannot open it.", "Run `cd ~` first, then run `"+d.deps.suggest("doctor")+"` again.")
+		return
+	}
 	var rt Runtime
 	var err error
 	if d.s.Runtime == RuntimeDocker {
@@ -916,8 +921,8 @@ const (
 	dbMemoryBytes  = 402653184 // 384 MiB, the limit of suiteward-db.container
 )
 
-// checkHost reads what Podman applies on the isolated host: the network backend, and the memory limit of the database.
-func (d *doctor) checkHost(ctx context.Context) {
+// checkNetwork reads the network backend that Podman applies on the isolated host.
+func (d *doctor) checkNetwork(ctx context.Context) {
 	args := []string{"info", "--format", "{{.Host.NetworkBackend}}"}
 	if d.s.Connection != "" {
 		args = append([]string{"--connection", d.s.Connection}, args...)
@@ -931,6 +936,13 @@ func (d *doctor) checkHost(ctx context.Context) {
 			"Install netavark with `sudo dnf install netavark`, set `network_backend = \"netavark\"` in `containers.conf`, then run doctor again. The metadata rule and the service network need it.")
 	default:
 		d.pass("network", "the network backend is "+networkBackend)
+	}
+}
+
+// checkHost reads what Podman applies on the isolated host: the network backend, and the memory limit of the database.
+func (d *doctor) checkHost(ctx context.Context) {
+	if d.needRuntime("network") { // a Podman that did not answer the runtime check, or a folder it cannot start in, says nothing here either
+		d.checkNetwork(ctx)
 	}
 
 	if !d.needRuntime("memory") {

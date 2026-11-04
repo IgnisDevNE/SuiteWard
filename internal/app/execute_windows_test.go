@@ -94,8 +94,11 @@ func TestWatchHelperProcess(t *testing.T) {
 	select {
 	case <-ctx.Done():
 		mark("ended", "")
-		// Winding up, the executor runs the container CLI to stop the sandbox of a job in flight. Any console program will do here.
-		if _, err := startHost(filepath.Join(os.Getenv("SystemRoot"), "System32", "hostname.exe")).Output(); err != nil {
+		// Winding up, the executor runs the container CLI to stop the sandbox of a job in flight. Any console program will do here. Its window is
+		// hidden, so that the console it gets (the one of the dead host is no use to it) does not open on the screen of whoever runs the tests.
+		program := startHost(filepath.Join(os.Getenv("SystemRoot"), "System32", "hostname.exe"))
+		program.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		if _, err := program.Output(); err != nil {
 			mark("program", "failed: "+err.Error())
 		} else {
 			mark("program", "ok")

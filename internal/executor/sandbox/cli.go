@@ -159,7 +159,8 @@ func runArgs(engine, name string, s Spec) []string {
 	if engine == enginePodman {
 		// --log-level=error is a global flag, so it goes before `run`. Podman passes it on to conmon, which then drops the warnings that bury the
 		// runner's journal while the source is streamed in ("Failed to write to fd container stdin": retries, not failures); errors still show.
-		// Docker has no conmon, and its --log-level is its client's.
+		// Docker has no conmon, and its --log-level is its client's. Through a Podman machine the flag reaches only the remote client: conmon runs
+		// in the machine at the service's own level.
 		args = append([]string{"--log-level=error"}, args...)
 		// Under --read-only Podman still mounts a writable tmpfs on /tmp, /var/tmp, /run and /dev/shm unless it is told not to.
 		args = append(args, "--read-only-tmpfs=false")

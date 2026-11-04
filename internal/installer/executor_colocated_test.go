@@ -279,6 +279,25 @@ func TestTheWrapperOfTheWindowsTaskStartsTheExecutorAgainAfterAPause(t *testing.
 	}
 }
 
+// The pause needs the console of the task, and a task that was stopped loses it (SW-25): Stop-ScheduledTask ends only the console host, the script lives
+// on as an orphan, and its ping fails at once, so a script that went on would start the executor again with no pause at all. The script ends when its
+// pause fails and goes back to :again when the pause worked, and nothing else in it changes (the tests around this one read the rest).
+func TestTheWrapperOfTheWindowsTaskEndsWhenItsPauseFails(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	h.f.idleListing = true // a first install lists the programs that run once
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	script := h.readHome("executor/run.cmd")
+	lines := strings.Split(strings.TrimSuffix(script, "\r\n"), "\r\n")
+	if n := len(lines); n < 2 || lines[n-2] != `"%SystemRoot%\System32\ping.exe" -n 6 127.0.0.1 >nul || exit /b` || lines[n-1] != "goto again" {
+		t.Errorf("the wrapper must end with the pause that ends the script when it fails, then goto again:\n%s", script)
+	}
+	if n := strings.Count(script, "exit /b"); n != 1 {
+		t.Errorf("the wrapper has %d exit /b, want only the one of the pause:\n%s", n, script)
+	}
+}
+
 func TestTheInstallSaysThatTheExecutorOfWindowsHasNoWindow(t *testing.T) {
 	h := machineHarnessOn(t, "windows")
 	h.f.idleListing = true // a first install lists the programs that run once

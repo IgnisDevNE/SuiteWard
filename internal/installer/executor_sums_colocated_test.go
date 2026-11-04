@@ -54,6 +54,7 @@ func TestInstallRefusesSumsThatDoNotListTheProgramBeforeChangingAnything(t *test
 }
 
 func TestInstallWithoutTheSumsSaysOnceThatTheBinaryWasNotChecked(t *testing.T) {
+	asBuild(t, "") // a development build
 	h := newHarness(t, "linux")
 	if err := h.podman(); err != nil {
 		t.Fatal(err)
@@ -76,5 +77,23 @@ func TestUpgradeAtTheInstalledReleasePinsTheExecutorToTheSums(t *testing.T) {
 	}
 	if got, want := u.readHome("executor/executor.pin"), sha256File(t, u.program())+"  "+sumsAsset+"\n"; got != want {
 		t.Errorf("the pin is %q, want the release's line %q", got, want)
+	}
+}
+
+// A release build is never called a development build: the install says what doctor's row says, in the same words.
+func TestInstallOfAReleaseBuildWithoutTheSumsDoesNotCallItADevelopmentBuild(t *testing.T) {
+	asBuild(t, testDigest)
+	h := newHarness(t, "linux")
+	if err := h.podman(); err != nil {
+		t.Fatal(err)
+	}
+	out := h.out.String()
+	fix := h.newEnv().Deps.suggest("install", "--upgrade --sha256sums <the release's SHA256SUMS file>")
+	want := "The test runner was not checked against the list of fingerprints of its release (SHA256SUMS), so SuiteWard cannot say that it is the release's own program. To check it, download SHA256SUMS from the same release and run `" + fix + "`.\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("the output lacks %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "development build") {
+		t.Errorf("a release build is called a development build:\n%s", out)
 	}
 }

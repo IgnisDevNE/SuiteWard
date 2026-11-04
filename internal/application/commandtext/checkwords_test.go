@@ -66,3 +66,25 @@ func TestTheUnblockOfTheChecksAndTheRefusalIsOfferedInTheWordsOfTheComment(t *te
 		t.Errorf("a check does not say that the tests do not run for this commit after an unblock:\n%s\n%s", contract, receipt)
 	}
 }
+
+// The two sentences that say when the tests run on their own are the comment's, said of the approved tests (M2.1c, SW-28, part 3): a reader who meets the check and the comment reads one
+// fact in one set of words, so each ends the same way.
+func TestTheContractCheckAndTheCommentSayWhenTheTestsRunOnTheirOwnInTheSameWords(t *testing.T) {
+	for _, tc := range []struct{ code, tail string }{
+		{"no-executor", "when the test runner answers again."},
+		{"executor-not-configured", "once the test runner is set up."},
+	} {
+		comment := resultsText(t, results(func(r *commandtext.Results) {
+			r.Canonical, r.Receipt, r.Next = unavailableCanonical(tc.code), nil, execution.NextUnblock
+		}))
+		c := requiredCheck("canonical-unavailable")
+		c.Unavailable = tc.code
+		_, contract := checkText(t, c)
+		if want := "SuiteWard runs them " + tc.tail; !strings.Contains(comment, want) {
+			t.Errorf("%s: the comment lacks %q:\n%s", tc.code, want, comment)
+		}
+		if want := "SuiteWard runs the approved tests " + tc.tail; !strings.Contains(contract, want) {
+			t.Errorf("%s: the Contract check lacks %q:\n%s", tc.code, want, contract)
+		}
+	}
+}

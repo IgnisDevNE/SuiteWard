@@ -129,3 +129,64 @@ func TestCheckMessageOfTheCanonicalGateRefusesWhatCannotBeRendered(t *testing.T)
 		})
 	}
 }
+
+// chkUnavailable is the message of generation 3 for a check of reason, with the reason code of the canonical job that it reports (empty for none).
+func chkUnavailable(reason, unavailable string) (governance.OutboxMessage, error) {
+	r := checks.Result{RepositoryID: cmtRepoID, PullNumber: cmtPull, HeadSHA: chkHead, State: checks.InProgress, Reason: reason, Reference: "P1-R2"}
+	return newCheckMessageOf(cmtRepo, r, owner.TierIsolated, "V2", 3, nil, 0, nil, 0, false, unavailable)
+}
+
+// The next step of a canonical-unavailable check follows from the reason of its job (M2.1c, SW-28, part 3): a message with no reason, such as one that was queued before the field
+// existed or one that a wait sends again, says what the check said before.
+func TestCheckPublisherPostsTheNextStepOfAnUnavailableRunByItsReason(t *testing.T) {
+	const push = "Next: push a new commit to run the approved tests again. To let this commit pass without the approved tests, the owner comments:"
+	for name, tc := range map[string]struct{ unavailable, next string }{
+		"the test runner did not answer": {"no-executor", "Next: SuiteWard runs the approved tests when the test runner answers again. To let this commit pass without the approved tests, the owner comments:"},
+		"no test runner is set up":       {"executor-not-configured", "Next: SuiteWard runs the approved tests once the test runner is set up. To let this commit pass without the approved tests, the owner comments:"},
+		"another reason":                 {"timeout", push},
+		"no reason":                      {"", push},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, err := chkUnavailable("canonical-unavailable", tc.unavailable)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := newChkWorld()
+			if err := w.deliver(m); err != nil {
+				t.Fatal(err)
+			}
+			posts := w.runner.posts()
+			if len(posts) != 1 || !strings.Contains(posts[0].Summary, tc.next) || !strings.Contains(posts[0].Summary, "/suiteward unblock <code>") {
+				t.Fatalf("posted %+v, want the next step %q and the unblock", posts, tc.next)
+			}
+		})
+	}
+}
+
+func TestCheckMessageOfAnUnavailableRunCarriesItsReasonOnlyWhenItHasOneAndRefusesWhatDoesNotFit(t *testing.T) {
+	for unavailable, want := range map[string]bool{"no-executor": true, "": false} {
+		m, err := chkUnavailable("canonical-unavailable", unavailable)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(m.Payload, &got); err != nil {
+			t.Fatal(err)
+		}
+		if _, has := got["unavailable"]; has != want || (want && got["unavailable"] != unavailable) {
+			t.Errorf("payload %v, want the reason %q carried = %v", got, unavailable, want)
+		}
+	}
+	for name, tc := range map[string]struct{ reason, unavailable string }{
+		"a code outside the closed set":                  {"canonical-unavailable", "bogus"},
+		"a reason on a pending run":                      {"canonical-pending", "no-executor"},
+		"a reason on a runner that does not respond":     {"canonical-not-responding", "no-executor"},
+		"a reason on a check that the run does not hold": {"approval-missing", "no-executor"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if m, err := chkUnavailable(tc.reason, tc.unavailable); err == nil {
+				t.Fatalf("built %s", m.Payload)
+			}
+		})
+	}
+}

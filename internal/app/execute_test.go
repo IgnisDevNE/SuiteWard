@@ -249,16 +249,25 @@ func TestTheWatchOfTheConsoleHostDoesNothingOnOtherSystems(t *testing.T) {
 	}
 }
 
-func TestWithoutARuntimeOrABinaryTheExecutorExitsWithOne(t *testing.T) {
+func TestWithoutABinaryTheExecutorExitsWithOne(t *testing.T) {
 	env := executorEnv(map[string]string{"SUITEWARD_EXECUTOR_URL": "http://127.0.0.1:1"})
 	var swept []string
 	var out, errOut bytes.Buffer
-	if code := executeWith(context.Background(), nil, env, &out, &errOut, fakeDeps(fakeRuntime{infoErr: errors.New("no engine")}, strings.Repeat("ab", 32), nil, &swept)); code != 1 || !strings.Contains(errOut.String(), "container runtime") {
-		t.Errorf("without a runtime: %d, stderr %q; want 1 and the runtime named", code, errOut.String())
-	}
-	errOut.Reset()
 	if code := executeWith(context.Background(), nil, env, &out, &errOut, fakeDeps(fakeRuntime{}, "", errors.New("no binary"), &swept)); code != 1 || !strings.Contains(errOut.String(), "binary") {
 		t.Errorf("without a binary: %d, stderr %q; want 1 and the binary named", code, errOut.String())
+	}
+}
+
+// A container program that does not answer is waited for, not a fatal error: only the signal ends the executor, with exit 0. The line that says
+// that it waits depends on the timing of the signal, so the run package's tests cover it.
+func TestWithoutAContainerProgramTheExecutorWaitsAndExitsWithZeroAtTheSignal(t *testing.T) {
+	env := executorEnv(map[string]string{"SUITEWARD_EXECUTOR_URL": "http://127.0.0.1:1"})
+	var swept []string
+	var out, errOut bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	if code := executeWith(ctx, nil, env, &out, &errOut, fakeDeps(fakeRuntime{infoErr: errors.New("no engine")}, strings.Repeat("ab", 32), nil, &swept)); code != 0 || errOut.Len() != 0 || len(swept) != 0 {
+		t.Errorf("without a container program: %d, stderr %q, swept %v; want 0, nothing on stderr and no sweep", code, errOut.String(), swept)
 	}
 }
 

@@ -61,6 +61,7 @@ func TestDoctorMachineProblems(t *testing.T) {
 		{"the machines cannot be listed", []rule{{match: "machine list", err: errors.New("podman: not found")}}, "podman-machine-default", "", []string{"list the Podman machines", "not found"}, "installed"},
 		{"the list is not JSON", []rule{{match: "machine list", out: "not json"}}, "podman-machine-default", "", []string{"read the list of Podman machines"}, "machine list --format json"},
 		{"no machine of that name", []rule{{match: "machine list", out: `[{"Name":"other","Running":true}]`}}, "podman-machine-default", "", []string{"no Podman machine is called podman-machine-default"}, "podman machine init"},
+		{"no machine of its own name", []rule{{match: "machine list", out: `[{"Name":"other","Running":true}]`}}, "sw-m21c", "", []string{"no Podman machine is called sw-m21c"}, "`podman machine init sw-m21c` and `podman machine start sw-m21c`"},
 		{"no machine at all", []rule{{match: "machine list", out: `[]`}}, "", "", []string{"there is no Podman machine"}, "podman machine init"},
 		{"the machine is starting", []rule{{match: "machine list", out: `[{"Name":"podman-machine-default","Starting":true}]`}}, "podman-machine-default", "", []string{"still starting"}, "Wait"},
 		{"a machine with its own name is stopped", []rule{{match: "machine list", out: `[{"Name":"dev","Running":false}]`}}, "dev", "", []string{"dev is not running"}, "podman machine start dev"},

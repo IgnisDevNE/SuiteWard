@@ -4,7 +4,7 @@
 # delayed probe job that must survive a restart. Needs only podman, curl and coreutils; reads nothing from the
 # environment but the SMOKE_* knobs below. Run it on the target:
 #   sh deploy/smoke.sh
-#   podman machine ssh --username user "sh -s" < deploy/smoke.sh          (this PC, inside the Podman machine, as its rootless user: the machine's default ssh user is root, the rootful store, on older machines and `user` on machine-os 6.1)
+#   podman machine ssh --username user "sh -s" < deploy/smoke.sh          (this PC, inside the Podman machine, as its rootless user: the machine's default ssh user is `root` on older machines, which is the rootful store, and `user` on machine-os 6.1)
 # Exit 0 only if every step passed; a failing step prints "FAIL <step>: <reason>" and exits 1.
 set -u
 

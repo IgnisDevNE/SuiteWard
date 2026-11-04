@@ -51,7 +51,7 @@ const (
 	SuggestRefused   Disposition = "suggest-refused"   // owner-authored /suiteward suggest on a fork or a closed pull request, or from a source it cannot answer from; always acknowledged; no operation id, never a command for the check
 	OtherPull        Disposition = "other-pull"        // owner-authored approve or revoke whose reference names a proposal carried by another pull request; refused before a step is used; no operation id, never a command for the check
 	ReceiptRefused   Disposition = "receipt-refused"   // owner-authored approve with a good code that the receipt gate refused; consumes the step, records no consent; no operation id, never a command for the check
-	ModeSet          Disposition = "mode-set"          // owner-authored /suiteward mode: the preview mode was recorded (Entry.Mode); no code, no step, no operation id
+	ModeSet          Disposition = "mode-set"          // an earlier owner-authored /suiteward mode, which recorded a preview mode (Entry.Mode) until M2.1c removed the command; old rows still read
 	ModeRefused      Disposition = "mode-refused"      // owner-authored /suiteward mode on a fork or a pull request that is not open; acknowledged, nothing else recorded; no operation id
 	Unblocked        Disposition = "unblocked"         // owner-authored /suiteward unblock with a good code that lifted the unavailable jobs of the head; no operation id, never a command for the check
 	UnblockRefused   Disposition = "unblock-refused"   // owner-authored /suiteward unblock with a good code that was refused (fork, not-open, not-unavailable); the step stays consumed; no operation id

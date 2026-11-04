@@ -411,7 +411,8 @@ func (h *host) configDir(ctx context.Context) error {
 	return nil
 }
 
-// next prints the command for the service-account step. The host step never runs it: that step must not run as root.
+// next prints the command for the service-account step: the install, or the upgrade when the service's quadlet is already in the account's
+// home. The host step never runs it: that step must not run as root.
 func (h *host) next(ctx context.Context) error {
 	uid, err := h.run(ctx, "id", "-u", ServiceAccount)
 	if err != nil {
@@ -421,12 +422,21 @@ func (h *host) next(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("could not find this program's own file: %w", err)
 	}
-	command := exe + " install --tier isolated"
+	home, err := h.accountHome(ctx)
+	if err != nil {
+		return err
+	}
+	command, lead := exe+" install --tier isolated", "Next, run the installer as the service account."
+	if h.exists(ctx, path.Join(home, ".config", "containers", "systemd", serveUnit)) {
+		// --tier stays: a host installed by hand has no settings file that says it, and an upgrade without one stops to ask.
+		command = exe + " install --upgrade --tier isolated"
+		lead = "The service is already installed on this host, so the next step upgrades it: run the installer as the service account."
+	}
 	_, carriesRelease := ReleaseImage()
 	if !carriesRelease {
 		command += " --image sha256:<signed index digest>"
 	}
-	h.say("\nThe host is ready. Next, run the installer as the service account. The account has no login shell, so this command opens one with the settings it needs:\n\n")
+	h.say("\nThe host is ready. %s The account has no login shell, so this command opens one with the settings it needs:\n\n", lead)
 	h.say("  sudo -u %s -H env XDG_RUNTIME_DIR=/run/user/%s DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus %s\n\n", ServiceAccount, uid, uid, command)
 	h.say("The test runner (the executor) already runs as %s and waits for the service. It uses the HTTP port named in the service account's settings, else %d. If the service will use another HTTP port, run this step again with `--http-port <port>`. Keep one test runner for each container program: when it starts, it removes every %s container of its container program, so a second one would remove the first one's sandboxes.\n\n", ExecutorAccount, DefaultHTTPPort, sandboxNamePrefix)
 	h.say("The account must be able to run %s", exe)

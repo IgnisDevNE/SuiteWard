@@ -45,9 +45,27 @@ var (
 // workingFolder is how the isolated commands learn the folder they run from; a variable so that a test names a folder of its own.
 var workingFolder = os.Getwd
 
-// checkWorkingFolder refuses a run from a folder that the account cannot enter. Scaffold: the check comes with the next commit.
+// unreadableFolder is the refusal of a run whose working folder the account cannot enter. Podman changes into that folder when it starts again
+// inside the account's user namespace, and stops there with "cannot chdir ...: Permission denied", which says nothing about the cause. The
+// folder of `mktemp -d` is one: only whoever made it can enter it.
+const unreadableFolder = "SuiteWard cannot run from this folder, because the account that runs it cannot open it. Run `cd ~` first, then run the command again."
+
+// folderRefused is that sentence as an error: a text of the owner's decision, with its full stop, which an errors.New string may not end in (ST1005).
+type folderRefused string
+
+func (e folderRefused) Error() string { return string(e) }
+
+// checkWorkingFolder refuses a run from a folder that the account cannot enter, before any command runs. The process never changes its own
+// folder: that would change what a relative path (--backup-dir) means. The folder has no name when it was removed; `/.` makes the system
+// check the permission to search the folder itself, and every folder above it, as chdir does (a read of the folder is not what Podman needs).
 func checkWorkingFolder() error {
-	_ = workingFolder
+	folder, err := workingFolder()
+	if err == nil {
+		_, err = os.Stat(folder + "/.")
+	}
+	if err != nil {
+		return folderRefused(unreadableFolder) // the cause is not shown: it is "permission denied" or "no such file", and the sentence names the way out
+	}
 	return nil
 }
 
@@ -65,8 +83,9 @@ type isolatedHost struct {
 	envPath      string // the GitHub env file of the account
 }
 
-// openIsolatedHost refuses what the isolated commands refuse before they look at anything else: a system that is not Linux,
-// root or another account, invalid settings, a Podman that is not rootless and a user manager that is not ready.
+// openIsolatedHost refuses what the isolated commands refuse before they look at anything else: a system that is not Linux, a working
+// folder that the account cannot enter, root or another account, invalid settings, a Podman that is not rootless and a user manager that
+// is not ready.
 func openIsolatedHost(ctx context.Context, s Settings, d Deps) (isolatedHost, error) {
 	if err := d.validate(); err != nil {
 		return isolatedHost{}, err

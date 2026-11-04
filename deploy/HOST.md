@@ -29,20 +29,24 @@ pwsh ./scripts/verify-release.ps1 -Blob SHA256SUMS -Bundle SHA256SUMS.sigstore.j
 On the host, as `ssm-user`, download the arm64 binary and `SHA256SUMS`, and compare. The first check must print the hash your PC printed, and the second must print `OK` for the binary:
 
 ```
-cd "$(mktemp -d)"
+dl="$(mktemp -d)"
+cd "$dl"
 curl -fsSLO https://github.com/IgnisDevNE/SuiteWard/releases/download/<tag>/suiteward_<tag>_linux_arm64
 curl -fsSLO https://github.com/IgnisDevNE/SuiteWard/releases/download/<tag>/SHA256SUMS
 sha256sum SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 sudo install -m 0755 suiteward_<tag>_linux_arm64 /usr/local/bin/suiteward
+cd /
 ```
+
+The last line leaves the download folder: `mktemp -d` makes a folder that only you can open, and the shell that section 2 opens as `suiteward` starts in the folder you are in, where `suiteward` cannot work. The verified `SHA256SUMS` stays in `$dl`.
 
 ## 2. Install the host
 
-As `ssm-user`, prepare the host once ([install guide step 10.2](../docs/install.md#10-running-on-a-separate-host-operators)):
+As `ssm-user`, prepare the host once ([install guide step 10.2](../docs/install.md#10-running-on-a-separate-host-operators)). `$dl` is the folder of section 1 (in a new session, give the path where you kept the verified `SHA256SUMS`):
 
 ```
-sudo /usr/local/bin/suiteward install host --sha256sums <the verified SHA256SUMS of the release>
+sudo /usr/local/bin/suiteward install host --sha256sums "$dl/SHA256SUMS"
 ```
 
 Name the program by its full path: `sudo` on EL9 does not search `/usr/local/bin`, so `sudo suiteward` answers "command not found".
@@ -57,6 +61,8 @@ Then, still as `ssm-user`, open a shell as `suiteward` with its user bus (the ac
 r=/run/user/$(id -u suiteward)
 sudo -u suiteward -H env XDG_RUNTIME_DIR=$r DBUS_SESSION_BUS_ADDRESS=unix:path=$r/bus bash
 ```
+
+Run it from a folder that every account can open, such as `/` (`cd /` first in a new session): the shell stays in the folder you start it in.
 
 In that shell, run the installer with the manifest port pinned, so that you can start the forward first ([install guide step 10.4](../docs/install.md#10-running-on-a-separate-host-operators)):
 

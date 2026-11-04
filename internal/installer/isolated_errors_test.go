@@ -181,23 +181,31 @@ func TestOpenIsolatedHostOpensFromAReadableFolder(t *testing.T) {
 }
 
 // The real trigger of the host that found this: a folder with no permission for the account (mode 0 stands for the other-account bits of the 0700
-// folder of `mktemp -d`), reached through the real working folder of the process.
+// folder of `mktemp -d`), reached through the real working folder of the process. With $PWD set, as a shell leaves it, os.Getwd itself fails; without
+// it, the system names the folder and only entering it fails.
 func TestOpenIsolatedHostStopsFromAFolderTheSystemWillNotLetTheAccountEnter(t *testing.T) {
 	if isWindows() || os.Geteuid() == 0 {
 		t.Skip("a folder without permissions stops only an account that is not root, on a system with modes")
 	}
-	dir := t.TempDir()
-	t.Chdir(dir)
-	if err := os.Chmod(dir, 0); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o500) })
-	f := newIsoFake(t.TempDir())
-	if _, err := openIsolatedHost(context.Background(), isolatedSettings(), f.deps()); err == nil || err.Error() != unreadableFolderText {
-		t.Fatalf("openIsolatedHost from a folder the account cannot enter = %v, want exactly %q", err, unreadableFolderText)
-	}
-	if len(f.calls) != 0 {
-		t.Errorf("a command ran before the refusal: %v", f.lines())
+	for name, keepPWD := range map[string]bool{"a shell set PWD": true, "no PWD": false} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			if !keepPWD {
+				t.Setenv("PWD", "")
+			}
+			if err := os.Chmod(dir, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o600) }) // the folder is empty: removing it needs the permission of the folder above
+			f := newIsoFake(t.TempDir())
+			if _, err := openIsolatedHost(context.Background(), isolatedSettings(), f.deps()); err == nil || err.Error() != unreadableFolderText {
+				t.Fatalf("openIsolatedHost from a folder the account cannot enter = %v, want exactly %q", err, unreadableFolderText)
+			}
+			if len(f.calls) != 0 {
+				t.Errorf("a command ran before the refusal: %v", f.lines())
+			}
+		})
 	}
 }
 

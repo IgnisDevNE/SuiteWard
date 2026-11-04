@@ -296,7 +296,7 @@ func commandAck(a Ack) string {
 			"Wait for SuiteWard to finish setting up this repository, then comment `/suiteward propose` on the pull request that should carry the first contract.")
 	case MalformedCommand:
 		if a.Malformed == MissingMode || a.Malformed == BadMode { // a /suiteward mode line, whatever it says (M2.1c, SW-16, text 7): no mistake to fix, so no list of forms
-			return paragraphs("`/suiteward mode` is no longer a command. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`.")
+			return paragraphs(modeGoneText)
 		}
 		return paragraphs("Your `/suiteward` command was not understood: " + malformedText(a.Malformed) + ". Nothing changed.\n" +
 			"Comment it again in one of these forms: `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>`, `/suiteward suggest` " +
@@ -450,6 +450,9 @@ func BootstrapSummary(s Summary) string {
 	parts = append(parts, review, codeCommand("approve", ref), after)
 	return paragraphs(parts...)
 }
+
+// modeGoneText answers a /suiteward mode line, and ends a mode-refused acknowledgment queued before the command was removed (M2.1c, SW-16, text 7).
+const modeGoneText = "`/suiteward mode` is no longer a command. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
 
 // CoLocatedNotice is what a body says when the instance runs beside the coding agent (ADR 0027).
 const CoLocatedNotice = "SuiteWard runs on the same computer as your coding agent, so its protection is reduced. " +
@@ -985,9 +988,10 @@ var refusals = map[Outcome]refusalSet{
 		InvalidSource: {"SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest changes to it",
 			"Fix the files or the `.suiteward.yml` file, then comment `/suiteward suggest` again.", ""},
 	}},
+	// Only an acknowledgment queued before M2.1c is a mode-refused one: it keeps its reason and says where the kind of change goes now.
 	ModeRefused: {"/suiteward mode", map[Refusal]refusalText{
-		Fork:    {forkReason, "Open the pull request from a branch of this repository, then comment `/suiteward mode <fix|feature|refactor>` there.", ""},
-		NotOpen: {notOpenReason, "Comment `/suiteward mode <fix|feature|refactor>` on an open pull request.", ""},
+		Fork:    {forkReason, modeGoneText, ""},
+		NotOpen: {notOpenReason, modeGoneText, ""},
 	}},
 	// An unblock that is refused has consumed its code, as a receipt refusal has.
 	UnblockRefused: {"/suiteward unblock", map[Refusal]refusalText{

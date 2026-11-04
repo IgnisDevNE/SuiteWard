@@ -869,8 +869,8 @@ func (c *colocatedInstall) restartAfterReboot(ctx context.Context) {
 		screenOn(c.out).Warn("Could not turn on %s (%v). Without it, SuiteWard does not start again by itself after the machine restarts. This does not stop the install; to fix it, %s.\n", restartUnit, err, fix)
 	}
 	if d.GOOS != "linux" {
-		// The connection is verified rootless by now, so it is the machine's name.
-		screenOn(c.out).Warn("The Podman machine does not start by itself when you log in. After this computer restarts, run `%s`: SuiteWard comes back with it.\n", machineStartCommand(c.s.Connection))
+		machine := strings.TrimSuffix(c.s.Connection, "-root") // the rootless connection is named after the machine, the rootful one adds -root
+		screenOn(c.out).Warn("The Podman machine does not start by itself when you log in. After this computer restarts, run `%s`: SuiteWard comes back with it.\n", machineStartCommand(machine))
 	}
 }
 

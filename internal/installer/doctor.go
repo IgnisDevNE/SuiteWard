@@ -333,9 +333,10 @@ func (d *doctor) checkMachine(ctx context.Context) {
 	}
 }
 
-// machineStartCommand starts the Podman machine called name: the default machine is what a bare `podman machine start` starts.
+// machineStartCommand starts the Podman machine called name: the default machine, or none named, is what a bare
+// `podman machine start` starts.
 func machineStartCommand(name string) string {
-	if name == defaultMachine {
+	if name == "" || name == defaultMachine {
 		return "podman machine start"
 	}
 	return "podman machine start " + name

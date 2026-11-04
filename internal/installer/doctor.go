@@ -305,7 +305,7 @@ func (d *doctor) checkMachine(ctx context.Context) {
 	if want == "" {
 		want = d.deps.Getenv("CONTAINER_CONNECTION")
 	}
-	want = strings.TrimSuffix(want, "-root") // the rootless connection is named after the machine, the rootful one adds -root
+	want = machineOf(want)
 	pick := slices.IndexFunc(list, func(m machineEntry) bool {
 		return m.Name == want || (want == "" && m.Running)
 	})
@@ -317,7 +317,7 @@ func (d *doctor) checkMachine(ctx context.Context) {
 		if want != "" {
 			what = "no Podman machine is called " + want
 		}
-		d.fail("machine", what, "Create and start one with `podman machine init` and `podman machine start`, or choose the right one with `connection:` in the settings file.")
+		d.fail("machine", what, "Create and start one with `"+machineCommand("init", want)+"` and `"+machineStartCommand(want)+"`, or choose the right one with `connection:` in the settings file.")
 		return
 	}
 	m := list[pick]
@@ -332,6 +332,9 @@ func (d *doctor) checkMachine(ctx context.Context) {
 		d.pass("machine", m.Name+" is running")
 	}
 }
+
+// machineOf is the Podman machine of a connection: the rootless connection is named after the machine, the rootful one adds -root.
+func machineOf(connection string) string { return strings.TrimSuffix(connection, "-root") }
 
 // machineStartCommand starts the Podman machine called name: the default machine, or none named, is what a bare
 // `podman machine start` starts.

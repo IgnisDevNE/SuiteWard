@@ -40,8 +40,9 @@ const (
 	// modeGoneText is text 7 of M2.1c, which the owner fixed (SW-16): the whole answer to a /suiteward mode line, whatever the line says, and the end of a
 	// mode-refused acknowledgment queued before the command was removed.
 	modeGoneText = "`/suiteward mode` is no longer a command. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
-	// modeSetText is the whole acknowledgment of a mode-set one queued before M2.1c: no mode was recorded, and the page and the store keep no preview.
-	modeSetText = "`/suiteward mode` is no longer a command, so this mode was not recorded. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
+	// modeSetText is the whole acknowledgment of a mode-set one queued before M2.1c: its mode is in the ledger, but nothing reads it, and the page and
+	// the store keep no preview.
+	modeSetText = "`/suiteward mode` is no longer a command, so this mode is not used. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
 )
 
 // countsLine is the receipt of summaryNotMet in the words of the results comment: the number of tests, then the table of what they show.

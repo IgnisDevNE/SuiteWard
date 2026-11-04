@@ -143,8 +143,8 @@ func (c *cli) engineName(ctx context.Context) (string, error) {
 	return c.engine, nil
 }
 
-// runArgs is the whole of `run`: the properties of ADR 0028 section 11 and nothing else, the same for both engines but two flags that only
-// Podman takes.
+// runArgs is the whole of `run`: the properties of ADR 0028 section 11 and nothing else, the same for both engines but two flags that
+// SuiteWard passes only to Podman.
 // There is no --rm, because the container must exist to be inspected for an out-of-memory kill; the runner removes it. There is no
 // --env either, because the image has an environment of its own: the script starts Argv through env -i with the assignments that
 // follow the work directory, so that Argv sees exactly Spec.Env.

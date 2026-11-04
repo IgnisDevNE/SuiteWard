@@ -724,7 +724,7 @@ Accepted 2026-11-03 (the owner's decisions 1 to 7 and the accepted proposals 8 t
 - **D-SECURITY-LIMIT-LABEL.** The owner read the row on live installs and kept its label, `Security limit` (decision 20).
 - **What was seen live (2026-11-04).** Development builds on two throwaway repositories: Docker Desktop, a Podman machine of its own, WSL Ubuntu 24.04 with Podman 4.9.3, and a throwaway AlmaLinux 9.8 distro ([the phase page](phases/M2.1c.md#what-the-round-saw-2026-11-04)). Not seen: SW-26 and SW-24's upgrade (they need a release), SW-22's approve-anyway line (it needs `receipt: required`), co-located Docker on Linux, and macOS. The Windows logon runs last.
 - **No migration.** The schema stays at 22.
-- **Found during the phase, in the Backlog:** SW-46, SW-49 and SW-51 to SW-59.
+- **Found during the phase, in the Backlog:** SW-46, SW-49, SW-51 to SW-54 and SW-56 to SW-59.
 
 ### D-M2.1B: Results communication
 

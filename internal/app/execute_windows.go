@@ -13,16 +13,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// What the log says, in plain words: once, when the run ends because the console host of its loop is gone, and once when the host cannot be watched
-// or its console cannot be given up.
+// What the log says, in plain words: once, when the run ends because the console host of its loop is gone, and once when the host cannot be watched.
 const (
 	consoleHostGone      = "The test runner stopped because its task was stopped."
 	consoleHostUnwatched = "The test runner cannot see when its task is stopped, so stopping the task will not stop it."
-	consoleNotFreed      = "The test runner could not give up the console of its task, so it may not be able to stop the sandbox of a job that runs."
 )
-
-// procFreeConsole is FreeConsole, which golang.org/x/sys/windows has no wrapper for.
-var procFreeConsole = windows.NewLazySystemDLL("kernel32.dll").NewProc("FreeConsole")
 
 // processEntry is a process of the computer as the snapshot lists it: the process that started it, and the name of its image.
 type processEntry struct {
@@ -113,11 +108,8 @@ func watchConsoleHost(ctx context.Context, log *slog.Logger) (context.Context, c
 					log.Warn(consoleHostUnwatched, "error", err)
 					return
 				case event == windows.WAIT_OBJECT_0:
-					// The console went with its host, and every console program that the executor starts from now on fails at once (0xc0000142), the container
-					// CLI that stops the sandbox of a job in flight among them. Without a console the next program gets one of its own.
-					if r, _, err := procFreeConsole.Call(); r == 0 {
-						log.Warn(consoleNotFreed, "error", err)
-					}
+					// The console went with its host, and a console program that the executor starts from now on fails at once (0xc0000142) unless it
+					// starts with CREATE_NO_WINDOW, as the container CLI that stops the sandbox of a job in flight does (sandbox.NoWindow).
 					log.Info(consoleHostGone)
 					cancel()
 					return

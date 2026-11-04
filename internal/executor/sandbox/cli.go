@@ -62,6 +62,7 @@ type execFunc func(ctx context.Context, name string, args []string, stdin io.Rea
 func osExec(ctx context.Context, name string, args []string, stdin io.Reader, stdout io.Writer) (int, string, error) {
 	cmd := commandContext(ctx, name, args...)
 	cmd.Env = CLIEnv(os.Environ())
+	NoWindow(cmd)
 	cmd.Stdin, cmd.Stdout = stdin, stdout
 	stderr := &capped{limit: stderrBytes}
 	cmd.Stderr = stderr

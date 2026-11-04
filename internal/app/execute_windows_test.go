@@ -13,6 +13,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	executor "github.com/IgnisDevNE/SuiteWard/internal/executor/run"
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/sandbox"
 )
 
 // The loop of run.cmd runs in the console host of its scheduled task: the executor is the child of cmd.exe, which is the child of conhost.exe. Another
@@ -94,11 +97,14 @@ func TestWatchHelperProcess(t *testing.T) {
 	select {
 	case <-ctx.Done():
 		mark("ended", "")
-		// Winding up, the executor runs the container CLI to stop the sandbox of a job in flight. Any console program will do here. Its window is
-		// hidden, so that the console it gets (the one of the dead host is no use to it) does not open on the screen of whoever runs the tests.
-		program := startHost(filepath.Join(os.Getenv("SystemRoot"), "System32", "hostname.exe"))
-		program.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		if _, err := program.Output(); err != nil {
+		// Winding up, the executor runs the container CLI to stop the sandbox of a job in flight, and the sweep runs it too. Both go through the
+		// code that the executor uses, with the engine of the test (a console program, as Podman and Docker are) for the CLI.
+		engine := markFile(dir, "engine.cmd")
+		_, _, err := sandbox.NewCLI(engine).Info(context.Background())
+		if err == nil {
+			err = executor.Sweeper(engine)(context.Background())
+		}
+		if err != nil {
 			mark("program", "failed: "+err.Error())
 		} else {
 			mark("program", "ok")
@@ -117,6 +123,10 @@ func TestTheExecutorEndsItsRunWhenTheConsoleHostOfItsLoopIsStopped(t *testing.T)
 	dir := t.TempDir()
 	system := filepath.Join(os.Getenv("SystemRoot"), "System32")
 	conhost, cmd := filepath.Join(system, "conhost.exe"), filepath.Join(system, "cmd.exe")
+	// The engine of the test answers every command with the JSON that `version --format` gets, and lists no container to sweep.
+	if err := os.WriteFile(markFile(dir, "engine.cmd"), []byte(`@echo {"Client":{"Version":"1.0"}}`+"\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	host := startHost(conhost)
 	// NoInheritHandles: Task Scheduler gives the host no standard handles, and a host that gets them (the NUL of exec) does not run its program.
 	host.SysProcAttr = &syscall.SysProcAttr{NoInheritHandles: true, CmdLine: `"` + conhost + `" --headless "` + cmd + `" /d /s /c ""` + os.Args[0] + `" -test.run=TestWatchHelperProcess"`}
@@ -149,9 +159,9 @@ func TestTheExecutorEndsItsRunWhenTheConsoleHostOfItsLoopIsStopped(t *testing.T)
 	}
 	waitForMark(t, dir, "ended")
 	// The console of the host is gone, and a program that starts in it fails at once (0xc0000142): the executor must be able to start the container CLI
-	// that stops its sandbox, as it does at Ctrl-C.
+	// that stops its sandbox, as it does at Ctrl-C, and it must do so without a window of its own (the CLI commands start with CREATE_NO_WINDOW).
 	if program := waitForMark(t, dir, "program"); program != "ok" {
-		t.Errorf("a program that the executor starts while it winds up: %s", program)
+		t.Errorf("the container CLI that the executor starts while it winds up: %s", program)
 	}
 	logged, err := os.ReadFile(markFile(dir, "log"))
 	if err != nil {

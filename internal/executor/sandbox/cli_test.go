@@ -443,6 +443,14 @@ func TestRunMapsARuntimeFailureToErrUnavailable(t *testing.T) {
 			f.state = `{"Status":"exited","OOMKilled":false,"ExitCode":125,"Error":"","StartedAt":"0001-01-01T00:00:00Z"}`
 		}},
 		{"the runtime has no such container", func(f *fakeRuntime) { f.state = "" }},
+		{"Podman refused the run with an Error: line, which --log-level=error keeps", func(f *fakeRuntime) {
+			f.version = podmanLocal
+			f.state = ""
+			f.onRun = func(_ context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
+				_, _ = io.Copy(io.Discard, stdin)
+				return 126, "Error: crun: the cpu controller is not available: OCI permission denied", nil
+			}
+		}},
 		{"the CLI could not run", func(f *fakeRuntime) {
 			f.onRun = func(context.Context, io.Reader, io.Writer) (int, string, error) {
 				return -1, "", errors.New("exec: docker: executable file not found in $PATH")

@@ -142,25 +142,6 @@ func (s *Store) Skipped(ctx context.Context, repositoryID int64, pull int, since
 	return skipped, nil
 }
 
-// PreviewMode implements commands.Store.
-func (s *Store) PreviewMode(ctx context.Context, repositoryID int64, pull int, since time.Time) (string, bool, error) {
-	if err := commands.ValidatePreview(repositoryID, pull); err != nil {
-		return "", false, err
-	}
-	number, err := int32Of(pull)
-	if err != nil {
-		return "", false, err
-	}
-	mode, err := dbgen.New(s.pool).PreviewMode(ctx, dbgen.PreviewModeParams{RepositoryID: repositoryID, PullNumber: number, Since: timestamp(since)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("read the preview mode: %w", err)
-	}
-	return mode.String, true, nil
-}
-
 // Instance implements commands.Store.
 func (s *Store) Instance(ctx context.Context) (string, error) {
 	id, err := dbgen.New(s.pool).GetInstanceID(ctx)

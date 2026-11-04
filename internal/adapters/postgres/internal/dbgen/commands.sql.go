@@ -240,27 +240,6 @@ func (q *Queries) PendingCommands(ctx context.Context, arg PendingCommandsParams
 	return items, nil
 }
 
-const previewMode = `-- name: PreviewMode :one
-SELECT mode FROM pr_commands
-WHERE repository_id = $1 AND pull_number = $2 AND disposition = 'mode-set' AND created_at >= $3::timestamptz
-ORDER BY comment_id DESC
-LIMIT 1
-`
-
-type PreviewModeParams struct {
-	RepositoryID int64
-	PullNumber   int32
-	Since        pgtype.Timestamptz
-}
-
-// The mode of the pull's latest mode-set entry (the greatest comment id) created at or after the current enrollment's enrolled_at.
-func (q *Queries) PreviewMode(ctx context.Context, arg PreviewModeParams) (pgtype.Text, error) {
-	row := q.db.QueryRow(ctx, previewMode, arg.RepositoryID, arg.PullNumber, arg.Since)
-	var mode pgtype.Text
-	err := row.Scan(&mode)
-	return mode, err
-}
-
 const pullSkipped = `-- name: PullSkipped :one
 SELECT EXISTS (
     SELECT 1 FROM pr_commands

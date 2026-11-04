@@ -144,7 +144,7 @@ func (e *Executor) Run(ctx context.Context) error {
 	}
 	e.runtime = name + " " + version
 	if !printable(e.runtime) {
-		return fmt.Errorf("no container runtime: %q is not 1 to 64 printable ASCII bytes", e.runtime)
+		return fmt.Errorf("the container runtime's name %q is not 1 to 64 printable ASCII bytes", e.runtime)
 	}
 	if err := e.cfg.Sweep(ctx); err != nil {
 		e.cfg.Log.Warn("the leftover containers were not swept", "error", err)

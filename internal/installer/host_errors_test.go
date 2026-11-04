@@ -109,6 +109,17 @@ func TestNextNeedsTheIDOfTheServiceAccount(t *testing.T) {
 	}
 }
 
+// The command that the host step prints depends on the service account's home (the quadlet of an installed service is there), so a home that
+// cannot be read stops it: it must not print an install over a host it could not look at.
+func TestNextNeedsTheHomeOfTheServiceAccount(t *testing.T) {
+	h := newHostFake()
+	h.failOn = map[string]error{"getent": errInjected}
+	hst := &host{d: h.deps(), out: io.Discard}
+	if err := hst.next(context.Background()); err == nil || !strings.Contains(err.Error(), "look up the account suiteward") {
+		t.Fatalf("next = %v", err)
+	}
+}
+
 func TestPrepareHostAsksOrRefusesTheMetadataQuestion(t *testing.T) {
 	t.Run("not a terminal and no answer", func(t *testing.T) {
 		h := newHostFake()

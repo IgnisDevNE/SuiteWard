@@ -417,11 +417,6 @@ func newBootstrapAck(target commentTarget, comment int64, ownerLogin string, dis
 	return newAck(ackPayload{commentTarget: target, Disposition: string(disposition), Comment: comment, Owner: ownerLogin, Reason: reason, Reference: reference})
 }
 
-// newModeSetAck builds the acknowledgment of a mode that was recorded.
-func newModeSetAck(target commentTarget, comment int64, ownerLogin string, mode domain.Mode) (governance.OutboxMessage, error) {
-	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.ModeSet), Comment: comment, Owner: ownerLogin, Mode: mode.String()})
-}
-
 // newUnblockedAck builds the acknowledgment of an unblock that lifted the jobs of these plans, and ended the open jobs of ended, some of them.
 func newUnblockedAck(target commentTarget, comment int64, ownerLogin string, plans, ended commandtext.Plans) (governance.OutboxMessage, error) {
 	return newAck(ackPayload{commentTarget: target, Disposition: string(commands.Unblocked), Comment: comment, Owner: ownerLogin, Plans: planNames(plans), Ended: planNames(ended)})

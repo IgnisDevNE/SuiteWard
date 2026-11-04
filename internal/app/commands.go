@@ -241,8 +241,6 @@ func (j *commandsJob) decide(ctx context.Context, enrollment owner.State, botID 
 		return j.propose(ctx, enrollment, c)
 	case commandtext.Suggest: // no code, no reference: it reads no step and grants nothing
 		return j.suggest(ctx, enrollment, c)
-	case commandtext.SetMode: // no code, so no step and no closed-pull guard
-		return j.setMode(ctx, enrollment, c, command.Mode)
 	default:
 		return j.consent(ctx, enrollment, c, command, reject)
 	}

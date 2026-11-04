@@ -321,10 +321,7 @@ func (d *doctor) checkMachine(ctx context.Context) {
 		return
 	}
 	m := list[pick]
-	start := "podman machine start"
-	if m.Name != defaultMachine {
-		start += " " + m.Name
-	}
+	start := machineStartCommand(m.Name)
 	switch {
 	case m.Starting:
 		d.fail("machine", "the Podman machine "+m.Name+" is still starting", "Wait until it runs, then run doctor again.")
@@ -334,6 +331,15 @@ func (d *doctor) checkMachine(ctx context.Context) {
 		d.machine = machineInfo{Name: m.Name, User: cmp.Or(m.RemoteUsername, machineUser)}
 		d.pass("machine", m.Name+" is running")
 	}
+}
+
+// machineStartCommand starts the Podman machine called name: the default machine, or none named, is what a bare
+// `podman machine start` starts.
+func machineStartCommand(name string) string {
+	if name == "" || name == defaultMachine {
+		return "podman machine start"
+	}
+	return "podman machine start " + name
 }
 
 // machineSSH runs one command in the Podman machine as its rootless user.

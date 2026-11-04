@@ -1062,6 +1062,33 @@ func TestInstallEnablesPodmanRestartInTheMachine(t *testing.T) {
 	}
 }
 
+// A machine that is not the default one is started by its name: a bare `podman machine start` would start podman-machine-default.
+func TestInstallNamesTheMachineToStartAfterARestart(t *testing.T) {
+	h := newHarness(t, "windows")
+	h.f.env["USERNAME"] = "tester"
+	h.f.on("system connection list", strings.ReplaceAll(machineConnections, "podman-machine-default", "sw-m21c"))
+	if err := h.podman("--connection", "sw-m21c"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(h.out.String(), "After this computer restarts, run `podman machine start sw-m21c`: SuiteWard comes back with it.") {
+		t.Errorf("the note does not name the machine:\n%s", h.out.String())
+	}
+}
+
+func TestMachineStartCommandNamesOnlyAMachineThatIsNotTheDefaultOne(t *testing.T) {
+	for _, c := range []struct{ name, machine, want string }{
+		{"the default machine", defaultMachine, "podman machine start"},
+		{"no machine named", "", "podman machine start"},
+		{"a machine of its own", "sw-m21c", "podman machine start sw-m21c"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := machineStartCommand(c.machine); got != c.want {
+				t.Errorf("machineStartCommand(%q) = %q, want %q", c.machine, got, c.want)
+			}
+		})
+	}
+}
+
 // Podman makes ~/.config/systemd/user/default.target.wants of the machine's user owned by root, so the user's own
 // `systemctl --user enable` is denied. The link is then made as the machine's default ssh user: on a Windows WSL machine that is
 // root, which can write there; on a machine-os 6.1 machine it is the user itself, which cannot, so the link goes through sudo.

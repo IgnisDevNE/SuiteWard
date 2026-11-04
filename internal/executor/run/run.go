@@ -191,7 +191,9 @@ func (e *Executor) awaitRuntime(ctx context.Context) (string, string, bool) {
 			e.cfg.Log.Warn("The container program does not answer. The test runner waits for it and tries again.", "error", err)
 			waited = true
 		}
-		_ = e.cfg.Sleep(ctx, wait)
+		if e.cfg.Sleep(ctx, wait) != nil {
+			return "", "", false
+		}
 		wait = min(2*wait, e.cfg.Pacing.MaxBackoff)
 	}
 }

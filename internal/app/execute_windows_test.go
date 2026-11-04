@@ -80,7 +80,10 @@ func TestWatchHelperProcess(t *testing.T) {
 	if dir == "" {
 		return
 	}
-	mark := func(name, text string) { _ = os.WriteFile(markFile(dir, name), []byte(text), 0o600) }
+	mark := func(name, text string) { // renamed into place, so that the test never reads half a mark
+		_ = os.WriteFile(markFile(dir, name+".tmp"), []byte(text), 0o600)
+		_ = os.Rename(markFile(dir, name+".tmp"), markFile(dir, name))
+	}
 	log, err := os.Create(markFile(dir, "log"))
 	if err != nil {
 		mark("failed", err.Error())
@@ -91,6 +94,12 @@ func TestWatchHelperProcess(t *testing.T) {
 	select {
 	case <-ctx.Done():
 		mark("ended", "")
+		// Winding up, the executor runs the container CLI to stop the sandbox of a job in flight. Any console program will do here.
+		if _, err := startHost(filepath.Join(os.Getenv("SystemRoot"), "System32", "hostname.exe")).Output(); err != nil {
+			mark("program", "failed: "+err.Error())
+		} else {
+			mark("program", "ok")
+		}
 	case <-time.After(30 * time.Second):
 		mark("timeout", "")
 	}
@@ -136,6 +145,11 @@ func TestTheExecutorEndsItsRunWhenTheConsoleHostOfItsLoopIsStopped(t *testing.T)
 		t.Fatalf("cannot end the console host: %v", err)
 	}
 	waitForMark(t, dir, "ended")
+	// The console of the host is gone, and a program that starts in it fails at once (0xc0000142): the executor must be able to start the container CLI
+	// that stops its sandbox, as it does at Ctrl-C.
+	if program := waitForMark(t, dir, "program"); program != "ok" {
+		t.Errorf("a program that the executor starts while it winds up: %s", program)
+	}
 	logged, err := os.ReadFile(markFile(dir, "log"))
 	if err != nil {
 		t.Fatal(err)

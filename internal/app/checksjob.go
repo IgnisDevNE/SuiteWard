@@ -567,7 +567,7 @@ func (j *checksJob) publishCheck(ctx context.Context, s *pullState, result check
 			}
 			return newCheckMessageWithPaths(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, runners.paths, len(runners.paths))
 		}
-		return newCheckMessageOf(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, nil, 0, counts, weakened, approveMode)
+		return newCheckMessageOf(s.p.Repo, result, s.tier, string(s.suite.canonical), generation, nil, 0, counts, weakened, approveMode, "")
 	})
 	if err != nil {
 		return fmt.Errorf("publish the check: %w", err)

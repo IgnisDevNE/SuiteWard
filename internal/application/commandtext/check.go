@@ -37,6 +37,8 @@ type Check struct {
 	// owner's unblock of an unavailable one. The reasons canonical-pending, canonical-not-responding, canonical-unavailable and canonical-failing mark it too. An approval that is missing against a canonical states the counts too.
 	Execution *CheckExecution
 	Unblocked bool
+	// Unavailable is the reason code of the unavailable canonical run that a canonical-unavailable check reports, from the closed set of the comments' reasons; empty when it is not known.
+	Unavailable string
 	// ApproveMode marks an approval-missing check whose approve names a mode: the repository requires a receipt (docs/contracts/runtime.md, "The revision comment"), as the
 	// comment of the revision shows. It is false for the first contract, which has no canonical and so no receipt policy.
 	ApproveMode bool

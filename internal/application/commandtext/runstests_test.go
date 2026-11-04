@@ -61,6 +61,14 @@ func everyBody(t *testing.T) map[string]string {
 				return s
 			})
 		}
+		for _, code := range []string{"no-executor", "executor-not-configured"} { // the next step that says the tests run on their own (SW-28)
+			add("check canonical-unavailable, "+code+" "+tier, func() string {
+				c := requiredCheck("canonical-unavailable")
+				c.Tier, c.Unavailable = value, code
+				_, s := commandtext.CheckSummary(c)
+				return s
+			})
+		}
 		add("check ready with counts "+tier, func() string {
 			c := check(commandtext.CheckSuccess, "ready")
 			c.Tier, c.Execution = value, passed()
@@ -275,7 +283,17 @@ func TestTheCommentsOfARunThatWaitsOrDidNotRunUseNoWordOfTheMachinery(t *testing
 			if word := machinery.FindString(body); word != "" {
 				t.Errorf("%s: the body says %q:\n%s", name, word, body)
 			}
+			if strings.Contains(body, "SuiteWard runs the approved tests") || strings.Contains(body, "SuiteWard runs them ") { // M2.1c, SW-28: the sentences that say the tests run on their own
+				reached["runs on its own: "+prefix]++
+			}
 		}
+	}
+	// The checks of the two reasons, at both tiers, and the comments that have a next step beside the none of the advisory levels, say that the tests run on their own.
+	if n := reached["runs on its own: check canonical-unavailable"]; n < 4 {
+		t.Errorf("only %d bodies of the Contract check say that the approved tests run on their own, want 4: the test no longer reaches them", n)
+	}
+	if n := reached["runs on its own: results did not run"]; n < 10 {
+		t.Errorf("only %d bodies of the results comment that did not run say that the tests run on their own, want 10: the test no longer reaches them", n)
 	}
 	for _, prefix := range prefixes {
 		if reached[prefix] == 0 {

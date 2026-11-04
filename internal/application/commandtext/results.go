@@ -320,8 +320,10 @@ func kindsText(r Results) []string {
 	return parts
 }
 
-// unblockText is the paragraph of the unblock: what the owner unblocked and whether the command ended the wait, the offer where a run holds something back, and what an
-// approval does to approved tests that did not run, which the payload says by ApprovalMissing (the next step may be the unblock where the receipt holds the approve too).
+// unblockText is the paragraph of the unblock: what the owner unblocked and whether the command ended the wait, whether the tests run on their own, the offer where a run holds
+// something back, and what an approval does to approved tests that did not run, which the payload says by ApprovalMissing (the next step may be the unblock where the receipt
+// holds the approve too). Whether the tests run on their own comes before the offer and the approval, so that the owner who reads "unblock" or "approve" does not take a push
+// for the only way; it follows every next step but nothing, which says it as its own step (noneText).
 func unblockText(r Results) string {
 	var sentences []string
 	if r.Unblocked != (Plans{}) {
@@ -329,6 +331,9 @@ func unblockText(r Results) string {
 		if r.Ended != (Plans{}) {
 			sentences = append(sentences, "SuiteWard had stopped waiting for the test runner, which was not responding.")
 		}
+	}
+	if runs := runsText(unavailableReasons(r)); runs != "" && r.Unblocked == (Plans{}) && r.Next != execution.NextNone {
+		sentences = append(sentences, runs)
 	}
 	if r.Next == execution.NextUnblock {
 		sentences = append(sentences, unblockOffer)
@@ -349,9 +354,8 @@ func plansWords(p Plans) string {
 	return "the receipt"
 }
 
-// noneText is the next step of a head with nothing left to the owner. A run that did not run says whether, and when, the tests run, by the reasons of the runs that did not
-// run: an unblock ends it for this commit, a test runner that did not answer or is not set up runs them later, and any other reason waits for a new push.
-func noneText(r Results) string {
+// unavailableReasons are the reasons of the runs of r that did not run, the approved tests first.
+func unavailableReasons(r Results) []string {
 	var reasons []string
 	if r.Canonical != nil && r.Canonical.Unavailable != "" {
 		reasons = append(reasons, r.Canonical.Unavailable)
@@ -359,18 +363,35 @@ func noneText(r Results) string {
 	if r.Receipt != nil && r.Receipt.Unavailable != "" {
 		reasons = append(reasons, r.Receipt.Unavailable)
 	}
+	return reasons
+}
+
+// runsText says that the tests run on their own, by the reasons of the runs that did not run: a test runner that did not answer runs them when it answers again, and one that is
+// not set up runs them once it is. It is empty for a head with no run that did not run and for any other reason, which waits for a new push.
+func runsText(reasons []string) string {
 	allOf := func(codes ...string) bool {
-		return !slices.ContainsFunc(reasons, func(reason string) bool { return !slices.Contains(codes, reason) })
+		return len(reasons) > 0 && !slices.ContainsFunc(reasons, func(reason string) bool { return !slices.Contains(codes, reason) })
 	}
 	switch {
-	case len(reasons) == 0:
-		return "Nothing to do for now."
-	case r.Unblocked != (Plans{}):
-		return "Nothing runs them for this commit now. A new push runs the tests."
 	case allOf("no-executor"):
 		return "SuiteWard runs them when the test runner answers again."
 	case allOf("no-executor", "executor-not-configured"):
 		return "SuiteWard runs them once the test runner is set up."
+	}
+	return ""
+}
+
+// noneText is the next step of a head with nothing left to the owner. A run that did not run says whether, and when, the tests run, by the reasons of the runs that did not
+// run: an unblock ends it for this commit, a test runner that did not answer or is not set up runs them later (runsText), and any other reason waits for a new push.
+func noneText(r Results) string {
+	reasons := unavailableReasons(r)
+	switch runs := runsText(reasons); {
+	case len(reasons) == 0:
+		return "Nothing to do for now."
+	case r.Unblocked != (Plans{}):
+		return "Nothing runs them for this commit now. A new push runs the tests."
+	case runs != "":
+		return runs
 	}
 	return "A new push runs them."
 }

@@ -37,6 +37,8 @@ type Check struct {
 	// owner's unblock of an unavailable one. The reasons canonical-pending, canonical-not-responding, canonical-unavailable and canonical-failing mark it too. An approval that is missing against a canonical states the counts too.
 	Execution *CheckExecution
 	Unblocked bool
+	// Unavailable is the reason code of the unavailable canonical run that a canonical-unavailable check reports, from the closed set of the comments' reasons; empty when it is not known.
+	Unavailable string
 	// ApproveMode marks an approval-missing check whose approve names a mode: the repository requires a receipt (docs/contracts/runtime.md, "The revision comment"), as the
 	// comment of the revision shows. It is false for the first contract, which has no canonical and so no receipt policy.
 	ApproveMode bool
@@ -119,10 +121,10 @@ var checkReasons = map[string]checkReason{
 	"canonical-not-responding": {CheckInProgress, "Test runner not responding",
 		"The test runner has not answered for about half a minute, so the approved tests have not run on this commit. This is a problem only if it lasts. " +
 			"SuiteWard keeps trying, and the tests start when the test runner answers. This check does not pass until they have run.",
-		"Next: check that the test runner is running on the machine that runs SuiteWard. To let this commit pass without the approved tests, the owner comments:"},
+		"Next: check that the test runner is running on the machine that runs SuiteWard. " + unblockLead},
 	"canonical-unavailable": {CheckInProgress, "Approved tests could not run",
 		"SuiteWard could not run the approved tests on this commit, so this check does not pass.",
-		"Next: push a new commit to run the approved tests again. To let this commit pass without the approved tests, the owner comments:"},
+		"Next: push a new commit to run the approved tests again. " + unblockLead},
 	"canonical-failing": {CheckFailure, "Approved tests failing",
 		"At least one approved test fails, is missing or is flaky on this commit.",
 		"Next: fix the code and push a new commit on which the approved tests pass."},
@@ -130,6 +132,16 @@ var checkReasons = map[string]checkReason{
 
 // canonicalReasons are the reasons of the canonical gate. They, the counts of a run and the owner's unblock mark the summary of canonical: required.
 var canonicalReasons = []string{"canonical-pending", "canonical-not-responding", "canonical-unavailable", "canonical-failing"}
+
+// unblockLead ends the next step of a check that waits for the approved tests: it leads to the copyable unblock command.
+const unblockLead = "To let this commit pass without the approved tests, the owner comments:"
+
+// runsLater is the next step of a canonical-unavailable check whose run did not run for a reason that a test runner's return ends, by that reason, in the words of the
+// results comment (runsText): SuiteWard runs the approved tests on its own. Any other reason, and one that is not known, keeps the next step of the reason (a push).
+var runsLater = map[string]string{
+	"no-executor":             "Next: SuiteWard runs the approved tests when the test runner answers again. " + unblockLead,
+	"executor-not-configured": "Next: SuiteWard runs the approved tests once the test runner is set up. " + unblockLead,
+}
 
 // unblockedText is what the summary says of a commit whose unavailable canonical run the owner unblocked.
 const unblockedText = "The owner unblocked this commit. The approved tests could not run on it, so this check passes without them."
@@ -222,6 +234,9 @@ func CheckSummary(c Check) (title, summary string) {
 		parts = append(parts, CoLocatedNotice)
 	}
 	next, command := reason.next, ""
+	if later, ok := runsLater[c.Unavailable]; ok { // checkUnavailable lets only canonical-unavailable name a reason
+		next = later
+	}
 	switch {
 	case c.Reason == "approval-missing" && c.ApproveMode: // the receipt gate refuses an approve with no mode under a required receipt, and consumes its code
 		next, command = "To approve this exact revision, say what kind of change it is (its mode) and comment:", modeApproveCommand(ref)
@@ -270,13 +285,27 @@ func checkRequired(c Check) error {
 	return nil
 }
 
+// checkUnavailable reports why the reason of an unavailable run does not fit c: only canonical-unavailable names one, and it is a code of the closed set (the codes of the comments).
+// A check that names none is valid: the reason is not known to every pass that sends a check.
+func checkUnavailable(c Check) error {
+	switch {
+	case c.Unavailable == "":
+		return nil
+	case c.Reason != "canonical-unavailable":
+		return fmt.Errorf("commandtext: reason %q states no reason of an unavailable run: only canonical-unavailable does", c.Reason)
+	case unavailableSentences[c.Unavailable] == "":
+		return errors.New("commandtext: the reason of the unavailable run is no code of the closed set")
+	}
+	return nil
+}
+
 // validateCheck reports why CheckSummary would panic on c, and returns the output of its reason.
 func validateCheck(c Check) (checkReason, error) {
 	reason, known := checkReasons[c.Reason]
 	if !known || reason.state != c.State {
 		return reason, fmt.Errorf("commandtext: check reason %q does not fit state %d", c.Reason, c.State)
 	}
-	if err := errors.Join(checkCheckReference(c), checkRequired(c)); err != nil {
+	if err := errors.Join(checkCheckReference(c), checkRequired(c), checkUnavailable(c)); err != nil {
 		return reason, err
 	}
 	switch {

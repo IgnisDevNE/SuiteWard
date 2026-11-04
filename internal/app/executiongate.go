@@ -18,9 +18,12 @@ import (
 // executionOutcome is what the execution step of a pull request decided beside its jobs: the counts that its Contract check carries, its Receipt check, and the
 // silence of the runner that the step read, which the comment of the head reads too (the zero value, for a step that failed, is not a reading).
 type executionOutcome struct {
-	counts  *checkExecution
-	receipt receiptDecision
-	silent  bool
+	counts *checkExecution
+	// unavailable is the reason of the canonical job that the gate held as canonical-unavailable, which says whether the approved tests run on their own (the check says it); empty for
+	// every other check, and for a pass whose step did not run.
+	unavailable string
+	receipt     receiptDecision
+	silent      bool
 	// pastLeaseWait: the silence is at least the lease wait, so the sweep of the next pass ends the jobs that wait for the runner as unavailable (Job.Swept, the rule of
 	// sweep: no-executor, or the reason of a lapsed lease at its last attempt), and the comment of that pass says the tests did not run. The comment of this pass reads it,
 	// so that "keeps trying" is not followed by "did not run".
@@ -157,6 +160,9 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 		d.result.State, d.result.Reason = checks.Failure, string(reason)
 	default:
 		d.result.State, d.result.Reason = checks.InProgress, string(reason)
+	}
+	if reason == domain.ReasonCanonicalUnavailable {
+		return executionOutcome{unavailable: string(jobs.canonical.Reason)}, nil
 	}
 	if status != domain.RunComplete {
 		return executionOutcome{}, nil

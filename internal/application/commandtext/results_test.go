@@ -509,8 +509,11 @@ func TestResultsCommentSaysWhatTheOwnerUnblockedAndHowToUnblock(t *testing.T) {
 			r.Canonical, r.Unblocked, r.Ended = unavailableCanonical("no-executor"), commandtext.Plans{Canonical: true}, commandtext.Plans{Canonical: true}
 		}, "The owner unblocked this commit, so its checks do not wait for the approved tests. SuiteWard had stopped waiting for the test runner, which was not responding."},
 		"a run that holds the head and was not unblocked": {func(r *commandtext.Results) {
-			r.Canonical, r.Next = unavailableCanonical("no-executor"), execution.NextUnblock
+			r.Canonical, r.Next = unavailableCanonical("timeout"), execution.NextUnblock
 		}, unblockOffer},
+		"a run that holds the head and the test runner did not answer": {func(r *commandtext.Results) {
+			r.Canonical, r.Next = unavailableCanonical("no-executor"), execution.NextUnblock
+		}, "SuiteWard runs them when the test runner answers again. " + unblockOffer},
 		"an approval is missing and the approved tests did not run": {func(r *commandtext.Results) {
 			r.Canonical, r.Next, r.ApprovalMissing = unavailableCanonical("timeout"), execution.NextApprove, true
 		}, approval},
@@ -685,19 +688,84 @@ func TestResultsCommentSaysWhetherTheTestsThatDidNotRunRunAgain(t *testing.T) {
 			}
 		})
 	}
-	// Only a next step of nothing says it: the unblock and a fix keep their own words. The offer of the unblock ends with "A new push runs them.", so the check is by paragraph.
-	t.Run("a next step that is not nothing says none of them", func(t *testing.T) {
+	// Only a next step of nothing says the others as its step: the unblock and a fix keep their own words. The offer of the unblock ends with "A new push runs them.", so the check is
+	// by paragraph. The two sentences about the test runner follow every next step but nothing (TestResultsCommentSaysThatTheTestsRunOnTheirOwnWhateverTheNextStepIs).
+	t.Run("a next step that is not nothing says none of the others", func(t *testing.T) {
 		for _, next := range []execution.Next{execution.NextUnblock, execution.NextFix} {
 			body := resultsText(t, results(func(r *commandtext.Results) {
 				r.Canonical, r.Next = unavailableCanonical("no-executor"), next
 			}))
-			for _, sentence := range []string{unblocked, whenAnswers, onceSetUp, newPush, nothing} {
+			for _, sentence := range []string{unblocked, newPush, nothing} {
 				if hasParagraph(body, sentence) {
 					t.Errorf("the next step %v says %q:\n%s", next, sentence, body)
 				}
 			}
 		}
 	})
+}
+
+// A head that has a next step still says when its tests run on their own (M2.1c, SW-28, part 3; docs/plan/phases/M2.1c.md, text 5): the sentence of the reason opens the paragraph of
+// the unblock, before the offer and before the sentence about the approval, so the owner who reads "unblock" or "approve" does not think that a push is the only way. An unblock, another
+// reason and a mix of reasons say none of it.
+func TestResultsCommentSaysThatTheTestsRunOnTheirOwnWhateverTheNextStepIs(t *testing.T) {
+	const (
+		whenAnswers = "SuiteWard runs them when the test runner answers again."
+		onceSetUp   = "SuiteWard runs them once the test runner is set up."
+		approval    = "After the owner approves this revision, SuiteWard runs the approved tests again, as the tests of the approved version."
+		approve     = "To approve this exact revision, comment:"
+		blocked     = "An approve would be refused now, because the receipt meets no kind of change, and a refused approve uses its code. To fix this, change the code or the tests and push a new commit."
+		fix         = "To fix this, change the code or the tests and push a new commit."
+	)
+	lost := func(canonical string, next execution.Next, approvalMissing bool) func(*commandtext.Results) {
+		return func(r *commandtext.Results) {
+			r.Canonical, r.Next, r.ApprovalMissing = unavailableCanonical(canonical), next, approvalMissing
+		}
+	}
+	for name, tc := range map[string]struct {
+		edit   func(*commandtext.Results)
+		want   string // the paragraph that holds the sentence, empty when the comment says neither of the two
+		before string // the next step, which the paragraph comes before
+	}{
+		"unblock, the test runner did not answer": {lost("no-executor", execution.NextUnblock, false), whenAnswers + " " + unblockOffer, ""},
+		"unblock, no test runner is set up":       {lost("executor-not-configured", execution.NextUnblock, false), onceSetUp + " " + unblockOffer, ""},
+		"unblock, the receipt did not get an answer": {func(r *commandtext.Results) {
+			r.Receipt, r.Next = unavailableReceipt("no-executor"), execution.NextUnblock
+		}, whenAnswers + " " + unblockOffer, ""},
+		"approve, the test runner did not answer":         {lost("no-executor", execution.NextApprove, true), whenAnswers + " " + approval, approve},
+		"approve, no test runner is set up":               {lost("executor-not-configured", execution.NextApprove, true), onceSetUp + " " + approval, approve},
+		"approve refused, the test runner did not answer": {lost("no-executor", execution.NextBlocked, true), whenAnswers + " " + approval, blocked},
+		"unblock and approve, nothing ran, both for no answer": {func(r *commandtext.Results) {
+			r.Canonical, r.Receipt, r.Next, r.ApprovalMissing = unavailableCanonical("no-executor"), unavailableReceipt("no-executor"), execution.NextUnblock, true
+		}, whenAnswers + " " + unblockOffer + " " + approval, ""},
+		"a fix, and the receipt did not get an answer": {func(r *commandtext.Results) {
+			r.Canonical.Counts, r.Receipt, r.ReceiptLevel, r.Next = execution.CanonicalCounts{Pass: 8, Fail: 1}, unavailableReceipt("no-executor"), execution.ReceiptLevelAdvisory, execution.NextFix
+		}, whenAnswers, fix},
+		"unblock, another reason": {lost("sandbox-unavailable", execution.NextUnblock, false), unblockOffer, ""},
+		"approve, another reason": {lost("fetch-failed", execution.NextApprove, true), approval, approve},
+		"unblock, one for no answer and one for another reason": {func(r *commandtext.Results) {
+			r.Canonical, r.Receipt, r.Next = unavailableCanonical("no-executor"), unavailableReceipt("timeout"), execution.NextUnblock
+		}, unblockOffer, ""},
+		"approve, no runner set up and another reason": {func(r *commandtext.Results) {
+			r.Canonical, r.Receipt, r.ReceiptLevel, r.Next, r.ApprovalMissing = unavailableCanonical("executor-not-configured"), unavailableReceipt("timeout"), execution.ReceiptLevelAdvisory, execution.NextApprove, true
+		}, approval, approve},
+		"approve, the owner unblocked the run": {func(r *commandtext.Results) {
+			r.Canonical, r.Unblocked, r.Next, r.ApprovalMissing = unavailableCanonical("no-executor"), commandtext.Plans{Canonical: true}, execution.NextApprove, true
+		}, "The owner unblocked this commit, so its checks do not wait for the approved tests. " + approval, approve},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(tc.edit))
+			if !hasParagraph(body, tc.want) {
+				t.Fatalf("the comment lacks the paragraph %q:\n%s", tc.want, body)
+			}
+			says := strings.Contains(tc.want, whenAnswers) || strings.Contains(tc.want, onceSetUp)
+			if has := strings.Contains(body, whenAnswers) || strings.Contains(body, onceSetUp); has != says {
+				t.Errorf("the comment says that the tests run on their own = %v, want %v:\n%s", has, says, body)
+			}
+			if tc.before != "" && strings.Index(body, tc.want) > strings.Index(body, tc.before) {
+				t.Errorf("the paragraph %q does not come before the next step %q:\n%s", tc.want, tc.before, body)
+			}
+		})
+	}
 }
 
 func TestResultsCommentEndsWithTheEvidenceSentenceAndTheTier(t *testing.T) {
@@ -998,6 +1066,15 @@ var resultsSituations = map[string]func(*commandtext.Results){
 	},
 	"did not run, no test runner is set up": func(r *commandtext.Results) {
 		r.CanonicalLevel, r.ReceiptLevel, r.Canonical = execution.CanonicalLevelAdvisory, execution.ReceiptLevelAdvisory, unavailableCanonical("executor-not-configured")
+	},
+	"did not run, the test runner did not answer, and the unblock is next": func(r *commandtext.Results) {
+		r.Canonical, r.Next = unavailableCanonical("no-executor"), execution.NextUnblock
+	},
+	"did not run, no test runner is set up, and the approve is next": func(r *commandtext.Results) {
+		r.Canonical, r.Next, r.ApprovalMissing = unavailableCanonical("executor-not-configured"), execution.NextApprove, true
+	},
+	"did not run, the test runner did not answer, and the approve is refused": func(r *commandtext.Results) {
+		r.Canonical, r.Next, r.ApprovalMissing = unavailableCanonical("no-executor"), execution.NextBlocked, true
 	},
 	"did not run, another reason": func(r *commandtext.Results) {
 		r.CanonicalLevel, r.ReceiptLevel, r.Receipt = execution.CanonicalLevelAdvisory, execution.ReceiptLevelAdvisory, unavailableReceipt("timeout")

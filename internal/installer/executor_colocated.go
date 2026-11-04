@@ -170,7 +170,7 @@ const executorRestartSeconds = 5
 // (Task Scheduler does not restart an action that exited: RestartOnFailure covers a start that failed). Its output goes to the log. The pause is
 // ping: timeout reads the console, which the task does not have. A ping that fails ends the script: ping needs the console of the task, a stop of the
 // task takes that away (it ends only the console host), and a loop that went on after a failed ping would start the program again with no pause at all.
-// Where the stopped console makes a new program hang instead of fail, the script is stuck in its pause and starts nothing.
+// Where the stopped console makes a new program hang instead of fail, the script is stuck in starting it.
 func (p executorPlan) windowsWrapper() string {
 	var b strings.Builder
 	b.WriteString("@echo off\r\n\"%SystemRoot%\\System32\\chcp.com\" 65001 >nul\r\nrem Written by `suiteward install`: the environment of the SuiteWard test runner, then the test runner, again after a pause when it ends. Do not put a credential here.\r\n")

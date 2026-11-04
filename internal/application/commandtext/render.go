@@ -988,9 +988,10 @@ var refusals = map[Outcome]refusalSet{
 		InvalidSource: {"SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest changes to it",
 			"Fix the files or the `.suiteward.yml` file, then comment `/suiteward suggest` again.", ""},
 	}},
-	// Only an acknowledgment queued before M2.1c is a mode-refused one: it keeps its reason and says where the kind of change goes now.
+	// Only an acknowledgment queued before M2.1c is a mode-refused one: it keeps its reason and says where the kind of change goes now. An approve does
+	// not work on a fork either, so that reason first sends the owner to a branch of this repository.
 	ModeRefused: {"/suiteward mode", map[Refusal]refusalText{
-		Fork:    {forkReason, modeGoneText, ""},
+		Fork:    {forkReason, "Open the pull request from a branch of this repository. " + modeGoneText, ""},
 		NotOpen: {notOpenReason, modeGoneText, ""},
 	}},
 	// An unblock that is refused has consumed its code, as a receipt refusal has.

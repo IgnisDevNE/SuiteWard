@@ -407,13 +407,13 @@ func TestAcknowledge(t *testing.T) {
 		{
 			"malformed missing mode",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.MissingMode, Source: source, Owner: owner},
-			[]string{oldModeText},
+			[]string{modeGoneText},
 			oldModeNotWant,
 		},
 		{
 			"malformed bad mode",
 			commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: commandtext.BadMode, Source: source, Owner: owner},
-			[]string{oldModeText},
+			[]string{modeGoneText},
 			oldModeNotWant,
 		},
 		{
@@ -567,14 +567,11 @@ func checkReplyLink(t *testing.T, outcome commandtext.Outcome, body string) {
 	}
 }
 
-// The words of text 7 of M2.1c, which the owner fixed (SW-16): the whole answer to a /suiteward mode line, whatever the line says.
-const oldModeText = "`/suiteward mode` is no longer a command. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
-
 // oldModeNotWant is what that answer leaves out: it does not say that the line was mistyped, and it does not list the forms of the other commands.
 var oldModeNotWant = []string{"not understood", "Comment it again", "Nothing changed", "`/suiteward approve <ref>", "`/suiteward revoke", "`/suiteward propose`", "`/suiteward skip", "`/suiteward suggest`", "`/suiteward unblock", "`<ref>`", "mode (the kind of change)"}
 
 func TestAcknowledgeAnswersTheOldModeCommandWithItsOwnWords(t *testing.T) {
-	want := oldModeText + "\n\nIn reply to [your command](#issuecomment-2345678901).\n"
+	want := modeGoneText + "\n\nIn reply to [your command](#issuecomment-2345678901).\n"
 	for _, reason := range []commandtext.Reason{commandtext.MissingMode, commandtext.BadMode} {
 		if got := render(t, func() string {
 			return commandtext.Acknowledge(commandtext.Ack{Outcome: commandtext.MalformedCommand, Malformed: reason, Source: source, Owner: owner})

@@ -234,7 +234,7 @@ func CheckSummary(c Check) (title, summary string) {
 		parts = append(parts, CoLocatedNotice)
 	}
 	next, command := reason.next, ""
-	if later, ok := runsLater[c.Unavailable]; ok { // checkRequired lets only canonical-unavailable name a reason
+	if later, ok := runsLater[c.Unavailable]; ok { // checkUnavailable lets only canonical-unavailable name a reason
 		next = later
 	}
 	switch {

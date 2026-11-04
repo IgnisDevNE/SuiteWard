@@ -707,15 +707,29 @@ func TestPullPageSaysThatTheKindsLookOnlyAtTheTestsThisChangeAddsOrEdits(t *test
 	}
 }
 
-func TestPullPageStatesThePreviewModeAndSaysThatNothingReadsIt(t *testing.T) {
+// pagePreviewTrap is the store that the page reads pull requests from, with the preview reader that the same store has in production: any read of the preview fails the test.
+type pagePreviewTrap struct {
+	pullLister
+	t *testing.T
+}
+
+func (s pagePreviewTrap) PreviewMode(context.Context, int64, int, time.Time) (string, bool, error) {
+	s.t.Error("the page read the preview mode")
+	return "feature", true, nil
+}
+
+// An earlier run of /suiteward mode left a mode-set row in the ledger (SW-16): the page states no preview mode and reads none, and the kinds section is the sentence and
+// the table, as it was before the line.
+func TestPullPageStatesNoPreviewModeAndReadsNone(t *testing.T) {
 	w := newPageWorld(t)
 	w.completed(canonicalTests("pass"), receiptTests("detects"))
-	w.wantText(w.section(w.text(), "The kinds of change"), "No preview mode is recorded for this pull request.")
-	w.previews.mode, w.previews.found = "feature", true
-	w.previews.asked = nil
-	w.wantText(w.section(w.text(), "The kinds of change"), "Preview mode: feature. It is a preview: no check and no approval reads it.")
-	if want := fmt.Sprint(bootRepoID, " 5 ", bootTime.UTC().Format(time.RFC3339)); len(w.previews.asked) != 1 || w.previews.asked[0] != want {
-		t.Errorf("the preview mode was asked as %v, want once as %q: since the current enrollment", w.previews.asked, want)
+	w.pages.pulls = pagePreviewTrap{pullLister: w.pulls, t: t}
+	page := w.text()
+	if strings.Contains(page, "review mode") {
+		t.Errorf("the page states a preview mode:\n%s", w.section(page, "The kinds of change"))
+	}
+	if section := strings.TrimSpace(w.section(page, "The kinds of change")); !strings.HasSuffix(section, "</table></div>") {
+		t.Errorf("the kinds section does not end with its table:\n%s", section)
 	}
 }
 

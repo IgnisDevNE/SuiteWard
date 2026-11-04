@@ -425,7 +425,7 @@ func TestPullPagePastItsCapIs503AndNeverRefusedForItsSize(t *testing.T) {
 }
 
 func TestAPageIsBuiltUnderACapOfTwelveMebibytesAboveTheNineOfItsBudgets(t *testing.T) {
-	if got := newReceiptPages(nil, nil, nil, nil, nil, "isolated").limit; got != 12<<20 {
+	if got := newReceiptPages(nil, nil, nil, nil, "isolated").limit; got != 12<<20 {
 		t.Errorf("a page is built under a limit of %d bytes, want 12 MiB", got)
 	}
 }

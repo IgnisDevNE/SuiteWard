@@ -55,7 +55,6 @@ type listBlock struct {
 type kindsSection struct {
 	Table   table // the zero table when there is no receipt to judge
 	NoneMet bool  // a receipt was judged and no kind of change is met
-	Preview string
 }
 
 // situate says the situation of the head and of each wanted run. It fills a domain.Set from the jobs, with the level that each was created under, and asks it whether the

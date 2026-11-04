@@ -67,8 +67,7 @@ li { overflow-wrap: anywhere; }
 {{template "links" .Wrong}}{{end}}<h2 id="kinds-of-change">The kinds of change</h2>
 <p>It looks only at the tests this change adds or edits.</p>
 {{if .Kinds.Table.Head}}{{template "table" .Kinds.Table}}{{else}}<p>No receipt to judge.</p>
-{{end}}<p>{{.Kinds.Preview}}</p>
-{{if .Evidence.Head}}<h2>How these results were made</h2>
+{{end}}{{if .Evidence.Head}}<h2>How these results were made</h2>
 {{template "table" .Evidence}}{{end}}{{if .Report.Show}}<h2>Change report</h2>
 {{if .Report.Sentence}}<p>{{.Report.Sentence}}</p>
 {{else}}<p>The change report of revision {{.Report.Reference}}, without the changed lines.</p>

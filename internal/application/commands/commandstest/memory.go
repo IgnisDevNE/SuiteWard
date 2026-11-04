@@ -175,26 +175,6 @@ func (m *Memory) Skipped(ctx context.Context, repositoryID int64, pull int, sinc
 	return false, nil
 }
 
-// PreviewMode implements commands.Store.
-func (m *Memory) PreviewMode(ctx context.Context, repositoryID int64, pull int, since time.Time) (string, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return "", false, err
-	}
-	if err := commands.ValidatePreview(repositoryID, pull); err != nil {
-		return "", false, err
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var latest commands.Entry
-	found := false
-	for _, e := range m.ledger {
-		if e.RepositoryID == repositoryID && e.PullNumber == pull && e.Disposition == commands.ModeSet && !e.CreatedAt.Before(since) && (!found || e.CommentID > latest.CommentID) {
-			latest, found = e, true
-		}
-	}
-	return latest.Mode, found, nil
-}
-
 // Instance implements commands.Store.
 func (m *Memory) Instance(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {

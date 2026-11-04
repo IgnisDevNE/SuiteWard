@@ -104,9 +104,6 @@ type Store interface {
 	// Skipped reports whether the pull has a `skipped` entry whose comment was created at or after since (the current
 	// enrollment's enrolled_at). ErrInvalid for a non-positive id or a pull out of range.
 	Skipped(ctx context.Context, repositoryID int64, pull int, since time.Time) (bool, error)
-	// PreviewMode returns the mode of the pull's mode-set entry with the greatest comment id among those created at or after since
-	// (the current enrollment's enrolled_at), and false when there is none. ErrInvalid for a non-positive id or a pull out of range.
-	PreviewMode(ctx context.Context, repositoryID int64, pull int, since time.Time) (string, bool, error)
 	// Instance returns this installation's random identifier, created by migration 00013 and never changed.
 	Instance(ctx context.Context) (string, error)
 }
@@ -140,9 +137,6 @@ func (e Entry) Validate() error {
 	}
 	return nil
 }
-
-// ValidatePreview reports why PreviewMode cannot answer, as ErrInvalid.
-func ValidatePreview(repositoryID int64, pull int) error { return ValidateSkipped(repositoryID, pull) }
 
 // ValidateLatest reports why LatestOwnerCommand cannot answer, as ErrInvalid.
 func ValidateLatest(repositoryID int64, pull int, ownerID, before int64) error {

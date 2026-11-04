@@ -399,6 +399,36 @@ func TestDoctorColocatedLoopbackOfAPodmanMachineThatDoesNotAnswerFromThisCompute
 	}
 }
 
+// A bare `podman machine stop` or `podman machine start` acts on the default machine, so the fix names the machine of this instance unless it is the
+// default one. Every other word of the fix stays.
+func TestDoctorLoopbackFixStopsAndStartsTheMachineOfTheInstance(t *testing.T) {
+	const fix = "This is a known limit of the machine's port forwarding. Run `%s`, then `%s`, then run doctor again. If it persists, the owner unblocks each revision with `/suiteward unblock`."
+	for name, c := range map[string]struct{ machine, stop, start string }{
+		"a machine of its own": {"sw-m21c", "podman machine stop sw-m21c", "podman machine start sw-m21c"},
+		"the default machine":  {defaultMachine, "podman machine stop", "podman machine start"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			list := fmt.Sprintf(`[{"Name":%q,"Running":true,"RemoteUsername":"user"}]`, c.machine)
+			f, s := colocated{goos: "windows", over: []rule{{match: "machine list", out: list}}}.build(t)
+			s.Connection = c.machine
+			path := filepath.Join(t.TempDir(), "settings.yaml")
+			if err := SaveSettings(path, s); err != nil {
+				t.Fatal(err)
+			}
+			unreachable := func(context.Context, string) ([]byte, error) { return nil, errors.New("connection refused") }
+			var got doctorResult
+			for _, r := range doctorChecks(context.Background(), f.deps(), unreachable, path, coloTokenFile(t, f)) {
+				if r.Name == "executor.loopback" {
+					got = r
+				}
+			}
+			if want := fmt.Sprintf(fix, c.stop, c.start); got.OK || got.Fix != want {
+				t.Errorf("executor.loopback = %+v, want a failure whose fix is %q", got, want)
+			}
+		})
+	}
+}
+
 // In a folder that an install refuses, an install does not set up the test runner, so no fix promises that it does: the rows that an install still
 // makes right (the token copy, the Go image, the service's token) say what to run and no more, and a test runner that runs but is not seen by the
 // service has no install to fix it, so its fix is the way out of the folder.

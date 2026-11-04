@@ -120,7 +120,8 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	default:
 		d.pass("executor.lifecycle", "The test runner is set up as "+executorMechanism(plan.goos)+".")
 	}
-	if d.rt == nil && stateErr == nil && !other && running {
+	_, statusRead := d.raw["status"]
+	if d.rt == nil && !statusRead && stateErr == nil && !other && running {
 		d.failRunnerWaitsForContainerProgram()
 	} else {
 		d.checkExecutorRunning(ctx, func(context.Context) error {
@@ -144,10 +145,11 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 }
 
 // failRunnerWaitsForContainerProgram is the result of a test runner that runs while doctor's own runtime check failed (d.rt is nil, and the result
-// named d.why says why). The service lives in that program, so /status cannot be read, and a test runner that cannot reach its program asks for
-// its version until it answers, and goes on by itself. Doctor cannot tell whether the runner's own request fails too (a rootful Podman fails
-// doctor's check, not the runner's), so the row says what SuiteWard cannot use and what the runner does when it cannot reach the program. The
-// fix is the one of the result that found the program down: the command that starts the Podman machine or Docker.
+// named d.why says why) and /status could not be read: the service lives in that program, so with it down nothing answers. When /status is read, the
+// service works and the usual row stands (a rootful Podman fails doctor's check, not the runner's). A test runner that cannot reach its program asks
+// for its version until it answers, and goes on by itself; doctor cannot tell whether the runner's own request fails, so the row says what SuiteWard
+// cannot use and what the runner does when it cannot reach the program. The fix is the one of the result that found the program down: the command
+// that starts the Podman machine or Docker.
 func (d *doctor) failRunnerWaitsForContainerProgram() {
 	i := slices.IndexFunc(d.results, func(r doctorResult) bool { return r.Name == d.why })
 	if i < 0 {

@@ -451,8 +451,11 @@ func BootstrapSummary(s Summary) string {
 	return paragraphs(parts...)
 }
 
+// modeApproveInstead ends every answer that says /suiteward mode is gone: the kind of change goes in the approve (M2.1c, SW-16, text 7).
+const modeApproveInstead = "Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
+
 // modeGoneText answers a /suiteward mode line, and ends a mode-refused acknowledgment queued before the command was removed (M2.1c, SW-16, text 7).
-const modeGoneText = "`/suiteward mode` is no longer a command. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
+const modeGoneText = "`/suiteward mode` is no longer a command. " + modeApproveInstead
 
 // CoLocatedNotice is what a body says when the instance runs beside the coding agent (ADR 0027).
 const CoLocatedNotice = "SuiteWard runs on the same computer as your coding agent, so its protection is reduced. " +

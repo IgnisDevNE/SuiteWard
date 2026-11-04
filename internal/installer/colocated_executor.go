@@ -198,8 +198,21 @@ func (c *colocatedInstall) setUpExecutor(ctx context.Context) {
 	scr.Say("The test runner has one credential, its own token (%s), and it reaches SuiteWard at http://127.0.0.1:%d.\n", plan.tokenFile, c.s.HTTPPort)
 	scr.Say("Keep only one test runner (the executor) for each container program. When it starts, it removes every container of its container program whose name starts with %s, so a second test runner (one started by hand, say) would remove the sandboxes of the first.\n", sandboxNamePrefix)
 	if c.executorPin == "" {
-		scr.Say("The test runner has not been checked against an official release. This is normal for a development build. To check it, run `%s` with the program from that release.\n", d.suggest("install", "--upgrade --sha256sums <the release's SHA256SUMS file>"))
+		detail, fix := unpinnedExecutorText(d)
+		scr.Say("%s %s\n", detail, fix)
 	}
+}
+
+// unpinnedExecutorText is what the install and doctor say of an executor whose pin was not made from a release's SHA256SUMS, and how to make it. A
+// release build never calls itself a development build, which it is not: it says that nothing checked the program against its release's list.
+func unpinnedExecutorText(d Deps) (detail, fix string) {
+	command := d.suggest("install", "--upgrade --sha256sums <the release's SHA256SUMS file>")
+	if _, release := ReleaseImage(); release {
+		return "The test runner was not checked against the list of fingerprints of its release (SHA256SUMS), so SuiteWard cannot say that it is the release's own program.",
+			"To check it, download SHA256SUMS from the same release and run `" + command + "`."
+	}
+	return "The test runner has not been checked against an official release. This is normal for a development build.",
+		"To check it, run `" + command + "` with the program from that release."
 }
 
 // removeExecutor stops the executor, takes it out of the operating system and deletes its files, the token copy apart (a purge removes that).

@@ -238,8 +238,8 @@ func (d *doctor) checkExecutorColocatedBinary(plan executorPlan, fix string) {
 	case len(fields) >= 2 && releaseAssetOf(plan.goos).MatchString(fields[1]):
 		d.pass("executor.binary", "The test runner's program matches the official release: its fingerprint (SHA-256 "+sum+") is listed in the release's SHA256SUMS as "+fields[1]+".")
 	default:
-		d.warn("executor.binary", "The test runner has not been checked against an official release. This is normal for a development build.",
-			"To check it, run `"+d.deps.suggest("install", "--upgrade --sha256sums <the release's SHA256SUMS file>")+"` with the program from that release.")
+		detail, check := unpinnedExecutorText(d.deps)
+		d.warn("executor.binary", detail, check)
 	}
 }
 

@@ -88,10 +88,14 @@ func TestInstallOfAReleaseBuildWithoutTheSumsDoesNotCallItADevelopmentBuild(t *t
 		t.Fatal(err)
 	}
 	out := h.out.String()
-	fix := h.newEnv().Deps.suggest("install", "--upgrade --sha256sums <the release's SHA256SUMS file>")
-	want := "The test runner was not checked against the list of fingerprints of its release (SHA256SUMS), so SuiteWard cannot say that it is the release's own program. To check it, download SHA256SUMS from the same release and run `" + fix + "`.\n"
-	if !strings.Contains(out, want) {
-		t.Errorf("the output lacks %q:\n%s", want, out)
+	// The command in between names this instance's own settings and token file, as every command the install prints does.
+	for _, want := range []string{
+		"The test runner was not checked against the list of fingerprints of its release (SHA256SUMS), so SuiteWard cannot say that it is the release's own program. To check it, download SHA256SUMS from the same release and run `suiteward install ",
+		" --upgrade --sha256sums <the release's SHA256SUMS file>`.\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the output lacks %q:\n%s", want, out)
+		}
 	}
 	if strings.Contains(out, "development build") {
 		t.Errorf("a release build is called a development build:\n%s", out)

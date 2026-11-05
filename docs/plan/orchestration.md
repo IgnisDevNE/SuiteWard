@@ -23,7 +23,7 @@ Two consequences of the configuration:
 
 ## Checks and publishing
 
-The project's checks are `./scripts/dev.ps1 check`, plus `./scripts/dev.ps1 persistence` when a change touches the PostgreSQL adapter or migrations. A task routed to Orbit is implemented through the [Orbit lifecycle](orbit.md#lifecycle); the orchestrator's own verification, the review and the merge are unchanged. Every GitHub write, the phase PR included, goes through the `ignisdevne[bot]` GitHub App with a token from `scripts/bot-token.ps1` ([GitHub and merges](../../AGENTS.md#github-and-merges)).
+The project's checks are `./scripts/dev.ps1 check`, plus `./scripts/dev.ps1 persistence` when a change touches the PostgreSQL adapter or migrations. A task routed to Orbit is implemented through the [Orbit lifecycle](orbit.md#lifecycle); the orchestrator's own verification, the review and the merge are unchanged. Every GitHub write, the phase PR included, goes through the `ignisdevne[bot]` GitHub App; `scripts/bot-token.ps1` gives its token to `gh` and API calls ([GitHub and merges](../../AGENTS.md#github-and-merges)).
 
 ## SuiteWard governs this repository
 

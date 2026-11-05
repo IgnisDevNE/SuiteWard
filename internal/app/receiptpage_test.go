@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"html"
 	"log/slog"
 	"net/http"
@@ -27,39 +26,25 @@ const pullPath = "/pulls/acme/widgets/5"
 
 var receiptDecl = execDeclaration("advisory", "advisory")
 
-// pagePreviews answers the preview mode of every pull request and remembers what it was asked.
-type pagePreviews struct {
-	mode  string
-	found bool
-	err   error
-	asked []string
-}
-
-func (f *pagePreviews) PreviewMode(_ context.Context, repositoryID int64, pull int, since time.Time) (string, bool, error) {
-	f.asked = append(f.asked, fmt.Sprint(repositoryID, " ", pull, " ", since.UTC().Format(time.RFC3339)))
-	return f.mode, f.found, f.err
-}
-
 // pageWorld is the default canonical world with the receipt page over its stores: pull 5 is open at cjHead2.
 type pageWorld struct {
 	*cjJobWorld
-	previews *pagePreviews
-	pages    *receiptPages
-	server   *api
-	apiLogs  *bytes.Buffer
-	at       time.Time // the clock of the page: zero is a moment after the runner was last seen
+	pages   *receiptPages
+	server  *api
+	apiLogs *bytes.Buffer
+	at      time.Time // the clock of the page: zero is a moment after the runner was last seen
 }
 
 func newPageWorld(t *testing.T) *pageWorld {
 	t.Helper()
-	w := &pageWorld{cjJobWorld: newExecWorld(t, receiptDecl), previews: &pagePreviews{}, apiLogs: &bytes.Buffer{}}
+	w := &pageWorld{cjJobWorld: newExecWorld(t, receiptDecl), apiLogs: &bytes.Buffer{}}
 	w.serve("isolated")
 	return w
 }
 
 // serve builds the page over the stores of the world, for the configured tier.
 func (w *pageWorld) serve(tier string) {
-	w.pages = newReceiptPages(w.suites, w.check.contents, w.jobs, w.pulls, w.previews, tier)
+	w.pages = newReceiptPages(w.suites, w.check.contents, w.jobs, w.pulls, tier)
 	w.pages.now = w.clockOfThePage
 	w.server = &api{owners: w.owners, receipts: w.pages, reports: newChangeReports(w.suites, w.content), executorStatus: &executorStatus{liveness: w.check.liveness},
 		logger: slog.New(slog.NewTextHandler(w.apiLogs, nil))}
@@ -240,7 +225,6 @@ func TestReceiptPageThatCannotBeBuiltIs503WithAFixedTextAndTheCauseInTheLog(t *t
 		t.Errorf("the cause is not logged: %s", w.apiLogs)
 	}
 	for name, edit := range map[string]func(*pageWorld){
-		"the preview mode":   func(w *pageWorld) { w.previews.err = errors.New("SECRET-STORE-TEXT") },
 		"the observed pulls": func(w *pageWorld) { w.pages.pulls = pagePullsFail{} },
 		"the revision": func(w *pageWorld) {
 			w.pages.suites = &erroringSuites{UnitOfWork: w.suites, project: w.project(), err: errors.New("SECRET-STORE-TEXT")}
@@ -371,7 +355,7 @@ func TestReceiptPageAsksWhetherTheReceiptAppliesBeforeItReadsItsJob(t *testing.T
 	response := w.get("127.0.0.1:8080", pullPath)
 
 	page := html.UnescapeString(response.Body.String())
-	if response.Code != http.StatusOK || strings.Contains(page, "<h2>Tests this change adds or edits</h2>") {
+	if response.Code != http.StatusOK || strings.Contains(page, ">Tests this change adds or edits</h2>") {
 		t.Errorf("status %d: the page shows the receipt of a revision whose receipt does not apply:\n%s", response.Code, page)
 	}
 	w.wantText(page, "This revision changes no file that the approved patterns match, so it has no receipt.")
@@ -411,7 +395,7 @@ func TestThePullRequestPageAndTheReportPageShareOneTurn(t *testing.T) {
 
 // The deadline of a request is the builder's, so that a test of the largest page can lift it; production keeps 20 s.
 func TestAPageIsBuiltUnderADeadlineOfTwentySeconds(t *testing.T) {
-	if got := newReceiptPages(nil, nil, nil, nil, nil, "isolated").requestTimeout(); got != 20*time.Second {
+	if got := newReceiptPages(nil, nil, nil, nil, "isolated").requestTimeout(); got != 20*time.Second {
 		t.Errorf("a request for a page may take %s, want 20 s", got)
 	}
 }

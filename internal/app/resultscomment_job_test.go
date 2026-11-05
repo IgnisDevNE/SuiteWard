@@ -503,6 +503,102 @@ func TestChecksAddTheResultsCommentAndNoSecondNotRespondingCommentWhenTheWaitEnd
 	w.wantComments("results:", resultsKeyOf(4, bootHead, job.ID, 0))
 }
 
+// A head whose job is created while the runner has been silent for the whole lease wait gets one comment, the results comment that says that the tests did not run: the
+// sweep of the next pass ends the job, so a comment that says "SuiteWard keeps trying" would be followed by "did not run" 30 s later. The check of the pass still says
+// that the runner does not respond.
+func TestChecksWriteOnlyTheResultsCommentForAHeadWhoseJobWaitsWhileTheRunnerIsSilentForTheLeaseWait(t *testing.T) {
+	w := gateWorld(t)
+	w.silentFor(w.check.executor.LeaseWait) // the first pass creates the job and reads the silence of the lease wait, to the instant
+	w.mustCheck()
+	job := w.onlyJob(4, bootHead, execution.PlanCanonical)
+	if job.State != execution.StatePending {
+		t.Fatalf("the job is %s, want pending: the pass created it and the sweep of the next pass ends it", job.State)
+	}
+	w.want(4, checks.InProgress, "canonical-not-responding", 1) // the checks are unchanged
+	w.wantComments("not-responding:")
+
+	w.mustCheck()
+
+	requireFinal(t, w.onlyJob(4, bootHead, execution.PlanCanonical), execution.ReasonNoExecutor)
+	w.wantComments("not-responding:")
+	w.wantComments("results:", resultsKeyOf(4, bootHead, job.ID, 0))
+	w.wantComments("runner-back:")
+}
+
+// A moment before the lease wait the head still gets the comment that says that SuiteWard keeps trying, as it did: the runner has not been silent for the lease wait,
+// so nothing says that the next sweep ends the job. The results comment follows, once the sweep did.
+func TestChecksWriteTheNotRespondingCommentOfAHeadWhoseJobWaitsAMomentBeforeTheLeaseWait(t *testing.T) {
+	w := gateWorld(t)
+	w.silentFor(w.check.executor.LeaseWait - time.Millisecond)
+	w.mustCheck()
+	job := w.onlyJob(4, bootHead, execution.PlanCanonical)
+	key := notRespondingKeyOf(4, bootHead, job.ID, 0)
+	w.wantComments("not-responding:", key)
+	w.wantComments("results:")
+
+	w.mustCheck()
+
+	requireFinal(t, w.onlyJob(4, bootHead, execution.PlanCanonical), execution.ReasonNoExecutor)
+	w.wantComments("not-responding:", key)
+	w.wantComments("results:", resultsKeyOf(4, bootHead, job.ID, 0))
+}
+
+// The pass that wrote no comment leaves no key: a runner that answers, and is silent again for less than the lease wait, gets the comment of the same jobs, and no
+// results comment, since the sweep never ended the job.
+func TestChecksWriteTheNotRespondingCommentOfAHeadWhoseRunnerAnsweredAfterAPassThatWroteNone(t *testing.T) {
+	w := gateWorld(t)
+	w.silentFor(w.check.executor.LeaseWait)
+	w.mustCheck()
+	job := w.onlyJob(4, bootHead, execution.PlanCanonical)
+	w.wantComments("not-responding:")
+
+	w.runnerAnswers()
+	w.mustCheck()
+	w.silentFor(45 * time.Second)
+	w.mustCheck()
+
+	if got := w.onlyJob(4, bootHead, execution.PlanCanonical); got.ID != job.ID || got.State != execution.StatePending {
+		t.Fatalf("the job is %d, %s; want job %d, pending: the runner answered before the sweep ended it", got.ID, got.State, job.ID)
+	}
+	w.wantComments("not-responding:", notRespondingKeyOf(4, bootHead, job.ID, 0))
+	w.wantComments("results:")
+}
+
+// The comment reads the silence that the pass read, and the lease wait that it read with it, and never the clock: the pass that wrote none left no key, so the same jobs
+// get theirs from a pass that read less silence.
+func TestTheNotRespondingCommentReadsTheSilenceOfThePassAndNeverTheClock(t *testing.T) {
+	w := gateWorld(t)
+	w.execRun()
+	x := &executionRun{known: true, policy: executionPolicy{canonical: domain.CanonicalLevelRequired}}
+	set, err := w.readHead(x, headJobs{canonicalPlanned: true, canonical: w.onlyJob(4, bootHead, execution.PlanCanonical), hasCanonical: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.check.now = func() time.Time {
+		t.Fatal("the comment read the clock")
+		return time.Time{}
+	}
+	s := pullFourState()
+	s.p.Repo, s.tier = bootRepo, "isolated"
+
+	for _, tc := range []struct {
+		name     string
+		executed executionOutcome
+		want     int
+	}{
+		{"the runner is not silent", executionOutcome{set: set}, 0},
+		{"the silence is the lease wait", executionOutcome{set: set, silent: true, pastLeaseWait: true}, 0},
+		{"the silence is less than the lease wait", executionOutcome{set: set, silent: true}, 1},
+	} {
+		if err := w.check.notRespondingComment(t.Context(), s, tc.executed); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := len(w.scopeKeys("not-responding:")); got != tc.want {
+			t.Fatalf("%s: %d not-responding comments, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestChecksWriteTheNotRespondingCommentOfAHeadWhoseReceiptJobWaits(t *testing.T) {
 	w := newExecWorld(t, execDecl)
 	w.execPullFive(execHeadFiles(execDecl, "v2"))

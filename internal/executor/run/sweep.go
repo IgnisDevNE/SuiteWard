@@ -38,6 +38,7 @@ func osRun(ctx context.Context, name string, args ...string) ([]byte, error) {
 	defer cancel()
 	cmd := commandContext(ctx, name, args...)
 	cmd.Env = sandbox.CLIEnv(os.Environ())
+	sandbox.NoWindow(cmd)
 	out, err := cmd.Output()
 	var failed *exec.ExitError
 	if errors.As(err, &failed) {

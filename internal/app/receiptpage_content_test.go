@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,16 +29,20 @@ func pageHeader(cells ...string) string {
 	return "<tr><th>" + strings.Join(cells, "</th><th>") + "</th></tr>"
 }
 
-// section is the part of the page under <h2>heading</h2>, up to the next <h2>.
+// headingOf matches the heading of a section: the three that "What went wrong" links carry an id, the others none.
+func headingOf(heading string) *regexp.Regexp {
+	return regexp.MustCompile(`<h2(?: id="[a-z-]+")?>` + regexp.QuoteMeta(heading) + `</h2>`)
+}
+
+// section is the part of the page under the heading, up to the next <h2.
 func (w *pageWorld) section(page, heading string) string {
 	w.t.Helper()
-	open := "<h2>" + heading + "</h2>"
-	start := strings.Index(page, open)
-	if start < 0 {
+	at := headingOf(heading).FindStringIndex(page)
+	if at == nil {
 		w.t.Fatalf("the page has no section %q:\n%s", heading, page)
 	}
-	rest := page[start+len(open):]
-	if end := strings.Index(rest, "<h2>"); end >= 0 {
+	rest := page[at[1]:]
+	if end := strings.Index(rest, "<h2"); end >= 0 {
 		rest = rest[:end]
 	}
 	return rest
@@ -560,15 +566,157 @@ func TestPullPageHasNoKindOfChangeToJudgeWithoutAReceiptThatIsCompleteAndNotEmpt
 	}
 }
 
-func TestPullPageStatesThePreviewModeAndSaysThatNothingReadsIt(t *testing.T) {
+// A line of "What went wrong", and the heading of the section that its link goes to.
+type wrongLine struct{ text, goesTo string }
+
+const (
+	approvedHeading = "Approved tests"
+	changeHeading   = "Tests this change adds or edits"
+	kindsHeading    = "The kinds of change"
+	noKindLine      = "The receipt meets no kind of change."
+)
+
+var wrongItem = regexp.MustCompile(`<li><a href="#([^"]*)">([^<]*)</a></li>`)
+
+// wentWrong are the lines of the section "What went wrong", each with the heading that carries the id its link goes to: a link to nowhere is an error of the page. It is none
+// when the page has no such section.
+func (w *pageWorld) wentWrong(page string) []wrongLine {
+	w.t.Helper()
+	if !strings.Contains(page, "<h2>What went wrong</h2>") {
+		return nil
+	}
+	section := w.section(page, "What went wrong")
+	var lines []wrongLine
+	for _, m := range wrongItem.FindAllStringSubmatch(section, -1) {
+		target := regexp.MustCompile(`<h2 id="` + regexp.QuoteMeta(m[1]) + `">([^<]*)</h2>`).FindStringSubmatch(page)
+		if target == nil {
+			w.t.Errorf("the line %q links to #%s, which no heading of the page carries", m[2], m[1])
+			continue
+		}
+		lines = append(lines, wrongLine{m[2], target[1]})
+	}
+	if items := strings.Count(section, "<li>"); items != len(lines) {
+		w.t.Errorf("the section has %d items and %d lines that link: every item is a link to a table\n%s", items, len(lines), section)
+	}
+	return lines
+}
+
+func (w *pageWorld) wantWentWrong(page string, want ...wrongLine) {
+	w.t.Helper()
+	if got := w.wentWrong(page); !slices.Equal(got, want) {
+		w.t.Errorf("what went wrong is %q, want %q", got, want)
+	}
+}
+
+// Each problem is one line, singular and plural, and a link to the table that shows it: the approved tests, the tests of the change, or the kinds of change.
+func TestPullPageSaysOneLineForEachProblemWithALinkToTheTableThatShowsIt(t *testing.T) {
+	editedApproved, editedChange := edited("TestEdited", "fail", "detects", []string{"fail"}, []string{"fail"})
+	for name, tc := range map[string]struct {
+		canonical, receipt []execution.Test
+		want               []wrongLine
+	}{
+		"three approved tests failed": {canonicalTests("fail", "fail", "fail", "pass"), receiptTests("detects"), []wrongLine{{"3 approved tests failed.", approvedHeading}}},
+		"one approved test failed":    {canonicalTests("fail", "pass"), receiptTests("detects"), []wrongLine{{"1 approved test failed.", approvedHeading}}},
+		"one gave no result":          {canonicalTests("missing", "pass"), receiptTests("detects"), []wrongLine{{"1 approved test gave no result.", approvedHeading}}},
+		"two gave no result":          {canonicalTests("missing", "missing"), receiptTests("detects"), []wrongLine{{"2 approved tests gave no result.", approvedHeading}}},
+		"two gave different results": {canonicalTests("flaky", "flaky"), receiptTests("detects"),
+			[]wrongLine{{"2 approved tests gave different results when they ran again.", approvedHeading}}},
+		"one gave different results": {canonicalTests("flaky"), receiptTests("detects"), []wrongLine{{"1 approved test gave different results when it ran again.", approvedHeading}}},
+		"one is weakened": {[]execution.Test{editedApproved}, []execution.Test{editedChange},
+			[]wrongLine{{"1 approved test failed.", approvedHeading}, {"1 approved test is weakened by this change.", approvedHeading}}},
+		"two tests of the change fail": {canonicalTests("pass"), receiptTests("fails", "fails", "detects"),
+			[]wrongLine{{"2 tests this change adds or edits fail.", changeHeading}, {noKindLine, kindsHeading}}},
+		"one test of the change fails": {canonicalTests("pass"), receiptTests("fails", "detects"),
+			[]wrongLine{{"1 test this change adds or edits fails.", changeHeading}, {noKindLine, kindsHeading}}},
+		"the receipt meets no kind": {canonicalTests("pass"), receiptTests("skipped"), []wrongLine{{noKindLine, kindsHeading}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newPageWorld(t)
+			w.completed(tc.canonical, tc.receipt)
+			w.wantWentWrong(w.text(), tc.want...)
+		})
+	}
+}
+
+// everyProblemWorld has every problem of the section: 3 approved tests fail, 1 gives no result, 2 give different results, 2 are weakened, 2 tests of the change fail and the
+// receipt meets no kind.
+func everyProblemWorld(t *testing.T) *pageWorld {
+	t.Helper()
+	w := newPageWorld(t)
+	changed := func(name string) execution.Test { // the version of an approved test that this change edits: TestC00 and TestC01 fail in their approved version
+		return execution.Test{Package: ".", Name: name, File: "a_test.go", Kind: execution.KindChanged, State: "detects", HeadRuns: []string{"pass"}, BaseRuns: []string{"fail"}}
+	}
+	w.completed(canonicalTests("fail", "fail", "fail", "missing", "flaky", "flaky"), append(receiptTests("fails", "fails"), changed("TestC00"), changed("TestC01")))
+	return w
+}
+
+// The lines come in the order of the counts of the comment, then the tests of the change, then the receipt.
+func TestPullPageSaysEveryProblemInOrder(t *testing.T) {
+	w := everyProblemWorld(t)
+	w.wantWentWrong(w.text(),
+		wrongLine{"3 approved tests failed.", approvedHeading},
+		wrongLine{"1 approved test gave no result.", approvedHeading},
+		wrongLine{"2 approved tests gave different results when they ran again.", approvedHeading},
+		wrongLine{"2 approved tests are weakened by this change.", approvedHeading},
+		wrongLine{"2 tests this change adds or edits fail.", changeHeading},
+		wrongLine{noKindLine, kindsHeading})
+}
+
+// A run that did not run is no problem here: the table by state and the situation say so. Only a run that has results has lines, and a receipt that did not run has no kinds to
+// meet none of.
+func TestPullPageHasNoLineForARunThatDidNotRun(t *testing.T) {
+	for name, tc := range map[string]struct {
+		canonical []execution.Test
+		want      []wrongLine
+	}{
+		"clean approved tests":  {canonicalTests("pass"), nil},
+		"failed approved tests": {canonicalTests("fail"), []wrongLine{{"1 approved test failed.", approvedHeading}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newPageWorld(t)
+			w.execPullFive(execHeadFiles(receiptDecl, "v2"))
+			w.finish(w.onlyJob(5, cjHead2, execution.PlanCanonical), tc.canonical)
+			w.silentFor(6 * time.Minute) // the receipt job is never run: the sweep ends it
+			w.mustCheck()
+			page := w.text()
+			w.wantText(page, "Tests this change adds or edits did not run.")
+			w.wantWentWrong(page, tc.want...)
+		})
+	}
+}
+
+// The kinds section says what its judgment looks at, right under its heading, whether or not something went wrong and whether or not there is a receipt to judge.
+func TestPullPageSaysThatTheKindsLookOnlyAtTheTestsThisChangeAddsOrEdits(t *testing.T) {
+	const sentence = "<p>It looks only at the tests this change adds or edits.</p>"
+	for name, setup := range map[string]func(w *pageWorld){
+		"nothing went wrong": func(w *pageWorld) { w.completed(canonicalTests("pass"), receiptTests("detects")) },
+		"a problem":          func(w *pageWorld) { w.completed(canonicalTests("fail"), receiptTests("fails")) },
+		"a receipt that is not complete": func(w *pageWorld) {
+			w.execPullFive(execHeadFiles(receiptDecl, "v2"))
+			w.finish(w.onlyJob(5, cjHead2, execution.PlanCanonical), canonicalTests("pass"))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newPageWorld(t)
+			setup(w)
+			section := w.section(w.text(), kindsHeading)
+			if !strings.HasPrefix(strings.TrimSpace(section), sentence) {
+				t.Errorf("the kinds section does not open with %q:\n%s", sentence, section)
+			}
+		})
+	}
+}
+
+// The page states no preview mode (SW-16): the kinds section is the sentence and the table, as it was before the line.
+func TestPullPageStatesNoModeAndTheKindsEndWithTheTable(t *testing.T) {
 	w := newPageWorld(t)
 	w.completed(canonicalTests("pass"), receiptTests("detects"))
-	w.wantText(w.section(w.text(), "The kinds of change"), "No preview mode is recorded for this pull request.")
-	w.previews.mode, w.previews.found = "feature", true
-	w.previews.asked = nil
-	w.wantText(w.section(w.text(), "The kinds of change"), "Preview mode: feature. It is a preview: no check and no approval reads it.")
-	if want := fmt.Sprint(bootRepoID, " 5 ", bootTime.UTC().Format(time.RFC3339)); len(w.previews.asked) != 1 || w.previews.asked[0] != want {
-		t.Errorf("the preview mode was asked as %v, want once as %q: since the current enrollment", w.previews.asked, want)
+	page := w.text()
+	if strings.Contains(page, "review mode") {
+		t.Errorf("the page states a preview mode:\n%s", w.section(page, "The kinds of change"))
+	}
+	if section := strings.TrimSpace(w.section(page, "The kinds of change")); !strings.HasSuffix(section, "</table></div>") {
+		t.Errorf("the kinds section does not end with its table:\n%s", section)
 	}
 }
 

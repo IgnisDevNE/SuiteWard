@@ -20,8 +20,45 @@ const (
 	linkNote = "This link opens on the computer that runs SuiteWard. If SuiteWard runs on a separate server, forward that server's HTTP port to your computer first. To open the link in a new tab, Ctrl+click it (Cmd+click on a Mac, or middle-click)."
 
 	resultsEvidence = "These results are what the test runner saw. They are evidence, not a verdict."
-	unblockOffer    = "To go on without these tests, the owner can comment `/suiteward unblock <code>`. That lets this commit pass its checks without them. A new push runs them."
+	// The offer of the unblock (M2.1c, SW-1; docs/plan/phases/M2.1c.md, text 4), shared by the results comment and the not-responding comment.
+	unblockOffer = "To go on without these tests, the owner can comment `/suiteward unblock <code>`, where `<code>` is a current code from the authenticator app. That lets this commit pass its checks without them, and they do not run for this commit. A new push runs them."
 )
+
+// The link and the tables of the results comment (M2.1c, SW-21; docs/plan/phases/M2.1c.md, texts 2 and 3), written out so that the tests pin them.
+const (
+	seeReport    = "See the full report here: [pull request page](" + resultsLink + ")."
+	noLinkText   = "SuiteWard has no web address set, so this comment has no link. The checks of this commit carry the counts."
+	kindsHeading = "Does the receipt meet each kind of change? It looks only at the tests this change adds or edits."
+	kindsHeader  = "| Kind of change | Met? | Why not |\n| --- | --- | --- |"
+)
+
+func countsHeading(n int) string { return "Tests this change adds or edits: " + strconv.Itoa(n) + "." }
+
+// countsTable is the table of the receipt: a row for each state, in the contract's order and with zeros shown. counts are the seven numbers of its rows.
+func countsTable(counts ...int) string {
+	labels := [...]string{"Fail before the change and pass now, so they show the change works", "Pass before and after, so they show nothing",
+		"Use code that the old code lacks, so they could not run before the change", "Fail with this change", "Give no result", "Give different results when run again", "Skipped"}
+	lines := []string{"| What the test shows | Tests |", "| --- | --- |"}
+	for i, n := range counts {
+		lines = append(lines, "| "+labels[i]+" | "+strconv.Itoa(n)+" |")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// countsParagraphs are the two paragraphs that state the receipt: the number of tests and the table of what they show.
+func countsParagraphs(total int, counts ...int) []string {
+	return []string{countsHeading(total), countsTable(counts...)}
+}
+
+// kindRow is the row of a kind of change that the receipt meets (notMet empty) or does not meet, with the sentence of its reason.
+func kindRow(kind, notMet string) string {
+	if notMet == "" {
+		return "| `" + kind + "` | Yes |  |"
+	}
+	return "| `" + kind + "` | No | " + notMet + " |"
+}
+
+func kindsTable(rows ...string) string { return kindsHeader + "\n" + strings.Join(rows, "\n") }
 
 // results is a head whose two runs are complete and clean, under required levels, with nothing to do: edit changes what a case needs.
 func results(edit ...func(*commandtext.Results)) commandtext.Results {
@@ -53,23 +90,15 @@ func TestResultsCommentOfACleanHeadHasTheBlocksInTheContractsOrder(t *testing.T)
 	want := strings.Join([]string{
 		"SuiteWard ran the tests for this commit (`0123456`). Nothing needs your attention.",
 		"Approved tests: 12 tests ran. 9 passed. 0 failed. 0 gave no result. 0 gave different results when they ran again. 3 were skipped.",
-		"Tests this change adds or edits: 3.\n" +
-			"- Fail before the change and pass now, so they show the change works: 2\n" +
-			"- Pass before and after, so they show nothing: 1\n" +
-			"- Use code that the old code lacks, so they could not run before the change: 0\n" +
-			"- Fail with this change: 0\n" +
-			"- Give no result: 0\n" +
-			"- Give different results when run again: 0\n" +
-			"- Skipped: 0",
-		"Does the receipt meet each kind of change?\n" +
-			"- `fix`: met.\n" +
-			"- `feature`: met.\n" +
-			"- `refactor`: not met. A test behaves differently with the change, so this does not look like a refactor.",
+		seeReport,
+		linkNote,
+		countsHeading(3),
+		countsTable(2, 1, 0, 0, 0, 0, 0),
+		kindsHeading,
+		kindsTable(kindRow("fix", ""), kindRow("feature", ""), kindRow("refactor", "A test behaves differently with the change, so this does not look like a refactor.")),
 		"To approve, name a kind of change that is met.",
 		"Nothing to do for now.",
 		resultsEvidence,
-		"Details: [pull request page](" + resultsLink + ").",
-		linkNote,
 	}, "\n\n") + "\n"
 	if got := resultsText(t, results()); got != want {
 		t.Errorf("the comment of a clean head is\n%s\nwant\n%s", got, want)
@@ -165,33 +194,24 @@ func hasParagraph(body, want string) bool {
 }
 
 func TestResultsCommentStatesTheReceipt(t *testing.T) {
-	list := func(heading string, counts ...int) string {
-		labels := []string{"Fail before the change and pass now, so they show the change works", "Pass before and after, so they show nothing",
-			"Use code that the old code lacks, so they could not run before the change", "Fail with this change", "Give no result", "Give different results when run again", "Skipped"}
-		lines := []string{heading}
-		for i, n := range counts {
-			lines = append(lines, "- "+labels[i]+": "+strconv.Itoa(n))
-		}
-		return strings.Join(lines, "\n")
-	}
 	for name, tc := range map[string]struct {
 		run  commandtext.ReceiptRun
 		want []string
 		not  []string
 	}{
 		"every state": {commandtext.ReceiptRun{Counts: execution.ReceiptCounts{Detects: 1, Inert: 2, NewAPI: 3, Fails: 4, Missing: 5, Flaky: 6, Skipped: 7, Excluded: 8}},
-			[]string{list("Tests this change adds or edits: 28.", 1, 2, 3, 4, 5, 6, 7)}, []string{"Changed test files that cannot be read", "Lines to look at", "no test that SuiteWard can run"}},
-		"an empty receipt": {commandtext.ReceiptRun{}, []string{"This change adds or edits no test that SuiteWard can run."}, []string{"Tests this change adds or edits:", "- Skipped"}},
+			countsParagraphs(28, 1, 2, 3, 4, 5, 6, 7), []string{"Changed test files that cannot be read", "Lines to look at", "no test that SuiteWard can run", "\n- "}},
+		"an empty receipt": {commandtext.ReceiptRun{}, []string{"This change adds or edits no test that SuiteWard can run."}, []string{"Tests this change adds or edits:", "What the test shows", "Skipped"}},
 		"a receipt of excluded tests only": {commandtext.ReceiptRun{Counts: execution.ReceiptCounts{Excluded: 2}},
-			[]string{"This change adds or edits no test that SuiteWard can run."}, []string{"Tests this change adds or edits:"}},
+			[]string{"This change adds or edits no test that SuiteWard can run."}, []string{"Tests this change adds or edits:", "What the test shows"}},
 		"files that cannot be read": {commandtext.ReceiptRun{Counts: execution.ReceiptCounts{Detects: 1, Unparsed: 2}},
-			[]string{list("Tests this change adds or edits: 1.", 1, 0, 0, 0, 0, 0, 0), "Changed test files that cannot be read: 2."}, nil},
+			append(countsParagraphs(1, 1, 0, 0, 0, 0, 0, 0), "Changed test files that cannot be read: 2."), nil},
 		"files that cannot be read and no test": {commandtext.ReceiptRun{Counts: execution.ReceiptCounts{Unparsed: 1}},
-			[]string{"This change adds or edits no test that SuiteWard can run.", "Changed test files that cannot be read: 1."}, []string{"Tests this change adds or edits:"}},
+			[]string{"This change adds or edits no test that SuiteWard can run.", "Changed test files that cannot be read: 1."}, []string{"Tests this change adds or edits:", "What the test shows"}},
 		"lines to look at": {commandtext.ReceiptRun{Counts: execution.ReceiptCounts{Inert: 1}, Markers: 4},
-			[]string{list("Tests this change adds or edits: 1.", 0, 1, 0, 0, 0, 0, 0), "Lines to look at: 4. They are listed on the page."}, nil},
+			append(countsParagraphs(1, 0, 1, 0, 0, 0, 0, 0), "Lines to look at: 4. They are listed on the page."), nil},
 		"a receipt that did not run": {commandtext.ReceiptRun{Unavailable: "timeout"}, []string{"Tests this change adds or edits: not run. The run took longer than its time limit."},
-			[]string{"This change adds or edits no test", "Lines to look at"}},
+			[]string{"This change adds or edits no test", "Lines to look at", "What the test shows"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := resultsText(t, results(func(r *commandtext.Results) {
@@ -220,34 +240,47 @@ func TestResultsCommentStatesTheReceipt(t *testing.T) {
 	})
 }
 
+// The notes of the receipt (the files that cannot be read, the lines to look at) stay paragraphs, after the table.
+func TestResultsCommentKeepsTheNotesOfTheReceiptAfterItsTable(t *testing.T) {
+	body := resultsText(t, results(func(r *commandtext.Results) {
+		r.Receipt = &commandtext.ReceiptRun{Counts: execution.ReceiptCounts{Detects: 1, Unparsed: 2}, Markers: 4}
+		r.Next = execution.NextFix
+	}))
+	want := strings.Join(append(countsParagraphs(1, 1, 0, 0, 0, 0, 0, 0), "Changed test files that cannot be read: 2. Lines to look at: 4. They are listed on the page."), "\n\n") + "\n\n"
+	if !strings.Contains(body, want) {
+		t.Errorf("the comment lacks the receipt, its table and its notes in this order:\n%s\nin:\n%s", want, body)
+	}
+}
+
 func TestResultsCommentSaysWhichKindsOfChangeTheReceiptMeets(t *testing.T) {
-	const fixNotMet = "- `fix`: not met. "
+	const fixNotMet = "No test fails without the change, so none shows that it fixes something."
+	const blocking = "A test fails, is missing or is flaky, or a changed test file cannot be read."
+	const notRefactor = "A test behaves differently with the change, so this does not look like a refactor."
 	for name, tc := range map[string]struct {
 		counts execution.ReceiptCounts
-		want   []string
+		want   []string // the rows of the table, in its order
 	}{
 		"a test that fails without the change": {execution.ReceiptCounts{Detects: 1},
-			[]string{"- `fix`: met.", "- `feature`: met.", "- `refactor`: not met. A test behaves differently with the change, so this does not look like a refactor."}},
+			[]string{kindRow("fix", ""), kindRow("feature", ""), kindRow("refactor", notRefactor)}},
 		"a test that needs new code": {execution.ReceiptCounts{NewAPI: 1},
-			[]string{fixNotMet + "No test fails without the change, so none shows that it fixes something.", "- `feature`: met.", "- `refactor`: not met. A test behaves differently with the change, so this does not look like a refactor."}},
+			[]string{kindRow("fix", fixNotMet), kindRow("feature", ""), kindRow("refactor", notRefactor)}},
 		"only inert tests": {execution.ReceiptCounts{Inert: 2},
-			[]string{fixNotMet + "No test fails without the change, so none shows that it fixes something.",
-				"- `feature`: not met. No test fails without the change or needs new code, so none shows that it adds something.", "- `refactor`: met."}},
+			[]string{kindRow("fix", fixNotMet), kindRow("feature", "No test fails without the change or needs new code, so none shows that it adds something."), kindRow("refactor", "")}},
 		"a test that fails": {execution.ReceiptCounts{Detects: 1, Fails: 1},
-			[]string{fixNotMet + "A test fails, is missing or is flaky, or a changed test file cannot be read.", "- `feature`: not met. A test fails, is missing or is flaky, or a changed test file cannot be read.",
-				"- `refactor`: not met. A test fails, is missing or is flaky, or a changed test file cannot be read."}},
+			[]string{kindRow("fix", blocking), kindRow("feature", blocking), kindRow("refactor", blocking)}},
 		"only skipped tests": {execution.ReceiptCounts{Skipped: 1},
-			[]string{fixNotMet + "No test fails without the change, so none shows that it fixes something."}},
+			[]string{kindRow("fix", fixNotMet), kindRow("feature", "No test fails without the change or needs new code, so none shows that it adds something."), kindRow("refactor", notRefactor)}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := resultsText(t, results(func(r *commandtext.Results) { r.Receipt.Counts = tc.counts }))
-			if !strings.Contains(body, "Does the receipt meet each kind of change?\n") {
-				t.Errorf("the comment does not ask which kinds of change are met:\n%s", body)
+			if !hasParagraph(body, kindsHeading) {
+				t.Errorf("the comment does not ask which kinds of change are met, with the words of the contract:\n%s", body)
 			}
-			for _, w := range tc.want {
-				if !strings.Contains(body, w+"\n") && !strings.HasSuffix(strings.TrimRight(body, "\n"), w) && !strings.Contains(body, w) {
-					t.Errorf("the comment lacks the line %q:\n%s", w, body)
-				}
+			if want := kindsHeading + "\n\n" + kindsTable(tc.want...) + "\n\n"; !strings.Contains(body, want) {
+				t.Errorf("the comment lacks the question and the table of the kinds in this order:\n%s\nin:\n%s", want, body)
+			}
+			if strings.Contains(body, "- `fix`") {
+				t.Errorf("the comment still lists the kinds as bullets:\n%s", body)
 			}
 		})
 	}
@@ -273,6 +306,167 @@ func TestResultsCommentSaysWhichKindsOfChangeTheReceiptMeets(t *testing.T) {
 			}
 		}
 	})
+}
+
+// While the approved tests fail or this change weakens one, the comment does not say which kind of change the receipt meets (SW-22, M2.1c decision 1 and text 1): the receipt
+// judges only the tests of the change, and a "met" beside those counts reads as a pass.
+const (
+	kindsWithheldTail = ", so this comment does not say which kind of change (`fix`, `feature`, `refactor`) this change is. The details are in the report."
+	approveAnyway     = "If you want to approve this revision anyway, name the kind of change that the report shows as met, and comment:"
+	approveModeIntro  = "To approve this exact revision, comment:"
+	approveNamesKind  = "To approve, name a kind of change that is met."
+)
+
+// withFailingApprovedTests edits a head so that its approved tests ran with the counts, and this change weakens weakened of them.
+func withFailingApprovedTests(counts execution.CanonicalCounts, weakened int) func(*commandtext.Results) {
+	return func(r *commandtext.Results) { r.Canonical.Counts, r.Weakened = counts, weakened }
+}
+
+func TestResultsCommentDoesNotSayWhichKindsAreMetWhileTheApprovedTestsFail(t *testing.T) {
+	for name, tc := range map[string]struct {
+		counts   execution.CanonicalCounts
+		weakened int
+		want     string
+	}{
+		"failed and weakened":     {execution.CanonicalCounts{Pass: 5, Fail: 3}, 1, "The approved tests failed (3 failed, 1 weakened)" + kindsWithheldTail},
+		"failed and no result":    {execution.CanonicalCounts{Pass: 5, Fail: 1, Missing: 2}, 0, "The approved tests failed (1 failed, 2 gave no result)" + kindsWithheldTail},
+		"different results":       {execution.CanonicalCounts{Pass: 5, Flaky: 2}, 0, "The approved tests failed (2 gave different results)" + kindsWithheldTail},
+		"every count":             {execution.CanonicalCounts{Pass: 5, Fail: 1, Missing: 2, Flaky: 3}, 4, "The approved tests failed (1 failed, 2 gave no result, 3 gave different results, 4 weakened)" + kindsWithheldTail},
+		"one weakened test only":  {execution.CanonicalCounts{Pass: 8}, 1, "This change weakens an approved test (1 weakened)" + kindsWithheldTail},
+		"two weakened tests only": {execution.CanonicalCounts{Pass: 8}, 2, "This change weakens approved tests (2 weakened)" + kindsWithheldTail},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(withFailingApprovedTests(tc.counts, tc.weakened)))
+			if !hasParagraph(body, tc.want) {
+				t.Errorf("the comment lacks the paragraph %q:\n%s", tc.want, body)
+			}
+			for _, n := range []string{"Does the receipt meet each kind of change?", ": met.", ": not met.", "Kind of change", "Met?", "| Yes |", "| No |", approveNamesKind} {
+				if strings.Contains(body, n) {
+					t.Errorf("the comment says %q beside failing approved tests:\n%s", n, body)
+				}
+			}
+			if tc.weakened > 0 {
+				if weakened := commandtext.WeakenedSentence(tc.weakened) + " The page names them."; !hasParagraph(body, weakened) {
+					t.Errorf("the comment lacks the paragraph of the weakened tests %q:\n%s", weakened, body)
+				}
+			}
+		})
+	}
+}
+
+func TestResultsCommentOffersTheApproveAnywayOnlyUnderARequiredReceiptThatAwaitsIt(t *testing.T) {
+	const blocked = "An approve would be refused now, because the receipt meets no kind of change, and a refused approve uses its code. To fix this, change the code or the tests and push a new commit."
+	const plain = "```\n/suiteward approve P3-R2 <code>\n```\n\nReplace `<code>` with a current code from your authenticator app."
+	const mode = "```\n/suiteward approve P3-R2 <fix|feature|refactor> <code>\n```\n\nReplace `<fix|feature|refactor>` with the mode of this change and `<code>` with a current code from your authenticator app."
+	failing := withFailingApprovedTests(execution.CanonicalCounts{Pass: 8, Fail: 1}, 0)
+	weakened := withFailingApprovedTests(execution.CanonicalCounts{Pass: 9}, 1)
+	approve := func(level execution.ReceiptLevel, namesMode bool) func(*commandtext.Results) {
+		return func(r *commandtext.Results) {
+			r.ReceiptLevel, r.Next, r.ApproveMode, r.ApprovalMissing = level, execution.NextApprove, namesMode, true
+		}
+	}
+	for name, tc := range map[string]struct {
+		edits    []func(*commandtext.Results)
+		withheld bool     // the comment says that it does not say which kind of change this is
+		want     []string // text that the comment has
+		not      []string // text that the comment lacks
+		commands int      // how many approve commands it shows
+	}{
+		"required, approve with a mode, approved tests fail": {[]func(*commandtext.Results){failing, approve(execution.ReceiptLevelRequired, true)}, true,
+			[]string{approveAnyway, mode}, []string{approveModeIntro, approveNamesKind}, 1},
+		"required, approve with a mode, a weakened test": {[]func(*commandtext.Results){weakened, approve(execution.ReceiptLevelRequired, true)}, true,
+			[]string{approveAnyway, mode}, []string{approveModeIntro, approveNamesKind}, 1},
+		"required, approve with no mode, approved tests fail": {[]func(*commandtext.Results){failing, approve(execution.ReceiptLevelRequired, false)}, true,
+			[]string{approveModeIntro, plain}, []string{"anyway", approveNamesKind}, 1},
+		"required, approve with a mode, nothing fails": {[]func(*commandtext.Results){approve(execution.ReceiptLevelRequired, true)}, false,
+			[]string{approveModeIntro, mode, approveNamesKind}, []string{"anyway", "does not say which kind"}, 1},
+		"required, blocked": {[]func(*commandtext.Results){failing, func(r *commandtext.Results) {
+			r.Receipt.Counts, r.Next, r.ApprovalMissing = execution.ReceiptCounts{Skipped: 1}, execution.NextBlocked, true
+		}}, true, []string{blocked}, []string{"anyway", "/suiteward approve", approveNamesKind}, 0},
+		"required, fix": {[]func(*commandtext.Results){failing, func(r *commandtext.Results) { r.Next = execution.NextFix }}, true,
+			[]string{"To fix this, change the code or the tests and push a new commit."}, []string{"anyway", "/suiteward approve", approveNamesKind}, 0},
+		"required, nothing to do": {[]func(*commandtext.Results){failing, func(r *commandtext.Results) { r.Next = execution.NextNone }}, true,
+			[]string{"Nothing to do for now."}, []string{"anyway", "/suiteward approve", approveNamesKind}, 0},
+		"advisory, approve with no mode": {[]func(*commandtext.Results){failing, approve(execution.ReceiptLevelAdvisory, false)}, true,
+			[]string{approveModeIntro, plain}, []string{"anyway", approveNamesKind}, 1},
+		"before-approval, approve with no mode": {[]func(*commandtext.Results){failing, approve(execution.ReceiptLevelBeforeApproval, false)}, true,
+			[]string{approveModeIntro, plain}, []string{"anyway", approveNamesKind}, 1},
+		"advisory, approve with a mode": {[]func(*commandtext.Results){failing, approve(execution.ReceiptLevelAdvisory, true)}, true,
+			[]string{approveModeIntro, mode}, []string{"anyway", approveNamesKind}, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(tc.edits...))
+			if got := strings.Contains(body, "so this comment does not say which kind of change"); got != tc.withheld {
+				t.Errorf("the comment says that it does not say which kind of change this is = %v, want %v:\n%s", got, tc.withheld, body)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(body, w) {
+					t.Errorf("the comment lacks %q:\n%s", w, body)
+				}
+			}
+			for _, n := range tc.not {
+				if strings.Contains(body, n) {
+					t.Errorf("the comment says %q:\n%s", n, body)
+				}
+			}
+			if got := strings.Count(body, "/suiteward approve"); got != tc.commands {
+				t.Errorf("the comment shows %d approve commands, want %d:\n%s", got, tc.commands, body)
+			}
+		})
+	}
+}
+
+// The kinds block is replaced only where it would stand: a receipt that is empty, did not run or is not wanted never had one, so the approve keeps its intro there.
+func TestResultsCommentKeepsTheApproveIntroWhereThereIsNoKindsBlockToReplace(t *testing.T) {
+	failing := withFailingApprovedTests(execution.CanonicalCounts{Pass: 8, Fail: 1}, 1)
+	approve := func(r *commandtext.Results) {
+		r.Next, r.ApproveMode, r.ApprovalMissing = execution.NextApprove, true, true
+	}
+	for name, edit := range map[string]func(*commandtext.Results){
+		"the receipt is empty": func(r *commandtext.Results) { r.Receipt.Counts = execution.ReceiptCounts{} },
+		"the receipt did not run and the owner unblocked it": func(r *commandtext.Results) {
+			r.Receipt, r.Unblocked = unavailableReceipt("timeout"), commandtext.Plans{Receipt: true}
+		},
+		"the receipt is not wanted": func(r *commandtext.Results) {
+			r.Receipt, r.ReceiptLevel, r.ApproveMode = nil, execution.ReceiptLevelOff, false
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(failing, approve, edit))
+			if !hasParagraph(body, approveModeIntro) || strings.Contains(body, "anyway") || strings.Contains(body, "does not say which kind") || strings.Count(body, "/suiteward approve") != 1 {
+				t.Errorf("the approve lost its intro, or the comment withholds kinds that it never stated:\n%s", body)
+			}
+		})
+	}
+}
+
+// A head whose approved tests do not fail, and whose change weakens none, keeps the kinds block as it was, even when the receipt's own tests fail.
+func TestResultsCommentKeepsTheKindsWhenTheApprovedTestsDoNotFail(t *testing.T) {
+	for name, edit := range map[string]func(*commandtext.Results){
+		"the approved tests pass": func(*commandtext.Results) {},
+		"the tests of the change fail": func(r *commandtext.Results) {
+			r.Receipt.Counts, r.Next = execution.ReceiptCounts{Detects: 1, Fails: 1}, execution.NextFix
+		},
+		"the approved tests are skipped or excluded": func(r *commandtext.Results) {
+			r.Canonical.Counts = execution.CanonicalCounts{Skipped: 2, Excluded: 1}
+		},
+		"the approved tests did not run": func(r *commandtext.Results) {
+			r.Canonical, r.Next = unavailableCanonical("timeout"), execution.NextUnblock
+		},
+		"the approved tests are not wanted": func(r *commandtext.Results) { r.Canonical, r.CanonicalLevel = nil, execution.CanonicalLevelOff },
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(edit))
+			for _, w := range []string{kindsHeading + "\n\n" + kindsHeader + "\n| `fix` | ", "| `refactor` | ", approveNamesKind} {
+				if !strings.Contains(body, w) {
+					t.Errorf("the comment lacks %q:\n%s", w, body)
+				}
+			}
+			if strings.Contains(body, "does not say which kind") {
+				t.Errorf("the comment withholds the kinds of change:\n%s", body)
+			}
+		})
+	}
 }
 
 func TestResultsCommentStatesTheCountOfWeakenedTestsAndWhatToDo(t *testing.T) {
@@ -315,8 +509,11 @@ func TestResultsCommentSaysWhatTheOwnerUnblockedAndHowToUnblock(t *testing.T) {
 			r.Canonical, r.Unblocked, r.Ended = unavailableCanonical("no-executor"), commandtext.Plans{Canonical: true}, commandtext.Plans{Canonical: true}
 		}, "The owner unblocked this commit, so its checks do not wait for the approved tests. SuiteWard had stopped waiting for the test runner, which was not responding."},
 		"a run that holds the head and was not unblocked": {func(r *commandtext.Results) {
-			r.Canonical, r.Next = unavailableCanonical("no-executor"), execution.NextUnblock
+			r.Canonical, r.Next = unavailableCanonical("timeout"), execution.NextUnblock
 		}, unblockOffer},
+		"a run that holds the head and the test runner did not answer": {func(r *commandtext.Results) {
+			r.Canonical, r.Next = unavailableCanonical("no-executor"), execution.NextUnblock
+		}, "SuiteWard runs them when the test runner answers again. " + unblockOffer},
 		"an approval is missing and the approved tests did not run": {func(r *commandtext.Results) {
 			r.Canonical, r.Next, r.ApprovalMissing = unavailableCanonical("timeout"), execution.NextApprove, true
 		}, approval},
@@ -426,22 +623,259 @@ func TestResultsCommentNamesTheNextStep(t *testing.T) {
 	})
 }
 
-func TestResultsCommentEndsWithTheEvidenceSentenceTheTierAndTheLink(t *testing.T) {
+// A head whose runs did not run and that leaves nothing to the owner (M2.1c, SW-28; docs/plan/phases/M2.1c.md, text 5) says by reason whether the tests run, and when: an unblock
+// ends it for this commit, a runner that did not answer or is not set up runs them later, and any other reason waits for a new push. A head with nothing that did not run keeps
+// "Nothing to do for now.".
+func TestResultsCommentSaysWhetherTheTestsThatDidNotRunRunAgain(t *testing.T) {
+	const (
+		unblocked   = "Nothing runs them for this commit now. A new push runs the tests."
+		whenAnswers = "SuiteWard runs them when the test runner answers again."
+		onceSetUp   = "SuiteWard runs them once the test runner is set up."
+		newPush     = "A new push runs them."
+		nothing     = "Nothing to do for now."
+	)
+	// advisoryRuns is a head whose runs, under advisory levels, did not run for the reasons named (empty: the run is complete), with nothing for the owner to do.
+	advisoryRuns := func(canonical, receipt string) func(*commandtext.Results) {
+		return func(r *commandtext.Results) {
+			r.CanonicalLevel, r.ReceiptLevel, r.Next = execution.CanonicalLevelAdvisory, execution.ReceiptLevelAdvisory, execution.NextNone
+			if canonical != "" {
+				r.Canonical = unavailableCanonical(canonical)
+			}
+			if receipt != "" {
+				r.Receipt = unavailableReceipt(receipt)
+			}
+		}
+	}
+	unblock := func(canonical, receipt string, plans commandtext.Plans) func(*commandtext.Results) {
+		return func(r *commandtext.Results) {
+			advisoryRuns(canonical, receipt)(r)
+			r.Unblocked = plans
+		}
+	}
+	for name, tc := range map[string]struct {
+		edit func(*commandtext.Results)
+		want string
+	}{
+		"the approved tests: the test runner did not answer":      {advisoryRuns("no-executor", ""), whenAnswers},
+		"the receipt: the test runner did not answer":             {advisoryRuns("", "no-executor"), whenAnswers},
+		"both: the test runner did not answer":                    {advisoryRuns("no-executor", "no-executor"), whenAnswers},
+		"the approved tests: no test runner is set up":            {advisoryRuns("executor-not-configured", ""), onceSetUp},
+		"both: no test runner is set up":                          {advisoryRuns("executor-not-configured", "executor-not-configured"), onceSetUp},
+		"one did not get an answer, the other has no runner":      {advisoryRuns("no-executor", "executor-not-configured"), onceSetUp},
+		"the approved tests: another reason":                      {advisoryRuns("timeout", ""), newPush},
+		"the receipt: another reason":                             {advisoryRuns("", "resource-limit"), newPush},
+		"one for no answer, the other for another reason":         {advisoryRuns("no-executor", "timeout"), newPush},
+		"one with no runner set up, the other for another reason": {advisoryRuns("executor-not-configured", "timeout"), newPush},
+		"the approved tests were unblocked":                       {unblock("no-executor", "", commandtext.Plans{Canonical: true}), unblocked},
+		"the unblock beats the reason":                            {unblock("timeout", "", commandtext.Plans{Canonical: true}), unblocked},
+		"one was unblocked and the other was not":                 {unblock("no-executor", "no-executor", commandtext.Plans{Canonical: true}), unblocked},
+		"both were unblocked":                                     {unblock("executor-not-configured", "no-executor", commandtext.Plans{Canonical: true, Receipt: true}), unblocked},
+		"under required, the approved tests were unblocked": {func(r *commandtext.Results) {
+			r.Canonical, r.Unblocked = unavailableCanonical("no-executor"), commandtext.Plans{Canonical: true}
+		}, unblocked},
+		"every run ran, under advisory": {advisoryRuns("", ""), nothing},
+		"every run ran, under required": {func(*commandtext.Results) {}, nothing},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(tc.edit))
+			if !hasParagraph(body, tc.want) {
+				t.Errorf("the comment lacks the paragraph %q:\n%s", tc.want, body)
+			}
+			for _, other := range []string{unblocked, whenAnswers, onceSetUp, newPush, nothing} {
+				if other != tc.want && hasParagraph(body, other) {
+					t.Errorf("the comment says %q beside %q:\n%s", other, tc.want, body)
+				}
+			}
+		})
+	}
+	// Only a next step of nothing says the others as its step: the unblock and a fix keep their own words. The offer of the unblock ends with "A new push runs them.", so the check is
+	// by paragraph. The two sentences about the test runner follow every next step but nothing (TestResultsCommentSaysThatTheTestsRunOnTheirOwnWhateverTheNextStepIs).
+	t.Run("a next step that is not nothing says none of the others", func(t *testing.T) {
+		for _, next := range []execution.Next{execution.NextUnblock, execution.NextFix} {
+			body := resultsText(t, results(func(r *commandtext.Results) {
+				r.Canonical, r.Next = unavailableCanonical("no-executor"), next
+			}))
+			for _, sentence := range []string{unblocked, newPush, nothing} {
+				if hasParagraph(body, sentence) {
+					t.Errorf("the next step %v says %q:\n%s", next, sentence, body)
+				}
+			}
+		}
+	})
+}
+
+// A head that has a next step still says when its tests run on their own (M2.1c, SW-28, part 3; docs/plan/phases/M2.1c.md, text 5): the sentence of the reason opens the paragraph of
+// the unblock, before the offer and before the sentence about the approval, so the owner who reads "unblock" or "approve" does not think that a push is the only way. An unblock, another
+// reason and a mix of reasons say none of it.
+func TestResultsCommentSaysThatTheTestsRunOnTheirOwnWhateverTheNextStepIs(t *testing.T) {
+	const (
+		whenAnswers = "SuiteWard runs them when the test runner answers again."
+		onceSetUp   = "SuiteWard runs them once the test runner is set up."
+		approval    = "After the owner approves this revision, SuiteWard runs the approved tests again, as the tests of the approved version."
+		approve     = "To approve this exact revision, comment:"
+		blocked     = "An approve would be refused now, because the receipt meets no kind of change, and a refused approve uses its code. To fix this, change the code or the tests and push a new commit."
+		fix         = "To fix this, change the code or the tests and push a new commit."
+	)
+	lost := func(canonical string, next execution.Next, approvalMissing bool) func(*commandtext.Results) {
+		return func(r *commandtext.Results) {
+			r.Canonical, r.Next, r.ApprovalMissing = unavailableCanonical(canonical), next, approvalMissing
+		}
+	}
+	for name, tc := range map[string]struct {
+		edit   func(*commandtext.Results)
+		want   string // the paragraph that holds the sentence, empty when the comment says neither of the two
+		before string // the next step, which the paragraph comes before
+	}{
+		"unblock, the test runner did not answer": {lost("no-executor", execution.NextUnblock, false), whenAnswers + " " + unblockOffer, ""},
+		"unblock, no test runner is set up":       {lost("executor-not-configured", execution.NextUnblock, false), onceSetUp + " " + unblockOffer, ""},
+		"unblock, the receipt did not get an answer": {func(r *commandtext.Results) {
+			r.Receipt, r.Next = unavailableReceipt("no-executor"), execution.NextUnblock
+		}, whenAnswers + " " + unblockOffer, ""},
+		"approve, the test runner did not answer":         {lost("no-executor", execution.NextApprove, true), whenAnswers + " " + approval, approve},
+		"approve, no test runner is set up":               {lost("executor-not-configured", execution.NextApprove, true), onceSetUp + " " + approval, approve},
+		"approve refused, the test runner did not answer": {lost("no-executor", execution.NextBlocked, true), whenAnswers + " " + approval, blocked},
+		"unblock and approve, nothing ran, both for no answer": {func(r *commandtext.Results) {
+			r.Canonical, r.Receipt, r.Next, r.ApprovalMissing = unavailableCanonical("no-executor"), unavailableReceipt("no-executor"), execution.NextUnblock, true
+		}, whenAnswers + " " + unblockOffer + " " + approval, ""},
+		"a fix, and the receipt did not get an answer": {func(r *commandtext.Results) {
+			r.Canonical.Counts, r.Receipt, r.ReceiptLevel, r.Next = execution.CanonicalCounts{Pass: 8, Fail: 1}, unavailableReceipt("no-executor"), execution.ReceiptLevelAdvisory, execution.NextFix
+		}, whenAnswers, fix},
+		"unblock, another reason": {lost("sandbox-unavailable", execution.NextUnblock, false), unblockOffer, ""},
+		"approve, another reason": {lost("fetch-failed", execution.NextApprove, true), approval, approve},
+		"unblock, one for no answer and one for another reason": {func(r *commandtext.Results) {
+			r.Canonical, r.Receipt, r.Next = unavailableCanonical("no-executor"), unavailableReceipt("timeout"), execution.NextUnblock
+		}, unblockOffer, ""},
+		"approve, no runner set up and another reason": {func(r *commandtext.Results) {
+			r.Canonical, r.Receipt, r.ReceiptLevel, r.Next, r.ApprovalMissing = unavailableCanonical("executor-not-configured"), unavailableReceipt("timeout"), execution.ReceiptLevelAdvisory, execution.NextApprove, true
+		}, approval, approve},
+		"approve, the owner unblocked the run": {func(r *commandtext.Results) {
+			r.Canonical, r.Unblocked, r.Next, r.ApprovalMissing = unavailableCanonical("no-executor"), commandtext.Plans{Canonical: true}, execution.NextApprove, true
+		}, "The owner unblocked this commit, so its checks do not wait for the approved tests. " + approval, approve},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := resultsText(t, results(tc.edit))
+			if !hasParagraph(body, tc.want) {
+				t.Fatalf("the comment lacks the paragraph %q:\n%s", tc.want, body)
+			}
+			says := strings.Contains(tc.want, whenAnswers) || strings.Contains(tc.want, onceSetUp)
+			if has := strings.Contains(body, whenAnswers) || strings.Contains(body, onceSetUp); has != says {
+				t.Errorf("the comment says that the tests run on their own = %v, want %v:\n%s", has, says, body)
+			}
+			if tc.before != "" && strings.Index(body, tc.want) > strings.Index(body, tc.before) {
+				t.Errorf("the paragraph %q does not come before the next step %q:\n%s", tc.want, tc.before, body)
+			}
+		})
+	}
+}
+
+func TestResultsCommentEndsWithTheEvidenceSentenceAndTheTier(t *testing.T) {
 	isolated := resultsText(t, results())
-	if !hasParagraph(isolated, resultsEvidence) || strings.Contains(isolated, commandtext.CoLocatedNotice) {
-		t.Errorf("the isolated comment lacks the evidence sentence, or has the notice of the co-located tier:\n%s", isolated)
+	if !strings.HasSuffix(isolated, "\n\n"+resultsEvidence+"\n") || strings.Contains(isolated, commandtext.CoLocatedNotice) {
+		t.Errorf("the isolated comment does not end with the evidence sentence, or has the notice of the co-located tier:\n%s", isolated)
 	}
 	co := resultsText(t, results(func(r *commandtext.Results) { r.Tier = commandtext.CoLocated }))
-	if !hasParagraph(co, commandtext.CoLocatedNotice) || strings.Index(co, resultsEvidence) > strings.Index(co, commandtext.CoLocatedNotice) {
-		t.Errorf("the co-located comment lacks the notice, or has it before the evidence sentence:\n%s", co)
+	if !strings.HasSuffix(co, "\n\n"+resultsEvidence+"\n\n"+commandtext.CoLocatedNotice+"\n") {
+		t.Errorf("the co-located comment does not end with the evidence sentence and the notice:\n%s", co)
 	}
-	if !strings.HasSuffix(isolated, "Details: [pull request page]("+resultsLink+").\n\n"+linkNote+"\n") {
-		t.Errorf("the comment does not end with its link and the link note:\n%s", isolated)
+}
+
+// The link to the full report comes right after the approved counts (M2.1c, SW-21, text 2): after the lead where no approved tests are wanted, and in the same place the sentence
+// that there is no link. Nothing about a link remains at the end.
+func TestResultsCommentLinksTheFullReportRightAfterTheApprovedCounts(t *testing.T) {
+	const approved = "Approved tests: 12 tests ran. 9 passed. 0 failed. 0 gave no result. 0 gave different results when they ran again. 3 were skipped."
+	const lead = "SuiteWard ran the tests for this commit (`0123456`). Nothing needs your attention."
+	receiptOnly := func(r *commandtext.Results) { r.Canonical, r.CanonicalLevel = nil, execution.CanonicalLevelOff }
+	for name, tc := range map[string]struct {
+		edit   func(*commandtext.Results)
+		before string // the paragraph that the link follows
+	}{
+		"a canonical run": {func(*commandtext.Results) {}, approved},
+		"a canonical run that did not run": {func(r *commandtext.Results) {
+			r.Canonical, r.Next = unavailableCanonical("no-executor"), execution.NextUnblock
+		}, "Approved tests: not run. The test runner did not respond."},
+		"only a receipt": {receiptOnly, lead},
+		"a head that needs attention": {func(r *commandtext.Results) {
+			r.Canonical.Counts.Fail, r.Canonical.Counts.Pass, r.Next = 1, 8, execution.NextFix
+		}, "Approved tests: 12 tests ran. 8 passed. 1 failed. 0 gave no result. 0 gave different results when they ran again. 3 were skipped."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, tier := range []commandtext.Tier{commandtext.Isolated, commandtext.CoLocated} {
+				body := resultsText(t, results(tc.edit, func(r *commandtext.Results) { r.Tier = tier }))
+				if want := tc.before + "\n\n" + seeReport + "\n\n" + linkNote + "\n\n"; !strings.Contains(body, want) {
+					t.Errorf("tier %d: the link does not follow %q, with its note:\n%s", tier, tc.before, body)
+				}
+				if strings.Contains(body, "Details:") || strings.Count(body, linkNote) != 1 || strings.Count(body, "pull request page") != 1 {
+					t.Errorf("tier %d: the comment keeps the old link, or says the link twice:\n%s", tier, body)
+				}
+				if last := lastParagraph(body); last != resultsEvidence && last != commandtext.CoLocatedNotice {
+					t.Errorf("tier %d: the comment ends with %q, want the evidence sentence or the notice of the tier", tier, last)
+				}
+			}
+			none := resultsText(t, results(tc.edit, func(r *commandtext.Results) { r.PullURL = "" }))
+			if want := tc.before + "\n\n" + noLinkText + "\n\n"; !strings.Contains(none, want) {
+				t.Errorf("with no base address the sentence that there is no link does not follow %q:\n%s", tc.before, none)
+			}
+			if strings.Contains(none, "See the full report") || strings.Contains(none, "Details:") || strings.Contains(none, linkNote) || strings.Count(none, noLinkText) != 1 || lastParagraph(none) == noLinkText {
+				t.Errorf("a comment with no base address links, or says that there is no link at its end:\n%s", none)
+			}
+		})
 	}
-	none := resultsText(t, results(func(r *commandtext.Results) { r.PullURL = "" }))
-	const noLink = "SuiteWard has no web address set, so this comment has no link. The checks of this commit carry the counts."
-	if !strings.HasSuffix(none, noLink+"\n") || strings.Contains(none, "Details:") || strings.Contains(none, linkNote) {
-		t.Errorf("a comment with no base address does not say so:\n%s", none)
+}
+
+func lastParagraph(body string) string {
+	paragraphs := strings.Split(strings.TrimRight(body, "\n"), "\n\n")
+	return paragraphs[len(paragraphs)-1]
+}
+
+// A head whose approved tests fail keeps A1's sentence where the kinds block stood (SW-22, text 1), after the receipt and its table: only the link moved.
+func TestResultsCommentOfAHeadWithFailingApprovedTestsKeepsItsSentencesInPlace(t *testing.T) {
+	want := strings.Join([]string{
+		"SuiteWard ran the tests for this commit (`0123456`). Something needs your attention.",
+		"Approved tests: 8 tests ran. 5 passed. 3 failed. 0 gave no result. 0 gave different results when they ran again. 0 were skipped.",
+		seeReport,
+		linkNote,
+		countsHeading(3),
+		countsTable(2, 1, 0, 0, 0, 0, 0),
+		"The approved tests failed (3 failed, 1 weakened)" + kindsWithheldTail,
+		commandtext.WeakenedSentence(1) + " The page names them.",
+		"To fix this, change the code or the tests and push a new commit.",
+		resultsEvidence,
+	}, "\n\n") + "\n"
+	body := resultsText(t, results(withFailingApprovedTests(execution.CanonicalCounts{Pass: 5, Fail: 3}, 1), func(r *commandtext.Results) { r.Next = execution.NextFix }))
+	if body != want {
+		t.Errorf("the comment of a head with failing approved tests is\n%s\nwant\n%s", body, want)
+	}
+}
+
+// A receipt that was wanted alone has no approved counts: the link follows the lead, and the tables follow the link.
+func TestResultsCommentOfAHeadWithOnlyAReceiptHasItsLinkRightAfterTheLead(t *testing.T) {
+	want := strings.Join([]string{
+		"SuiteWard ran the tests for this commit (`0123456`). Nothing needs your attention.",
+		seeReport,
+		linkNote,
+		countsHeading(3),
+		countsTable(2, 1, 0, 0, 0, 0, 0),
+		kindsHeading,
+		kindsTable(kindRow("fix", ""), kindRow("feature", ""), kindRow("refactor", "A test behaves differently with the change, so this does not look like a refactor.")),
+		"To approve, name a kind of change that is met.",
+		"Nothing to do for now.",
+		resultsEvidence,
+	}, "\n\n") + "\n"
+	body := resultsText(t, results(func(r *commandtext.Results) { r.Canonical, r.CanonicalLevel = nil, execution.CanonicalLevelOff }))
+	if body != want {
+		t.Errorf("the comment of a head with only a receipt is\n%s\nwant\n%s", body, want)
+	}
+}
+
+// A table is no table when a cell holds a raw `|` or a line break: every sentence that a kinds table can hold is fixed text, and none holds either.
+func TestTheSentencesOfTheKindsTableHoldNoPipeAndNoLineBreak(t *testing.T) {
+	for _, mode := range []execution.Mode{execution.ModeFix, execution.ModeFeature, execution.ModeRefactor} {
+		for _, reason := range []execution.Reason{execution.ReasonNoEvaluatedTests, execution.ReasonBlockingTests, execution.ReasonNoDetection, execution.ReasonNotInert} {
+			sentence, ok := commandtext.ModeNotMetSentence(mode, reason)
+			if ok && strings.ContainsAny(sentence, "|\n\r") {
+				t.Errorf("the sentence of %s and %s holds a pipe or a line break: %q", mode, reason, sentence)
+			}
+		}
 	}
 }
 
@@ -510,23 +944,33 @@ func TestNotRespondingCommentTellsTheTestsAreWaitingAndWhatToCheck(t *testing.T)
 		bold    = "**The test runner is not responding.**"
 		waiting = "The tests for this commit (`0123456`) are waiting. SuiteWard has not heard from the test runner for about half a minute."
 		problem = "This is a problem only if it lasts. SuiteWard keeps trying, and the tests start when the test runner answers. Check that it is running on the machine that runs SuiteWard. If it stays silent, SuiteWard stops waiting after a while and says so."
+		// M2.1c, SW-1 (docs/plan/phases/M2.1c.md, text 4): with something held, the offer follows the sentence that says so; with nothing held, one paragraph says that nothing
+		// waits and that an unblock is not needed.
+		holds        = "The checks of this commit wait for these tests. " + unblockOffer
+		holdsNothing = "Nothing waits for these tests. An unblock is not needed here: it would only keep these tests from running when the test runner answers again."
 	)
 	notResponding := func(unblock bool, link string) string {
 		return render(t, func() string {
 			return commandtext.NotRespondingComment(commandtext.NotResponding{Head: resultsHead, Pull: 7, Unblock: unblock, PullURL: link})
 		})
 	}
-	want := strings.Join([]string{bold, waiting, problem, unblockOffer, "Details: [pull request page](" + resultsLink + ").", linkNote}, "\n\n") + "\n"
+	want := strings.Join([]string{bold, waiting, problem, holds, "Details: [pull request page](" + resultsLink + ").", linkNote}, "\n\n") + "\n"
 	if got := notResponding(true, resultsLink); got != want {
 		t.Errorf("the comment with the offer is\n%s\nwant\n%s", got, want)
 	}
-	wantPlain := strings.Join([]string{bold, waiting, problem, "Details: [pull request page](" + resultsLink + ").", linkNote}, "\n\n") + "\n"
+	wantPlain := strings.Join([]string{bold, waiting, problem, holdsNothing, "Details: [pull request page](" + resultsLink + ").", linkNote}, "\n\n") + "\n"
 	if got := notResponding(false, resultsLink); got != wantPlain {
 		t.Errorf("the comment without the offer is\n%s\nwant\n%s", got, wantPlain)
 	}
+	if got := notResponding(false, resultsLink); strings.Contains(got, "/suiteward") || strings.Contains(strings.ToLower(got), "nothing to do") {
+		t.Errorf("the comment without the offer offers the command, or says that the owner has nothing to do:\n%s", got)
+	}
 	const noLink = "SuiteWard has no web address set, so this comment has no link. The checks of this commit carry the counts."
-	if got := notResponding(true, ""); !strings.HasSuffix(got, unblockOffer+"\n\n"+noLink+"\n") || strings.Contains(got, "Details:") {
+	if got := notResponding(true, ""); !strings.HasSuffix(got, holds+"\n\n"+noLink+"\n") || strings.Contains(got, "Details:") {
 		t.Errorf("a comment with no base address does not say so:\n%s", got)
+	}
+	if got := notResponding(false, ""); !strings.HasSuffix(got, holdsNothing+"\n\n"+noLink+"\n") || strings.Contains(got, "Details:") {
+		t.Errorf("a comment with no base address and no offer does not say so:\n%s", got)
 	}
 	for name, n := range map[string]commandtext.NotResponding{
 		"a head that is short":                {Head: "0123456", Pull: 7},
@@ -617,6 +1061,24 @@ var resultsSituations = map[string]func(*commandtext.Results){
 	"unblocked": func(r *commandtext.Results) {
 		r.Canonical, r.Unblocked = unavailableCanonical("no-executor"), commandtext.Plans{Canonical: true}
 	},
+	"did not run, the test runner did not answer": func(r *commandtext.Results) {
+		r.CanonicalLevel, r.ReceiptLevel, r.Canonical, r.Receipt = execution.CanonicalLevelAdvisory, execution.ReceiptLevelAdvisory, unavailableCanonical("no-executor"), unavailableReceipt("no-executor")
+	},
+	"did not run, no test runner is set up": func(r *commandtext.Results) {
+		r.CanonicalLevel, r.ReceiptLevel, r.Canonical = execution.CanonicalLevelAdvisory, execution.ReceiptLevelAdvisory, unavailableCanonical("executor-not-configured")
+	},
+	"did not run, the test runner did not answer, and the unblock is next": func(r *commandtext.Results) {
+		r.Canonical, r.Next = unavailableCanonical("no-executor"), execution.NextUnblock
+	},
+	"did not run, no test runner is set up, and the approve is next": func(r *commandtext.Results) {
+		r.Canonical, r.Next, r.ApprovalMissing = unavailableCanonical("executor-not-configured"), execution.NextApprove, true
+	},
+	"did not run, the test runner did not answer, and the approve is refused": func(r *commandtext.Results) {
+		r.Canonical, r.Next, r.ApprovalMissing = unavailableCanonical("no-executor"), execution.NextBlocked, true
+	},
+	"did not run, another reason": func(r *commandtext.Results) {
+		r.CanonicalLevel, r.ReceiptLevel, r.Receipt = execution.CanonicalLevelAdvisory, execution.ReceiptLevelAdvisory, unavailableReceipt("timeout")
+	},
 	"ended": func(r *commandtext.Results) {
 		r.Canonical, r.Receipt, r.Unblocked, r.Ended = unavailableCanonical("no-executor"), unavailableReceipt("no-executor"), commandtext.Plans{Canonical: true, Receipt: true}, commandtext.Plans{Canonical: true, Receipt: true}
 	},
@@ -634,6 +1096,9 @@ var resultsSituations = map[string]func(*commandtext.Results){
 		r.Canonical, r.Receipt, r.Next, r.ApprovalMissing = unavailableCanonical("no-executor"), unavailableReceipt("no-executor"), execution.NextUnblock, true
 	},
 	"weakened": func(r *commandtext.Results) { r.Weakened, r.Next, r.ApprovalMissing = 2, execution.NextApprove, true },
+	"approved tests fail, the approve names a mode": func(r *commandtext.Results) {
+		r.Canonical.Counts, r.Weakened, r.Next, r.ApproveMode, r.ApprovalMissing = execution.CanonicalCounts{Pass: 8, Fail: 1, Missing: 1}, 1, execution.NextApprove, true, true
+	},
 	"files that cannot be read and lines to look at": func(r *commandtext.Results) {
 		r.Receipt.Counts.Unparsed, r.Receipt.Markers, r.Next = 1, 3, execution.NextFix
 	},

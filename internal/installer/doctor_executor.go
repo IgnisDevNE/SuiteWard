@@ -323,7 +323,7 @@ func (d *doctor) checkExecutorRunning(ctx context.Context, process func(context.
 	}
 	age := time.Since(doc.Execution.LastSeenAt).Round(time.Second)
 	if age > executorSeenWithin {
-		d.fail("executor.running", fmt.Sprintf("the test runner runs, but the service last saw a test runner %s ago: it cannot reach the service at http://127.0.0.1:%d, or it uses a different token than the service", age, d.s.HTTPPort), fixes.notSeen)
+		d.fail("executor.running", fmt.Sprintf("the test runner runs, but the service last saw a test runner %s ago: it cannot reach the service at http://127.0.0.1:%d, it uses a different token than the service, or it waits for its container program (its log says so)", age, d.s.HTTPPort), fixes.notSeen)
 		return
 	}
 	d.pass("executor.running", fmt.Sprintf("the test runner runs and was last seen by the service %s ago (the service starts that clock when it starts, so the running process is the real proof)", age))

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
@@ -39,8 +40,9 @@ func (d *doctor) executorFix() string {
 }
 
 // anotherInstanceFix is the fix of an executor that is registered for another instance: an install of this one skips it, so it is that instance's removal that frees the place.
-func (d *doctor) anotherInstanceFix() string {
-	return "A computer has one test runner, and it belongs to another instance. Remove that instance with " + d.deps.removeOtherInstance() + ". Then run `" + d.deps.suggest("install") + "` again for this one. Until then the install leaves the other test runner alone."
+// remove is the command that removes it (runnerHolder).
+func (d *doctor) anotherInstanceFix(remove string) string {
+	return "A computer has one test runner, and it belongs to another instance. Remove that instance with " + remove + ". Then run `" + d.deps.suggest("install") + "` again for this one. Until then the install leaves the other test runner alone."
 }
 
 // executorTokenFile is the token file that the files of the executor are beside: the one --token-file names, else the default place of this user's
@@ -91,8 +93,11 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 		return
 	}
 	fix, notRunning := d.executorFix(), plan.startHint()
+	who := ""  // which instance it is, when the list of installations says
 	if other { // no install makes this instance an executor of its own while that one is registered
-		fix = d.anotherInstanceFix()
+		var remove string
+		who, remove = d.deps.runnerHolder(plan)
+		fix = d.anotherInstanceFix(remove)
 		notRunning = fix
 	}
 	d.checkExecutorToken(plan) // the install makes the token copy and the service's token whatever becomes of the executor, so its fix stays the install's
@@ -105,7 +110,7 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	case stateErr != nil:
 		d.fail("executor.lifecycle", "Doctor could not ask the operating system about the test runner: "+stateErr.Error(), d.executorFix())
 	case other:
-		d.fail("executor.lifecycle", "The test runner on this computer belongs to another instance, not to the one that uses the token file `"+tokenFile+"`. A computer has one test runner.", fix)
+		d.fail("executor.lifecycle", "The test runner on this computer belongs to another instance"+who+", not to the one that uses the token file `"+tokenFile+"`. A computer has one test runner.", fix)
 	case !registered:
 		d.fail("executor.lifecycle", "The test runner is not set up on this computer. It should be "+executorMechanism(plan.goos)+".", d.executorFix())
 	case definitionErr != nil:
@@ -115,23 +120,44 @@ func (d *doctor) checkExecutorColocated(ctx context.Context) {
 	default:
 		d.pass("executor.lifecycle", "The test runner is set up as "+executorMechanism(plan.goos)+".")
 	}
-	d.checkExecutorRunning(ctx, func(context.Context) error {
-		switch {
-		case stateErr != nil:
-			return fmt.Errorf("doctor could not tell whether the test runner is running: %w", stateErr)
-		case other:
-			return errors.New("the test runner on this computer belongs to another instance, so none runs for this one")
-		case !running:
-			return errors.New("the test runner is not running")
-		}
-		return nil
-	}, runningFixes{
-		noToken:    d.installFix(),
-		notRunning: notRunning,
-		notSeen:    d.notSeenFix(plan),
-	})
+	_, statusRead := d.raw["status"]
+	if d.rt == nil && !statusRead && stateErr == nil && !other && running {
+		d.failRunnerWaitsForContainerProgram()
+	} else {
+		d.checkExecutorRunning(ctx, func(context.Context) error {
+			switch {
+			case stateErr != nil:
+				return fmt.Errorf("doctor could not tell whether the test runner is running: %w", stateErr)
+			case other:
+				return errors.New("the test runner on this computer belongs to another instance, so none runs for this one")
+			case !running:
+				return errors.New("the test runner is not running")
+			}
+			return nil
+		}, runningFixes{
+			noToken:    d.installFix(),
+			notRunning: notRunning,
+			notSeen:    d.notSeenFix(plan),
+		})
+	}
 	d.checkExecutorImage(ctx)
 	d.checkExecutorLoopback(ctx)
+}
+
+// failRunnerWaitsForContainerProgram is the result of a test runner that runs while doctor's own runtime check failed (d.rt is nil, and the result
+// named d.why says why) and /status could not be read: the service lives in that program, so with it down nothing answers. When /status is read, the
+// service works and the usual row stands (a rootful Podman fails doctor's check, not the runner's). A test runner that cannot reach its program asks
+// for its version until it answers, and goes on by itself; doctor cannot tell whether the runner's own request fails, so the row says what SuiteWard
+// cannot use and what the runner does when it cannot reach the program. The fix is the one of the result that found the program down: the command
+// that starts the Podman machine or Docker.
+func (d *doctor) failRunnerWaitsForContainerProgram() {
+	i := slices.IndexFunc(d.results, func(r doctorResult) bool { return r.Name == d.why })
+	if i < 0 {
+		d.fail("executor.running", "doctor could not find why the container program does not answer: it has no result named "+d.why, doctorBugFix)
+		return
+	}
+	why := d.results[i]
+	d.fail("executor.running", "The test runner is running, but SuiteWard cannot use the container program: "+strings.TrimRight(why.Detail, ".")+". A test runner that cannot reach its container program waits and goes on by itself once it answers, so it needs no restart. Until then no test can run.", why.Fix)
 }
 
 // notSeenFix is the fix of a test runner that runs and that the service has not seen lately: its log says why, and an install makes the service
@@ -234,8 +260,8 @@ func (d *doctor) checkExecutorColocatedBinary(plan executorPlan, fix string) {
 	case len(fields) >= 2 && releaseAssetOf(plan.goos).MatchString(fields[1]):
 		d.pass("executor.binary", "The test runner's program matches the official release: its fingerprint (SHA-256 "+sum+") is listed in the release's SHA256SUMS as "+fields[1]+".")
 	default:
-		d.warn("executor.binary", "The test runner has not been checked against an official release. This is normal for a development build.",
-			"To check it, run `"+d.deps.suggest("install", "--upgrade --sha256sums <the release's SHA256SUMS file>")+"` with the program from that release.")
+		detail, check := unpinnedExecutorText(d.deps)
+		d.warn("executor.binary", detail, check)
 	}
 }
 
@@ -249,7 +275,7 @@ func (d *doctor) checkExecutorLoopback(ctx context.Context) {
 	address := fmt.Sprintf("http://127.0.0.1:%d/readyz", d.s.HTTPPort)
 	if _, err := d.fetch(ctx, address); err != nil {
 		d.fail("executor.loopback", fmt.Sprintf("This computer cannot reach `127.0.0.1:%d`, the port that the Podman machine %s publishes (%v). The test runner cannot reach the service either, so its test runs end with `no-executor`. The owner can unblock each revision with `/suiteward unblock`.", d.s.HTTPPort, d.machine.Name, err),
-			"This is a known limit of the machine's port forwarding. Run `podman machine stop`, then `podman machine start`, then run doctor again. If it persists, the owner unblocks each revision with `/suiteward unblock`.")
+			"This is a known limit of the machine's port forwarding. Run `"+machineStopCommand(d.machine.Name)+"`, then `"+machineStartCommand(d.machine.Name)+"`, then run doctor again. If it persists, the owner unblocks each revision with `/suiteward unblock`.")
 		return
 	}
 	d.pass("executor.loopback", fmt.Sprintf("This computer reaches `127.0.0.1:%d`, the port that the Podman machine %s publishes.", d.s.HTTPPort, d.machine.Name))

@@ -94,7 +94,7 @@ func TestReceiptCheckPublisherPostsEveryState(t *testing.T) {
 	}{
 		{execution.CheckInProgress, receiptRunning, "Receipt pending", "in_progress", "", "The tests are waiting for the test runner, or they are running"},
 		{execution.CheckFailure, receiptFailing, "Receipt: failing or missing tests", "completed", "failure", "Changed test files that cannot be read: 7."},
-		{execution.CheckSuccess, receiptComplete, "Receipt ready", "completed", "success", "- Pass before and after, so they show nothing: 2"},
+		{execution.CheckSuccess, receiptComplete, "Receipt ready", "completed", "success", "| Pass before and after, so they show nothing | 2 |"},
 		{execution.CheckNeutral, receiptNotRun, "Receipt unavailable", "completed", "neutral", "The test runner did not respond."},
 		{execution.CheckNeutral, receiptNotApplicable, "No receipt for this revision", "completed", "neutral", "This commit has no receipt."},
 	} {

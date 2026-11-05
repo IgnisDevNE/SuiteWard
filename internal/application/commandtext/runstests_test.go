@@ -2,6 +2,7 @@ package commandtext_test
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -56,6 +57,14 @@ func everyBody(t *testing.T) map[string]string {
 			add("check "+tc.reason+" "+tier, func() string {
 				c := requiredCheck(tc.reason)
 				c.Tier = value
+				_, s := commandtext.CheckSummary(c)
+				return s
+			})
+		}
+		for _, code := range []string{"no-executor", "executor-not-configured"} { // the next step that says the tests run on their own (SW-28)
+			add("check canonical-unavailable, "+code+" "+tier, func() string {
+				c := requiredCheck("canonical-unavailable")
+				c.Tier, c.Unavailable = value, code
 				_, s := commandtext.CheckSummary(c)
 				return s
 			})
@@ -203,6 +212,9 @@ func addAcks(t *testing.T, add func(name string, f func() string)) {
 	ack("propose failed", commandtext.Ack{Outcome: commandtext.ProposeFailed})
 	ack("skipped", commandtext.Ack{Outcome: commandtext.Skipped})
 	ack("bootstrap promoted", commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Version: 1, Proposal: 4, Revision: 2})
+	for _, level := range []execution.CanonicalLevel{execution.CanonicalLevelOff, execution.CanonicalLevelAdvisory, execution.CanonicalLevelRequired} {
+		ack("bootstrap promoted, canonical "+level.String(), commandtext.Ack{Outcome: commandtext.BootstrapPromoted, Version: 1, Proposal: 4, Revision: 2, Canonical: level})
+	}
 	for _, base := range []commandtext.ScopeBase{commandtext.BasePull, commandtext.BaseContract, commandtext.BaseDefaultBranch} {
 		ack("nothing uncovered "+fmt.Sprint(base), commandtext.Ack{Outcome: commandtext.NothingUncovered, Base: base})
 	}
@@ -252,4 +264,91 @@ func TestNoTextSaysThatSuiteWardDoesNotRunTests(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The comments of a run that waits or did not run are in plain words (M2.1c, SW-1 and SW-28; docs/plan/phases/M2.1c.md, texts 4 and 5): none says a reason code, a job, a lease or
+// an executor, which only the machinery of a run knows. The checks and the refusal that offer the unblock in the words of the comments (SW-47, text 4) are in plain words too, and so
+// is the V1 comment that says the approved tests run now (SW-2, text 6), at every canonical level.
+func TestTheCommentsOfARunThatWaitsOrDidNotRunUseNoWordOfTheMachinery(t *testing.T) {
+	machinery := regexp.MustCompile(`(?i)\b(jobs?|leases?|executors?|canonical)\b`)
+	prefixes := []string{"not responding", "results did not run", "results unblocked",
+		"check canonical-unavailable", "check canonical-not-responding", "receipt not responding, with the unblock offer", "ack receipt refused receipt-unavailable", "ack bootstrap promoted"}
+	reached := map[string]int{}
+	for name, body := range everyBody(t) {
+		for _, prefix := range prefixes {
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			reached[prefix]++
+			if word := machinery.FindString(body); word != "" {
+				t.Errorf("%s: the body says %q:\n%s", name, word, body)
+			}
+			if strings.Contains(body, "SuiteWard runs the approved tests") || strings.Contains(body, "SuiteWard runs them ") { // M2.1c, SW-28: the sentences that say the tests run on their own
+				reached["runs on its own: "+prefix]++
+			}
+		}
+	}
+	// The checks of the two reasons, at both tiers, and the comments that have a next step beside the none of the advisory levels, say that the tests run on their own.
+	if n := reached["runs on its own: check canonical-unavailable"]; n < 4 {
+		t.Errorf("only %d bodies of the Contract check say that the approved tests run on their own, want 4: the test no longer reaches them", n)
+	}
+	if n := reached["runs on its own: results did not run"]; n < 10 {
+		t.Errorf("only %d bodies of the results comment that did not run say that the tests run on their own, want 10: the test no longer reaches them", n)
+	}
+	for _, prefix := range prefixes {
+		if reached[prefix] == 0 {
+			t.Errorf("no body named %q was checked: the test no longer reaches it", prefix)
+		}
+	}
+	if comments := reached[prefixes[0]] + reached[prefixes[1]] + reached[prefixes[2]]; comments < 10 {
+		t.Errorf("only %d bodies were checked: the test no longer reaches the comments of a run that waits or did not run", comments)
+	}
+}
+
+// A Markdown table is one paragraph whose every line is a row of the same number of cells: a raw `|` or a line break in a cell breaks it, and a table that does not start
+// its paragraph is not drawn (GitHub wants a blank line before it). The rule holds for every text of the package, and the three families that state the receipt reach a table.
+func TestEveryTableOfTheTextsIsWellFormed(t *testing.T) {
+	families := map[string]bool{"results ": false, "receipt ": false, "ack receipt refused, mode ": false}
+	for name, body := range everyBody(t) {
+		for _, paragraph := range strings.Split(body, "\n\n") {
+			if !checkTableParagraph(t, name, paragraph) {
+				continue
+			}
+			for family := range families {
+				if strings.HasPrefix(name, family) {
+					families[family] = true
+				}
+			}
+		}
+	}
+	for family, reached := range families {
+		if !reached {
+			t.Errorf("no text of the family %q has a table", family)
+		}
+	}
+}
+
+// checkTableParagraph reports whether the paragraph is a table, and says what is wrong with it: a row in a paragraph that does not open with one, a table with no separator or
+// no row, and a row with a cell more or less than the header, which a raw pipe or a line break in a cell makes.
+func checkTableParagraph(t *testing.T, name, paragraph string) bool {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(paragraph, "\n"), "\n")
+	if !strings.HasPrefix(lines[0], "|") {
+		for _, line := range lines {
+			if strings.HasPrefix(line, "|") {
+				t.Errorf("%s: a row of a table does not start its paragraph, so no table is drawn: %q", name, line)
+			}
+		}
+		return false
+	}
+	if len(lines) < 3 || strings.Trim(lines[1], "|- ") != "" {
+		t.Errorf("%s: a table with no separator row, or with no row:\n%s", name, paragraph)
+	}
+	pipes := strings.Count(lines[0], "|")
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "| ") || !strings.HasSuffix(line, " |") || strings.Count(line, "|") != pipes {
+			t.Errorf("%s: a row of %d cells holds a raw pipe or a line break: %q\n%s", name, pipes-1, line, paragraph)
+		}
+	}
+	return true
 }

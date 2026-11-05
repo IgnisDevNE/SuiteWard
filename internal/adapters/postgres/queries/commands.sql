@@ -51,13 +51,6 @@ WHERE repository_id = sqlc.arg(repository_id) AND pull_number = sqlc.arg(pull_nu
 ORDER BY comment_id DESC
 LIMIT 1;
 
--- The mode of the pull's latest mode-set entry (the greatest comment id) created at or after the current enrollment's enrolled_at.
--- name: PreviewMode :one
-SELECT mode FROM pr_commands
-WHERE repository_id = sqlc.arg(repository_id) AND pull_number = sqlc.arg(pull_number) AND disposition = 'mode-set' AND created_at >= sqlc.arg(since)::timestamptz
-ORDER BY comment_id DESC
-LIMIT 1;
-
 -- Whether the pull has a skipped entry whose comment was created at or after the current enrollment's enrolled_at.
 -- name: PullSkipped :one
 SELECT EXISTS (

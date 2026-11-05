@@ -61,6 +61,7 @@ func TestDoctorMachineProblems(t *testing.T) {
 		{"the machines cannot be listed", []rule{{match: "machine list", err: errors.New("podman: not found")}}, "podman-machine-default", "", []string{"list the Podman machines", "not found"}, "installed"},
 		{"the list is not JSON", []rule{{match: "machine list", out: "not json"}}, "podman-machine-default", "", []string{"read the list of Podman machines"}, "machine list --format json"},
 		{"no machine of that name", []rule{{match: "machine list", out: `[{"Name":"other","Running":true}]`}}, "podman-machine-default", "", []string{"no Podman machine is called podman-machine-default"}, "podman machine init"},
+		{"no machine of its own name", []rule{{match: "machine list", out: `[{"Name":"other","Running":true}]`}}, "sw-m21c", "", []string{"no Podman machine is called sw-m21c"}, "`podman machine init sw-m21c` and `podman machine start sw-m21c`"},
 		{"no machine at all", []rule{{match: "machine list", out: `[]`}}, "", "", []string{"there is no Podman machine"}, "podman machine init"},
 		{"the machine is starting", []rule{{match: "machine list", out: `[{"Name":"podman-machine-default","Starting":true}]`}}, "podman-machine-default", "", []string{"still starting"}, "Wait"},
 		{"a machine with its own name is stopped", []rule{{match: "machine list", out: `[{"Name":"dev","Running":false}]`}}, "dev", "", []string{"dev is not running"}, "podman machine start dev"},
@@ -115,6 +116,111 @@ func TestDoctorRuntimeFixes(t *testing.T) {
 			wantFail(t, res, "runtime")
 			if !strings.Contains(res["runtime"].Fix, c.fix) {
 				t.Errorf("fix %q does not mention %q", res["runtime"].Fix, c.fix)
+			}
+		})
+	}
+}
+
+// A bare `podman machine start` starts the default machine, so the fix of a Podman machine that does not answer names the machine of this instance
+// unless it is the default one, or doctor does not know it (the isolated tier reaches the runtime check without a machine check). Every other word stays.
+func TestDoctorRuntimeFixStartsTheMachineOfTheInstance(t *testing.T) {
+	const fix = "Check the Podman machine with `podman machine list` and start it with `%s`."
+	for name, c := range map[string]struct{ machine, start string }{
+		"a machine of its own": {"sw-m21c", "podman machine start sw-m21c"},
+		"the default machine":  {defaultMachine, "podman machine start"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			list := fmt.Sprintf(`[{"Name":%q,"Running":true,"RemoteUsername":"user"}]`, c.machine)
+			f, s := colocated{goos: "windows", over: []rule{{match: "machine list", out: list}, {match: "info --format", err: errors.New("no socket")}}}.build(t)
+			s.Connection = c.machine
+			_, res, _ := runDoctor(t, f, s)
+			wantFail(t, res, "runtime")
+			if got, want := res["runtime"].Fix, fmt.Sprintf(fix, c.start); got != want {
+				t.Errorf("fix %q, want %q", got, want)
+			}
+		})
+	}
+	t.Run("no machine is known", func(t *testing.T) {
+		d := doctor{deps: Deps{GOOS: "windows"}, s: Settings{Runtime: RuntimePodman}}
+		if got, want := d.runtimeFix(errors.New("no socket")), fmt.Sprintf(fix, "podman machine start"); got != want {
+			t.Errorf("fix %q, want %q", got, want)
+		}
+	})
+}
+
+// The fix of a rootful Podman is the one of the refusal: on Linux with no connection set (in the settings or in CONTAINER_CONNECTION) the person
+// ran SuiteWard as root; anywhere else a connection was chosen, and the fix is to choose the rootless one.
+func TestDoctorRootfulFixSaysWhatToDoWhereItHappens(t *testing.T) {
+	const asRoot = "Run SuiteWard as the user who installed it, not as root or with sudo."
+	const aConnection = "`connection:` in the settings file"
+	cases := []struct {
+		name       string
+		goos       string
+		connection string // the connection of the settings; "" on Linux is none
+		env        string
+		fix        string
+		notFix     string
+	}{
+		{"Linux with no connection", "linux", "", "", asRoot, aConnection},
+		{"Linux with a connection in the settings", "linux", "named", "", aConnection, asRoot},
+		{"Linux with the connection of the environment", "linux", "", "from-env", aConnection, asRoot},
+		{"a machine", "windows", "", "", aConnection, asRoot},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, s := colocated{goos: c.goos, over: []rule{{match: "info --format", out: "false\n"}}}.build(t)
+			if c.goos == "linux" {
+				s.Connection = c.connection
+			}
+			if c.env != "" {
+				f.env["CONTAINER_CONNECTION"] = c.env
+			}
+			_, res, _ := runDoctor(t, f, s)
+			wantFail(t, res, "runtime", "rootful")
+			if fix := res["runtime"].Fix; !strings.Contains(fix, c.fix) || strings.Contains(fix, c.notFix) {
+				t.Errorf("fix %q does not say %q, or says %q", fix, c.fix, c.notFix)
+			}
+		})
+	}
+}
+
+// A Podman whose version cannot be read still answers, so the runtime row stays a pass; its note says that it could not tell, and why, and it
+// is on the plain output line like the note of an older Podman.
+func TestDoctorSaysWhenThePodmanVersionCannotBeRead(t *testing.T) {
+	cases := []struct {
+		name string
+		rule rule
+		why  string
+	}{
+		{"the command fails", rule{match: "version --format", err: errors.New("connection reset")}, "connection reset"},
+		{"the answer is not JSON", rule{match: "version --format", out: "podman version 4.9.3"}, "read the answer"},
+		{"the answer is empty", rule{match: "version --format"}, "read the answer"},
+		{"the answer holds no version", rule{match: "version --format", out: `{"Client":{}}`}, "no version number"},
+		{"the version has no number", rule{match: "version --format", out: podmanVersions("dev", "")}, "no version number"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, s := colocated{over: []rule{c.rule}}.build(t)
+			code, res, _ := runDoctor(t, f, s)
+			if code != 0 {
+				t.Errorf("exit %d, results %+v", code, res)
+			}
+			wantOK(t, res, "runtime", "containers")
+			r := res["runtime"]
+			if r.needsALook() {
+				t.Errorf("the runtime row is a pass that needs no look: %+v", r)
+			}
+			for _, want := range []string{"its version could not be read", c.why} {
+				if !strings.Contains(r.Note, want) {
+					t.Errorf("the note %q does not say %q", r.Note, want)
+				}
+			}
+			if strings.Contains(r.Note, "works with it") {
+				t.Errorf("a version that was not read is not older: %q", r.Note)
+			}
+			f, s = colocated{over: []rule{c.rule}}.build(t)
+			if _, text := runDoctorRaw(t, f, s, false); !strings.Contains("\n"+text, "\nok runtime: "+r.Note+"\n") {
+				t.Errorf("the plain output does not carry the note %q:\n%s", r.Note, text)
 			}
 		})
 	}

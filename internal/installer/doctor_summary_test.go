@@ -224,11 +224,36 @@ func TestTheDoctorRowOfAHealthyInstanceHasNoWarningsAndNothingToCheckAgain(t *te
 	}
 }
 
+// The note of a passing result is a row of the summary, so the end of an install says what doctor notes (a Podman older than 5.0): it is not a
+// warning, so there is still nothing to check again.
+func TestTheSummaryShowsTheNoteOfAPassingResult(t *testing.T) {
+	f, s := colocated{over: []rule{olderPodman}}.build(t)
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := SaveSettings(path, s); err != nil {
+		t.Fatal(err)
+	}
+	env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}}
+	var rows summaryRows
+	rows.addDoctor(context.Background(), env, path, coloTokenFile(t, f), "suiteward doctor")
+	if len(rows) != 2 || rows[0].Key != "Doctor" || !regexp.MustCompile(`^\d+ ok, 0 warnings, 0 failures$`).MatchString(rows[0].Value) ||
+		rows[1] != (ui.KV{Key: "Note", Value: olderPodmanNote}) {
+		t.Errorf("the rows of an instance on Podman 4.9.3 are %+v, want the Doctor row and the note", rows)
+	}
+}
+
 // A summary that carries what doctor found still shows the rows a person needs on the smallest window. The page keeps its key rows and trims
 // the warnings from the end when it is taller than the window: this is the case of the first install, two repositories without their
-// ruleset and an owner who is not enrolled, and the Status and Doctor rows stay, with the first warning.
+// ruleset and an owner who is not enrolled, and the Status and Doctor rows stay, with the first warning. A note of doctor (a Podman older than
+// 5.0) is the first row to go: the command that checks again stays on the page, and the scrollback keeps the note.
 func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
-	f, s := colocated{checkOut: instanceChecks}.build(t)
+	t.Run("without a note", func(t *testing.T) { summaryOnASmallWindow(t, colocated{checkOut: instanceChecks}, nil) })
+	t.Run("with the note of an older Podman", func(t *testing.T) {
+		summaryOnASmallWindow(t, colocated{checkOut: instanceChecks, over: []rule{olderPodman}}, []string{olderPodmanNote})
+	})
+}
+
+func summaryOnASmallWindow(t *testing.T, instance colocated, inScrollback []string) {
+	f, s := instance.build(t)
 	// The settings and the ruleset files are named relative to a folder the test works in: a path under the temp folder wraps at 80 columns when
 	// that folder is long, and the page would lose a warning for the length of the path and not for the number of rows.
 	t.Chdir(t.TempDir())
@@ -271,7 +296,7 @@ func TestTheSummaryPageKeepsTheStatusAndDoctorRowsOnASmallWindow(t *testing.T) {
 		}
 	}
 	scrollback := out[strings.LastIndex(out, leaveAlt):]
-	for _, want := range []string{"FAIL protection.Acme/api", "FAIL protection.Acme/web", reducedAssuranceKey} {
+	for _, want := range append([]string{"FAIL protection.Acme/api", "FAIL protection.Acme/web", reducedAssuranceKey}, inScrollback...) {
 		if !strings.Contains(flat(scrollback), want) {
 			t.Errorf("the scrollback lacks %q:\n%s", want, scrollback)
 		}

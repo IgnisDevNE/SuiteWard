@@ -12,7 +12,7 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/contract"
 )
 
-// The change report of the current revision on the pull request page (docs/contracts/runtime.md, "The pull request page", item 8): the summary lines and a table of the
+// The change report of the current revision on the pull request page (docs/contracts/runtime.md, "The pull request page", item 7): the summary lines and a table of the
 // changed files with no hunk, a link to the full report of the revision, which keeps the hunks, and a link to the report of each earlier revision of the proposal. The
 // report is built here once, in the turn that the page holds, by the reports of the process, which bound what they read.
 

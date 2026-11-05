@@ -28,8 +28,9 @@ import (
 //
 // It reads the settings at settingsPath (the default location when empty), checks the engine, the containers or units, the
 // pins, the ports and /status of the instance those settings describe, runs `suiteward check --json` in the service
-// container and merges its results. It prints `ok <name>`, `WARN <name>: <detail> — <fix>` (a pass that needs a look) or `FAIL <name>: <detail> — <fix>` per result (the same style as
-// `check`), or with jsonOut the array of {name, ok, detail, fix}, which also carries the detail of the passing checks. On a
+// container and merges its results. It prints `ok <name>` (`ok <name>: <note>` for a pass that has a note: the runtime row of an older Podman),
+// `WARN <name>: <detail> — <fix>` (a pass that needs a look) or `FAIL <name>: <detail> — <fix>` per result (the same style as
+// `check`), or with jsonOut the array of {name, ok, detail, fix}, which also carries the detail of the passing checks and, where there is one, the note. On a
 // full screen the results are lines of the screen, ended by the counts ("N ok, N warnings, N failures"), and the caller holds the page
 // until Enter (doctorCommand). The exit code is 0 when everything passed and 1 otherwise. Doctor only reads: it never creates, starts, stops or removes anything.
 func Doctor(ctx context.Context, deps Deps, settingsPath, tokenFile string, out io.Writer, jsonOut bool) int {
@@ -70,6 +71,9 @@ type doctorResult struct {
 	Detail  string `json:"detail"`
 	Fix     string `json:"fix"`
 	Warning bool   `json:"warning,omitempty"` // a passing result that needs a look; it does not change the exit code
+	// Note is something a plain pass says of itself without a warning: it is written beside the name (`ok runtime: <note>`) and counts as an ok.
+	// Only doctor's own runtime row has one, so the service's rows, which have no such key, are written as before.
+	Note string `json:"note,omitempty"`
 	// Commands are the subcommands of this program that Fix of a row of the service names by its bare name: `suiteward check --json` says which,
 	// because the service cannot know the flags of the instance (see commands). An older service sends none.
 	Commands []string `json:"commands,omitempty"`
@@ -77,6 +81,14 @@ type doctorResult struct {
 
 // needsALook says that a result is not a plain pass: a failure, or a pass that doctor warns about.
 func (r doctorResult) needsALook() bool { return !r.OK || r.Warning }
+
+// passText is what follows the mark of a plain pass: its name, and its note when it has one.
+func (r doctorResult) passText() string {
+	if r.Note == "" {
+		return r.Name
+	}
+	return r.Name + ": " + r.Note
+}
 
 // line is how a result that needs a look is written: WARN for a pass that needs a look, FAIL for a failure.
 func (r doctorResult) line() string {
@@ -111,7 +123,7 @@ func writeDoctor(w io.Writer, results []doctorResult, jsonOut bool) error {
 			if r.needsALook() {
 				scr.Warn("%s\n", r.line())
 			} else {
-				scr.Check("%s", r.Name)
+				scr.Check("%s", r.passText())
 			}
 		}
 		passed, warned, failed := doctorCounts(results)
@@ -123,7 +135,7 @@ func writeDoctor(w io.Writer, results []doctorResult, jsonOut bool) error {
 		if r.needsALook() {
 			b.WriteString(r.line() + "\n")
 		} else {
-			b.WriteString("ok " + r.Name + "\n")
+			b.WriteString("ok " + r.passText() + "\n")
 		}
 	}
 	_, err := io.WriteString(w, b.String())
@@ -190,8 +202,11 @@ type doctor struct {
 	refusedFolder error // co-located Windows: why an install would refuse the folder of the test runner (refuseNew), when it would
 }
 
-func (d *doctor) pass(name, detail string) {
-	d.results = append(d.results, doctorResult{Name: name, OK: true, Detail: detail})
+func (d *doctor) pass(name, detail string) { d.passNote(name, detail, "") }
+
+// passNote reports a pass that says one thing more of itself, which is not a warning.
+func (d *doctor) passNote(name, detail, note string) {
+	d.results = append(d.results, doctorResult{Name: name, OK: true, Detail: detail, Note: note})
 }
 
 func (d *doctor) fail(name, detail, fix string) {
@@ -290,7 +305,7 @@ func (d *doctor) checkMachine(ctx context.Context) {
 	if want == "" {
 		want = d.deps.Getenv("CONTAINER_CONNECTION")
 	}
-	want = strings.TrimSuffix(want, "-root") // the rootless connection is named after the machine, the rootful one adds -root
+	want = machineOf(want)
 	pick := slices.IndexFunc(list, func(m machineEntry) bool {
 		return m.Name == want || (want == "" && m.Running)
 	})
@@ -302,14 +317,11 @@ func (d *doctor) checkMachine(ctx context.Context) {
 		if want != "" {
 			what = "no Podman machine is called " + want
 		}
-		d.fail("machine", what, "Create and start one with `podman machine init` and `podman machine start`, or choose the right one with `connection:` in the settings file.")
+		d.fail("machine", what, "Create and start one with `"+machineCommand("init", want)+"` and `"+machineStartCommand(want)+"`, or choose the right one with `connection:` in the settings file.")
 		return
 	}
 	m := list[pick]
-	start := "podman machine start"
-	if m.Name != defaultMachine {
-		start += " " + m.Name
-	}
+	start := machineStartCommand(m.Name)
 	switch {
 	case m.Starting:
 		d.fail("machine", "the Podman machine "+m.Name+" is still starting", "Wait until it runs, then run doctor again.")
@@ -321,12 +333,34 @@ func (d *doctor) checkMachine(ctx context.Context) {
 	}
 }
 
+// machineOf is the Podman machine of a connection: the rootless connection is named after the machine, the rootful one adds -root.
+func machineOf(connection string) string { return strings.TrimSuffix(connection, "-root") }
+
+// machineStartCommand starts the Podman machine called name: the default machine, or none named, is what a bare
+// `podman machine start` starts.
+func machineStartCommand(name string) string { return machineCommand("start", name) }
+
+// machineStopCommand stops the Podman machine called name, with the same rule as machineStartCommand.
+func machineStopCommand(name string) string { return machineCommand("stop", name) }
+
+func machineCommand(verb, name string) string {
+	if name == "" || name == defaultMachine {
+		return "podman machine " + verb
+	}
+	return "podman machine " + verb + " " + name
+}
+
 // machineSSH runs one command in the Podman machine as its rootless user.
 func (d *doctor) machineSSH(ctx context.Context, command string) ([]byte, error) {
 	return d.deps.Exec(ctx, "podman", []string{"machine", "ssh", "--username", d.machine.User, d.machine.Name, command}, nil)
 }
 
 func (d *doctor) checkRuntime(ctx context.Context) {
+	if d.s.Tier == config.TierIsolated && checkWorkingFolder() != nil { // Podman would stop with "cannot chdir", which names no cause
+		d.why = "runtime"
+		d.fail("runtime", "SuiteWard cannot run from this folder, because the account that runs it cannot open it.", "Run `cd ~` first, then run `"+d.deps.suggest("doctor")+"` again.")
+		return
+	}
 	var rt Runtime
 	var err error
 	if d.s.Runtime == RuntimeDocker {
@@ -351,12 +385,53 @@ func (d *doctor) checkRuntime(ctx context.Context) {
 	if d.deps.GOOS == "windows" {
 		detail += "; the Windows Docker pipe (docker_engine) is answered by " + d.pipeOwner(ctx)
 	}
-	d.pass("runtime", detail)
+	var note string
+	if d.s.Runtime == RuntimePodman && d.s.Tier != config.TierIsolated {
+		note = podmanNote(ctx, rt.(*Podman)) // NewPodman answers a *Podman
+	}
+	d.passNote("runtime", detail, note)
+}
+
+// podmanNote is what the runtime row says of the version of a co-located Podman, which has no floor: Podman 4.9 (Ubuntu 24.04's
+// package) does not report a sandbox killed for memory as such, and the executor reads its exit status 137 the same. The row stays a
+// pass, so an older Podman is a note and not a warning, and a version that cannot be read is said so. The isolated tier has its floor
+// of 5.5 at the host step.
+func podmanNote(ctx context.Context, p *Podman) string {
+	version, err := podmanVersion(ctx, p)
+	switch {
+	case err != nil:
+		return "SuiteWard could not check whether Podman is older than 5.0, because its version could not be read (" + oneLine(err.Error()) + ")."
+	case !podmanAtLeast(version, 5, 0):
+		return "Podman " + version + " is older than 5.0. SuiteWard works with it, but a newer Podman says more clearly when a test is stopped for using too much memory."
+	}
+	return ""
+}
+
+// podmanVersion is the version of the engine behind the connection: the server's, else the client's, as the sandbox's Info reads it
+// (a Podman machine reports its engine as the server, a local Podman a client alone). It is asked through p, so of the connection NewPodman
+// resolved, whoever named it: the settings, CONTAINER_CONNECTION, or the machine's one rootless connection off Linux.
+func podmanVersion(ctx context.Context, p *Podman) (string, error) {
+	out, err := p.run(ctx, nil, "version", "--format", "{{json .}}")
+	if err != nil {
+		return "", err
+	}
+	var v struct{ Client, Server struct{ Version string } }
+	if err := json.Unmarshal(out, &v); err != nil {
+		return "", fmt.Errorf("read the answer: %w", err)
+	}
+	version := podmanVersionText.FindString(cmp.Or(v.Server.Version, v.Client.Version))
+	if version == "" {
+		return "", errors.New("it reported no version number")
+	}
+	return version, nil
 }
 
 func (d *doctor) runtimeFix(err error) string {
 	switch {
 	case errors.Is(err, ErrRootful):
+		if d.deps.GOOS == "linux" && cmp.Or(d.s.Connection, d.deps.Getenv("CONTAINER_CONNECTION")) == "" { // the connection NewPodman used: none
+			return "Run SuiteWard as the user who installed it, not as root or with sudo."
+		}
 		return "Choose the machine's rootless connection (the one that does not run as the administrator) with `connection:` in the settings file."
 	case errors.Is(err, ErrNotDocker):
 		return "Set `connection:` in the settings file to Docker's own context, or install again with `--runtime podman`."
@@ -365,7 +440,7 @@ func (d *doctor) runtimeFix(err error) string {
 	case d.s.Runtime == RuntimeDocker:
 		return "Start Docker (Docker Desktop on Windows and macOS), then check that `docker version` answers."
 	case d.deps.GOOS != "linux":
-		return "Check the Podman machine with `podman machine list` and start it with `podman machine start`."
+		return "Check the Podman machine with `podman machine list` and start it with `" + machineStartCommand(d.machine.Name) + "`."
 	default:
 		return "Check that `podman info` works for your user."
 	}
@@ -860,8 +935,8 @@ const (
 	dbMemoryBytes  = 402653184 // 384 MiB, the limit of suiteward-db.container
 )
 
-// checkHost reads what Podman applies on the isolated host: the network backend, and the memory limit of the database.
-func (d *doctor) checkHost(ctx context.Context) {
+// checkNetwork reads the network backend that Podman applies on the isolated host.
+func (d *doctor) checkNetwork(ctx context.Context) {
 	args := []string{"info", "--format", "{{.Host.NetworkBackend}}"}
 	if d.s.Connection != "" {
 		args = append([]string{"--connection", d.s.Connection}, args...)
@@ -875,6 +950,13 @@ func (d *doctor) checkHost(ctx context.Context) {
 			"Install netavark with `sudo dnf install netavark`, set `network_backend = \"netavark\"` in `containers.conf`, then run doctor again. The metadata rule and the service network need it.")
 	default:
 		d.pass("network", "the network backend is "+networkBackend)
+	}
+}
+
+// checkHost reads what Podman applies on the isolated host: the network backend, and the memory limit of the database.
+func (d *doctor) checkHost(ctx context.Context) {
+	if d.needRuntime("network") { // a Podman that did not answer the runtime check, or a folder it cannot start in, says nothing here either
+		d.checkNetwork(ctx)
 	}
 
 	if !d.needRuntime("memory") {

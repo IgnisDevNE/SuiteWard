@@ -406,6 +406,54 @@ func TestUpgradeIsolatedRefusesAnotherAccount(t *testing.T) {
 	}
 }
 
+// A folder the account cannot enter ends every command that opens the isolated host before Podman runs and before anything changes. `enroll`
+// goes through the same openIsolatedHost, but it asks for a real terminal first, so the test of openIsolatedHost covers it.
+func TestIsolatedCommandsStopFromAFolderTheAccountCannotOpen(t *testing.T) {
+	commands := map[string]func(u *isoUpgrade) error{
+		"upgrade":   func(u *isoUpgrade) error { return u.upgrade("--image", testDigest, "--yes") },
+		"uninstall": func(u *isoUpgrade) error { return u.uninstall("--yes") },
+		"backup": func(u *isoUpgrade) error {
+			return Backup(context.Background(), []string{"--tier", "isolated", "--settings", settingsFile(u.home), "--to", u.backups}, u.env())
+		},
+	}
+	for name, run := range commands {
+		for folderName, folder := range unreachableFolders(t) {
+			t.Run(name+" when "+folderName, func(t *testing.T) {
+				u := newIsoUpgrade(t, nil)
+				before := u.units()
+				inFolder(t, folder)
+				if err := run(u); err == nil || err.Error() != unreadableFolderText {
+					t.Fatalf("%s = %v, want exactly %q", name, err, unreadableFolderText)
+				}
+				if u.f.has("podman") {
+					t.Errorf("Podman ran: %v", u.f.lines())
+				}
+				u.untouched(before)
+				if files, _ := filepath.Glob(filepath.Join(u.backups, "*")); len(files) != 0 {
+					t.Errorf("a backup was made: %v", files)
+				}
+			})
+		}
+	}
+}
+
+// From a folder that the account can enter, a relative path means what it did: the process does not change its folder, so --backup-dir is
+// read from where the command was run.
+func TestUpgradeIsolatedReadsARelativeBackupFolderFromTheWorkingFolder(t *testing.T) {
+	u := newIsoUpgrade(t, nil)
+	folder := t.TempDir()
+	t.Chdir(folder)
+	if err := u.upgrade("--image", testDigest, "--yes", "--backup-dir", "later"); err != nil {
+		t.Fatal(err)
+	}
+	if got := oneArchive(t, filepath.Join(folder, "later")); got == "" {
+		t.Error("the backup is not in the folder that the relative path names")
+	}
+	if files, _ := filepath.Glob(filepath.Join(u.backups, "*")); len(files) != 0 {
+		t.Errorf("the backup went to the folder of the first --backup-dir: %v", files)
+	}
+}
+
 // ---- uninstall ----
 
 var isolatedUnitFiles = []string{

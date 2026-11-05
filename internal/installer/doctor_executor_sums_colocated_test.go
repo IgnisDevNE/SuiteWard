@@ -28,9 +28,46 @@ func writePin(t *testing.T, f *fakeEngine, name string) {
 	}
 }
 
+// asBuild makes the program a release build (a digest) or a development build (none): ReleaseImage reads the variable that the release workflow sets.
+func asBuild(t *testing.T, digest string) {
+	t.Helper()
+	was := ImageDigest
+	ImageDigest = digest
+	t.Cleanup(func() { ImageDigest = was })
+}
+
+// A release build is never called a development build: with no pin from the release's SHA256SUMS it says what was not checked and how to check it.
+func TestDoctorColocatedWarnsOfAReleaseBuildWithoutCallingItADevelopmentBuild(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			asBuild(t, testDigest)
+			f, s := colocated{goos: goos}.build(t)
+			writePin(t, f, "suiteward-executor")
+			code, res, _ := runDoctor(t, f, s)
+			if code != 0 {
+				t.Errorf("a warning is not a failure: exit %d", code)
+			}
+			r := res["executor.binary"]
+			if !r.OK || !r.Warning {
+				t.Fatalf("executor.binary = %+v, want a passing warning", r)
+			}
+			if want := "The test runner was not checked against the list of fingerprints of its release (SHA256SUMS), so SuiteWard cannot say that it is the release's own program."; r.Detail != want {
+				t.Errorf("the detail is %q, want %q", r.Detail, want)
+			}
+			if want := "To check it, download SHA256SUMS from the same release and run `suiteward install --upgrade --sha256sums <the release's SHA256SUMS file>`."; r.Fix != want {
+				t.Errorf("the fix is %q, want %q", r.Fix, want)
+			}
+			if strings.Contains(r.Detail+r.Fix, "development build") {
+				t.Errorf("a release build is called a development build: %+v", r)
+			}
+		})
+	}
+}
+
 func TestDoctorColocatedWarnsWhenThePinWasNotMadeFromTheReleasesSums(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin", "windows"} {
 		t.Run(goos, func(t *testing.T) {
+			asBuild(t, "") // a development build
 			f, s := colocated{goos: goos}.build(t)
 			writePin(t, f, "suiteward-executor")
 			code, res, _ := runDoctor(t, f, s)

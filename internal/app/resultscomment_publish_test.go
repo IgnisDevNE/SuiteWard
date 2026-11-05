@@ -75,13 +75,17 @@ func TestTheResultsCommentIsPostedFromItsPayloadWithTheLinkOfThePullRequestPage(
 	for _, want := range []string{
 		"SuiteWard ran the tests for this commit (`0123456`). Nothing needs your attention.",
 		"Approved tests: 12 tests ran. 9 passed. 0 failed. 0 gave no result. 0 gave different results when they ran again. 3 were skipped.",
-		"Tests this change adds or edits: 3.\n- Fail before the change and pass now, so they show the change works: 2",
-		"- `fix`: met.", "Nothing to do for now.",
-		"Details: [pull request page](http://127.0.0.1:8080/pulls/acme/widgets/7).",
+		"3 were skipped.\n\nSee the full report here: [pull request page](http://127.0.0.1:8080/pulls/acme/widgets/7).\n\nThis link opens on the computer that runs SuiteWard.",
+		"Tests this change adds or edits: 3.\n\n| What the test shows | Tests |\n| --- | --- |\n| Fail before the change and pass now, so they show the change works | 2 |",
+		"Does the receipt meet each kind of change? It looks only at the tests this change adds or edits.\n\n| Kind of change | Met? | Why not |\n| --- | --- | --- |\n| `fix` | Yes |  |",
+		"Nothing to do for now.",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the comment lacks %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "Details:") || strings.Contains(body, "- `fix`: met.") {
+		t.Errorf("the comment keeps the old link line or the old list of kinds:\n%s", body)
 	}
 }
 
@@ -89,7 +93,9 @@ func TestTheResultsCommentWithoutABaseAddressSaysSo(t *testing.T) {
 	w := newCmtWorld(t)
 	key, payload := rcResults(nil)
 	body := w.mustPost(key, payload)
-	if !strings.Contains(body, "SuiteWard has no web address set, so this comment has no link. The checks of this commit carry the counts.") || strings.Contains(body, "Details:") {
+	// The sentence takes the place of the link: right after the approved counts.
+	if !strings.Contains(body, "3 were skipped.\n\nSuiteWard has no web address set, so this comment has no link. The checks of this commit carry the counts.\n\nTests this change adds or edits: 3.") ||
+		strings.Contains(body, "Details:") || strings.Contains(body, "See the full report here") {
 		t.Errorf("the comment of an instance with no base address:\n%s", body)
 	}
 }
@@ -101,7 +107,7 @@ func TestTheResultsCommentKeepsItsTextWhenItsLinkIsRefused(t *testing.T) {
 		w.pub.reportBase = base
 		key, payload := rcResults(nil)
 		body := w.mustPost(key, payload)
-		if !strings.Contains(body, "Nothing needs your attention.") || strings.Contains(body, "Details:") || !strings.Contains(body, "has no web address set") {
+		if !strings.Contains(body, "Nothing needs your attention.") || strings.Contains(body, "Details:") || strings.Contains(body, "See the full report here") || !strings.Contains(body, "has no web address set") {
 			t.Errorf("base %q: the text was lost or kept a refused link:\n%s", base, body)
 		}
 		if !strings.Contains(w.logs.String(), "link") {
@@ -301,6 +307,48 @@ func TestTheNotRespondingCommentIsPostedFromItsPayload(t *testing.T) {
 			}
 			if got := strings.Contains(body, "/suiteward unblock <code>"); got != unblock {
 				t.Errorf("the offer is present = %v, want %v:\n%s", got, unblock, body)
+			}
+			// M2.1c, SW-1: the owner reads that the checks wait and where the code comes from, or that nothing waits and that an unblock is not needed.
+			holds := "The checks of this commit wait for these tests. To go on without these tests, the owner can comment `/suiteward unblock <code>`, where `<code>` is a current code from the authenticator app."
+			holdsNothing := "Nothing waits for these tests. An unblock is not needed here: it would only keep these tests from running when the test runner answers again."
+			if got := strings.Contains(body, holds); got != unblock {
+				t.Errorf("the sentences of a head that waits are present = %v, want %v:\n%s", got, unblock, body)
+			}
+			if got := strings.Contains(body, holdsNothing); got != !unblock {
+				t.Errorf("the sentence of a head that holds nothing is present = %v, want %v:\n%s", got, !unblock, body)
+			}
+		})
+	}
+}
+
+// M2.1c, SW-28: a results comment of a head whose run did not run and that leaves nothing to the owner says from its payload whether the tests run again.
+func TestTheResultsCommentOfARunThatDidNotRunSaysWhetherItRunsAgain(t *testing.T) {
+	for name, tc := range map[string]struct {
+		edit func(map[string]any)
+		want string
+	}{
+		"the test runner did not answer": {func(p map[string]any) {
+			p["canonical"] = map[string]any{"status": "unavailable", "reason": "no-executor"}
+		},
+			"SuiteWard runs them when the test runner answers again."},
+		"no test runner is set up": {func(p map[string]any) {
+			p["canonical"] = map[string]any{"status": "unavailable", "reason": "executor-not-configured"}
+		}, "SuiteWard runs them once the test runner is set up."},
+		"another reason": {func(p map[string]any) { p["canonical"] = map[string]any{"status": "unavailable", "reason": "timeout"} }, "A new push runs them."},
+		"the owner unblocked it": {func(p map[string]any) {
+			p["canonical"] = map[string]any{"status": "unavailable", "reason": "no-executor"}
+			p["canonicalLevel"], p["unblocked"] = "required", []string{"canonical"}
+		}, "Nothing runs them for this commit now. A new push runs the tests."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCmtWorld(t)
+			key, payload := rcResults(func(p map[string]any) {
+				p["canonicalLevel"], p["receiptLevel"] = "advisory", "advisory"
+				tc.edit(p)
+			})
+			body := w.mustPost(key, payload)
+			if !strings.Contains(body, "\n\n"+tc.want+"\n\n") || strings.Contains(body, "Nothing to do for now.") {
+				t.Errorf("the next step is not %q, or the comment still says that there is nothing to do:\n%s", tc.want, body)
 			}
 		})
 	}

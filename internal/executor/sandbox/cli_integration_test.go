@@ -77,7 +77,7 @@ type recorder struct {
 }
 
 func (r *recorder) exec(ctx context.Context, name string, args []string, stdin io.Reader, stdout io.Writer) (int, string, error) {
-	if i := slices.Index(args, "--name"); args[0] == "run" && i >= 0 {
+	if i := slices.Index(args, "--name"); subcommand(args) == "run" && i >= 0 {
 		r.mu.Lock()
 		r.names = append(r.names, args[i+1])
 		r.mu.Unlock()
@@ -199,8 +199,10 @@ func TestAMemoryHogIsSeenAsOOMKilled(t *testing.T) {
 	s.Limits.MemoryMiB = 64
 	s.Limits.TmpfsMiB = 16
 	out := runOnEngine(t, rt, s)
-	if !out.OOMKilled {
-		t.Errorf("the memory limit killed the hog, and the runtime must say so: %+v", out)
+	// Rootless Podman 4.9 (Ubuntu 24.04) kills the hog but does not set OOMKilled; the executor reads exit status 137 the same way
+	// (run.invoke), so either one says that the memory limit did it.
+	if !out.OOMKilled && out.ExitCode != 137 {
+		t.Errorf("the memory limit killed the hog, and the runtime must say so (OOMKilled, or exit status 137): %+v", out)
 	}
 }
 

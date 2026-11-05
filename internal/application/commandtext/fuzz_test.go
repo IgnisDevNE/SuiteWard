@@ -95,7 +95,7 @@ func checkParsed(t *testing.T, body string, p commandtext.Parsed) {
 
 func checkCommand(t *testing.T, body string, c commandtext.Command) {
 	t.Helper()
-	if c.Mode != execution.ModeNone && c.Verb != commandtext.Approve && c.Verb != commandtext.SetMode {
+	if c.Mode != execution.ModeNone && c.Verb != commandtext.Approve {
 		t.Fatalf("verb %d carries the mode %d: %+v from %q", c.Verb, c.Mode, c, body)
 	}
 	switch c.Verb {
@@ -105,15 +105,11 @@ func checkCommand(t *testing.T, body string, c commandtext.Command) {
 		if c.Proposal != 0 || c.Revision != 0 || !isCode(c.Code) || !strings.Contains(body, c.Code) {
 			t.Fatalf("verb %d %+v is not only a 6-digit code from %q", c.Verb, c, body)
 		}
-	case commandtext.SetMode:
-		if c.Proposal != 0 || c.Revision != 0 || c.Code != "" || c.Mode == execution.ModeNone || !spells(body, c.Mode) {
-			t.Fatalf("mode %+v is not only a mode that %q spells", c, body)
-		}
 	case commandtext.Propose, commandtext.Suggest:
 		if c.Proposal != 0 || c.Revision != 0 || c.Code != "" {
 			t.Fatalf("verb %d carries a reference or a code: %+v from %q", c.Verb, c, body)
 		}
-	default:
+	default: // no verb for a /suiteward mode line either: it is malformed (M2.1c, SW-16)
 		t.Fatalf("unknown verb in %+v from %q", c, body)
 	}
 }

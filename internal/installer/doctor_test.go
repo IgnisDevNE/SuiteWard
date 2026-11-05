@@ -240,6 +240,16 @@ func doctorStateOf(status string, exit int, health string) map[string]any {
 	return state
 }
 
+// podmanVersions is what `podman version --format {{json .}}` prints: the client's version and, when a server answers (a
+// Podman machine), the server's.
+func podmanVersions(client, server string) string {
+	out := fmt.Sprintf(`{"Client":{"Version":%q}`, client)
+	if server != "" {
+		out += fmt.Sprintf(`,"Server":{"Version":%q}`, server)
+	}
+	return out + "}"
+}
+
 // colocated builds the fake of a healthy co-located stack; every field is a way to break it.
 type colocated struct {
 	goos     string
@@ -308,7 +318,7 @@ func (c colocated) build(t *testing.T) (*fakeEngine, Settings) {
 	if s.Runtime == RuntimeDocker {
 		f.on("version --format", dockerDesktopServer+"\n").on("info --format", `["name=seccomp"]`+"\n")
 	} else {
-		f.on("info --format", "true\n")
+		f.on("info --format", "true\n").on("version --format", podmanVersions("6.1.4", "6.1.4"))
 	}
 	f.on("podman-restart.service", "LoadState=loaded\nUnitFileState=enabled\n")
 	f.on("-un", "suiteward\n").on("show-user suiteward", "Linger=yes\n")
@@ -351,6 +361,207 @@ func TestDoctorHealthyColocatedDocker(t *testing.T) {
 	}
 }
 
+const olderPodmanNote = "Podman 4.9.3 is older than 5.0. SuiteWard works with it, but a newer Podman says more clearly when a test is stopped for using too much memory."
+
+// A co-located Podman older than 5.0 is neither a failure nor a warning (Ubuntu 24.04 ships 4.9.3, and a warning there would
+// stay forever with nothing to act on): the runtime row passes and says so in its note. The version is the server's, else the client's.
+func TestDoctorNotesAColocatedPodmanOlderThan5(t *testing.T) {
+	cases := []struct {
+		name    string
+		goos    string
+		answer  string
+		noted   bool
+		command string // the one version command, as its argument line
+	}{
+		{"a 4.9.3 server", "linux", podmanVersions("4.9.3", "4.9.3"), true, "version --format {{json .}}"},
+		{"a client alone of 4.9.3", "linux", podmanVersions("4.9.3", ""), true, "version --format {{json .}}"},
+		{"a machine of 4.9.3 under a client of 6.1.4", "windows", podmanVersions("6.1.4", "4.9.3"), true, "--connection podman-machine-default version --format {{json .}}"},
+		{"a machine of 6.1.4 under a client of 4.9.3", "windows", podmanVersions("4.9.3", "6.1.4"), false, "--connection podman-machine-default version --format {{json .}}"},
+		{"a 5.0.0 server", "linux", podmanVersions("5.0.0", "5.0.0"), false, "version --format {{json .}}"},
+		{"a 6.1.4 server", "linux", podmanVersions("6.1.4", "6.1.4"), false, "version --format {{json .}}"},
+		{"a client alone of 6.1.4", "linux", podmanVersions("6.1.4", ""), false, "version --format {{json .}}"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, s := colocated{goos: c.goos, over: []rule{{match: "version --format", out: c.answer}}}.build(t)
+			code, res, _ := runDoctor(t, f, s)
+			if code != 0 {
+				t.Errorf("exit %d, results %+v", code, res)
+			}
+			wantOK(t, res, "runtime")
+			r := res["runtime"]
+			if r.needsALook() {
+				t.Errorf("the runtime row is a pass that needs no look, so no warning is counted: %+v", r)
+			}
+			if got := r.Note == olderPodmanNote; got != c.noted {
+				t.Errorf("the note is the older-Podman one: %v, want %v: %q", got, c.noted, r.Note)
+			}
+			if !c.noted && r.Note != "" {
+				t.Errorf("a note without a reason: %q", r.Note)
+			}
+			// On Windows the probe of the Docker pipe asks `docker version` too: only Podman's own command counts here.
+			asked := slices.DeleteFunc(f.find("version --format"), func(c call) bool { return c.name != "podman" })
+			if len(asked) != 1 || asked[0].line() != c.command {
+				t.Errorf("want the one command `podman %s`, got %v", c.command, asked)
+			}
+		})
+	}
+}
+
+// olderPodman is the fake of a co-located Podman 4.9.3, which gets the note.
+var olderPodman = rule{match: "version --format", out: podmanVersions("4.9.3", "4.9.3")}
+
+// The note of an older Podman is on the line of the passing runtime row, in plain text: `ok runtime: <note>`. It is a pass, so the exit code is 0
+// and no WARN line appears, and no other row changes: the output is the one of a newer Podman with that one line replaced.
+func TestDoctorPlainOutputShowsThePodmanNoteOnTheRuntimeRow(t *testing.T) {
+	f, s := colocated{}.build(t)
+	code, newer := runDoctorRaw(t, f, s, false)
+	if code != 0 || !strings.Contains(newer, "\nok runtime\n") {
+		t.Fatalf("a newer Podman: exit %d, want 0 and the line `ok runtime` in:\n%s", code, newer)
+	}
+	f, s = colocated{over: []rule{olderPodman}}.build(t)
+	code, text := runDoctorRaw(t, f, s, false)
+	if code != 0 {
+		t.Errorf("exit %d for a Podman 4.9.3, a note is not a failure:\n%s", code, text)
+	}
+	if want := strings.Replace(newer, "\nok runtime\n", "\nok runtime: "+olderPodmanNote+"\n", 1); text != want {
+		t.Errorf("the plain output is\n%s\nwant the output of a newer Podman with the runtime line `ok runtime: <note>`:\n%s", text, want)
+	}
+	if strings.Contains(text, "WARN") {
+		t.Errorf("a note is not a warning:\n%s", text)
+	}
+}
+
+// On a full screen the note is on the check line of the runtime row, which the scrollback keeps, and the counts treat the row as the pass it is.
+func TestDoctorFullScreenShowsThePodmanNoteOnTheRuntimeRow(t *testing.T) {
+	run := func(t *testing.T, over ...rule) (code int, tail string) {
+		t.Helper()
+		f, s := colocated{over: over}.build(t)
+		path := filepath.Join(t.TempDir(), "settings.yaml")
+		if err := SaveSettings(path, s); err != nil {
+			t.Fatal(err)
+		}
+		c := newTermConsole(&bytes.Buffer{})
+		env := Env{Deps: f.deps(), Term: Terminal{In: strings.NewReader(""), Out: &bytes.Buffer{}}, OpenScreen: c.open}
+		var stderr bytes.Buffer
+		code = Main(liveContext(t), []string{"doctor", "--settings", path, "--token-file", coloTokenFile(t, f)}, env, &stderr)
+		if stderr.Len() != 0 {
+			t.Errorf("stderr is %q", stderr.String())
+		}
+		return code, c.tail()
+	}
+	_, tail := run(t)
+	if !strings.Contains("\n"+tail, "\n✓ runtime\n") {
+		t.Fatalf("a newer Podman: the check line of the runtime row is missing from:\n%s", tail)
+	}
+	code, tail := run(t, olderPodman)
+	if code != 0 {
+		t.Errorf("exit %d for a Podman 4.9.3, a note is not a failure", code)
+	}
+	if want := "\n✓ runtime: " + olderPodmanNote + "\n"; !strings.Contains("\n"+tail, want) {
+		t.Errorf("the scrollback lacks %q:\n%s", want, tail)
+	}
+	checks := strings.Count("\n"+tail, "\n✓ ")
+	if counts := fmt.Sprintf("%d ok, 0 warnings, 0 failures", checks); !strings.HasSuffix(strings.TrimSpace(tail), counts) {
+		t.Errorf("the scrollback does not end with %q:\n%s", counts, tail)
+	}
+}
+
+// `doctor --json` keeps the note apart from the detail, under `note`, and only the runtime row has the key: the rows that
+// `suiteward check --json` sends have none, and they still decode and are listed as before.
+func TestDoctorJSONCarriesThePodmanNoteUnderItsOwnKey(t *testing.T) {
+	rows := func(over ...rule) map[string]map[string]any {
+		f, s := colocated{over: over}.build(t)
+		_, raw := runDoctorRaw(t, f, s, true)
+		var list []map[string]any
+		if err := json.Unmarshal([]byte(raw), &list); err != nil {
+			t.Fatalf("doctor --json printed %q: %v", raw, err)
+		}
+		byName := map[string]map[string]any{}
+		for _, r := range list {
+			byName[r["name"].(string)] = r
+		}
+		return byName
+	}
+	older := rows(olderPodman)
+	if got := older["runtime"]["note"]; got != olderPodmanNote {
+		t.Errorf("the runtime row says note %v, want %q", got, olderPodmanNote)
+	}
+	if detail, _ := older["runtime"]["detail"].(string); strings.Contains(detail, "older than") {
+		t.Errorf("the note is in the detail too: %q", detail)
+	}
+	if older["runtime"]["ok"] != true {
+		t.Errorf("the runtime row is a pass: %v", older["runtime"])
+	}
+	for name, r := range older {
+		if _, has := r["note"]; has && name != "runtime" {
+			t.Errorf("the row %s has a note: %v", name, r)
+		}
+	}
+	if r, ok := older["github.app"]; !ok || r["ok"] != true {
+		t.Errorf("a row of `suiteward check --json` without a note is lost or changed: %v", r)
+	}
+	if _, has := rows()["runtime"]["note"]; has {
+		t.Error("a newer Podman has a note key")
+	}
+}
+
+// The version is asked of the connection that NewPodman chose, whoever named it: with no connection in the settings, off Linux that is the one
+// rootless machine connection, and anywhere CONTAINER_CONNECTION. The fake answers 4.9.3 on that connection and 6.1.4 on the engine's default.
+func TestDoctorAsksThePodmanVersionOfTheConnectionNewPodmanResolved(t *testing.T) {
+	cases := []struct {
+		name       string
+		goos       string
+		env        string
+		connection string
+		over       []rule
+	}{
+		{"the only rootless machine connection", "windows", "", "podman-machine-default", []rule{{match: "system connection list", out: machineConnections}}},
+		{"CONTAINER_CONNECTION", "linux", "edge", "edge", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			asked := "--connection " + c.connection + " version --format {{json .}}"
+			over := slices.Concat(c.over, []rule{
+				{match: "=" + asked, out: podmanVersions("4.9.3", "4.9.3")},
+				{match: "=version --format {{json .}}", out: podmanVersions("6.1.4", "6.1.4")},
+			})
+			f, s := colocated{goos: c.goos, over: over}.build(t)
+			s.Connection = ""
+			f.env["CONTAINER_CONNECTION"] = c.env
+			_, text := runDoctorRaw(t, f, s, false)
+			if want := "\nok runtime: " + olderPodmanNote + "\n"; !strings.Contains("\n"+text, want) {
+				t.Errorf("the output lacks %q, though the connection %s answers 4.9.3:\n%s", want, c.connection, text)
+			}
+			// On Windows the probe of the Docker pipe asks `docker version` too: only Podman's own command counts here.
+			versions := slices.DeleteFunc(f.find("version --format"), func(c call) bool { return c.name != "podman" })
+			if len(versions) != 1 || versions[0].line() != asked {
+				t.Errorf("want the one command `podman %s`, got %v", asked, versions)
+			}
+		})
+	}
+}
+
+// Docker has its own version, which nothing here judges, and the isolated tier has its floor of 5.5 at the host step: neither row changes.
+func TestDoctorAddsNoPodmanNoteToDockerOrToTheIsolatedTier(t *testing.T) {
+	f, s := colocated{engine: RuntimeDocker}.build(t)
+	_, res, _ := runDoctor(t, f, s)
+	wantOK(t, res, "runtime")
+	if got, want := res["runtime"].Detail, "Docker Desktop 4.50.0 (209931) 29.9.2"; got != want {
+		t.Errorf("the Docker runtime row is %q, want %q", got, want)
+	}
+	if calls := f.find("version --format"); len(calls) != 1 {
+		t.Errorf("Docker is asked its version once, to be identified: %v", calls)
+	}
+
+	f, s = isolatedRig{}.build(t)
+	_, res, _ = runDoctor(t, f, s)
+	wantOK(t, res, "runtime")
+	if calls := f.find("version --format"); len(calls) != 0 {
+		t.Errorf("the isolated tier asks no version: %v", calls)
+	}
+}
+
 func TestDoctorDockerPinsAreCheckedByImage(t *testing.T) {
 	other := "ghcr.io/ignisdevne/suiteward@sha256:" + strings.Repeat("c", 64)
 	f, s := colocated{engine: RuntimeDocker, migrate: doctorStateOf("exited", 0, ""), edit: func(name string, obj map[string]any) {
@@ -376,7 +587,7 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 		want  []string
 	}{
 		{"the engine does not answer", colocated{over: []rule{{match: "info --format", err: errors.New("connection refused")}}}, "runtime", []string{"connection refused"}},
-		{"a rootful connection", colocated{over: []rule{{match: "info --format", out: "false\n"}}}, "runtime", []string{"rootless"}},
+		{"a rootful connection", colocated{over: []rule{{match: "info --format", out: "false\n"}}}, "runtime", []string{"rootful"}},
 		{"an unhealthy database", colocated{state: map[string]map[string]any{ContainerDB: doctorStateOf("running", 0, "unhealthy")}}, "containers", []string{ContainerDB, "unhealthy"}},
 		{"a stopped service", colocated{state: map[string]map[string]any{ContainerServe: doctorStateOf("exited", 137, "")}}, "containers", []string{ContainerServe, "exited"}},
 		{"a migrate container that failed", colocated{migrate: doctorStateOf("exited", 3, "")}, "containers", []string{ContainerMigrate, "exit"}},
@@ -413,7 +624,7 @@ func TestDoctorReportsEachFailureWithItsFix(t *testing.T) {
 }
 
 // The fix of a disabled podman-restart.service names what works: in a Podman machine the user's own enable can be denied
-// (the unit's directories belong to root), so the link is made as the default ssh user (root on a Windows WSL machine) and the user reloads; on Linux the user enables it.
+// (the unit's directories belong to root), so the link is made through sudo as the default ssh user and the user reloads; on Linux the user enables it.
 func TestDoctorRestartFixNamesWhatWorks(t *testing.T) {
 	off := []rule{{match: "podman-restart.service", out: "LoadState=loaded\nUnitFileState=disabled\n"}}
 	t.Run("in a Podman machine", func(t *testing.T) {
@@ -421,13 +632,22 @@ func TestDoctorRestartFixNamesWhatWorks(t *testing.T) {
 		_, res, _ := runDoctor(t, f, s)
 		wantFail(t, res, "restart", "podman-restart.service", "disabled")
 		for _, want := range []string{
-			"podman machine ssh podman-machine-default 'mkdir -p /home/user/.config/systemd/user/default.target.wants && ln -sf /usr/lib/systemd/user/podman-restart.service /home/user/.config/systemd/user/default.target.wants/podman-restart.service'",
+			`podman machine ssh podman-machine-default "sudo -n sh -c 'mkdir -p /home/user/.config/systemd/user/default.target.wants && ln -sf /usr/lib/systemd/user/podman-restart.service /home/user/.config/systemd/user/default.target.wants/podman-restart.service'"`,
 			"podman machine ssh --username user podman-machine-default 'systemctl --user daemon-reload && systemctl --user is-enabled podman-restart.service'",
-			"as the machine's default ssh user (root on a Windows WSL machine)",
+			"with sudo (administrator rights), as the machine's default ssh user",
 		} {
 			if !strings.Contains(res["restart"].Fix, want) {
 				t.Errorf("the fix lacks %q:\n%s", want, res["restart"].Fix)
 			}
+		}
+		if strings.Contains(res["restart"].Fix, "WSL") {
+			t.Errorf("the fix names a machine kind it does not need:\n%s", res["restart"].Fix)
+		}
+		// What the person reads is the printed line, not the structured fix.
+		f, s = colocated{goos: "windows", over: off}.build(t)
+		_, text := runDoctorRaw(t, f, s, false)
+		if want := "FAIL restart: "; !strings.Contains(text, want) || !strings.Contains(text, res["restart"].Fix) {
+			t.Errorf("the printed doctor output lacks the restart fix %q:\n%s", res["restart"].Fix, text)
 		}
 	})
 	// A re-run leaves a running, healthy Docker container alone, so `suiteward install` alone would not change its policy: the
@@ -739,6 +959,26 @@ func (r isolatedRig) build(t *testing.T) (*fakeEngine, Settings) {
 	f.on("info --format", "true\n")
 	f.rules = append(f.rules, healthyIsolatedExecutor(t, s)...)
 	return f, s
+}
+
+// Doctor of the isolated tier, run from a folder its account cannot enter, says so on its runtime row, before Podman would stop there with "cannot
+// chdir … Permission denied", which names no cause. The co-located tier runs as the person's own account and is not checked.
+func TestDoctorOfTheIsolatedTierSaysThatItsFolderCannotBeEntered(t *testing.T) {
+	f, s := isolatedRig{}.build(t)
+	inFolder(t, func() (string, error) { return "", os.ErrPermission })
+	_, res, _ := runDoctor(t, f, s)
+	wantFail(t, res, "runtime", "SuiteWard cannot run from this folder, because the account that runs it cannot open it.")
+	if fix := res["runtime"].Fix; !strings.Contains(fix, "`cd ~`") {
+		t.Errorf("the fix does not say how to leave the folder: %q", fix)
+	}
+	if len(f.find("info --format")) != 0 {
+		t.Error("Podman ran from a folder the account cannot enter")
+	}
+	wantFail(t, res, "network", "not checked: runtime failed")
+
+	f, s = colocated{}.build(t)
+	_, res, _ = runDoctor(t, f, s)
+	wantOK(t, res, "runtime")
 }
 
 func TestDoctorHealthyIsolated(t *testing.T) {

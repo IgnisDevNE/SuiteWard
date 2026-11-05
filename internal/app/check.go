@@ -54,6 +54,9 @@ type checkPayload struct {
 	Execution *checkExecution `json:"execution,omitempty"`
 	// Unblocked marks a check that the owner's unblock of an unavailable canonical run lifted.
 	Unblocked bool `json:"unblocked,omitempty"`
+	// Unavailable is the reason code of the canonical job that a canonical-unavailable check reports, which says whether the tests run on their own later. A message that was queued
+	// before it existed, and one that a wait keeps, has none: the check then gives the next step for a reason that is not known.
+	Unavailable string `json:"unavailable,omitempty"`
 	// ApproveMode marks an approval-missing check whose approve names a mode, which a required receipt needs (docs/contracts/runtime.md, "The canonical gate", "The approve command of an approval-missing check").
 	ApproveMode bool `json:"approveMode,omitempty"`
 	// Weakened is the number of approved tests that the change edits and that fail, are missing or are flaky in their approved version, which an approval-missing check states in place of
@@ -106,7 +109,7 @@ func (p checkPayload) check(key string) (commandtext.Check, error) {
 	case slices.ContainsFunc(p.Paths, func(path string) bool { return len(path) > maxSummaryText }):
 		return commandtext.Check{}, keyError(githubCheckKind, key, "a path is too long")
 	}
-	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal, Unblocked: p.Unblocked, ApproveMode: p.ApproveMode, Weakened: p.Weakened}
+	c := commandtext.Check{State: state, Reason: p.Reason, Tier: tier, Paths: p.Paths, PathsTotal: p.PathsTotal, Unblocked: p.Unblocked, Unavailable: p.Unavailable, ApproveMode: p.ApproveMode, Weakened: p.Weakened}
 	if p.Execution != nil {
 		counts := commandtext.CheckExecution(*p.Execution)
 		c.Execution = &counts
@@ -149,14 +152,15 @@ func newCheckMessage(repo string, r checks.Result, tier, version string, generat
 // newCheckMessageWithPaths is newCheckMessage for a runner-uncovered result: paths are its runner files and total how many there are. The
 // payload keeps at most 20, each cut to maxSummaryText bytes.
 func newCheckMessageWithPaths(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int) (governance.OutboxMessage, error) {
-	return newCheckMessageOf(repo, r, tier, version, generation, paths, total, nil, 0, false)
+	return newCheckMessageOf(repo, r, tier, version, generation, paths, total, nil, 0, false, "")
 }
 
 // newCheckMessageOf is newCheckMessageWithPaths for a result that execution adds to: counts are those of a complete canonical run, nil for none, weakened is the count of weakened tests
-// that an approval that is missing states (0 for none or unknown), and approveMode says that its approve names a mode.
-func newCheckMessageOf(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int, counts *checkExecution, weakened int, approveMode bool) (governance.OutboxMessage, error) {
+// that an approval that is missing states (0 for none or unknown), approveMode says that its approve names a mode, and unavailable is the reason code of the canonical job that a
+// canonical-unavailable check reports (empty for none or unknown).
+func newCheckMessageOf(repo string, r checks.Result, tier, version string, generation int64, paths []string, total int, counts *checkExecution, weakened int, approveMode bool, unavailable string) (governance.OutboxMessage, error) {
 	p := checkPayload{commentTarget: commentTarget{RepositoryID: r.RepositoryID, Repo: repo, Pull: r.PullNumber}, HeadSHA: r.HeadSHA, Generation: generation,
-		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version, PathsTotal: total, Execution: counts, Unblocked: r.Unblocked, ApproveMode: approveMode, Weakened: weakened}
+		State: string(r.State), Reason: r.Reason, Reference: r.Reference, Tier: tier, Version: version, PathsTotal: total, Execution: counts, Unblocked: r.Unblocked, Unavailable: unavailable, ApproveMode: approveMode, Weakened: weakened}
 	if len(paths) > 0 {
 		p.Paths = boundedText(paths)
 	}

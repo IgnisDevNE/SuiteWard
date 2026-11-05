@@ -76,15 +76,50 @@ func TestRequiredCheckSummaryStatesTheCanonicalRunItIsWaitingForOrCouldNotMake(t
 }
 
 func TestRequiredCheckSummaryOfAnUnavailableRunOffersTheUnblockAndOfAPendingOneDoesNot(t *testing.T) {
+	// The command is followed, in one paragraph, by what the code is and what the unblock costs, in the words of the comments' offer (M2.1c, SW-47).
+	const offer = "```\n/suiteward unblock <code>\n```\n\n" +
+		"Replace `<code>` with a current code from your authenticator app. The checks of this commit then stop waiting for these tests, and they do not run for this commit. A new push runs them.\n\n" +
+		requiredClosing
 	for _, reason := range []string{"canonical-unavailable", "canonical-not-responding"} {
-		if _, summary := checkText(t, requiredCheck(reason)); !strings.Contains(summary, "```\n/suiteward unblock <code>\n```") {
-			t.Errorf("%s: the summary does not offer the unblock:\n%s", reason, summary)
+		if _, summary := checkText(t, requiredCheck(reason)); !strings.Contains(summary, offer) {
+			t.Errorf("%s: the summary does not offer the unblock in the words of the comments:\n%s", reason, summary)
 		}
 	}
 	for _, reason := range []string{"canonical-pending", "canonical-failing"} {
 		if _, summary := checkText(t, requiredCheck(reason)); strings.Contains(summary, "unblock") {
 			t.Errorf("%s: the summary offers an unblock, which only canonical-unavailable and canonical-not-responding offer:\n%s", reason, summary)
 		}
+	}
+}
+
+// The next step of an unavailable run follows from its reason (M2.1c, SW-28, part 3; docs/plan/phases/M2.1c.md, text 5): the tests run when the test runner answers again, or once
+// it is set up, and any other reason, or one that is not known, waits for a push. The unblock follows in the same words in every case.
+func TestRequiredCheckSummaryOfAnUnavailableRunSaysWhetherTheTestsRunOnTheirOwn(t *testing.T) {
+	const (
+		toLet   = "To let this commit pass without the approved tests, the owner comments:"
+		command = "```\n/suiteward unblock <code>\n```\n\nReplace `<code>` with a current code from your authenticator app. The checks of this commit then stop waiting for these tests, and they do not run for this commit. A new push runs them."
+		runs    = "SuiteWard runs the approved tests"
+		push    = "Next: push a new commit to run the approved tests again. "
+	)
+	for name, tc := range map[string]struct{ unavailable, next string }{
+		"the test runner did not answer":            {"no-executor", "Next: " + runs + " when the test runner answers again. "},
+		"no test runner is set up":                  {"executor-not-configured", "Next: " + runs + " once the test runner is set up. "},
+		"a sandbox that could not be built":         {"sandbox-unavailable", push},
+		"a dependency that could not be downloaded": {"fetch-failed", push},
+		"a timeout":                  {"timeout", push},
+		"a reason that is not known": {"", push},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := requiredCheck("canonical-unavailable")
+			c.Unavailable = tc.unavailable
+			_, summary := checkText(t, c)
+			if want := tc.next + toLet + "\n\n" + command; !strings.Contains(summary, want) {
+				t.Errorf("the summary lacks\n%s\n%s", want, summary)
+			}
+			if says, want := strings.Contains(summary, runs), tc.next != push; says != want {
+				t.Errorf("the summary says that the approved tests run on their own = %v, want %v:\n%s", says, want, summary)
+			}
+		})
 	}
 }
 
@@ -190,25 +225,29 @@ func TestCheckSummaryRefusesRequiredFieldsThatDoNotFit(t *testing.T) {
 	counts := func(c *commandtext.Check) { c.Execution = ran() }
 	unblock := func(c *commandtext.Check) { c.Unblocked = true }
 	for name, c := range map[string]commandtext.Check{
-		"counts on a pending run":                      with(requiredCheck("canonical-pending"), counts),
-		"counts on an unavailable run":                 with(requiredCheck("canonical-unavailable"), counts),
-		"counts on a runner that does not respond":     with(requiredCheck("canonical-not-responding"), counts),
-		"an unblock on a runner that does not respond": with(requiredCheck("canonical-not-responding"), unblock),
-		"a runner that does not respond that failed":   with(requiredCheck("canonical-not-responding"), func(c *commandtext.Check) { c.State = commandtext.CheckFailure }),
-		"a failing run without counts":                 with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.Execution = nil }),
-		"a failing run that blocks nothing":            with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 2, Passed: 2} }),
-		"counts on an invalid source":                  with(check(commandtext.CheckFailure, "invalid-source"), counts),
-		"an unblock on an approval that is missing":    with(check(commandtext.CheckInProgress, "approval-missing"), unblock),
-		"an unblock on a pending run":                  with(requiredCheck("canonical-pending"), unblock),
-		"an unblock on a failing run":                  with(requiredCheck("canonical-failing"), unblock),
-		"an unblock with counts":                       with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = passed(); unblock(c) }),
-		"a success with a failing test":                with(check(commandtext.CheckSuccess, "ready"), counts),
-		"an unblock on a runner block":                 with(check(commandtext.CheckInProgress, "runner-uncovered"), unblock),
-		"a pending run that is a failure":              with(requiredCheck("canonical-pending"), func(c *commandtext.Check) { c.State = commandtext.CheckFailure }),
-		"a failing run that is in progress":            with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.State = commandtext.CheckInProgress }),
-		"a negative count":                             with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 1, Passed: 2, Failed: -1} }),
-		"tests that are not the sum of their states":   with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 5, Passed: 2} }),
-		"a negative number of excluded tests":          with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Excluded: -1} }),
+		"counts on a pending run":                                          with(requiredCheck("canonical-pending"), counts),
+		"counts on an unavailable run":                                     with(requiredCheck("canonical-unavailable"), counts),
+		"counts on a runner that does not respond":                         with(requiredCheck("canonical-not-responding"), counts),
+		"an unblock on a runner that does not respond":                     with(requiredCheck("canonical-not-responding"), unblock),
+		"a runner that does not respond that failed":                       with(requiredCheck("canonical-not-responding"), func(c *commandtext.Check) { c.State = commandtext.CheckFailure }),
+		"a failing run without counts":                                     with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.Execution = nil }),
+		"a failing run that blocks nothing":                                with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 2, Passed: 2} }),
+		"counts on an invalid source":                                      with(check(commandtext.CheckFailure, "invalid-source"), counts),
+		"an unblock on an approval that is missing":                        with(check(commandtext.CheckInProgress, "approval-missing"), unblock),
+		"an unblock on a pending run":                                      with(requiredCheck("canonical-pending"), unblock),
+		"an unblock on a failing run":                                      with(requiredCheck("canonical-failing"), unblock),
+		"an unblock with counts":                                           with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = passed(); unblock(c) }),
+		"a success with a failing test":                                    with(check(commandtext.CheckSuccess, "ready"), counts),
+		"an unblock on a runner block":                                     with(check(commandtext.CheckInProgress, "runner-uncovered"), unblock),
+		"a pending run that is a failure":                                  with(requiredCheck("canonical-pending"), func(c *commandtext.Check) { c.State = commandtext.CheckFailure }),
+		"a failing run that is in progress":                                with(requiredCheck("canonical-failing"), func(c *commandtext.Check) { c.State = commandtext.CheckInProgress }),
+		"a negative count":                                                 with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 1, Passed: 2, Failed: -1} }),
+		"tests that are not the sum of their states":                       with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Tests: 5, Passed: 2} }),
+		"a negative number of excluded tests":                              with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Execution = &commandtext.CheckExecution{Excluded: -1} }),
+		"a reason of an unavailable run on a pending run":                  with(requiredCheck("canonical-pending"), func(c *commandtext.Check) { c.Unavailable = "no-executor" }),
+		"a reason of an unavailable run on a runner that does not respond": with(requiredCheck("canonical-not-responding"), func(c *commandtext.Check) { c.Unavailable = "no-executor" }),
+		"a reason of an unavailable run on a success":                      with(check(commandtext.CheckSuccess, "ready"), func(c *commandtext.Check) { c.Unavailable = "no-executor" }),
+		"a reason of an unavailable run that is no code of the closed set": with(requiredCheck("canonical-unavailable"), func(c *commandtext.Check) { c.Unavailable = "bogus" }),
 	} {
 		t.Run(name, func(t *testing.T) { mustPanic(t, func() { commandtext.CheckSummary(c) }) })
 	}

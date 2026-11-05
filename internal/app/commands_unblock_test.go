@@ -308,14 +308,13 @@ func TestTheExecutionDispositionsNeitherSetNorClearTheRejectedCommand(t *testing
 	x.unavailable(execution.PlanCanonical, cjHead, execution.ReasonNotConfigured)
 	x.sync(
 		x.sayWithCode(500, 10, "approve "+cjExecProposal+" fix", 5), // invalid-code: sets owner-command-rejected
-		x.say(501, 11, "mode fix"),                                  // mode-set
 		x.sayWithCode(502, 12, "approve "+cjExecProposal+" fix", 0), // receipt-refused: the receipt is unavailable
 		x.sayWithCode(503, 13, unblockCommand, 0),                   // unblocked
 	)
 
 	x.mustRun()
 
-	for comment, want := range map[int64]commands.Disposition{500: commands.InvalidCode, 501: commands.ModeSet, 502: commands.ReceiptRefused, 503: commands.Unblocked} {
+	for comment, want := range map[int64]commands.Disposition{500: commands.InvalidCode, 502: commands.ReceiptRefused, 503: commands.Unblocked} {
 		if entry, _ := x.entry(comment); entry.Disposition != want {
 			t.Errorf("comment %d is %q; want %q", comment, entry.Disposition, want)
 		}

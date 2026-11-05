@@ -94,9 +94,6 @@ func requireStoresReadThem(t *testing.T, database schemaDatabase) {
 	if err != nil || !found || string(latest.Disposition) != "processed" || latest.Mode != "" || latest.Operation != "op" {
 		t.Fatalf("LatestOwnerCommand = %+v, found %v, error %v; want the processed entry with no mode", latest, found, err)
 	}
-	if mode, found, err := store.PreviewMode(t.Context(), 10, 1, record.HeadSince); err != nil || found {
-		t.Fatalf("PreviewMode = %q, found %v, error %v; want no preview mode", mode, found, err)
-	}
 }
 
 func TestCheckLedgerHasTheUnblockedColumnAtTheSupportedVersion(t *testing.T) {

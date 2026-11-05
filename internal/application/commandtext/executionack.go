@@ -6,8 +6,8 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
-// The acknowledgments of the execution commands (M2.1) that are not a refusal of a pull request: the receipt gate's refusal of an approve, the preview
-// mode and the unblock. They state only fixed text, the owner's login, a reference, a mode and counts: no repository text.
+// The acknowledgments of the execution commands (M2.1) that are not a refusal of a pull request: the receipt gate's refusal of an approve, the mode-set
+// one that was queued before M2.1c and the unblock. They state only fixed text, the owner's login, a reference, a mode and counts: no repository text.
 
 // codeUsedAgain ends the text of a refusal that consumed the code of its command: a code works once.
 const codeUsedAgain = "The code was used, so the next attempt needs the next code: wait for your authenticator app to show a new one."
@@ -18,11 +18,8 @@ func executionAck(a Ack) string {
 	switch a.Outcome {
 	case ReceiptRefused:
 		return receiptRefusal(a)
-	case ModeSet:
-		return paragraphs(
-			"Preview mode recorded for this pull request by "+who+": `"+a.Mode.String()+"`.",
-			"This is only a preview. The pull request page shows it, but no check and no approval uses it. The mode that counts is the one you write in the approve command.",
-		)
+	case ModeSet: // only an acknowledgment queued before M2.1c: nothing records or shows a preview mode any more (SW-16, text 7 in its own words)
+		return paragraphs("`/suiteward mode` is no longer a command, so this mode is not used. " + modeApproveInstead)
 	case Unblocked:
 		return paragraphs(
 			"Unblock recorded by "+who+" for the current commit of this pull request. Its checks no longer wait for "+plansWords(a.Plans)+"."+stoppedWaiting(a.Ended),

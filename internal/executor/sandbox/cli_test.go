@@ -58,7 +58,7 @@ func (f *fakeRuntime) exec(ctx context.Context, name string, args []string, stdi
 	f.mu.Lock()
 	f.calls = append(f.calls, call{name, slices.Clone(args), ctx.Err()})
 	f.mu.Unlock()
-	switch args[0] {
+	switch subcommand(args) {
 	case "run":
 		if f.onRun != nil {
 			return f.onRun(ctx, stdin, stdout)
@@ -90,12 +90,17 @@ func (f *fakeRuntime) exec(ctx context.Context, name string, args []string, stdi
 	}
 }
 
+// subcommand is the verb of a command line: its first argument that is not a flag. Podman's `run` has a global flag before it.
+func subcommand(args []string) string {
+	return args[slices.IndexFunc(args, func(arg string) bool { return !strings.HasPrefix(arg, "-") })]
+}
+
 func (f *fakeRuntime) commands(verb string) []call {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var found []call
 	for _, c := range f.calls {
-		if c.args[0] == verb {
+		if subcommand(c.args) == verb {
 			found = append(found, c)
 		}
 	}
@@ -107,7 +112,7 @@ func (f *fakeRuntime) verbs() []string {
 	defer f.mu.Unlock()
 	verbs := make([]string, len(f.calls))
 	for i, c := range f.calls {
-		verbs[i] = c.args[0]
+		verbs[i] = subcommand(c.args)
 	}
 	return verbs
 }
@@ -165,7 +170,14 @@ func TestRunBuildsTheIsolationOfADR0028ForBothEngines(t *testing.T) {
 			// kill by name decide how a container ends.
 			// --log-driver=none: the runtime keeps no copy of the container's output on the host (Docker on Linux defaults to an unbounded
 			// json-file); the attached CLI still gets the standard output, which is all the runner reads.
-			want := []string{"run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only", "--log-driver=none"}
+			var want []string
+			if tc.podman {
+				// --log-level=error: a global flag, so before `run`. Podman passes it on to conmon, which then drops the warnings that it writes
+				// to the runner's journal many times a second while the source is streamed in ("Failed to write to fd container stdin: Resource
+				// temporarily unavailable", retries and not failures); errors still show. Docker has no conmon, and its --log-level is its client's.
+				want = append(want, "--log-level=error")
+			}
+			want = append(want, "run", "--name", name, "-i", "--sig-proxy=false", "--pull=never", "--network=none", "--read-only", "--log-driver=none")
 			if tc.podman {
 				// Podman keeps /tmp, /var/tmp, /run and /dev/shm writable under --read-only unless it is told not to.
 				want = append(want, "--read-only-tmpfs=false")
@@ -431,6 +443,14 @@ func TestRunMapsARuntimeFailureToErrUnavailable(t *testing.T) {
 			f.state = `{"Status":"exited","OOMKilled":false,"ExitCode":125,"Error":"","StartedAt":"0001-01-01T00:00:00Z"}`
 		}},
 		{"the runtime has no such container", func(f *fakeRuntime) { f.state = "" }},
+		{"Podman refused the run with an Error: line, which --log-level=error keeps", func(f *fakeRuntime) {
+			f.version = podmanLocal
+			f.state = ""
+			f.onRun = func(_ context.Context, stdin io.Reader, _ io.Writer) (int, string, error) {
+				_, _ = io.Copy(io.Discard, stdin)
+				return 126, "Error: crun: the cpu controller is not available: OCI permission denied", nil
+			}
+		}},
 		{"the CLI could not run", func(f *fakeRuntime) {
 			f.onRun = func(context.Context, io.Reader, io.Writer) (int, string, error) {
 				return -1, "", errors.New("exec: docker: executable file not found in $PATH")

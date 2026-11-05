@@ -89,7 +89,7 @@ const (
 //     MalformedCommand and EditedFirst, which have no trustworthy reference and
 //     must leave both zero.
 //   - Rejection is set only for Rejected, Malformed only for MalformedCommand,
-//     Version (V<n>) only for BootstrapPromoted.
+//     Version (V<n>) and Canonical only for BootstrapPromoted.
 //   - Owner is the owner's GitHub login.
 //   - Source is the id of the comment that carried the command; the body links
 //     to it. It is required, except for BootstrapPromoted, which a later job
@@ -130,6 +130,9 @@ type Ack struct {
 	Plans Plans
 	// Ended are the plans whose open job the unblock ended (the test runner was not responding): a subset of Plans, and none for every other outcome.
 	Ended Plans
+	// Canonical is the canonical level of the V1 that BootstrapPromoted announces. None (zero) is a message from before the level was carried and says
+	// nothing about runs, like off; it is none for every other outcome.
+	Canonical execution.CanonicalLevel
 }
 
 // Plans says which plans of a head an unblock lifted: its canonical run, its receipt, or both.
@@ -292,9 +295,12 @@ func commandAck(a Ack) string {
 		return paragraphs(subject + " was not processed, because SuiteWard has not finished setting up this repository. Nothing changed.\n" +
 			"Wait for SuiteWard to finish setting up this repository, then comment `/suiteward propose` on the pull request that should carry the first contract.")
 	case MalformedCommand:
+		if a.Malformed == MissingMode || a.Malformed == BadMode { // a /suiteward mode line, whatever it says (M2.1c, SW-16, text 7): no mistake to fix, so no list of forms
+			return paragraphs(modeGoneText)
+		}
 		return paragraphs("Your `/suiteward` command was not understood: " + malformedText(a.Malformed) + ". Nothing changed.\n" +
-			"Comment it again in one of these forms: `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>`, `/suiteward suggest`, " +
-			"`/suiteward mode <fix|feature|refactor>` or `/suiteward unblock <code>`. " +
+			"Comment it again in one of these forms: `/suiteward approve <ref> <code>`, `/suiteward revoke <ref> <code>`, `/suiteward propose`, `/suiteward skip <code>`, `/suiteward suggest` " +
+			"or `/suiteward unblock <code>`. " +
 			"`<ref>` is the reference in SuiteWard's comment about the proposal. Where a command takes a code, use the current six-digit code from your authenticator app.")
 	case OtherPullRequest:
 		return paragraphs(ref + " belongs to another pull request. Comment your command on that pull request instead. Nothing changed.")
@@ -324,11 +330,30 @@ func bootstrapAck(a Ack) string {
 		return paragraphs("`/suiteward suggest`: " + subject + " already covers every test-like file of this pull request, so there is nothing to suggest. Nothing changed.\n" +
 			"This answer is not an approval.")
 	case BootstrapPromoted:
-		return paragraphs(fmt.Sprintf("Setup is complete: %s, approved by %s, is now V%d, the approved version of the contract.\n", ref, who, a.Version) +
+		promoted := fmt.Sprintf("Setup is complete: %s, approved by %s, is now V%d, the approved version of the contract.\n", ref, who, a.Version) +
 			"SuiteWard checked the approved files at the exact commit that was approved, and recorded the result.\n" +
-			"From now on, a change to the protected files needs a new proposal and your approval.")
+			"From now on, a change to the protected files needs a new proposal and your approval."
+		if runs := promotedRuns(a.Canonical); runs != "" {
+			return paragraphs(promoted, runs)
+		}
+		return paragraphs(promoted)
 	}
 	return notInGroup(a.Outcome)
+}
+
+// promotedRuns is what the V1 comment says about the runs of the approved tests (M2.1c, SW-2), and "" where it says nothing: canonical off, and a message queued before the
+// level was carried. It does not say that any run happened, only that they happen from now on.
+func promotedRuns(level execution.CanonicalLevel) string {
+	const runs = "From now on, SuiteWard runs the approved tests on every open pull request and on every push. A results comment follows when a run ends."
+	switch level {
+	case 0, execution.CanonicalLevelOff:
+		return ""
+	case execution.CanonicalLevelAdvisory:
+		return runs
+	case execution.CanonicalLevelRequired:
+		return runs + " The checks of a commit wait for its run."
+	}
+	panic(fmt.Sprintf("commandtext: unknown canonical level %d", level))
 }
 
 // mustReference is the reference ValidateAck accepted for a, "" for an outcome that names none.
@@ -363,7 +388,7 @@ func rejectionText(r Rejection, ref, who string) (reason, next string) {
 func malformedText(r Reason) string {
 	switch r {
 	case UnknownVerb:
-		return "the word after `/suiteward` must be `approve`, `revoke`, `propose`, `skip`, `suggest`, `mode` or `unblock`"
+		return "the word after `/suiteward` must be `approve`, `revoke`, `propose`, `skip`, `suggest` or `unblock`"
 	case MissingReference:
 		return "the proposal reference is missing"
 	case BadReference:
@@ -374,12 +399,8 @@ func malformedText(r Reason) string {
 		return "the code must be exactly six digits"
 	case ExtraText:
 		return "there is extra text after the command"
-	case MissingMode:
-		return "the mode (the kind of change) is missing: it must be `fix`, `feature` or `refactor`"
-	case BadMode:
-		return "the mode (the kind of change) must be `fix`, `feature` or `refactor`"
 	}
-	panic(fmt.Sprintf("commandtext: unknown malformed reason %d", r))
+	panic(fmt.Sprintf("commandtext: unknown malformed reason %d", r)) // MissingMode and BadMode too: commandAck answers them with text 7
 }
 
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -429,6 +450,12 @@ func BootstrapSummary(s Summary) string {
 	parts = append(parts, review, codeCommand("approve", ref), after)
 	return paragraphs(parts...)
 }
+
+// modeApproveInstead ends every answer that says /suiteward mode is gone: the kind of change goes in the approve (M2.1c, SW-16, text 7).
+const modeApproveInstead = "Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
+
+// modeGoneText answers a /suiteward mode line, and ends a mode-refused acknowledgment queued before the command was removed (M2.1c, SW-16, text 7).
+const modeGoneText = "`/suiteward mode` is no longer a command. " + modeApproveInstead
 
 // CoLocatedNotice is what a body says when the instance runs beside the coding agent (ADR 0027).
 const CoLocatedNotice = "SuiteWard runs on the same computer as your coding agent, so its protection is reduced. " +
@@ -964,9 +991,11 @@ var refusals = map[Outcome]refusalSet{
 		InvalidSource: {"SuiteWard could not read the files of this pull request or the current `.suiteward.yml` well enough to suggest changes to it",
 			"Fix the files or the `.suiteward.yml` file, then comment `/suiteward suggest` again.", ""},
 	}},
+	// Only an acknowledgment queued before M2.1c is a mode-refused one: it keeps its reason and says where the kind of change goes now. An approve does
+	// not work on a fork either, so that reason first sends the owner to a branch of this repository.
 	ModeRefused: {"/suiteward mode", map[Refusal]refusalText{
-		Fork:    {forkReason, "Open the pull request from a branch of this repository, then comment `/suiteward mode <fix|feature|refactor>` there.", ""},
-		NotOpen: {notOpenReason, "Comment `/suiteward mode <fix|feature|refactor>` on an open pull request.", ""},
+		Fork:    {forkReason, "Open the pull request from a branch of this repository. " + modeGoneText, ""},
+		NotOpen: {notOpenReason, modeGoneText, ""},
 	}},
 	// An unblock that is refused has consumed its code, as a receipt refusal has.
 	UnblockRefused: {"/suiteward unblock", map[Refusal]refusalText{

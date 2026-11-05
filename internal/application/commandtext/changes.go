@@ -54,7 +54,7 @@ type NotShown struct {
 
 // Markers count the marker lines of a report by kind.
 type Markers struct {
-	RemovedAssertions, AddedSkips, Focused, DeletedTests, TestFilesRemoved int
+	RemovedAssertions, RemovedCases, AddedSkips, Focused, DeletedTests, TestFilesRemoved int
 }
 
 // ChangesOf summarizes r: the counts of its totals, and the files to name.
@@ -63,7 +63,7 @@ func ChangesOf(r report.Report) Changes {
 	c := Changes{
 		Added: r.Totals.Files[report.Added], Modified: r.Totals.Files[report.Modified], Removed: r.Totals.Files[report.Removed],
 		LinesAdded: r.Totals.LinesAdded, LinesRemoved: r.Totals.LinesRemoved, Truncated: r.Truncated,
-		Markers: Markers{RemovedAssertions: m[report.MarkRemovedAssertion], AddedSkips: m[report.MarkAddedSkip], Focused: m[report.MarkFocus],
+		Markers: Markers{RemovedAssertions: m[report.MarkRemovedAssertion], RemovedCases: m[report.MarkRemovedCase], AddedSkips: m[report.MarkAddedSkip], Focused: m[report.MarkFocus],
 			DeletedTests: m[report.MarkDeletedTest], TestFilesRemoved: m[report.MarkTestFileRemoved]},
 	}
 	var withCounts []ChangedFile
@@ -106,7 +106,7 @@ func validateChanges(c Changes) error {
 	files := c.Added + c.Modified + c.Removed
 	switch {
 	case min(c.Added, c.Modified, c.Removed, c.Counted, c.LinesAdded, c.LinesRemoved, c.NotShownTotal) < 0,
-		min(c.Markers.RemovedAssertions, c.Markers.AddedSkips, c.Markers.Focused, c.Markers.DeletedTests, c.Markers.TestFilesRemoved) < 0:
+		min(c.Markers.RemovedAssertions, c.Markers.RemovedCases, c.Markers.AddedSkips, c.Markers.Focused, c.Markers.DeletedTests, c.Markers.TestFilesRemoved) < 0:
 		return errors.New("commandtext: a negative count in the changes")
 	case c.Counted > files:
 		return fmt.Errorf("commandtext: %d counted files of %d changed files", c.Counted, files)
@@ -178,6 +178,7 @@ func markerPhrases(m Markers, reduced bool) string {
 		one, many string
 	}{
 		{m.RemovedAssertions, "removed assertion line", "removed assertion lines"},
+		{m.RemovedCases, "removed test case line", "removed test case lines"},
 		{m.AddedSkips, "added skip line", "added skip lines"},
 		{m.Focused, "added focus line", "added focus lines"},
 		{m.DeletedTests, "removed test declaration", "removed test declarations"},

@@ -28,7 +28,6 @@ func bare(outcome commandtext.Outcome) commandtext.Ack {
 const (
 	codeUsed     = "The code was used and nothing was approved."
 	nextCode     = "The next attempt needs the next code"
-	countsLine   = "Tests this change adds or edits: 7.\n- Fail before the change and pass now, so they show the change works: 0\n- Pass before and after, so they show nothing: 2\n- Use code that the old code lacks, so they could not run before the change: 1\n- Fail with this change: 1\n- Give no result: 0\n- Give different results when run again: 0\n- Skipped: 3"
 	forkText     = "this pull request comes from a fork, and SuiteWard does not support pull requests from forks yet. Nothing changed."
 	notOpenText  = "this pull request is no longer open. Nothing changed."
 	codeWasUsed  = "The code was used"
@@ -38,7 +37,16 @@ const (
 	unblockStays = "The unblock changes no result: tests that have finished, whether they pass or fail, stay as they are."
 	// notLifted is what an unblock does not lift, in the refusal for want of anything to lift.
 	notLifted = "An unblock applies only to tests that could not run, or that wait for a test runner that is not responding. It does nothing for tests that have finished, whether they pass or fail, or that wait for GitHub or for a test runner that is responding."
+	// modeGoneText is text 7 of M2.1c, which the owner fixed (SW-16): the whole answer to a /suiteward mode line, whatever the line says, and the end of a
+	// mode-refused acknowledgment queued before the command was removed.
+	modeGoneText = "`/suiteward mode` is no longer a command. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
+	// modeSetText is the whole acknowledgment of a mode-set one queued before M2.1c: its mode is in the ledger, but nothing reads it, and the page and
+	// the store keep no preview.
+	modeSetText = "`/suiteward mode` is no longer a command, so this mode is not used. Name the kind of change in the approve instead: `/suiteward approve P<n>-R<m> <fix|feature|refactor> <code>`."
 )
+
+// countsLine is the receipt of summaryNotMet in the words of the results comment: the number of tests, then the table of what they show.
+var countsLine = strings.Join(countsParagraphs(7, 0, 2, 1, 1, 0, 0, 3), "\n\n")
 
 func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 	cases := []struct {
@@ -56,7 +64,9 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"receipt unavailable",
 			refused(execution.ReasonReceiptUnavailable, execution.ModeNone),
-			[]string{"Your approval of P4-R2 by @octo-owner was refused: the tests of the receipt could not run on this commit. " + codeUsed, "To run the tests again, push a new commit. To approve this commit without a receipt instead, comment:", "```\n/suiteward unblock <code>\n```", "Then comment the approve again, with the next code.", "An unblock applies only to tests that could not run, or that wait for a test runner that is not responding.", nextCode},
+			[]string{"Your approval of P4-R2 by @octo-owner was refused: the tests of the receipt could not run on this commit. " + codeUsed, "To run the tests again, push a new commit. To approve this commit without a receipt instead, comment:\n\n```\n/suiteward unblock <code>\n```\n\n" +
+				"Replace `<code>` with a current code from your authenticator app.\n\n" +
+				"Then comment the approve again, with the next code. An unblock applies only to tests that could not run, or that wait for a test runner that is not responding.\n\n" + nextCode},
 			[]string{"mode", "eligible"},
 		},
 		{
@@ -86,20 +96,22 @@ func TestAcknowledgeTheExecutionOutcomes(t *testing.T) {
 		{
 			"mode set",
 			commandtext.Ack{Outcome: commandtext.ModeSet, Source: source, Owner: owner, Mode: execution.ModeFeature},
-			[]string{"Preview mode recorded for this pull request by @octo-owner: `feature`.", "The pull request page shows it", "no check and no approval uses it", "The mode that counts is the one you write in the approve command."},
-			[]string{"eligible", "/suiteward approve", "<code>"},
+			[]string{modeSetText},
+			[]string{"Preview", "preview", "pull request page", "The mode that counts", "eligible"},
 		},
 		{
+			// An acknowledgment queued before M2.1c: it keeps its reason, and no longer offers the command that is gone (SW-16, text 7). An approve does not
+			// work on a fork either, so the fork refusal sends the owner to a branch of this repository first.
 			"mode refused for a fork",
 			commandtext.Ack{Outcome: commandtext.ModeRefused, Source: source, Owner: owner, Refusal: commandtext.Fork},
-			[]string{"`/suiteward mode` was not processed: " + forkText, "`/suiteward mode <fix|feature|refactor>`"},
-			[]string{"code", "approv"},
+			[]string{"`/suiteward mode` was not processed: " + forkText + "\nOpen the pull request from a branch of this repository. " + modeGoneText},
+			[]string{"`/suiteward mode <fix|feature|refactor>`", "then comment"},
 		},
 		{
 			"mode refused for a pull request that is not open",
 			commandtext.Ack{Outcome: commandtext.ModeRefused, Source: source, Owner: owner, Refusal: commandtext.NotOpen},
-			[]string{"`/suiteward mode` was not processed: " + notOpenText, "`/suiteward mode <fix|feature|refactor>`"},
-			[]string{"code", "approv"},
+			[]string{"`/suiteward mode` was not processed: " + notOpenText + "\n" + modeGoneText},
+			[]string{"`/suiteward mode <fix|feature|refactor>`", "on an open pull request", "branch of this repository"},
 		},
 		{
 			"unblocked, canonical run",
@@ -203,9 +215,7 @@ func TestAcknowledgeAnUnmetModeStatesEveryCount(t *testing.T) {
 	a.Markers = 1
 	body := render(t, func() string { return commandtext.Acknowledge(a) })
 	for _, want := range []string{
-		"Tests this change adds or edits: 81.\n- Fail before the change and pass now, so they show the change works: 12\n- Pass before and after, so they show nothing: 34\n" +
-			"- Use code that the old code lacks, so they could not run before the change: 5\n- Fail with this change: 6\n- Give no result: 7\n" +
-			"- Give different results when run again: 8\n- Skipped: 9",
+		strings.Join(countsParagraphs(81, 12, 34, 5, 6, 7, 8, 9), "\n\n"),
 		"Lines to look at: 1. They are listed on the pull request page.",
 		"Tests that SuiteWard cannot run, so the receipt does not cover them: 10.",
 	} {

@@ -184,7 +184,6 @@ func RunConformance(t *testing.T, newEnv func(*testing.T) Env) {
 		{"the mode of a command is stored with its entry", cmModeStored},
 		{"an entry refuses a mode that is not fix, feature or refactor, a mode-set without one, and an operation on an execution disposition", cmExecutionInvalid},
 		{"a mode or an unblock after a wrong code never replaces it as the owner's latest command", cmLatestIgnoresExecution},
-		{"PreviewMode is the latest mode-set of the pull created at or after since", cmPreviewMode},
 		{"Instance is a stable 128-bit hexadecimal identifier", cmInstance},
 		{"a canceled context writes nothing", cmCanceled},
 	}
@@ -584,55 +583,6 @@ func cmLatestIgnoresExecution(e *cmdEnv) {
 		e.must(err)
 		if !found || got.CommentID != 1 || got.Disposition != commands.InvalidCode {
 			e.t.Fatalf("after %s: LatestOwnerCommand = %+v, found %v; want the wrong code, comment 1", d, got, found)
-		}
-	}
-}
-
-func cmPreviewMode(e *cmdEnv) {
-	set := func(repository, comment int64, pull, created int, mode string) {
-		x := entry(repository, comment, commands.ModeSet)
-		x.PullNumber, x.CreatedAt, x.Mode = pull, cmdTime(created), mode
-		e.must(e.store.Record(e.ctx, x, nil))
-	}
-	preview := func(repository int64, pull, since int, wantMode string) {
-		e.t.Helper()
-		got, found, err := e.store.PreviewMode(e.ctx, repository, pull, cmdTime(since))
-		e.must(err)
-		if got != wantMode || found != (wantMode != "") {
-			e.t.Fatalf("PreviewMode(%d, %d, since %d) = %q, found %v; want %q", repository, pull, since, got, found, wantMode)
-		}
-	}
-	preview(10, 1, 0, "") // nothing recorded
-	set(10, 1, 1, 5, "fix")
-	preview(10, 1, 0, "fix")
-	set(10, 2, 1, 7, "refactor")
-	preview(10, 1, 0, "refactor") // the latest of the pull
-	set(10, 3, 1, 9, "feature")
-	preview(10, 1, 0, "feature")
-	preview(10, 1, 9, "feature") // created exactly at since counts
-	preview(10, 1, 8, "feature")
-	preview(10, 1, 10, "") // every mode-set is before the current enrollment
-	preview(10, 2, 0, "")  // another pull
-	preview(20, 1, 0, "")  // another repository
-	set(10, 4, 2, 6, "fix")
-	preview(10, 2, 0, "fix")
-	preview(10, 1, 0, "feature") // the other pull's mode never leaks
-
-	// Only a mode-set entry answers: an approve that carried a mode, and a refused mode, do not.
-	approve := entry(10, 5, commands.Processed)
-	approve.Mode, approve.CreatedAt = "fix", cmdTime(20)
-	e.must(e.store.Record(e.ctx, approve, nil))
-	refused := entry(10, 6, commands.ModeRefused)
-	refused.Mode, refused.CreatedAt = "refactor", cmdTime(21)
-	e.must(e.store.Record(e.ctx, refused, nil))
-	preview(10, 1, 0, "feature")
-	for name, args := range map[string]struct {
-		repository int64
-		pull       int
-	}{"repository": {0, 1}, "pull": {10, 0}, "huge pull": {10, 1 << 31}} {
-		_, _, err := e.store.PreviewMode(e.ctx, args.repository, args.pull, cmdTime(0))
-		if !errors.Is(err, commands.ErrInvalid) {
-			e.t.Fatalf("%s: error = %v; want ErrInvalid", name, err)
 		}
 	}
 }

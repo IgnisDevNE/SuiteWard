@@ -139,7 +139,7 @@ func referenceOf(a Ack) (string, error) {
 	return reference(a.Proposal, a.Revision)
 }
 
-// checkConsent checks the fields that only some outcomes carry: Eligible, Rejection, Malformed and Version.
+// checkConsent checks the fields that only some outcomes carry: Eligible, Rejection, Malformed, Version and Canonical (a level, for BootstrapPromoted only).
 func checkConsent(a Ack) error {
 	consent := a.Outcome == Approved || a.Outcome == Revoked || a.Outcome == NoActiveApproval || a.Outcome == Rejected
 	switch {
@@ -151,6 +151,8 @@ func checkConsent(a Ack) error {
 		return fmt.Errorf("commandtext: malformed reason %d does not fit outcome %d", a.Malformed, a.Outcome)
 	case (a.Outcome == BootstrapPromoted) != (a.Version != 0):
 		return fmt.Errorf("commandtext: version %d does not fit outcome %d", a.Version, a.Outcome)
+	case a.Canonical != 0 && (a.Outcome != BootstrapPromoted || a.Canonical.String() == ""):
+		return fmt.Errorf("commandtext: canonical level %d does not fit outcome %d", a.Canonical, a.Outcome)
 	case a.Outcome == BootstrapPromoted:
 		return checkID("version", a.Version)
 	}

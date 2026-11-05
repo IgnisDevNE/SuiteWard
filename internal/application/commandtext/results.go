@@ -3,6 +3,8 @@ package commandtext
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
@@ -64,8 +66,12 @@ const (
 
 	resultsEvidence = "These results are what the test runner saw. They are evidence, not a verdict."
 	informationText = "These results are for information. They do not hold this pull request."
-	// unblockOffer is the sentence that offers the owner's unblock, in the results comment and in the not-responding comment.
-	unblockOffer = "To go on without these tests, the owner can comment `/suiteward unblock <code>`. That lets this commit pass its checks without them. A new push runs them."
+	// unblockOffer is the sentence that offers the owner's unblock, in the results comment and in the not-responding comment: it names the code, what the unblock does and that the tests stay unrun.
+	unblockOffer = "To go on without these tests, the owner can comment `/suiteward unblock <code>`, where `<code>` is a current code from the authenticator app. " +
+		"That lets this commit pass its checks without them, and they do not run for this commit. A new push runs them."
+	// waitsText and holdsNothingText are the not-responding comment's paragraph about the unblock, before its link: the offer follows waitsText, and holdsNothingText says that nothing is held and an unblock is not needed.
+	waitsText        = "The checks of this commit wait for these tests."
+	holdsNothingText = "Nothing waits for these tests. An unblock is not needed here: it would only keep these tests from running when the test runner answers again."
 	// approvalText says what an approval does to approved tests that did not run: the approved head gets another run, under the approved version.
 	approvalText = "After the owner approves this revision, SuiteWard runs the approved tests again, as the tests of the approved version."
 
@@ -73,15 +79,16 @@ const (
 	fixText     = "To fix this, change the code or the tests and push a new commit."
 )
 
-// ResultsComment renders the results comment of a head: the lead, the approved tests, the receipt, the kinds of change that it meets, the weakened count, the unblock,
-// the level, the next step, the evidence sentence and the tier, and the link, each a paragraph that is left out when it does not apply. The values come from storage, so
-// one that does not fit is an impossible state and panics.
+// ResultsComment renders the results comment of a head: the lead, the approved tests, the link to the full report, the receipt, the kinds of change that it meets, the
+// weakened count, the unblock, the level, the next step, the evidence sentence and the tier, each a paragraph that is left out when it does not apply. The values come from
+// storage, so one that does not fit is an impossible state and panics.
 func ResultsComment(r Results) string {
 	must(validateResults(r))
 	parts := []string{leadText(r.set().Lead(), r.Head)}
 	if r.Canonical != nil {
 		parts = append(parts, canonicalText(*r.Canonical))
 	}
+	parts = append(parts, linkParts("See the full report here:", r.PullURL)...)
 	if r.Receipt != nil {
 		parts = append(parts, receiptText(*r.Receipt, "the page")...)
 		parts = append(parts, kindsText(r)...)
@@ -100,10 +107,10 @@ func ResultsComment(r Results) string {
 	if r.Tier == CoLocated {
 		parts = append(parts, CoLocatedNotice)
 	}
-	return paragraphs(append(parts, linkParts(r.PullURL)...)...)
+	return paragraphs(parts...)
 }
 
-// NotRespondingComment renders the not-responding comment of a head, which offers the unblock when a job that waits holds something back.
+// NotRespondingComment renders the not-responding comment of a head, which offers the unblock when a job that waits holds something back and says that nothing waits otherwise.
 func NotRespondingComment(n NotResponding) string {
 	must(validateHeadLink(n.Head, n.Pull, n.PullURL))
 	parts := []string{
@@ -113,9 +120,11 @@ func NotRespondingComment(n NotResponding) string {
 			"If it stays silent, SuiteWard stops waiting after a while and says so.",
 	}
 	if n.Unblock {
-		parts = append(parts, unblockOffer)
+		parts = append(parts, waitsText+" "+unblockOffer)
+	} else {
+		parts = append(parts, holdsNothingText)
 	}
-	return paragraphs(append(parts, linkParts(n.PullURL)...)...)
+	return paragraphs(append(parts, linkParts("Details:", n.PullURL)...)...)
 }
 
 // RunnerBackComment renders the runner-back comment of a head: the owner unblocked it, so its tests did not run and nothing will run them now.
@@ -125,18 +134,18 @@ func RunnerBackComment(b RunnerBack) string {
 		"**The test runner is back.**",
 		"The owner unblocked this commit (" + shortHead(b.Head) + ") while the test runner was not responding, so its tests did not run and its checks stopped waiting for them.",
 		"Nothing will run them for this commit now. A new push runs the tests as usual.",
-	}, linkParts(b.PullURL)...)...)
+	}, linkParts("Details:", b.PullURL)...)...)
 }
 
 // shortHead is the first seven characters of a head, in a code span.
 func shortHead(head string) string { return "`" + head[:7] + "`" }
 
-// linkParts are the paragraphs of the link: the link to the pull request page and its note, or the sentence that there is none.
-func linkParts(url string) []string {
+// linkParts are the paragraphs of the link: intro and the link to the pull request page, and its note, or the sentence that there is none.
+func linkParts(intro, url string) []string {
 	if url == "" {
 		return []string{noLinkText}
 	}
-	return []string{"Details: [pull request page](" + url + ").", linkNote}
+	return []string{intro + " [pull request page](" + url + ").", linkNote}
 }
 
 // set is the set that the results state, as the domain reads it, so that the lead follows from the counts and no value can state another.
@@ -190,6 +199,33 @@ func canonicalText(run CanonicalRun) string {
 	return text
 }
 
+// receiptCounts states the tests that a change adds or edits by what they show: their number and a table with a row for each state, zeros included, or that SuiteWard can run
+// none. The results comment, the Receipt check and the refusal of an approve all say it, so a reader meets one table for one fact. A table is a paragraph of its own: GitHub
+// draws it only after a blank line.
+func receiptCounts(c execution.ReceiptCounts) []string {
+	if c.Evaluated() == 0 {
+		return []string{"This change adds or edits no test that SuiteWard can run."}
+	}
+	return []string{fmt.Sprintf("Tests this change adds or edits: %d.", c.Evaluated()), markdownTable([]string{"What the test shows", "Tests"},
+		[]string{"Fail before the change and pass now, so they show the change works", strconv.Itoa(c.Detects)},
+		[]string{"Pass before and after, so they show nothing", strconv.Itoa(c.Inert)},
+		[]string{"Use code that the old code lacks, so they could not run before the change", strconv.Itoa(c.NewAPI)},
+		[]string{"Fail with this change", strconv.Itoa(c.Fails)},
+		[]string{"Give no result", strconv.Itoa(c.Missing)},
+		[]string{"Give different results when run again", strconv.Itoa(c.Flaky)},
+		[]string{"Skipped", strconv.Itoa(c.Skipped)})}
+}
+
+// markdownTable renders a table: the header, its separator and a row for each of rows. A cell is a count or a fixed sentence, so none holds a pipe or a line break.
+func markdownTable(header []string, rows ...[]string) string {
+	row := func(cells []string) string { return "| " + strings.Join(cells, " | ") + " |" }
+	lines := []string{row(header), strings.Repeat("| --- ", len(header)) + "|"}
+	for _, cells := range rows {
+		lines = append(lines, row(cells))
+	}
+	return strings.Join(lines, "\n")
+}
+
 // receiptText states the tests that the change adds or edits, by state, then the files that cannot be read and the lines to look at, or why the run did not happen. page
 // names where the lines are listed: the text of a comment that links it says "the page", and one that has no link names the pull request page.
 func receiptText(run ReceiptRun, page string) []string {
@@ -197,19 +233,7 @@ func receiptText(run ReceiptRun, page string) []string {
 		return []string{"Tests this change adds or edits: not run. " + unavailableSentences[run.Unavailable]}
 	}
 	c := run.Counts
-	var parts []string
-	if c.Evaluated() == 0 {
-		parts = append(parts, "This change adds or edits no test that SuiteWard can run.")
-	} else {
-		parts = append(parts, fmt.Sprintf("Tests this change adds or edits: %d.\n"+
-			"- Fail before the change and pass now, so they show the change works: %d\n"+
-			"- Pass before and after, so they show nothing: %d\n"+
-			"- Use code that the old code lacks, so they could not run before the change: %d\n"+
-			"- Fail with this change: %d\n"+
-			"- Give no result: %d\n"+
-			"- Give different results when run again: %d\n"+
-			"- Skipped: %d", c.Evaluated(), c.Detects, c.Inert, c.NewAPI, c.Fails, c.Missing, c.Flaky, c.Skipped))
-	}
+	parts := receiptCounts(c)
 	var notes []string
 	if c.Unparsed > 0 {
 		notes = append(notes, fmt.Sprintf("Changed test files that cannot be read: %d.", c.Unparsed))
@@ -223,36 +247,83 @@ func receiptText(run ReceiptRun, page string) []string {
 	return parts
 }
 
-// kindsText says which kinds of change the receipt meets and why not, in the words of the page. A receipt that did not run, or has nothing to judge, meets none and says
-// nothing.
+// judged says that the receipt ran and has tests to judge, so the comment has something to say of the kinds of change.
+func (r Results) judged() bool {
+	return r.Receipt != nil && r.Receipt.Unavailable == "" && !r.Receipt.Counts.Empty()
+}
+
+// approvedCounts are the counts of the approved tests: none for a run that is not wanted or did not run.
+func (r Results) approvedCounts() execution.CanonicalCounts {
+	if r.Canonical == nil {
+		return execution.CanonicalCounts{}
+	}
+	return r.Canonical.Counts
+}
+
+// approvedTestsFail says that the approved tests have a failed, missing or flaky test, or that this change weakens one.
+func (r Results) approvedTestsFail() bool {
+	c := r.approvedCounts()
+	return c.Fail+c.Missing+c.Flaky > 0 || r.Weakened > 0
+}
+
+// kindsWithheldText replaces the kinds of change while the approved tests fail: the receipt judges only the tests of the change, and a "met" beside these counts reads as a
+// pass. It names the counts above zero and sends the reader to the report.
+func kindsWithheldText(r Results) string {
+	c := r.approvedCounts()
+	var counts []string
+	for _, n := range []struct {
+		n    int
+		what string
+	}{{c.Fail, "failed"}, {c.Missing, "gave no result"}, {c.Flaky, "gave different results"}, {r.Weakened, "weakened"}} {
+		if n.n > 0 {
+			counts = append(counts, fmt.Sprintf("%d %s", n.n, n.what))
+		}
+	}
+	opening := "The approved tests failed"
+	if c.Fail+c.Missing+c.Flaky == 0 {
+		opening = "This change weakens approved tests"
+		if r.Weakened == 1 {
+			opening = "This change weakens an approved test"
+		}
+	}
+	return opening + " (" + strings.Join(counts, ", ") + "), so this comment does not say which kind of change (`fix`, `feature`, `refactor`) this change is. The details are in the report."
+}
+
+// kindsText says which kinds of change the receipt meets and why not, as a table with the words of the page, or that it does not while the approved tests fail. A receipt that
+// did not run, or has nothing to judge, meets none and says nothing.
 func kindsText(r Results) []string {
-	c := r.Receipt.Counts
-	if r.Receipt.Unavailable != "" || c.Empty() {
+	if !r.judged() {
 		return nil
 	}
-	lines := []string{"Does the receipt meet each kind of change?"}
+	if r.approvedTestsFail() {
+		return []string{kindsWithheldText(r)}
+	}
+	c := r.Receipt.Counts
+	var rows [][]string
 	for _, mode := range []execution.Mode{execution.ModeFix, execution.ModeFeature, execution.ModeRefactor} {
 		summary, err := c.Summarize(mode)
 		must(err)
-		line := "- `" + mode.String() + "`: met."
+		row := []string{"`" + mode.String() + "`", "Yes", ""}
 		if summary.Verdict == execution.VerdictNotMet {
 			sentence, ok := ModeNotMetSentence(mode, summary.Reason)
 			if !ok {
 				panic(fmt.Sprintf("commandtext: no sentence for the mode %s and the reason %q", mode, summary.Reason))
 			}
-			line = "- `" + mode.String() + "`: not met. " + sentence
+			row[1], row[2] = "No", sentence
 		}
-		lines = append(lines, line)
+		rows = append(rows, row)
 	}
-	parts := []string{strings.Join(lines, "\n")}
+	parts := []string{"Does the receipt meet each kind of change? It looks only at the tests this change adds or edits.", markdownTable([]string{"Kind of change", "Met?", "Why not"}, rows...)}
 	if r.ReceiptLevel == execution.ReceiptLevelRequired {
 		parts = append(parts, "To approve, name a kind of change that is met.")
 	}
 	return parts
 }
 
-// unblockText is the paragraph of the unblock: what the owner unblocked and whether the command ended the wait, the offer where a run holds something back, and what an
-// approval does to approved tests that did not run, which the payload says by ApprovalMissing (the next step may be the unblock where the receipt holds the approve too).
+// unblockText is the paragraph of the unblock: what the owner unblocked and whether the command ended the wait, whether the tests run on their own, the offer where a run holds
+// something back, and what an approval does to approved tests that did not run, which the payload says by ApprovalMissing (the next step may be the unblock where the receipt
+// holds the approve too). Whether the tests run on their own comes before the offer and the approval, so that the owner who reads "unblock" or "approve" does not take a push
+// for the only way; it follows every next step but nothing, which says it as its own step (noneText).
 func unblockText(r Results) string {
 	var sentences []string
 	if r.Unblocked != (Plans{}) {
@@ -260,6 +331,9 @@ func unblockText(r Results) string {
 		if r.Ended != (Plans{}) {
 			sentences = append(sentences, "SuiteWard had stopped waiting for the test runner, which was not responding.")
 		}
+	}
+	if runs := runsText(unavailableReasons(r)); runs != "" && r.Unblocked == (Plans{}) && r.Next != execution.NextNone {
+		sentences = append(sentences, runs)
 	}
 	if r.Next == execution.NextUnblock {
 		sentences = append(sentences, unblockOffer)
@@ -280,22 +354,67 @@ func plansWords(p Plans) string {
 	return "the receipt"
 }
 
+// unavailableReasons are the reasons of the runs of r that did not run, the approved tests first.
+func unavailableReasons(r Results) []string {
+	var reasons []string
+	if r.Canonical != nil && r.Canonical.Unavailable != "" {
+		reasons = append(reasons, r.Canonical.Unavailable)
+	}
+	if r.Receipt != nil && r.Receipt.Unavailable != "" {
+		reasons = append(reasons, r.Receipt.Unavailable)
+	}
+	return reasons
+}
+
+// runsText says that the tests run on their own, by the reasons of the runs that did not run: a test runner that did not answer runs them when it answers again, and one that is
+// not set up runs them once it is. It is empty for a head with no run that did not run and for any other reason, which waits for a new push.
+func runsText(reasons []string) string {
+	allOf := func(codes ...string) bool {
+		return len(reasons) > 0 && !slices.ContainsFunc(reasons, func(reason string) bool { return !slices.Contains(codes, reason) })
+	}
+	switch {
+	case allOf("no-executor"):
+		return "SuiteWard runs them when the test runner answers again."
+	case allOf("no-executor", "executor-not-configured"):
+		return "SuiteWard runs them once the test runner is set up."
+	}
+	return ""
+}
+
+// noneText is the next step of a head with nothing left to the owner. A run that did not run says whether, and when, the tests run, by the reasons of the runs that did not
+// run: an unblock ends it for this commit, a test runner that did not answer or is not set up runs them later (runsText), and any other reason waits for a new push.
+func noneText(r Results) string {
+	reasons := unavailableReasons(r)
+	switch runs := runsText(reasons); {
+	case len(reasons) == 0:
+		return "Nothing to do for now."
+	case r.Unblocked != (Plans{}):
+		return "Nothing runs them for this commit now. A new push runs the tests."
+	case runs != "":
+		return runs
+	}
+	return "A new push runs them."
+}
+
 // nextText is the next step. The unblock is its own step, which unblockText gives.
 func nextText(r Results) []string {
 	switch r.Next {
 	case execution.NextApprove:
 		ref := Reference(r.Proposal, r.Revision)
-		command := codeCommand("approve", ref)
+		command, intro := codeCommand("approve", ref), "To approve this exact revision, comment:"
 		if r.ApproveMode {
 			command = modeApproveCommand(ref)
+			if r.ReceiptLevel == execution.ReceiptLevelRequired && r.judged() && r.approvedTestsFail() { // kindsText names no kind here, so the approve is the owner's call
+				intro = "If you want to approve this revision anyway, name the kind of change that the report shows as met, and comment:"
+			}
 		}
-		return []string{"To approve this exact revision, comment:", command}
+		return []string{intro, command}
 	case execution.NextBlocked:
 		return []string{blockedText}
 	case execution.NextFix:
 		return []string{fixText}
 	case execution.NextNone:
-		return []string{"Nothing to do for now."}
+		return []string{noneText(r)}
 	}
 	return nil
 }

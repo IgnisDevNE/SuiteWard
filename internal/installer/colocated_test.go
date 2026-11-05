@@ -1062,13 +1062,44 @@ func TestInstallEnablesPodmanRestartInTheMachine(t *testing.T) {
 	}
 }
 
-// The Podman machine of WSL makes ~/.config/systemd/user/default.target.wants owned by root, so the user's own
-// `systemctl --user enable` is denied. The link is then made as the machine's default ssh user (root on a Windows WSL machine).
+// A machine that is not the default one is started by its name: a bare `podman machine start` would start podman-machine-default.
+func TestInstallNamesTheMachineToStartAfterARestart(t *testing.T) {
+	h := newHarness(t, "windows")
+	h.f.env["USERNAME"] = "tester"
+	h.f.on("system connection list", strings.ReplaceAll(machineConnections, "podman-machine-default", "sw-m21c"))
+	if err := h.podman("--connection", "sw-m21c"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(h.out.String(), "After this computer restarts, run `podman machine start sw-m21c`: SuiteWard comes back with it.") {
+		t.Errorf("the note does not name the machine:\n%s", h.out.String())
+	}
+}
+
+func TestMachineStartCommandNamesOnlyAMachineThatIsNotTheDefaultOne(t *testing.T) {
+	for _, c := range []struct{ name, machine, want string }{
+		{"the default machine", defaultMachine, "podman machine start"},
+		{"no machine named", "", "podman machine start"},
+		{"a machine of its own", "sw-m21c", "podman machine start sw-m21c"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := machineStartCommand(c.machine); got != c.want {
+				t.Errorf("machineStartCommand(%q) = %q, want %q", c.machine, got, c.want)
+			}
+		})
+	}
+}
+
+// Podman makes ~/.config/systemd/user/default.target.wants of the machine's user owned by root, so the user's own
+// `systemctl --user enable` is denied. The link is then made as the machine's default ssh user: on a Windows WSL machine that is
+// root, which can write there; on a machine-os 6.1 machine it is the user itself, which cannot, so the link goes through sudo.
 const (
-	restartAsked  = "podman-machine-default systemctl --user is-enabled" // the check before anything is changed
-	restartEnable = "systemctl --user enable podman-restart.service"
-	restartLink   = "ln -sf /usr/lib/systemd/user/podman-restart.service /home/user/.config/systemd/user/default.target.wants/podman-restart.service"
-	restartReload = "daemon-reload" // the reload that is followed by the check that the link took
+	restartAsked    = "podman-machine-default systemctl --user is-enabled" // the check before anything is changed
+	restartEnable   = "systemctl --user enable podman-restart.service"
+	restartLink     = "ln -sf /usr/lib/systemd/user/podman-restart.service /home/user/.config/systemd/user/default.target.wants/podman-restart.service"
+	restartPlain    = "podman-machine-default mkdir -p" // the plain link: a command of the default ssh user, not through sudo
+	restartSudo     = "sudo -n"                         // the link through sudo
+	restartSudoLink = "sudo -n sh -c 'mkdir -p /home/user/.config/systemd/user/default.target.wants && " + restartLink + "'"
+	restartReload   = "daemon-reload" // the reload that is followed by the check that the link took
 )
 
 // restartCalls names the calls that look after podman-restart.service in the machine, in order.
@@ -1078,6 +1109,8 @@ func restartCalls(h *harness) []string {
 		line := c.line()
 		switch {
 		case !strings.Contains(line, "machine ssh"):
+		case strings.Contains(line, restartSudo):
+			out = append(out, "sudo-link")
 		case strings.Contains(line, "ln -sf"):
 			out = append(out, "link")
 		case strings.Contains(line, restartReload):
@@ -1094,6 +1127,8 @@ func restartCalls(h *harness) []string {
 func TestInstallEnablesPodmanRestartInAMachineWhoseUserCannot(t *testing.T) {
 	notEnabled := errors.New("exit status 1") // is-enabled exits 1 for a unit that is not enabled
 	denied := errors.New("Failed to enable unit: Access denied")
+	noWrite := errors.New("ln: failed to create symbolic link: Permission denied")
+	noSudo := errors.New("sudo: a password is required")
 	cases := []struct {
 		name  string
 		rules []rule
@@ -1102,12 +1137,18 @@ func TestInstallEnablesPodmanRestartInAMachineWhoseUserCannot(t *testing.T) {
 	}{
 		{"it is enabled already", []rule{{match: restartAsked, out: "enabled\n"}}, []string{"is-enabled"}, false},
 		{"the user can enable it", []rule{{match: restartAsked, out: "disabled\n", err: notEnabled}}, []string{"is-enabled", "enable"}, false},
-		{"the root link takes", []rule{{match: restartAsked, err: notEnabled}, {match: restartEnable, err: denied}, {match: restartReload, out: "enabled\n"}},
+		{"the plain link takes", []rule{{match: restartAsked, err: notEnabled}, {match: restartEnable, err: denied}, {match: restartReload, out: "enabled\n"}},
 			[]string{"is-enabled", "enable", "link", "reload"}, false},
-		{"the root link fails", []rule{{match: restartAsked, err: notEnabled}, {match: restartEnable, err: denied}, {match: "ln -sf", err: errors.New("read-only file system")}},
-			[]string{"is-enabled", "enable", "link"}, true},
-		{"the link does not enable it", []rule{{match: restartAsked, err: notEnabled}, {match: restartEnable, err: denied}, {match: restartReload, out: "disabled\n", err: notEnabled}},
+		{"the plain link is refused and the link through sudo takes", []rule{{match: restartAsked, err: notEnabled}, {match: restartEnable, err: denied}, {match: restartPlain, err: noWrite}, {match: restartReload, out: "enabled\n"}},
+			[]string{"is-enabled", "enable", "link", "sudo-link", "reload"}, false},
+		{"the plain link and sudo are both refused", []rule{{match: restartAsked, err: notEnabled}, {match: restartEnable, err: denied}, {match: restartPlain, err: noWrite}, {match: restartSudo, err: noSudo}},
+			[]string{"is-enabled", "enable", "link", "sudo-link"}, true},
+		{"the link fails and sudo fails too", []rule{{match: restartAsked, err: notEnabled}, {match: restartEnable, err: denied}, {match: "ln -sf", err: errors.New("read-only file system")}},
+			[]string{"is-enabled", "enable", "link", "sudo-link"}, true},
+		{"the plain link does not enable it", []rule{{match: restartAsked, err: notEnabled}, {match: restartEnable, err: denied}, {match: restartReload, out: "disabled\n", err: notEnabled}},
 			[]string{"is-enabled", "enable", "link", "reload"}, true},
+		{"the link through sudo does not enable it", []rule{{match: restartAsked, err: notEnabled}, {match: restartEnable, err: denied}, {match: restartPlain, err: noWrite}, {match: restartReload, out: "disabled\n", err: notEnabled}},
+			[]string{"is-enabled", "enable", "link", "sudo-link", "reload"}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1125,18 +1166,102 @@ func TestInstallEnablesPodmanRestartInAMachineWhoseUserCannot(t *testing.T) {
 			if noted := strings.Contains(out, "Could not turn on podman-restart.service"); noted != tc.note {
 				t.Errorf("note printed: %v, want %v\n%s", noted, tc.note, out)
 			}
-			if tc.note && !strings.Contains(out, restartLink) {
-				t.Errorf("the note does not name the command that works (%s):\n%s", restartLink, out)
+			if tc.note && !strings.Contains(out, `podman machine ssh podman-machine-default "`+restartSudoLink+`"`) {
+				t.Errorf("the note does not name the link through sudo that works (%s):\n%s", restartSudoLink, out)
 			}
-			if tc.note && !strings.Contains(out, "as the machine's default ssh user (root on a Windows WSL machine)") {
-				t.Errorf("the note does not say which user makes the link:\n%s", out)
+			if tc.note && (!strings.Contains(out, "as the machine's default ssh user") || strings.Contains(out, "root on a Windows WSL machine")) {
+				t.Errorf("the note does not say which user makes the link, in words that fit every machine:\n%s", out)
 			}
 			assertRestartCommandsRunAsTheirUsers(t, h)
 		})
 	}
 }
 
-// The link runs as the machine's default ssh user (no --username) and creates its directory; the reload runs as the user.
+// The plain link is today's command and never goes through sudo, so a machine whose default ssh user can write the folder (root on a
+// Windows WSL machine) is enabled with exactly the commands of the older installer.
+func TestInstallLinksRestartWithoutSudoWhereThePlainLinkTakes(t *testing.T) {
+	h := newHarness(t, "windows")
+	h.f.env["USERNAME"] = "tester"
+	h.f.on("system connection list", machineConnections)
+	h.f.rules = append([]rule{{match: restartAsked, err: errors.New("exit status 1")}, {match: restartEnable, err: errors.New("Failed to enable unit: Access denied")}, {match: restartReload, out: "enabled\n"}}, h.f.rules...)
+	if err := h.podman("--connection", "podman-machine-default"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"machine ssh --username user podman-machine-default systemctl --user is-enabled podman-restart.service",
+		"machine ssh --username user podman-machine-default systemctl --user enable podman-restart.service",
+		"machine ssh podman-machine-default mkdir -p /home/user/.config/systemd/user/default.target.wants && " + restartLink,
+		"machine ssh --username user podman-machine-default systemctl --user daemon-reload && systemctl --user is-enabled podman-restart.service",
+	}
+	var got []string
+	for _, line := range h.f.lines() {
+		if strings.Contains(line, "podman-restart.service") && strings.Contains(line, "machine ssh") {
+			got = append(got, line)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("commands:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if len(h.f.find("sudo")) != 0 {
+		t.Errorf("sudo ran where the plain link took: %v", h.f.find("sudo"))
+	}
+}
+
+// On a machine-os 6.1 machine the default ssh user is the user, which cannot write the folder root made: the same link runs through
+// `sudo -n` as that user, in one command, and the reload and the check are the user's.
+func TestInstallLinksRestartThroughSudoWhereThePlainLinkIsRefused(t *testing.T) {
+	h := newHarness(t, "windows")
+	h.f.env["USERNAME"] = "tester"
+	h.f.on("system connection list", machineConnections)
+	h.f.rules = append([]rule{
+		{match: restartAsked, err: errors.New("exit status 1")},
+		{match: restartEnable, err: errors.New("Failed to enable unit: Access denied")},
+		{match: restartPlain, err: errors.New("ln: failed to create symbolic link: Permission denied")},
+		{match: restartReload, out: "enabled\n"},
+	}, h.f.rules...)
+	if err := h.podman("--connection", "podman-machine-default"); err != nil {
+		t.Fatal(err)
+	}
+	sudo := h.f.find(restartSudo)
+	if len(sudo) != 1 {
+		t.Fatalf("calls through sudo: %v", sudo)
+	}
+	if want := []string{"machine", "ssh", "podman-machine-default", restartSudoLink}; !slices.Equal(sudo[0].args, want) || sudo[0].name != "podman" {
+		t.Errorf("the link through sudo is %s %q, want podman %q", sudo[0].name, sudo[0].args, want)
+	}
+	if strings.Contains(h.out.String(), "Could not turn on podman-restart.service") {
+		t.Errorf("a link that took was reported as a failure:\n%s", h.out.String())
+	}
+}
+
+// Both failures are named, in words that say what was tried, so a person can tell a folder that is not writable from a user that cannot use sudo.
+func TestInstallNamesBothFailuresWhenSudoIsRefusedToo(t *testing.T) {
+	h := newHarness(t, "windows")
+	h.f.env["USERNAME"] = "tester"
+	h.f.on("system connection list", machineConnections)
+	h.f.rules = append([]rule{
+		{match: restartAsked, err: errors.New("exit status 1")},
+		{match: restartEnable, err: errors.New("Failed to enable unit: Access denied")},
+		{match: restartPlain, err: errors.New("ln: failed to create symbolic link: Permission denied")},
+		{match: restartSudo, err: errors.New("sudo: a password is required")},
+	}, h.f.rules...)
+	if err := h.podman("--connection", "podman-machine-default"); err != nil {
+		t.Fatal(err)
+	}
+	var note string
+	for _, line := range strings.Split(h.out.String(), "\n") {
+		if strings.Contains(line, "Could not turn on podman-restart.service") {
+			note = line
+		}
+	}
+	for _, want := range []string{"Access denied", "Permission denied", "a password is required", "through sudo"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the note lacks %q: %q", want, note)
+		}
+	}
+}
+
+// The link runs as the machine's default ssh user (no --username) and creates its directory, through sudo or not; the reload runs as the user.
 func assertRestartCommandsRunAsTheirUsers(t *testing.T, h *harness) {
 	t.Helper()
 	for _, c := range h.f.find("ln -sf") {
@@ -1160,7 +1285,7 @@ func TestInstallDoesNotLinkRestartForAMachineUserThatIsNotAPlainName(t *testing.
 	if err := h.podman("--connection", "podman-machine-default"); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.f.find("ln -sf")) != 0 {
+	if len(h.f.find("ln -sf")) != 0 || len(h.f.find("sudo")) != 0 {
 		t.Errorf("a root command was built from the user name: %v", h.f.lines())
 	}
 	var note string
@@ -1171,6 +1296,9 @@ func TestInstallDoesNotLinkRestartForAMachineUserThatIsNotAPlainName(t *testing.
 	}
 	if !strings.Contains(note, "x;reboot") {
 		t.Errorf("the note does not say that the user name is the reason: %q", note)
+	}
+	if !strings.Contains(note, "systemctl --user enable podman-restart.service") || strings.Contains(note, "sudo") {
+		t.Errorf("the note does not give the generic fix: %q", note)
 	}
 }
 
@@ -1217,13 +1345,68 @@ func TestInstallDockerNeedsConfirmationAndNamesTheReasons(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "--accept-docker") {
 		t.Fatalf("got %v", err)
 	}
-	if len(h.f.calls) != 0 {
-		t.Errorf("the engine was called before the confirmation: %v", h.f.lines())
+	if len(h.f.find("version --format")) == 0 {
+		t.Errorf("Docker was not asked whether it answers before the question: %v", h.f.lines())
 	}
+	h.mustNotMutate()
 	for _, want := range []string{"Podman", "root", "secrets"} {
 		if !strings.Contains(h.out.String(), want) {
 			t.Errorf("the warning lacks %q:\n%s", want, h.out.String())
 		}
+	}
+}
+
+// A Docker that does not answer costs no "yes": the install stops with the engine's error, and the risk question is never shown.
+func TestInstallDockerThatDoesNotAnswerStopsBeforeTheRiskQuestion(t *testing.T) {
+	h := dockerHarness(t, "windows")
+	h.f.rules = append([]rule{{match: "version --format", err: errors.New("the pipe is closed")}}, h.f.rules...)
+	err := h.install("--runtime", "docker", "--image", testImage) // no --accept-docker: the question would be asked
+	if err == nil || !strings.Contains(err.Error(), "does not answer") || !strings.Contains(err.Error(), "the pipe is closed") {
+		t.Fatalf("got %v, want the error of a Docker that does not answer", err)
+	}
+	if strings.Contains(err.Error(), "did not confirm") || strings.Contains(h.out.String(), "Docker works on this computer") {
+		t.Errorf("the risk question was asked of a Docker that does not answer:\n%v\n%s", err, h.out.String())
+	}
+	h.mustNotMutate()
+}
+
+// The question comes after Docker has answered, so nothing of it is on the screen when the engine is asked.
+func TestInstallDockerAsksTheRiskQuestionAfterDockerAnswers(t *testing.T) {
+	h := dockerHarness(t, "windows")
+	env := h.newEnv()
+	inner, shown, asked := env.Deps.Exec, "", false
+	env.Deps.Exec = func(ctx context.Context, name string, a []string, stdin io.Reader) ([]byte, error) {
+		if !asked {
+			asked, shown = true, h.out.String()
+		}
+		return inner(ctx, name, a, stdin)
+	}
+	err := Install(context.Background(), []string{"--settings", h.settingsPath(), "--token-file", h.tokenPath(), "--runtime", "docker", "--image", testImage, "--accept-docker=false"}, env)
+	if err == nil || !strings.Contains(err.Error(), "did not confirm Docker") {
+		t.Fatalf("got %v, want the refusal of a no", err)
+	}
+	if !asked {
+		t.Fatal("Docker was never asked whether it answers")
+	}
+	if strings.Contains(shown, "Docker works on this computer") {
+		t.Errorf("the warning was shown before Docker was asked:\n%s", shown)
+	}
+	if !strings.Contains(h.out.String(), "Docker works on this computer") {
+		t.Errorf("the warning was not shown after Docker answered:\n%s", h.out.String())
+	}
+	h.mustNotMutate()
+}
+
+// Only an install asks: a command that works on what is installed (confirm false) opens a Docker that answers without the question.
+func TestOpenRuntimeDoesNotAskTheDockerQuestionOfACommandThatDoesNotInstall(t *testing.T) {
+	h := dockerHarness(t, "windows")
+	r := newTestResolver(t, nil, nil, Terminal{In: strings.NewReader(""), Out: &h.out})
+	rt, _, err := openRuntime(context.Background(), r, h.newEnv(), Settings{Runtime: RuntimeDocker}, false)
+	if err != nil || rt.Name() != RuntimeDocker {
+		t.Fatalf("got %v, %v", rt, err)
+	}
+	if strings.Contains(h.out.String(), "Docker works on this computer") {
+		t.Errorf("a command that does not install asked the question:\n%s", h.out.String())
 	}
 }
 

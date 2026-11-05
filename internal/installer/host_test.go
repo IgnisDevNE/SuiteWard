@@ -653,3 +653,62 @@ func TestPrepareHostPrintsTheServiceStepWithItsTierAndAnImageOnlyForADevelopment
 		t.Errorf("a release binary carries its own digest and the command must not ask for one:\n%s", out)
 	}
 }
+
+// serviceQuadlet is the quadlet of the service in the service account's home: a host that has it runs SuiteWard.
+const serviceQuadlet = "/home/suiteward/.config/containers/systemd/suiteward.container"
+
+// On a host that has the service, the next step is the upgrade: the same shell command with `install --upgrade` in place of the install (and
+// `--tier isolated`, because a host installed by hand has no settings file to name the tier), `--image` only for a development build, and the
+// sentence before it says that the service is installed and that this upgrades it.
+func TestPrepareHostNamesTheUpgradeWhenTheServiceIsInstalled(t *testing.T) {
+	was := ImageDigest
+	t.Cleanup(func() { ImageDigest = was })
+	const shell = "sudo -u suiteward -H env XDG_RUNTIME_DIR=/run/user/1001 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus "
+	const intro = "The host is ready. The service is already installed on this host, so the next step upgrades it: run the installer as the service account."
+
+	ImageDigest = testDigest
+	h := newHostFake()
+	h.paths[serviceQuadlet] = true
+	out, err := runHost(t, h, declineMetadataRule, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, shell) || !strings.Contains(out, " install --upgrade --tier isolated\n") {
+		t.Errorf("an installed host is told to run the shell command with the upgrade:\n%s", out)
+	}
+	if !strings.Contains(out, intro) {
+		t.Errorf("the output must say that the service is installed and that the next step upgrades it (%q):\n%s", intro, out)
+	}
+	if strings.Contains(out, "install --tier isolated") || strings.Contains(out, "--image") || strings.Contains(out, "Next, run the installer") {
+		t.Errorf("an installed host is told neither the install nor an image of a release binary:\n%s", out)
+	}
+
+	ImageDigest = ""
+	h = newHostFake()
+	h.paths[serviceQuadlet] = true
+	if out, err = runHost(t, h, declineMetadataRule, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, " install --upgrade --tier isolated --image sha256:<signed index digest>") {
+		t.Errorf("a development build carries no digest, so the upgrade asks for --image too:\n%s", out)
+	}
+}
+
+// With no service on the host the words and the command are the install's, as before.
+func TestPrepareHostNamesTheInstallWhenThereIsNoService(t *testing.T) {
+	was := ImageDigest
+	t.Cleanup(func() { ImageDigest = was })
+	ImageDigest = testDigest
+	out, err := runHost(t, newHostFake(), declineMetadataRule, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"The host is ready. Next, run the installer as the service account. The account has no login shell, so this command opens one with the settings it needs:", " install --tier isolated\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "--upgrade") || strings.Contains(out, "already installed") {
+		t.Errorf("a host with no service is not told to upgrade:\n%s", out)
+	}
+}

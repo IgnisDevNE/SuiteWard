@@ -71,3 +71,47 @@ func TestCheckSummaryThatShowsMarkerLinesSaysThatTheyAreNotAVerdict(t *testing.T
 		t.Errorf("a summary that shows no marker lines has the note:\n%s", plain)
 	}
 }
+
+// A removed case of a table test is a marker line of its own: it comes right after the removed assertion lines, and the facts of a comment, a
+// check and a page all say it with the same words.
+func TestChangesStateTheRemovedTestCasesRightAfterTheRemovedAssertions(t *testing.T) {
+	const (
+		assertion = report.MarkRemovedAssertion
+		skip      = report.MarkAddedSkip
+		focus     = report.MarkFocus
+		test      = report.MarkDeletedTest
+		file      = report.MarkTestFileRemoved
+		testCase  = report.MarkerKind("removed-case")
+	)
+	for name, tc := range map[string]struct {
+		markers map[report.MarkerKind]int
+		want    string
+	}{
+		"one":         {map[report.MarkerKind]int{testCase: 1}, "1 removed test case line"},
+		"two":         {map[report.MarkerKind]int{testCase: 2}, "2 removed test case lines"},
+		"among some":  {map[report.MarkerKind]int{assertion: 1, testCase: 2, skip: 1}, "1 removed assertion line, 2 removed test case lines, 1 added skip line"},
+		"all of them": {map[report.MarkerKind]int{file: 1, test: 1, focus: 1, skip: 1, testCase: 3, assertion: 2}, "2 removed assertion lines, 3 removed test case lines, 1 added skip line, 1 added focus line, 1 removed test declaration, 1 removed test file"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			facts := commandtext.ChangesOf(report.Report{Totals: report.Totals{Markers: tc.markers}}).Facts(false)
+			if got, want := facts[len(facts)-1], "Marker lines seen: "+tc.want; got != want {
+				t.Errorf("last fact = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// The case of the M2.1b acceptance test: a pull request removed one row of the table of a test, and the comment said that it saw no marker line.
+func TestRevisionCommentCountsARemovedRowOfATableTest(t *testing.T) {
+	changes := []report.FileChange{{Path: "internal/a_test.go", Status: report.Modified,
+		Old: []byte("package a\n\nfunc TestValidLogin(t *testing.T) {\n\tfor login, want := range map[string]bool{\n\t\t\"octo\": true,\n\t\t\"_octo\": false,\n\t} {\n\t}\n}\n"),
+		New: []byte("package a\n\nfunc TestValidLogin(t *testing.T) {\n\tfor login, want := range map[string]bool{\n\t\t\"octo\": true,\n\t} {\n\t}\n}\n")}}
+
+	body := revisionText(t, revisionWith(t, commandtext.Isolated, changes...))
+
+	for _, want := range []string{"- Lines: 0 added, 1 removed (counted in 1 of 1 files)\n", "- Marker lines seen: 1 removed test case line\n"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+}

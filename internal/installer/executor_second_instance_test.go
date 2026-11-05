@@ -130,3 +130,99 @@ func TestTheUsageOfTheTokenFileSaysThatAnotherSettingsFileNeedsIt(t *testing.T) 
 		t.Errorf("the usage of --token-file does not say that another settings file needs it:\n%s", h.out.String())
 	}
 }
+
+// The install that finds the test runner of another instance says which instance it is, from the list of installations, as doctor does.
+
+// refusal is the install's words about the test runner of another instance, with who for the part after "another instance" and remove for the
+// command that removes it; again is the install of this instance.
+func refusal(who, remove, again string) string {
+	return "a computer has one test runner, and yours belongs to another instance" + who + ". This instance left it as it is. To use this instance's own, remove the other instance with " +
+		remove + ", then run `" + again + "` again"
+}
+
+func TestAnInstallThatFindsTheExecutorOfAnotherInstanceNamesTheInstanceThatHoldsIt(t *testing.T) {
+	for name, c := range map[string]struct{ runtime, instance, who string }{
+		"one other installation is known":  {RuntimeDocker, holderID, " (the instance `" + holderID + "`, on Docker)"},
+		"the other installation has no id": {RuntimePodman, "", " (the instance with the settings file `%s`, on Podman)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, "linux")
+			mainInstanceExecutor(t, h) // the user unit names the main instance's program; the configuration folder is the test's own
+			mainToken, err := defaultTokenFile(h.f.deps())
+			if err != nil {
+				t.Fatal(err)
+			}
+			holder := listedElsewhere(t, "linux", mainToken, c.runtime, c.instance)
+			listedElsewhere(t, "linux", otherToken(t), RuntimePodman, bystanderID) // its program is not the one the unit names
+			if err := h.podman(); err != nil {
+				t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
+			}
+			who := c.who
+			if c.instance == "" {
+				who = strings.ReplaceAll(who, "%s", holder)
+			}
+			want := refusal(who, removing(holder, mainToken), (Deps{instance: h.named()}).suggest("install"))
+			if out := h.out.String(); !strings.Contains(out, want) || strings.Contains(out, bystanderID) {
+				t.Errorf("the output lacks %q, or names an instance that does not hold the test runner:\n%s", want, out)
+			}
+		})
+	}
+}
+
+// On Windows the task is not read: several other installations that hold a test runner are listed, with the removal that leaves the flags to the person. This instance's
+// own entry, which the install has just written, is not one of them.
+func TestAnInstallOnWindowsListsTheInstancesThatMayHoldTheTestRunner(t *testing.T) {
+	h := machineHarnessOn(t, "windows")
+	defaultTokenPlace(t, h) // the configuration folder is the test's own
+	h.first("/Query /TN SuiteWard Executor", "")
+	first := listedElsewhere(t, "windows", owning(t, otherToken(t)), RuntimeDocker, holderID)
+	second := listedElsewhere(t, "windows", owning(t, otherToken(t)), RuntimePodman, "")
+	if err := h.podman(); err != nil {
+		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
+	}
+	who := " (one of the other instances on this computer: the instance `" + holderID + "`, on Docker; the instance with the settings file `" + second + "`, on Podman)"
+	want := refusal(who, generalHint, (Deps{instance: h.named()}).suggest("install"))
+	if out := h.out.String(); !strings.Contains(out, want) || strings.Contains(out, first) {
+		t.Errorf("the output lacks %q, or names the settings file of an instance that has an id:\n%s", want, out)
+	}
+}
+
+// On Windows a listed installation counts only when its own executor folder holds the wrapper and the task definition: the list keeps the last
+// write, and an instance of an older release may have no entry, so the only other entry is not named by elimination.
+func TestAnInstallOnWindowsNamesOnlyAnInstanceWhoseExecutorFolderHoldsATestRunner(t *testing.T) {
+	for name, holderListed := range map[string]bool{"the other installation holds none": false, "one of two holds one": true} {
+		t.Run(name, func(t *testing.T) {
+			h := machineHarnessOn(t, "windows")
+			defaultTokenPlace(t, h) // the configuration folder is the test's own
+			h.first("/Query /TN SuiteWard Executor", "")
+			listedElsewhere(t, "windows", otherToken(t), RuntimePodman, bystanderID)
+			who, remove := "", generalHint
+			if holderListed {
+				token := owning(t, otherToken(t))
+				holder := listedElsewhere(t, "windows", token, RuntimeDocker, holderID)
+				who, remove = " (the instance `"+holderID+"`, on Docker)", removing(holder, token)
+			}
+			if err := h.podman(); err != nil {
+				t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
+			}
+			want := refusal(who, remove, (Deps{instance: h.named()}).suggest("install"))
+			if out := h.out.String(); !strings.Contains(out, want) || strings.Contains(out, bystanderID) {
+				t.Errorf("the output lacks %q, or names an installation whose executor folder holds no test runner:\n%s", want, out)
+			}
+		})
+	}
+}
+
+// Nothing in the list holds the test runner: the words are the ones the install always had.
+func TestAnInstallThatFindsTheExecutorOfAnInstanceTheListDoesNotNameKeepsItsWords(t *testing.T) {
+	h := newHarness(t, "linux")
+	mainInstanceExecutor(t, h) // the unit names the main instance's program, which no entry of the list has
+	listedElsewhere(t, "linux", otherToken(t), RuntimePodman, bystanderID)
+	if err := h.podman(); err != nil {
+		t.Fatalf("the stack is up and the install does not fail for the executor: %v", err)
+	}
+	want := refusal("", generalHint, (Deps{instance: h.named()}).suggest("install"))
+	if out := h.out.String(); !strings.Contains(out, want) {
+		t.Errorf("the output lacks %q:\n%s", want, out)
+	}
+}

@@ -5,7 +5,8 @@ import "html/template"
 // pullTemplate is the page of GET /pulls/{owner}/{repo}/{pull}: one document with inline style, no script and nothing loaded from elsewhere (the guard of the route sets a
 // policy that allows nothing else). html/template escapes every string; the strings that hold repository text were also made visible by commandtext.Visible. The blocks that
 // it defines (group, table, row, list, item, links, link) are the ones that the budgets count the bytes of (receiptpage_tables.go): a table of tests and a list are written by
-// them alone. The short sections come before the two long tables of tests, each of which is folded into one closed <details> for each state.
+// them alone. The short sections come before the two long tables of tests, each of which is folded into one closed <details> for each state. "What went wrong" comes right
+// after the tests by state and links the three headings that carry an id; those ids are fixed words, never built from data.
 var pullTemplate = template.Must(template.New("pull").Parse(`<!doctype html>
 <html lang="en">
 <head>
@@ -62,10 +63,11 @@ li { overflow-wrap: anywhere; }
 {{end}}</ul>
 {{end}}{{if .States.Show}}<h2>Tests by state</h2>
 {{template "table" .States.Table}}{{range .States.Sentences}}<p>{{.}}</p>
-{{end}}{{end}}<h2>The kinds of change</h2>
+{{end}}{{end}}{{if .Wrong}}<h2>What went wrong</h2>
+{{template "links" .Wrong}}{{end}}<h2 id="kinds-of-change">The kinds of change</h2>
+<p>It looks only at the tests this change adds or edits.</p>
 {{if .Kinds.Table.Head}}{{template "table" .Kinds.Table}}{{else}}<p>No receipt to judge.</p>
-{{end}}<p>{{.Kinds.Preview}}</p>
-{{if .Evidence.Head}}<h2>How these results were made</h2>
+{{end}}{{if .Evidence.Head}}<h2>How these results were made</h2>
 {{template "table" .Evidence}}{{end}}{{if .Report.Show}}<h2>Change report</h2>
 {{if .Report.Sentence}}<p>{{.Report.Sentence}}</p>
 {{else}}<p>The change report of revision {{.Report.Reference}}, without the changed lines.</p>
@@ -76,10 +78,10 @@ li { overflow-wrap: anywhere; }
 {{end}}<p><a href="{{.Report.Full.Href}}">{{.Report.Full.Text}}</a></p>
 {{if .Report.Earlier}}<h3>{{.Report.EarlierHeading}}</h3>
 {{template "links" .Report.Earlier}}{{if .Report.EarlierMore}}<p>{{.Report.EarlierMore}}</p>
-{{end}}{{end}}{{end}}{{end}}{{if .Approved.Show}}<h2>Approved tests</h2>
+{{end}}{{end}}{{end}}{{end}}{{if .Approved.Show}}<h2 id="approved-tests">Approved tests</h2>
 <p>{{.Approved.Lead}}</p>
 {{range .Approved.Groups}}{{template "group" .}}{{end}}{{if .Approved.More}}<p>{{.Approved.More}}</p>
-{{end}}{{end}}{{if .Receipt.Show}}<h2>Tests this change adds or edits</h2>
+{{end}}{{end}}{{if .Receipt.Show}}<h2 id="change-tests">Tests this change adds or edits</h2>
 <p>{{.Receipt.Lead}}</p>
 {{range .Receipt.Lists}}<h3>{{.Heading}}</h3>
 {{if .Items}}{{template "list" .Items}}{{end}}{{if .More}}<p>{{.More}}</p>

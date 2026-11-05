@@ -153,12 +153,10 @@ func openRuntime(ctx context.Context, r *Resolver, env Env, saved Settings, conf
 	connection := r.preset("connection", savedConnection)
 	var rt Runtime
 	if name == RuntimeDocker {
-		if confirm {
-			if err := confirmDocker(r); err != nil {
-				return nil, "", err
-			}
+		// Docker answers before the risk question, so that a stopped Docker costs no "yes".
+		if rt, err = NewDocker(ctx, env.Deps, DockerOptions{Context: connection}); err == nil && confirm {
+			err = confirmDocker(r)
 		}
-		rt, err = NewDocker(ctx, env.Deps, DockerOptions{Context: connection})
 	} else {
 		if connection, err = podmanConnection(ctx, env.Deps, connection); err != nil {
 			return nil, "", err
@@ -824,22 +822,29 @@ const (
 // plainUser is a machine user name that can go into a path and into a shell command that runs as the machine's default ssh user.
 var plainUser = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
 
-// restartLinkCommand links podman-restart.service for user in a Podman machine. It runs as the machine's default ssh user, which
-// is root on a Windows WSL machine: Podman's WSL machine creates the user's systemd directories owned by root, so the user's own
-// `systemctl --user enable` is denied there.
+// restartLinkCommand links podman-restart.service for user in a Podman machine. Podman creates the user's systemd directories owned
+// by root, so the user's own `systemctl --user enable` is denied; the link is made as the machine's default ssh user, which can
+// write there when it is root (a Windows WSL machine) and cannot when it is the user itself (machine-os 6.1).
 func restartLinkCommand(user string) string {
 	wants := "/home/" + user + "/.config/systemd/user/default.target.wants"
 	return "mkdir -p " + wants + " && ln -sf /usr/lib/systemd/user/" + restartUnit + " " + wants + "/" + restartUnit
 }
 
-// restartFix is what to run by hand to enable podman-restart.service in a Podman machine: the link as the machine's default ssh
-// user, then the reload and check as the user. A user name that is not plain gets the generic fix, never a command built from it.
+// restartSudoLinkCommand is restartLinkCommand through sudo, for a default ssh user that is not root. -n makes sudo fail at once where
+// it would ask for a password. user is plain (see plainUser), so the link holds no single quote.
+func restartSudoLinkCommand(user string) string {
+	return "sudo -n sh -c '" + restartLinkCommand(user) + "'"
+}
+
+// restartFix is what to run by hand to enable podman-restart.service in a Podman machine: the link through sudo as the machine's
+// default ssh user, then the reload and check as the user. A user name that is not plain gets the generic fix, never a command built
+// from it.
 func restartFix(machine, user string) string {
 	if !plainUser.MatchString(user) {
 		return restartEnableFix
 	}
-	return fmt.Sprintf("inside the Podman machine, link %s as the machine's default ssh user (root on a Windows WSL machine) with `podman machine ssh %s %s`; then reload and check as the user with `podman machine ssh --username %s %s %s` (it prints enabled)",
-		restartUnit, machine, quoteArg(restartLinkCommand(user)), user, machine, quoteArg(restartReloadCommand))
+	return fmt.Sprintf("inside the Podman machine, link %s with sudo (administrator rights), as the machine's default ssh user, with `podman machine ssh %s %s`; then reload and check as the user with `podman machine ssh --username %s %s %s` (it prints enabled)",
+		restartUnit, machine, quoteArg(restartSudoLinkCommand(user)), user, machine, quoteArg(restartReloadCommand))
 }
 
 // restartAfterReboot enables podman-restart.service of the rootless user, which is what starts a --restart always
@@ -864,16 +869,21 @@ func (c *colocatedInstall) restartAfterReboot(ctx context.Context) {
 		screenOn(c.out).Warn("Could not turn on %s (%v). Without it, SuiteWard does not start again by itself after the machine restarts. This does not stop the install; to fix it, %s.\n", restartUnit, err, fix)
 	}
 	if d.GOOS != "linux" {
-		screenOn(c.out).Warn("The Podman machine does not start by itself when you log in. After this computer restarts, run `podman machine start`: SuiteWard comes back with it.\n")
+		screenOn(c.out).Warn("The Podman machine does not start by itself when you log in. After this computer restarts, run `%s`: SuiteWard comes back with it.\n", machineStartCommand(machineOf(c.s.Connection)))
 	}
 }
 
 // enableInMachine enables podman-restart.service for user in the Podman machine: nothing when it is enabled already, the user's
-// own enable, and when that is denied the link as the default ssh user followed by a reload and a check that it took.
+// own enable, and when that is denied the link as the default ssh user (through sudo when the plain link is refused) followed by a
+// reload and a check that it took.
 func (c *colocatedInstall) enableInMachine(ctx context.Context, user string) error {
 	d, machine := c.env.Deps, c.s.Connection
 	asUser := func(command string) ([]byte, error) {
 		return d.Exec(ctx, "podman", []string{"machine", "ssh", "--username", user, machine, command}, nil)
+	}
+	asDefault := func(command string) error {
+		_, err := d.Exec(ctx, "podman", []string{"machine", "ssh", machine, command}, nil)
+		return err
 	}
 	// is-enabled exits 1 for a unit that is not enabled: only a clean "enabled" is an answer, the rest goes on to the enable.
 	if out, err := asUser("systemctl --user is-enabled " + restartUnit); err == nil && strings.TrimSpace(string(out)) == "enabled" {
@@ -886,11 +896,14 @@ func (c *colocatedInstall) enableInMachine(ctx context.Context, user string) err
 	if !plainUser.MatchString(user) {
 		return fmt.Errorf("%w; the machine user %q is not a plain name, so the link is not made for it", err, user)
 	}
-	if _, linkErr := d.Exec(ctx, "podman", []string{"machine", "ssh", machine, restartLinkCommand(user)}, nil); linkErr != nil {
-		return fmt.Errorf("%w; the link as the default ssh user failed too: %v", err, linkErr)
+	// On a machine-os 6.1 machine the default ssh user is the user, which cannot write the folder root made: the same link goes through sudo.
+	if linkErr := asDefault(restartLinkCommand(user)); linkErr != nil {
+		if sudoErr := asDefault(restartSudoLinkCommand(user)); sudoErr != nil {
+			return fmt.Errorf("%w; linking it as the machine's default ssh user failed (%v), and linking it through sudo failed too (%v)", err, linkErr, sudoErr)
+		}
 	}
 	if out, checkErr := asUser(restartReloadCommand); checkErr != nil || strings.TrimSpace(string(out)) != "enabled" {
-		return fmt.Errorf("%w; the link as the default ssh user was made, but the unit is still not enabled after a reload", err)
+		return fmt.Errorf("%w; the link was made, but the unit is still not enabled after a reload", err)
 	}
 	return nil
 }

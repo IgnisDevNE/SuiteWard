@@ -16,7 +16,7 @@ import (
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
 )
 
-// The execution commands in the commands job (M2.1; docs/contracts/runtime.md, "Commands"): the preview mode, the unblock and the receipt gate of an approve.
+// The execution commands in the commands job (M2.1; docs/contracts/runtime.md, "Commands"): the unblock and the receipt gate of an approve.
 
 // refuse records a refusal with its acknowledgment: disposition d with the fixed reason of the acknowledgment.
 func (j *commandsJob) refuse(ctx context.Context, enrollment owner.State, c commands.Candidate, d commands.Disposition, reason string) error {
@@ -25,26 +25,6 @@ func (j *commandsJob) refuse(ctx context.Context, enrollment owner.State, c comm
 		return &opaque{what: "build the acknowledgment", cause: err}
 	}
 	return j.record(ctx, c, d, "", &ack)
-}
-
-// setMode decides a /suiteward mode: it records the preview mode of the pull request (the entry carries it). It takes no code and so no step, and a pull request
-// that is not open is no reason to ignore it: a fork and a pull request that is not open are refused and acknowledged.
-func (j *commandsJob) setMode(ctx context.Context, enrollment owner.State, c commands.Candidate, mode domain.Mode) error {
-	pull, err := j.observedPull(ctx, c)
-	if err != nil {
-		return err
-	}
-	switch {
-	case isFork(pull.HeadRepo, c.Repo):
-		return j.refuse(ctx, enrollment, c, commands.ModeRefused, reasonFork)
-	case !pull.NotOpenSince.IsZero():
-		return j.refuse(ctx, enrollment, c, commands.ModeRefused, reasonNotOpen)
-	}
-	ack, err := newModeSetAck(commentTarget{RepositoryID: c.RepositoryID, Repo: c.Repo, Pull: c.PullNumber}, c.Comment.CommentID, enrollment.Owner.Login, mode)
-	if err != nil {
-		return &opaque{what: "build the acknowledgment", cause: err}
-	}
-	return j.record(ctx, c, commands.ModeSet, "", &ack)
 }
 
 // unblock decides a /suiteward unblock whose code was verified and consumed, on the pull request as the synchronization observed it (docs/contracts/runtime.md,

@@ -18,9 +18,16 @@ import (
 // executionOutcome is what the execution step of a pull request decided beside its jobs: the counts that its Contract check carries, its Receipt check, and the
 // silence of the runner that the step read, which the comment of the head reads too (the zero value, for a step that failed, is not a reading).
 type executionOutcome struct {
-	counts  *checkExecution
-	receipt receiptDecision
-	silent  bool
+	counts *checkExecution
+	// unavailable is the reason of the canonical job that the gate held as canonical-unavailable, which says whether the approved tests run on their own (the check says it); empty for
+	// every other check, and for a pass whose step did not run.
+	unavailable string
+	receipt     receiptDecision
+	silent      bool
+	// pastLeaseWait: the silence is at least the lease wait, so the sweep of the next pass ends the jobs that wait for the runner as unavailable (Job.Swept, the rule of
+	// sweep: no-executor, or the reason of a lapsed lease at its last attempt), and the comment of that pass says the tests did not run. The comment of this pass reads it,
+	// so that "keeps trying" is not followed by "did not run".
+	pastLeaseWait bool
 
 	// What the comments of the head and the counts of an awaiting check read: the Set of the head (headSetOf; zero for a step that failed or a head that no run decides, which is
 	// never final), the revision of the head, whether the approve of its check names a mode, and the weakened count that the counts of an awaiting check state.
@@ -38,13 +45,16 @@ func (j *checksJob) executionStep(ctx context.Context, s *pullState, x *executio
 	if err != nil {
 		return executionOutcome{}, err
 	}
-	silent := j.liveness.Silent(j.now())
+	now := j.now()
+	silent := j.liveness.Silent(now)
+	// The test of Job.Swept, equality included. LastSeen never moves back, so a runner that answered between the two reads only turns this off: the comment of today.
+	pastLeaseWait := !execution.Stored(now).Before(execution.Stored(j.liveness.LastSeen()).Add(j.executor.LeaseWait))
 	outcome, err := j.applyCanonicalGate(ctx, s, x, jobs, d, silent)
 	if err != nil {
 		return executionOutcome{}, err
 	}
 	outcome.receipt, err = j.receiptCheck(ctx, s, x, jobs, silent)
-	outcome.silent = silent
+	outcome.silent, outcome.pastLeaseWait = silent, pastLeaseWait
 	if err != nil {
 		return outcome, err
 	}
@@ -150,6 +160,9 @@ func (j *checksJob) applyCanonicalGate(ctx context.Context, s *pullState, x *exe
 		d.result.State, d.result.Reason = checks.Failure, string(reason)
 	default:
 		d.result.State, d.result.Reason = checks.InProgress, string(reason)
+	}
+	if reason == domain.ReasonCanonicalUnavailable {
+		return executionOutcome{unavailable: string(jobs.canonical.Reason)}, nil
 	}
 	if status != domain.RunComplete {
 		return executionOutcome{}, nil

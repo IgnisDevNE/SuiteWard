@@ -25,3 +25,4 @@ runner:
   - deploy/smoke.sh
 execution:
   profile: go
+  canonical: required

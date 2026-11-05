@@ -4,9 +4,10 @@
 // domain packages (scope, execution) and the YAML library.
 //
 // Parsing: Parse returns a Parsed whose Kind is KindNotCommand, KindCommand
-// (with its Command: Verb Approve, Revoke, Propose, Skip, Suggest, SetMode or Unblock, Proposal, Revision, Code and Mode; Propose and
-// Suggest have neither reference nor code, Skip and Unblock only a code, SetMode only a mode, and Approve may name a mode before its code)
-// or KindMalformed (with its Reason: UnknownVerb, MissingReference, BadReference, MissingCode, BadCode, ExtraText, MissingMode or BadMode).
+// (with its Command: Verb Approve, Revoke, Propose, Skip, Suggest or Unblock, Proposal, Revision, Code and Mode; Propose and
+// Suggest have neither reference nor code, Skip and Unblock only a code, and Approve may name a mode before its code)
+// or KindMalformed (with its Reason: UnknownVerb, MissingReference, BadReference, MissingCode, BadCode, ExtraText, or MissingMode for a bare
+// /suiteward mode line and BadMode for any other: that command is gone, M2.1c, SW-16).
 // Reference writes P<n>-R<m> and ParseReference reads it.
 //
 // Rendering: Acknowledge renders an Ack (Outcome Approved, Revoked,
@@ -61,8 +62,7 @@ const (
 	Skip
 	// Suggest takes neither reference nor code.
 	Suggest
-	// SetMode takes a mode and nothing else; Unblock takes only a code, as Skip does.
-	SetMode
+	// Unblock takes only a code, as Skip does.
 	Unblock
 )
 
@@ -77,6 +77,7 @@ const (
 	MissingCode
 	BadCode
 	ExtraText
+	// MissingMode and BadMode keep their names and their stored codes for a /suiteward mode line, which is no longer a command: bare, and any other.
 	MissingMode
 	BadMode
 	// lastReason is no reason: it ends the list (see lastOutcome in render.go).
@@ -90,7 +91,7 @@ type Command struct {
 	Proposal int
 	Revision int
 	Code     string
-	// Mode is the mode an approve names or a SetMode sets, and ModeNone for every other command and for an approve that names none.
+	// Mode is the mode an approve names, and ModeNone for every other command and for an approve that names none.
 	Mode execution.Mode
 }
 
@@ -283,8 +284,11 @@ func parseLine(rest string) Parsed {
 		return parseCode(Skip, tokens[1:])
 	case asciiLower(tokens[0]) == "unblock":
 		return parseCode(Unblock, tokens[1:])
-	case asciiLower(tokens[0]) == "mode":
-		return parseMode(tokens[1:])
+	case asciiLower(tokens[0]) == "mode": // no longer a command (M2.1c, SW-16): the answer says where the mode goes now
+		if len(tokens) > 1 {
+			return bad(BadMode)
+		}
+		return bad(MissingMode)
 	default:
 		return bad(UnknownVerb)
 	}
@@ -313,21 +317,6 @@ func parseReferenced(verb Verb, args []string) Parsed {
 		parsed.Command.Proposal, parsed.Command.Revision, parsed.Command.Mode = proposal, revision, mode
 	}
 	return parsed
-}
-
-// parseMode reads the arguments of mode: a mode word and nothing else.
-func parseMode(args []string) Parsed {
-	if len(args) == 0 {
-		return Parsed{Kind: KindMalformed, Reason: MissingMode}
-	}
-	mode, err := execution.ParseMode(asciiLower(args[0]))
-	switch {
-	case err != nil:
-		return Parsed{Kind: KindMalformed, Reason: BadMode}
-	case len(args) > 1:
-		return Parsed{Kind: KindMalformed, Reason: ExtraText}
-	}
-	return Parsed{Kind: KindCommand, Command: Command{Verb: SetMode, Mode: mode}}
 }
 
 // parseCode reads the arguments of a command that ends in a code: a code and nothing else, so a reference is a bad code.

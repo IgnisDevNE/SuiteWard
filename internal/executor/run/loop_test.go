@@ -3,10 +3,12 @@ package run
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -211,16 +213,200 @@ func TestShutdownWhileWaitingStopsAtOnce(t *testing.T) {
 	}
 }
 
-func TestWithoutARuntimeTheExecutorDoesNotStart(t *testing.T) {
+// infoRuntime is a runtime whose Info fails the first fail times, as a container program that is not running does, and then answers with
+// name and version. The other methods are the fake runtime's.
+type infoRuntime struct {
+	*fakeRuntime
+	fail          int
+	name, version string
+
+	mu    sync.Mutex
+	asked int
+}
+
+func (r *infoRuntime) Info(context.Context) (string, string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.asked++
+	if r.asked <= r.fail {
+		return "", "", fmt.Errorf("Cannot connect to Podman (the machine is not running, attempt %d)", r.asked)
+	}
+	return r.name, r.version, nil
+}
+
+func (r *infoRuntime) timesAsked() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.asked
+}
+
+// The plain words of the two state changes: the executor says each once, however many times it asks.
+const (
+	waitingLine = "The container program does not answer. The test runner waits for it and tries again."
+	answersLine = "The container program answers again."
+)
+
+// logged is the messages that the recorder holds so far, in order.
+func logged(logs *logRecorder) []string {
+	var msgs []string
+	for {
+		select {
+		case rec := <-logs.records:
+			msgs = append(msgs, rec.msg)
+		default:
+			return msgs
+		}
+	}
+}
+
+func TestWhileTheContainerProgramDoesNotAnswerTheExecutorWaitsLongerEachTimeAndThenGoesOn(t *testing.T) {
+	rt := &infoRuntime{fakeRuntime: newRuntime(nil), fail: 4, name: "podman", version: "5.8.2"}
+	svc := newService(t)
+	// The four waits after a failed Info return at once; the fifth wait, the 5 s after the first lease that finds no job, is where the executor rests.
+	d := start(t, svc, rt, func(_ *Config, d *driver) { d.sleeps.immediate, d.sleeps.reached = 4, make(chan struct{}) })
+	wait(d, d.sleeps.reached)
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 20 * time.Second, 5 * time.Second}
+	if got := d.sleeps.durations(); !slices.Equal(got, want) {
+		t.Errorf("the waits were %v; want %v: 5 s, doubling to at most 20 s while the program is down, then the 5 s of an empty lease", got, want)
+	}
+	if n := rt.timesAsked(); n != 5 {
+		t.Errorf("the program was asked %d times; want 5, once after each wait", n)
+	}
+	if n := d.swept.Load(); n != 1 {
+		t.Errorf("the sweep ran %d times; want once, when the program answered", n)
+	}
+	if n := svc.leaseRequests(); n < 1 {
+		t.Errorf("%d lease requests; the executor leases once the program answers", n)
+	}
+}
+
+func TestTheExecutorSaysOnceThatItWaitsForTheContainerProgramAndOnceThatItAnswers(t *testing.T) {
+	logs := newLogRecorder()
+	rt := &infoRuntime{fakeRuntime: newRuntime(nil), fail: 3, name: "podman", version: "5.8.2"}
+	d := start(t, newService(t), rt, func(cfg *Config, d *driver) {
+		cfg.Log = slog.New(logs)
+		d.sleeps.immediate, d.sleeps.reached = 3, make(chan struct{})
+	})
+	wait(d, d.sleeps.reached)
+	msgs := logged(logs)
+	index := func(msg string) int { return slices.Index(msgs, msg) }
+	waiting, answers, runs := index(waitingLine), index(answersLine), index("the executor runs")
+	if waiting < 0 || answers < waiting || runs < answers {
+		t.Errorf("the lines were %q; want the waiting line, then the answering line, then the one that says the executor runs", msgs)
+	}
+	for _, msg := range []string{waitingLine, answersLine} {
+		if n := strings.Count(strings.Join(msgs, "\n"), msg); n != 1 {
+			t.Errorf("%q was logged %d times over 3 failed attempts; want once", msg, n)
+		}
+	}
+}
+
+func TestTheWaitingLineCarriesTheError(t *testing.T) {
+	logs := newLogRecorder()
+	rt := &infoRuntime{fakeRuntime: newRuntime(nil), fail: 1 << 30}
+	d := start(t, newService(t), rt, func(cfg *Config, d *driver) { cfg.Log = slog.New(logs) })
+	for {
+		select {
+		case rec := <-logs.records:
+			if rec.msg != waitingLine {
+				continue
+			}
+			if err, _ := rec.attrs["error"].(error); err == nil || !strings.Contains(err.Error(), "Cannot connect to Podman") {
+				t.Errorf("the waiting line carries the error %v; want the program's own", rec.attrs["error"])
+			}
+			return
+		case err := <-d.done:
+			d.done <- err
+			t.Fatalf("the executor stopped (%v) before it said that it waits", err)
+		case <-time.After(d.patience):
+			t.Fatal("the executor never said that it waits")
+		}
+	}
+}
+
+func TestWithoutAContainerProgramTheExecutorWaitsAndEndsWithNilAtOnceAtTheSignal(t *testing.T) {
 	rt := newRuntime(nil)
 	rt.infoErr = errors.New("the engine does not answer")
 	svc := newService(t, nil)
-	d := start(t, svc, rt)
-	if err := d.stopped(); err == nil || !strings.Contains(err.Error(), "container runtime") {
-		t.Errorf("Run = %v with no container runtime; want a fatal error that says so", err)
+	d := start(t, svc, rt, func(_ *Config, d *driver) { d.sleeps.reached = make(chan struct{}) }) // the first wait blocks until the context ends
+	wait(d, d.sleeps.reached)
+	d.cancel()
+	if err := d.stopped(); err != nil {
+		t.Errorf("Run = %v after a signal while it waited for the container program; want a clean stop", err)
 	}
 	if n := svc.leaseRequests(); n != 0 {
 		t.Errorf("%d lease requests without a runtime", n)
+	}
+	if n := d.swept.Load(); n != 0 {
+		t.Errorf("the sweep ran %d times without a runtime", n)
+	}
+	if got := d.sleeps.durations(); !slices.Equal(got, []time.Duration{5 * time.Second}) {
+		t.Errorf("the waits were %v; want the one of 5 s, which the signal ended", got)
+	}
+}
+
+// askingRuntime's Info tells that it was asked and then waits for the end of its context, as the CLI's command is killed with its context.
+type askingRuntime struct {
+	*fakeRuntime
+	asking chan struct{}
+}
+
+func (r askingRuntime) Info(ctx context.Context) (string, string, error) {
+	r.asking <- struct{}{}
+	<-ctx.Done()
+	return "", "", ctx.Err()
+}
+
+func TestASignalWhileTheContainerProgramIsAskedEndsRunWithoutAWaitingLine(t *testing.T) {
+	logs := newLogRecorder()
+	rt := askingRuntime{fakeRuntime: newRuntime(nil), asking: make(chan struct{}, 1)}
+	d := start(t, newService(t), rt, func(cfg *Config, _ *driver) { cfg.Log = slog.New(logs) })
+	wait(d, rt.asking)
+	d.cancel()
+	if err := d.stopped(); err != nil {
+		t.Errorf("Run = %v after a signal; want a clean stop", err)
+	}
+	if slices.Contains(logged(logs), waitingLine) {
+		t.Error("the executor said that it waits for the container program, when the signal had come")
+	}
+}
+
+// The signal that ends a wait ends Run there: the executor does not ask the program once more, and does not go on to sweep and lease, even with
+// a program that would answer.
+func TestASignalDuringTheWaitEndsRunBeforeTheProgramIsAskedAgain(t *testing.T) {
+	logs := newLogRecorder()
+	rt := &infoRuntime{fakeRuntime: newRuntime(nil), fail: 1, name: "podman", version: "5.8.2"}
+	svc := newService(t, nil)
+	d := start(t, svc, rt, func(cfg *Config, d *driver) {
+		cfg.Log = slog.New(logs)
+		d.sleeps.reached = make(chan struct{})
+	})
+	wait(d, d.sleeps.reached)
+	d.cancel()
+	if err := d.stopped(); err != nil {
+		t.Errorf("Run = %v after a signal during the wait; want a clean stop", err)
+	}
+	if n := rt.timesAsked(); n != 1 {
+		t.Errorf("the program was asked %d times; want once, the signal ended the wait before a second ask", n)
+	}
+	if slices.Contains(logged(logs), answersLine) || d.swept.Load() != 0 || svc.leaseRequests() != 0 {
+		t.Error("the executor went on after the signal that ended its wait")
+	}
+}
+
+// A runtime that answers with a name the results cannot carry is not a program that is down: waiting does not help, so the executor stops, whether
+// it asked once or had to wait first.
+func TestARuntimeNameThatIsNotPrintableIsStillFatal(t *testing.T) {
+	for fail := range 2 {
+		rt := &infoRuntime{fakeRuntime: newRuntime(nil), fail: fail, name: "pod\x00man", version: "5.8.2"}
+		svc := newService(t, nil)
+		d := start(t, svc, rt, func(_ *Config, d *driver) { d.sleeps.immediate = 1 })
+		if err := d.stopped(); err == nil || !strings.Contains(err.Error(), "container runtime") || !strings.Contains(err.Error(), "printable") {
+			t.Errorf("after %d failed attempts Run = %v; want a fatal error that says the name is not printable", fail, err)
+		}
+		if n := svc.leaseRequests(); n != 0 {
+			t.Errorf("after %d failed attempts: %d lease requests with a name that cannot be reported", fail, n)
+		}
 	}
 }
 

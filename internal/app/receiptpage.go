@@ -92,18 +92,12 @@ func (a *api) receiptFailed(w http.ResponseWriter, r *http.Request, err error) {
 	http.Error(w, "the pull request page is unavailable", http.StatusServiceUnavailable)
 }
 
-// previewReader is the part of the command ledger the page reads: the preview mode of a pull request.
-type previewReader interface {
-	PreviewMode(ctx context.Context, repositoryID int64, pull int, since time.Time) (string, bool, error)
-}
-
 // receiptPages builds the pull request page. One page is built at a time in the process, in the turn of the reports (pageReports), because a page of two runs of 10,000 tests holds its rows and its markup.
 type receiptPages struct {
 	suites     governance.UnitOfWork
 	contents   governance.ContentReader
 	executions execution.Store
 	pulls      pullLister
-	previews   previewReader
 	tier       string           // the configured installation tier
 	limit      int              // the most bytes a page may hold, a field so that a test can lower it
 	timeout    time.Duration    // how long a request for a page may take, a field so that a test of the largest page can lift it
@@ -112,6 +106,6 @@ type receiptPages struct {
 
 func (p *receiptPages) requestTimeout() time.Duration { return p.timeout }
 
-func newReceiptPages(suites governance.UnitOfWork, contents governance.ContentReader, executions execution.Store, pulls pullLister, previews previewReader, tier string) *receiptPages {
-	return &receiptPages{suites: suites, contents: contents, executions: executions, pulls: pulls, previews: previews, tier: tier, limit: maxPullPage, timeout: receiptTimeout, now: time.Now}
+func newReceiptPages(suites governance.UnitOfWork, contents governance.ContentReader, executions execution.Store, pulls pullLister, tier string) *receiptPages {
+	return &receiptPages{suites: suites, contents: contents, executions: executions, pulls: pulls, tier: tier, limit: maxPullPage, timeout: receiptTimeout, now: time.Now}
 }

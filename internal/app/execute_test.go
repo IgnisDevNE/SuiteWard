@@ -6,11 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/executor/sandbox"
 )
@@ -181,6 +184,9 @@ func fakeDeps(rt fakeRuntime, sum string, sumErr error, swept *[]string) execute
 			return func(context.Context) error { *swept = append(*swept, binary); return nil }
 		},
 		binarySum: func() (string, error) { return sum, sumErr },
+		watch: func(ctx context.Context, _ *slog.Logger) (context.Context, context.CancelFunc) {
+			return context.WithCancel(ctx)
+		},
 	}
 }
 
@@ -202,16 +208,66 @@ func TestTheExecutorStopsCleanlyAtTheSignalAndSweepsWithTheConfiguredRuntime(t *
 	}
 }
 
-func TestWithoutARuntimeOrABinaryTheExecutorExitsWithOne(t *testing.T) {
+// The watch of the console host (SW-25) cancels the context that the run gets, so the run ends as at the signal: it stops asking for jobs and exits 0.
+func TestTheExecutorStopsCleanlyWhenTheWatchEndsTheRun(t *testing.T) {
+	var swept []string
+	deps := fakeDeps(fakeRuntime{}, strings.Repeat("ab", 32), nil, &swept)
+	deps.watch = func(ctx context.Context, _ *slog.Logger) (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(ctx)
+		cancel() // the console host of the loop is gone
+		return ctx, cancel
+	}
+	live, release := context.WithCancel(context.Background())
+	t.Cleanup(release) // a run that the watch does not end stops here, not when the test binary exits
+	env := executorEnv(map[string]string{"SUITEWARD_EXECUTOR_URL": "http://127.0.0.1:1"})
+	var out, errOut bytes.Buffer
+	done := make(chan int, 1)
+	go func() { done <- executeWith(live, nil, env, &out, &errOut, deps) }()
+	select {
+	case code := <-done:
+		if code != 0 || errOut.Len() != 0 {
+			t.Errorf("executeWith = %d, stderr %q; want a clean stop", code, errOut.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the executor kept running after the watch ended its run")
+	}
+}
+
+// Only the scheduled task of Windows has a console host to lose: elsewhere the watch ends nothing and says nothing (Windows has its own tests).
+func TestTheWatchOfTheConsoleHostDoesNothingOnOtherSystems(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows watches the console host of the loop: execute_windows_test.go")
+	}
+	var out bytes.Buffer
+	ctx, stop := watchConsoleHost(context.Background(), newLogger(&out, slog.LevelInfo))
+	if ctx.Err() != nil || out.Len() != 0 {
+		t.Errorf("the watch ended the run (%v) or logged %q on %s", ctx.Err(), out.String(), runtime.GOOS)
+	}
+	stop()
+	if ctx.Err() == nil {
+		t.Error("the context of the watch does not end when its caller stops it")
+	}
+}
+
+func TestWithoutABinaryTheExecutorExitsWithOne(t *testing.T) {
 	env := executorEnv(map[string]string{"SUITEWARD_EXECUTOR_URL": "http://127.0.0.1:1"})
 	var swept []string
 	var out, errOut bytes.Buffer
-	if code := executeWith(context.Background(), nil, env, &out, &errOut, fakeDeps(fakeRuntime{infoErr: errors.New("no engine")}, strings.Repeat("ab", 32), nil, &swept)); code != 1 || !strings.Contains(errOut.String(), "container runtime") {
-		t.Errorf("without a runtime: %d, stderr %q; want 1 and the runtime named", code, errOut.String())
-	}
-	errOut.Reset()
 	if code := executeWith(context.Background(), nil, env, &out, &errOut, fakeDeps(fakeRuntime{}, "", errors.New("no binary"), &swept)); code != 1 || !strings.Contains(errOut.String(), "binary") {
 		t.Errorf("without a binary: %d, stderr %q; want 1 and the binary named", code, errOut.String())
+	}
+}
+
+// A container program that does not answer is waited for, not a fatal error: only the signal ends the executor, with exit 0. The line that says
+// that it waits depends on the timing of the signal, so the run package's tests cover it.
+func TestWithoutAContainerProgramTheExecutorWaitsAndExitsWithZeroAtTheSignal(t *testing.T) {
+	env := executorEnv(map[string]string{"SUITEWARD_EXECUTOR_URL": "http://127.0.0.1:1"})
+	var swept []string
+	var out, errOut bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	if code := executeWith(ctx, nil, env, &out, &errOut, fakeDeps(fakeRuntime{infoErr: errors.New("no engine")}, strings.Repeat("ab", 32), nil, &swept)); code != 0 || errOut.Len() != 0 || len(swept) != 0 {
+		t.Errorf("without a container program: %d, stderr %q, swept %v; want 0, nothing on stderr and no sweep", code, errOut.String(), swept)
 	}
 }
 

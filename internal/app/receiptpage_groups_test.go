@@ -20,7 +20,7 @@ type pageGroup struct {
 }
 
 var (
-	headingPattern = regexp.MustCompile(`<h2>([^<]*)</h2>`)
+	headingPattern = regexp.MustCompile(`<h2[^>]*>([^<]*)</h2>`)
 	groupPattern   = regexp.MustCompile(`(?s)<details([^>]*)>\n<summary>([^<]*)</summary>(.*?)</details>`)
 	rowStatePart   = regexp.MustCompile(`<tr><td>([^<]*)</td>`)
 )
@@ -50,20 +50,39 @@ func summaries(groups []pageGroup) []string {
 	return out
 }
 
-// The short sections come first: the kinds of change, how the results were made and the change report are above the long tables, and the closing note ends the page.
-func TestPullPageShowsTheShortSectionsAboveTheLongTables(t *testing.T) {
-	w := weakenedWorld(t)
-	page := w.text()
+// headings are the h2 of the page in order.
+func headings(page string) []string {
 	var got []string
 	for _, m := range headingPattern.FindAllStringSubmatch(page, -1) {
 		got = append(got, m[1])
 	}
+	return got
+}
+
+// The short sections come first: the kinds of change, how the results were made and the change report are above the long tables, and the closing note ends the page. With
+// nothing wrong that is the whole page: no "What went wrong".
+func TestPullPageShowsTheShortSectionsAboveTheLongTables(t *testing.T) {
+	w := newPageWorld(t)
+	w.completed(canonicalTests("pass", "pass"), receiptTests("detects"))
+	page := w.text()
 	want := []string{"Tests by state", "The kinds of change", "How these results were made", "Change report", "Approved tests", "Tests this change adds or edits"}
-	if !slices.Equal(got, want) {
+	if got := headings(page); !slices.Equal(got, want) {
 		t.Errorf("the sections are %q, want %q", got, want)
 	}
-	w.wantInOrder(page, "Pull request: 5", weakenedTwo, "<h2>Tests by state</h2>") // the top: the facts and the weakened sentence
-	w.wantInOrder(page, "<h2>Tests this change adds or edits</h2>", "The results on this page are evidence reported by a test runner, not a verdict.")
+	w.wantInOrder(page, "Pull request: 5", "<h2>Tests by state</h2>")
+	w.wantInOrder(page, ">Tests this change adds or edits</h2>", "The results on this page are evidence reported by a test runner, not a verdict.")
+}
+
+// With a problem, "What went wrong" is right after "Tests by state", above the kinds of change, and the rest keeps its order. The weakened sentence stays in the top.
+func TestPullPagePutsWhatWentWrongRightAfterTheTestsByState(t *testing.T) {
+	w := weakenedWorld(t)
+	page := w.text()
+	want := []string{"Tests by state", "What went wrong", "The kinds of change", "How these results were made", "Change report", "Approved tests", "Tests this change adds or edits"}
+	if got := headings(page); !slices.Equal(got, want) {
+		t.Errorf("the sections are %q, want %q", got, want)
+	}
+	w.wantInOrder(page, "Pull request: 5", weakenedTwo, "<h2>Tests by state</h2>", "<h2>What went wrong</h2>", ">The kinds of change</h2>")
+	w.wantInOrder(page, ">Tests this change adds or edits</h2>", "The results on this page are evidence reported by a test runner, not a verdict.")
 }
 
 // A table of tests is one group for each state that has a test, each closed, with no group for a state that has none. A group holds the rows of its state, and its summary names

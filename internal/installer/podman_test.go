@@ -86,6 +86,45 @@ func TestPodmanRefusesARootfulConnectionBeforeChangingAnything(t *testing.T) {
 	}
 }
 
+// On Linux without a connection there is no machine to pick a connection of: the person ran the command as root, and is told to run it as their
+// own user. A machine, or a connection that was named, keeps the words about the connection.
+func TestPodmanRefusalOfARootfulPodmanSaysWhatToDoWhereItHappens(t *testing.T) {
+	const asRoot = "SuiteWard does not run as root. Nothing was changed. Run the command again as your own user, without sudo, so that Podman runs without administrator rights."
+	const aConnection = "select the machine's rootless connection with --connection NAME"
+	cases := []struct {
+		name       string
+		goos       string
+		connection string
+		env        string
+		want       string
+		notWant    string
+	}{
+		{"Linux with no connection", "linux", "", "", asRoot, aConnection},
+		{"Linux with a connection that was named", "linux", "named", "", aConnection, asRoot},
+		{"Linux with the connection of the environment", "linux", "", "from-env", aConnection, asRoot},
+		{"a machine", "windows", "", "", aConnection, asRoot},
+		{"a machine that was named", "darwin", "podman-machine-default-root", "", aConnection, asRoot},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFake(c.goos).on("system connection list", machineConnections).on("info --format", "false\n")
+			if c.env != "" {
+				f.env["CONTAINER_CONNECTION"] = c.env
+			}
+			_, err := NewPodman(context.Background(), f.deps(), c.connection)
+			if !errors.Is(err, ErrRootful) {
+				t.Fatalf("got %v, want ErrRootful", err)
+			}
+			if !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), c.notWant) {
+				t.Errorf("the refusal reads %q, want it to say %q and not %q", err, c.want, c.notWant)
+			}
+			if plain := "this Podman runs with administrator rights (rootful): "; !strings.HasPrefix(err.Error(), plain) {
+				t.Errorf("the refusal reads %q, want it to open with the plain words %q", err, plain)
+			}
+		})
+	}
+}
+
 func TestPodmanOnLinuxUsesTheLocalRootlessPodman(t *testing.T) {
 	f := newFake("linux")
 	newRootlessPodman(t, f, "")

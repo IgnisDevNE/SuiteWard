@@ -323,7 +323,7 @@ func TestBuildOrdersAndTotals(t *testing.T) {
 	t.Parallel()
 	r := build(t,
 		mod("b/two.py", "a\nassert 1\n", "a\n"),
-		removed("z/gone_test.go", "func TestA(t *testing.T) {\n\tassert.True(t, ok)\n}\n"),
+		removed("z/gone_test.go", "func TestA(t *testing.T) {\n\tfor _, c := range []struct{ in, want int }{\n\t\t{1, 2},\n\t} {\n\t\tassert.True(t, ok)\n\t}\n}\n"),
 		added("a.txt", "x\ny\nz\n"),
 		mod("b/one.js", "a\n", "a\nit.skip('x')\nit.only('y')\n"),
 		mod("same.txt", "s\n", "s\n"),
@@ -338,10 +338,10 @@ func TestBuildOrdersAndTotals(t *testing.T) {
 	}
 	wantTotals := report.Totals{
 		Files:      map[report.Status]int{report.Added: 1, report.Modified: 4, report.Removed: 1},
-		LinesAdded: 3 + 2, LinesRemoved: 1 + 3, // the binary file counts for neither
+		LinesAdded: 3 + 2, LinesRemoved: 1 + 7, // the binary file counts for neither
 		Markers: map[report.MarkerKind]int{
 			report.MarkRemovedAssertion: 2, report.MarkAddedSkip: 1, report.MarkFocus: 1,
-			report.MarkDeletedTest: 1, report.MarkTestFileRemoved: 1,
+			report.MarkDeletedTest: 1, report.MarkTestFileRemoved: 1, "removed-case": 1,
 		},
 	}
 	if !reflect.DeepEqual(r.Totals, wantTotals) {

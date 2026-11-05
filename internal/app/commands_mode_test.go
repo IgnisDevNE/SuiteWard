@@ -43,24 +43,30 @@ func TestTheModeOfAnApproveIsRecordedWhateverItsDisposition(t *testing.T) {
 }
 
 // A /suiteward mode line is no command (M2.1c, SW-16, text 7): the owner's line is recorded as any malformed line is, with no mode, no step and no operation, and
-// it is answered on a pull request that is not open too, because a malformed line is decided before the closed-pull guard.
+// it is answered on a pull request that is not open, on a fork and in a repository with no Suite too, because a malformed line is decided before those guards.
 func TestAModeLineIsAnsweredAsMalformedAndRecordsNoMode(t *testing.T) {
 	closedAt := cjSync.Add(10 * time.Minute)
 	for _, tc := range []struct {
 		name  string
+		repo  int64
 		setup func(w *cjWorld, mode cjComment)
 	}{
-		{"an open pull request", func(w *cjWorld, mode cjComment) { w.syncAll([]cjComment{mode}) }},
-		{"a pull request that closed after the comment", func(w *cjWorld, mode cjComment) {
+		{"an open pull request", cjID1, func(w *cjWorld, mode cjComment) { w.syncAll([]cjComment{mode}) }},
+		{"a pull request that closed after the comment", cjID1, func(w *cjWorld, mode cjComment) {
 			w.syncAll([]cjComment{mode})
 			w.closePull(cjID1, cjSync.Add(time.Minute))
 		}},
-		{"a pull request that was closed when the comment was first observed", func(w *cjWorld, mode cjComment) {
+		{"a pull request that was closed when the comment was first observed", cjID1, func(w *cjWorld, mode cjComment) {
 			w.observe(cjID1, closedAt.Add(time.Minute), mode)
 			w.observe(cjID2, cjSync.Add(20*time.Minute))
 			w.closePull(cjID1, closedAt)
 			w.closePull(cjID1, cjSync.Add(20*time.Minute))
 		}},
+		{"a fork", cjID1, func(w *cjWorld, mode cjComment) {
+			w.headRepo = "evil/widgets"
+			w.syncAll([]cjComment{mode})
+		}},
+		{"a repository with no Suite", cjID2, func(w *cjWorld, mode cjComment) { w.syncAll(nil, mode) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newCjWorld(t)
@@ -69,8 +75,8 @@ func TestAModeLineIsAnsweredAsMalformedAndRecordsNoMode(t *testing.T) {
 
 			w.mustRun()
 
-			w.requireRejected(cjID1, 500, commands.Malformed, commandtext.BadMode, "")
-			if entry, _, _ := w.recorded(cjID1, 500); entry.Mode != "" || entry.Operation != "" {
+			w.requireRejected(tc.repo, 500, commands.Malformed, commandtext.BadMode, "")
+			if entry, _, _ := w.recorded(tc.repo, 500); entry.Mode != "" || entry.Operation != "" {
 				t.Errorf("entry has mode %q and operation %q; want neither: a mode line records no mode", entry.Mode, entry.Operation)
 			}
 			if len(w.owners.consumed) != 0 {

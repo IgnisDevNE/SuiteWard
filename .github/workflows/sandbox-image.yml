@@ -1,0 +1,89 @@
+# Builds, publishes and signs the sandbox image of the C/C++ execution profile (deploy/sandbox/cpp/Containerfile). The owner starts it by hand; it is not part of the CI gate and not a required check.
+# SuiteWard pins the published image by its index digest as a source constant, so this runs once, before the code that pins it, and again only when the Containerfile changes.
+# Nothing is pushed before linux/amd64 builds and passes the smoke test with the flags the sandbox uses: no network, user 65534. The push then builds both platforms; the amd64 packages come from the cache of the smoke build.
+# Like release.yml: no third-party actions, the BuildKit image and the SBOM generator are pinned by digest, the index carries a SLSA provenance and an SBOM, and it is signed keyless with cosign through GitHub OIDC (Rekor).
+# Unlike the service image, the arm64 build runs apt in the target image, so it runs under QEMU: the binfmt image below registers it, also pinned by digest.
+# The signing identity is this workflow at the ref it ran on; the verification below checks exactly that. The GHCR package is made public by the owner once, after the first run.
+name: Sandbox image
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: sandbox-image
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/ignisdevne/suiteward-sandbox-cpp
+  # The same pins as release.yml (scripts/check-pins.ps1 checks they agree).
+  BUILDKIT_IMAGE: docker.io/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+  SBOM_GENERATOR: docker.io/docker/buildkit-syft-scanner@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9
+  # tonistiigi/binfmt:latest as of 2026-11-12: the QEMU handlers, pinned so its tag cannot move.
+  BINFMT_IMAGE: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+
+jobs:
+  publish:
+    name: Build, push and sign the C/C++ sandbox image
+    runs-on: ubuntu-24.04
+    # apt and GCC under QEMU make the arm64 build slow.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      # Only this job: cosign exchanges the run's OIDC token for a short-lived signing certificate.
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Register the arm64 emulator
+        # The runner is amd64 and the Containerfile runs apt-get in the target image, so the arm64 build executes arm64 binaries.
+        run: docker run --privileged --rm "$BINFMT_IMAGE" --install arm64
+      - name: Create the builder
+        run: docker buildx create --use --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE"
+      - name: Build linux/amd64 alone and smoke-test it as the sandbox runs it
+        # Nothing is pushed yet.
+        run: |
+          docker buildx build --platform linux/amd64 --provenance=false --load \
+            --file deploy/sandbox/cpp/Containerfile --tag sandbox-cpp-smoke deploy/sandbox/cpp
+          docker run --rm --network none --user 65534:65534 sandbox-cpp-smoke \
+            sh -c 'cmake --version && ninja --version && g++ --version && tar --version && env true'
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+      - name: Install cosign
+        # The binary pinned in dev/tools.json: a release asset checked against its SHA-256 before it is made executable.
+        run: |
+          read -r url sha256 < <(jq -er '.cosign.assets["linux-amd64"] | "\(.url) \(.sha256)"' dev/tools.json)
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "$RUNNER_TEMP/cosign" "$url"
+          echo "$sha256  $RUNNER_TEMP/cosign" | sha256sum --check --strict -
+          chmod +x "$RUNNER_TEMP/cosign"
+      - id: push
+        name: Build and push linux/amd64 and linux/arm64
+        env:
+          COMMIT: ${{ github.sha }}
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 --push \
+            --provenance=mode=max --attest "type=sbom,generator=$SBOM_GENERATOR" \
+            --label org.opencontainers.image.source=https://github.com/IgnisDevNE/SuiteWard \
+            --label "org.opencontainers.image.revision=$COMMIT" \
+            --annotation index:org.opencontainers.image.source=https://github.com/IgnisDevNE/SuiteWard \
+            --file deploy/sandbox/cpp/Containerfile --tag "$IMAGE:sha-$COMMIT" \
+            --metadata-file "$RUNNER_TEMP/meta.json" deploy/sandbox/cpp
+          # The index digest: the attestation manifests hang off it, so signing it covers them.
+          echo "digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/meta.json")" >> "$GITHUB_OUTPUT"
+      - name: Sign the image index and verify the signature
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::Unexpected image digest"; exit 1; }
+          "$RUNNER_TEMP/cosign" sign --yes "$IMAGE@$DIGEST"
+          "$RUNNER_TEMP/cosign" verify --certificate-identity "https://github.com/$WORKFLOW_REF" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$IMAGE@$DIGEST"
+          # SuiteWard pins this digest: copy these two lines from the run summary.
+          { echo "Index digest: $DIGEST"; echo "Reference: $IMAGE@$DIGEST"; } >> "$GITHUB_STEP_SUMMARY"

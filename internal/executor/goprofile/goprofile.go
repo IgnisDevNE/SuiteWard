@@ -5,7 +5,7 @@ package goprofile
 
 // Image is the Go image of every sandbox, pinned by digest. It is the builder image of deploy/Containerfile, so the Go
 // that builds the release is the Go that runs the protected tests.
-const Image = "docker.io/library/golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd"
+const Image = "docker.io/library/golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf"
 
 // The layout of the sandbox's /work, as tar entry names. The runner extracts one tar into /work and then runs the
 // process in the Workdir under it.

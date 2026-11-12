@@ -22,7 +22,7 @@ func passing(c call) (sandbox.Outcome, error) { return goTest(c, pass), nil }
 
 // The sandbox object of an unavailable result: the image and the runtime are the executor's own and always known; the toolchain is known
 // once the image has answered.
-const sandboxWithout = `"sandbox": {"imageDigest": "sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd", "runtime": "docker 29.1.0"}`
+const sandboxWithout = `"sandbox": {"imageDigest": "sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf", "runtime": "docker 29.1.0"}`
 
 // unavailable is the body of a result that gives up with the reason.
 func unavailable(reason, sandboxObject string) string {

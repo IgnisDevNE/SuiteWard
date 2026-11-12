@@ -3,7 +3,8 @@
 # Nothing is pushed before linux/amd64 builds and passes the smoke test with the flags the sandbox uses: no network, user 65534. The push then builds both platforms; the amd64 packages come from the cache of the smoke build.
 # Like release.yml: no third-party actions, the BuildKit image and the SBOM generator are pinned by digest, the index carries a SLSA provenance and an SBOM, and it is signed keyless with cosign through GitHub OIDC (Rekor).
 # Unlike the service image, the arm64 build runs apt in the target image, so it runs under QEMU: the binfmt image below registers it, also pinned by digest.
-# The signing identity is this workflow at the ref it ran on; the verification below checks exactly that. The GHCR package is made public by the owner once, after the first run.
+# It runs only on main, and the verification below accepts only this workflow at main as the signer. Both guard against an accident, not an attack: a branch that edits this file can remove them.
+# What binds the image is its digest pinned in reviewed source; the signature is evidence. The GHCR package is made public by the owner once, after the first run.
 name: Sandbox image
 
 on:
@@ -35,6 +36,12 @@ jobs:
       # Only this job: cosign exchanges the run's OIDC token for a short-lived signing certificate.
       id-token: write
     steps:
+      - name: Refuse a run that is not on main
+        # A run on another branch would publish and sign an image under the official name, with a digest that looks like a real one.
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          [ "$REF" = refs/heads/main ] || { echo "::error::Run this workflow on main"; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -79,11 +86,12 @@ jobs:
       - name: Sign the image index and verify the signature
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
-          WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::Unexpected image digest"; exit 1; }
           "$RUNNER_TEMP/cosign" sign --yes "$IMAGE@$DIGEST"
-          "$RUNNER_TEMP/cosign" verify --certificate-identity "https://github.com/$WORKFLOW_REF" \
+          # A fixed identity, not the ref of this run: only this workflow at main signs the image that SuiteWard pins.
+          "$RUNNER_TEMP/cosign" verify \
+            --certificate-identity https://github.com/IgnisDevNE/SuiteWard/.github/workflows/sandbox-image.yml@refs/heads/main \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com "$IMAGE@$DIGEST"
           # SuiteWard pins this digest: copy these two lines from the run summary.
           { echo "Index digest: $DIGEST"; echo "Reference: $IMAGE@$DIGEST"; } >> "$GITHUB_STEP_SUMMARY"

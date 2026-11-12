@@ -519,7 +519,7 @@ execution:
 - **It is a protected change.** The pull request that adds or changes the block is a revision that you approve with a code. Before the first contract (V1) nothing runs.
 - **The canonical declaration governs every pull request, the one that changes the block included.** A pull request that lowers the levels still meets the old levels until its approved version is promoted. Lowering is, from the strongest: `canonical` `required`, `advisory`, `off`, and `receipt` `required`, `before-approval`, `advisory`, `off`; removing the block lowers both to `off`. A revision that lowers a level lists it in its comment as a reduction (`approved tests: required -> advisory`), so you see it before you approve it. Raising a level lists nothing.
 - **Pull requests from forks get no run.** Their check stays `fork-unsupported`.
-- **The toolchain is not a setting.** Go is the Go of the release's pinned sandbox image (1.27.3 in this release). A `go` or `toolchain` line of a side's `go.mod` that asks for a newer one makes the run `unavailable` (`toolchain-mismatch`).
+- **The toolchain is not a setting.** Go is the Go of the release's pinned sandbox image (1.27.4 in this release). A `go` or `toolchain` line of a side's `go.mod` that asks for a newer one makes the run `unavailable` (`toolchain-mismatch`).
 
 **What each level does.**
 

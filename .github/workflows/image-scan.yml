@@ -41,7 +41,7 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
           # The Go image of the executor's sandboxes (internal/executor/goprofile). The copy that scripts/check-pins.ps1 compares with the others.
-          GO_IMAGE: docker.io/library/golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd
+          GO_IMAGE: docker.io/library/golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf
         run: |
           set -euo pipefail
           images=("$(jq -er '.postgres.image' dev/tools.json)" "$GO_IMAGE")

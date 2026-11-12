@@ -142,7 +142,7 @@ func TestAReceiptRunsATinyModuleOnARealEngine(t *testing.T) {
 	}
 	assertBody(t, body, `{
 		"status": "complete", "head": {"sha": "`+headSHA+`"}, "base": {"sha": "`+baseSHA+`"}, `+commonExecutor+`,
-		"sandbox": {"imageDigest": "sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd", "toolchain": "`+toolchain+`", "runtime": "`+runtimeName+`"},
+		"sandbox": {"imageDigest": "sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf", "toolchain": "`+toolchain+`", "runtime": "`+runtimeName+`"},
 		"tests": [
 			{"package": ".", "name": "TestDetects", "file": "lib_test.go", "kind": "added", "head": ["pass"], "base": ["fail", "fail", "fail"]},
 			{"package": ".", "name": "TestInert", "file": "lib_test.go", "kind": "added", "head": ["pass"], "base": ["pass"]}
@@ -225,7 +225,7 @@ func TestAHeadGoModOverATestDirectoryOfTheManifestIsABuildErrorOnARealEngine(t *
 	runtimeName, _ := sb["runtime"].(string)
 	assertBody(t, body, `{
 		"status": "complete", "head": {"sha": "`+headSHA+`"}, `+commonExecutor+`,
-		"sandbox": {"imageDigest": "sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd", "toolchain": "`+toolchain+`", "runtime": "`+runtimeName+`"},
+		"sandbox": {"imageDigest": "sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf", "toolchain": "`+toolchain+`", "runtime": "`+runtimeName+`"},
 		"tests": [
 			{"package": ".", "name": "TestOne", "file": "lib_test.go", "kind": "declared", "head": ["pass"]},
 			{"package": "sub", "name": "TestOne", "file": "sub/sub_test.go", "kind": "declared", "head": ["build-error"]}
@@ -251,7 +251,7 @@ func TestAHeadOnlyGoModOverAnAddedTestIsABuildErrorOnARealEngine(t *testing.T) {
 	runtimeName, _ := sb["runtime"].(string)
 	assertBody(t, body, `{
 		"status": "complete", "head": {"sha": "`+headSHA+`"}, "base": {"sha": "`+baseSHA+`"}, `+commonExecutor+`,
-		"sandbox": {"imageDigest": "sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd", "toolchain": "`+toolchain+`", "runtime": "`+runtimeName+`"},
+		"sandbox": {"imageDigest": "sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf", "toolchain": "`+toolchain+`", "runtime": "`+runtimeName+`"},
 		"tests": [{"package": "sub", "name": "TestOne", "file": "sub/sub_test.go", "kind": "added", "head": ["build-error"], "base": ["pass"]}]
 	}`)
 }

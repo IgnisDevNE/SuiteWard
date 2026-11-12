@@ -731,7 +731,7 @@ func assertBody(t *testing.T, body []byte, want string) map[string]any {
 // The fields of a complete result that do not change between the tests.
 const (
 	commonExecutor = `"executor": {"version": "1.2.3", "binarySha256": "abababababababababababababababababababababababababababababababab"}`
-	commonSandbox  = `"sandbox": {"imageDigest": "sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd", "toolchain": "go1.27.3", "runtime": "docker 29.1.0"}`
+	commonSandbox  = `"sandbox": {"imageDigest": "sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf", "toolchain": "go1.27.3", "runtime": "docker 29.1.0"}`
 )
 
 // moduleZip is a module zip with one file of n bytes, as a proxy serves it, and its .mod file.

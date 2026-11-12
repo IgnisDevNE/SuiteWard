@@ -1,0 +1,8 @@
+# The sandbox image of the C/C++ execution profile: a compiler, CMake and Ninja, nothing else. Build: docker build -f deploy/sandbox/cpp/Containerfile deploy/sandbox/cpp
+# Debian and not Alpine because GoogleTest and the project under test are built against glibc, as most C/C++ code is; GCC is the only compiler.
+# The base is pinned by the digest of its multi-arch index. Once .github/workflows/sandbox-image.yml has published this image, SuiteWard pins it by its own digest, not by a tag.
+# The sandbox runs it as 65534:65534 with no network and a tmpfs on /work: it needs sh, tar and env, which the base has, and no user of its own.
+FROM docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+RUN apt-get update \
+	&& apt-get install --yes --no-install-recommends g++ cmake ninja-build \
+	&& rm -rf /var/lib/apt/lists/*

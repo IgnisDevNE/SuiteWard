@@ -24,8 +24,7 @@ type Profile struct {
 // list is the order of All and of Suggest. Each profile reads its image from its own package, so scripts/check-pins.ps1 keeps one
 // copy of a digest to check.
 var list = []Profile{
-	// ImageBytes is `podman image inspect --format '{{.Size}}'` of Image, linux/amd64, on the rootless connection of
-	// podman-machine-default (2026-11-13), the same measure as the C/C++ image's 411507626.
+	// 266516173 bytes: `podman image inspect --format '{{.Size}}'` of Image, linux/amd64, rootless podman-machine-default, 2026-11-13 (the C/C++ image reads 411507626 the same way).
 	{ID: "go", Name: "Go", Image: goprofile.Image, ImageBytes: 266516173, BuildFiles: []string{"go.mod"}},
 }
 

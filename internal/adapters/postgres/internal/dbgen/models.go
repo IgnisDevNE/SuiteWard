@@ -156,6 +156,8 @@ type ExecutionResult struct {
 	Markers         []byte
 	Submodules      []string
 	Unparsed        []string
+	Parts           []byte
+	Removed         []byte
 }
 
 type ExecutionTest struct {

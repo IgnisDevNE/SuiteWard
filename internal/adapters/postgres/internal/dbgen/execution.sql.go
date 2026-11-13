@@ -181,9 +181,28 @@ SELECT job_id, status, origin, reason, executor_version, executor_sha256, image_
 FROM execution_results WHERE job_id = $1
 `
 
-func (q *Queries) GetExecutionResult(ctx context.Context, jobID int64) (ExecutionResult, error) {
+type GetExecutionResultRow struct {
+	JobID           int64
+	Status          string
+	Origin          string
+	Reason          pgtype.Text
+	ExecutorVersion pgtype.Text
+	ExecutorSha256  pgtype.Text
+	ImageDigest     pgtype.Text
+	Toolchain       pgtype.Text
+	Runtime         pgtype.Text
+	StartedAt       pgtype.Timestamptz
+	EndedAt         pgtype.Timestamptz
+	ReceivedAt      pgtype.Timestamptz
+	BodyDigest      pgtype.Text
+	Markers         []byte
+	Submodules      []string
+	Unparsed        []string
+}
+
+func (q *Queries) GetExecutionResult(ctx context.Context, jobID int64) (GetExecutionResultRow, error) {
 	row := q.db.QueryRow(ctx, getExecutionResult, jobID)
-	var i ExecutionResult
+	var i GetExecutionResultRow
 	err := row.Scan(
 		&i.JobID,
 		&i.Status,

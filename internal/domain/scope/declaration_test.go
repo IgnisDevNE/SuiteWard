@@ -806,6 +806,9 @@ func TestParseDeclarationRefusesABadProfilesEntry(t *testing.T) {
 		{"a zero-width space", entry(`{profile: go, folder: "a\u200Bb"}`), folder},
 		{"a right-to-left override", entry(`{profile: go, folder: "a\u202Eb"}`), folder},
 		{"a byte order mark", entry(`{profile: go, folder: "a\uFEFFb"}`), folder},
+		// The service refuses both in a result's package, so a folder that held one would make every result of its part a 400.
+		{"a line separator", entry(`{profile: go, folder: "a\u2028b"}`), folder},
+		{"a paragraph separator", entry(`{profile: go, folder: "a\u2029b"}`), folder},
 		{"a byte that is not UTF-8", "version: 1\nexecution:\n  profiles:\n    - profile: go\n      folder: \"a\xffb\"\n", folder},
 		{"an integer folder", entry("{profile: go, folder: 2024}"), folder},
 		{"a null folder", entry("{profile: go, folder: ~}"), folder},

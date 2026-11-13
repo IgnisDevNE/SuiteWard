@@ -149,11 +149,11 @@ func TestReductionsReportAWeakerExecutionPolicy(t *testing.T) {
 		{"receipt from required to off", withExecution("{profile: go, receipt: required}"), withExecution("{profile: go, receipt: off}"), []string{"execution receipt: required -> off"}},
 		{"both levels lowered", withExecution(full), withExecution("{profile: go, canonical: advisory, receipt: before-approval}"), []string{"execution canonical: required -> advisory", "execution receipt: required -> before-approval"}},
 		{"one level lowered and one raised", withExecution("{profile: go, canonical: required, receipt: off}"), withExecution("{profile: go, canonical: off, receipt: required}"), []string{"execution canonical: required -> off"}},
-		{"the profile removed lowers every level to off", withExecution(full), withExecution("{}"), []string{"execution canonical: required -> off", "execution receipt: required -> off"}},
-		{"the profile removed from the defaults", withExecution("{profile: go}"), withExecution("{}"), []string{"execution canonical: advisory -> off", "execution receipt: advisory -> off"}},
-		{"the section removed", withExecution(full), "version: 1\n", []string{"execution canonical: required -> off", "execution receipt: required -> off"}},
-		{"the declaration deleted", withExecution("{profile: go, receipt: before-approval}"), absent, []string{"execution canonical: advisory -> off", "execution receipt: before-approval -> off"}},
-		{"removing a profile that runs nothing", withExecution("{profile: go, canonical: off, receipt: off}"), "version: 1\n", []string{}},
+		{"the profile removed lowers every level to off", withExecution(full), withExecution("{}"), []string{"execution canonical: required -> off", "execution profile: go . removed", "execution receipt: required -> off"}},
+		{"the profile removed from the defaults", withExecution("{profile: go}"), withExecution("{}"), []string{"execution canonical: advisory -> off", "execution profile: go . removed", "execution receipt: advisory -> off"}},
+		{"the section removed", withExecution(full), "version: 1\n", []string{"execution canonical: required -> off", "execution profile: go . removed", "execution receipt: required -> off"}},
+		{"the declaration deleted", withExecution("{profile: go, receipt: before-approval}"), absent, []string{"execution canonical: advisory -> off", "execution profile: go . removed", "execution receipt: before-approval -> off"}},
+		{"removing a profile whose levels are off reports the profile only", withExecution("{profile: go, canonical: off, receipt: off}"), "version: 1\n", []string{"execution profile: go . removed"}},
 		{"removing an empty section", withExecution("{}"), "version: 1\n", []string{}},
 		{"a policy raised", withExecution("{profile: go, canonical: advisory, receipt: advisory}"), withExecution(full), []string{}},
 		{"a profile added", "version: 1\n", withExecution("{profile: go}"), []string{}},
@@ -173,4 +173,121 @@ func TestReductionsReportAWeakerExecutionPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+// reductionCase is a governing and a proposed declaration, and the entries that Reductions reports from the first to the second.
+type reductionCase struct {
+	name                string
+	governing, proposed string
+	want                []string
+}
+
+func checkReductions(t *testing.T, tests []reductionCase) {
+	t.Helper()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := scope.Reductions(scopeOf(t, tt.governing), scopeOf(t, tt.proposed))
+			if !reflect.DeepEqual(got, tt.want) || !slices.IsSorted(got) {
+				t.Fatalf("Reductions() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+// A running pair of the governing declaration that the proposed one does not hold is reported as removed, with "." for the root. The
+// scalar form is the pair (go, .); a folder that moves is the removal of the old pair.
+func TestReductionsReportARemovedProfile(t *testing.T) {
+	root := withProfiles("[{profile: go}]")
+	checkReductions(t, []reductionCase{
+		{"the scalar form is the pair at the root", withExecution("{profile: go}"), withProfiles("[{profile: go, folder: core}]"), []string{"execution profile: go . removed"}},
+		{"the root and the scalar form are one pair", withExecution("{profile: go}"), root, []string{}},
+		{"a folder that moves", withProfiles("[{profile: go, folder: core}]"), withProfiles("[{profile: go, folder: lib}]"), []string{"execution profile: go core removed"}},
+		{"a nested folder", withProfiles("[{profile: go}, {profile: go, folder: tools/gen}]"), root, []string{"execution profile: go tools/gen removed"}},
+		{"the root beside a nested folder", withProfiles("[{profile: go}, {profile: go, folder: core}]"), withProfiles("[{profile: go, folder: core}]"), []string{"execution profile: go . removed"}},
+		{"a folder as it is declared", withProfiles(`[{profile: go}, {profile: go, folder: "+lib/a b"}]`), root, []string{"execution profile: go +lib/a b removed"}},
+		{
+			"several, sorted",
+			withProfiles("[{profile: go, folder: lib}, {profile: go}, {profile: go, folder: core}]"),
+			withProfiles("[{profile: go, folder: core}]"),
+			[]string{"execution profile: go . removed", "execution profile: go lib removed"},
+		},
+		{
+			"the levels that stay are not reported",
+			withExecution("{profiles: [{profile: go}, {profile: go, folder: core}], canonical: required, receipt: required}"),
+			withExecution("{profiles: [{profile: go, folder: core}], canonical: required, receipt: required}"),
+			[]string{"execution profile: go . removed"},
+		},
+		{
+			"the last running profile comes with both levels, all sorted together",
+			withProfiles("[{profile: go}, {profile: go, folder: core}]"),
+			"version: 1\n",
+			[]string{"execution canonical: advisory -> off", "execution profile: go . removed", "execution profile: go core removed", "execution receipt: advisory -> off"},
+		},
+		{
+			"sorted among the rules and the excludes",
+			"version: 1\ninclude: [a]\nexecution: {profiles: [{profile: go}]}\n",
+			"version: 1\nexclude: [b]\n",
+			[]string{"exclude b", "execution canonical: advisory -> off", "execution profile: go . removed", "execution receipt: advisory -> off", "rule a"},
+		},
+		{"a profile that is removed, beside one that stays protected only", withProfiles("[{profile: go}, {profile: go, folder: core, run: false}]"), "version: 1\n", []string{"execution canonical: advisory -> off", "execution profile: go . removed", "execution receipt: advisory -> off"}},
+	})
+}
+
+// A running pair that the proposed declaration keeps with run false is reported as made protected only. The strings are by pair: an enclosing
+// running entry of the profile that goes on running does not hide it.
+func TestReductionsReportAProfileMadeProtectedOnly(t *testing.T) {
+	checkReductions(t, []reductionCase{
+		{
+			"the only entry",
+			withProfiles("[{profile: go}]"), withProfiles("[{profile: go, run: false}]"),
+			[]string{"execution canonical: advisory -> off", "execution profile: go . -> protected only", "execution receipt: advisory -> off"},
+		},
+		{
+			"a nested entry, while the root goes on running",
+			withProfiles("[{profile: go}, {profile: go, folder: core}]"), withProfiles("[{profile: go}, {profile: go, folder: core, run: false}]"),
+			[]string{"execution profile: go core -> protected only"},
+		},
+		{
+			"the root, while a nested entry goes on running",
+			withProfiles("[{profile: go}, {profile: go, folder: core}]"), withProfiles("[{profile: go, run: false}, {profile: go, folder: core}]"),
+			[]string{"execution profile: go . -> protected only"},
+		},
+		{
+			"the scalar form",
+			withExecution("{profile: go}"), withProfiles("[{profile: go, run: false}, {profile: go, folder: core}]"),
+			[]string{"execution profile: go . -> protected only"},
+		},
+		{
+			"one made protected only and another removed",
+			withProfiles("[{profile: go, folder: a}, {profile: go, folder: b}, {profile: go, folder: c}]"), withProfiles("[{profile: go, folder: a, run: false}, {profile: go, folder: c}]"),
+			[]string{"execution profile: go a -> protected only", "execution profile: go b removed"},
+		},
+	})
+}
+
+// A pair that is added, whether it runs or not, takes nothing away; nor does a protected-only pair that goes, since it ran nothing, or one
+// that starts to run.
+func TestReductionsIgnoreAnAddedProtectedOnlyEntry(t *testing.T) {
+	root := withProfiles("[{profile: go}]")
+	checkReductions(t, []reductionCase{
+		{"beside a running root", root, withProfiles("[{profile: go}, {profile: go, folder: core, run: false}]"), []string{}},
+		{"to a declaration with no profile", "version: 1\n", withProfiles("[{profile: go, run: false}]"), []string{}},
+		{"to no declaration", absent, withProfiles("[{profile: go, run: false}]"), []string{}},
+		{"a protected-only pair that is removed", withProfiles("[{profile: go}, {profile: go, folder: core, run: false}]"), root, []string{}},
+		{"a protected-only pair that starts to run", withProfiles("[{profile: go}, {profile: go, folder: core, run: false}]"), withProfiles("[{profile: go}, {profile: go, folder: core}]"), []string{}},
+		{"every pair protected only, then none", withProfiles("[{profile: go, run: false}]"), "version: 1\n", []string{}},
+		{"a protected-only pair that moves", withProfiles("[{profile: go}, {profile: go, folder: a, run: false}]"), withProfiles("[{profile: go}, {profile: go, folder: b, run: false}]"), []string{}},
+	})
+}
+
+func TestReductionsIgnoreAnAddedRunningProfile(t *testing.T) {
+	core := withProfiles("[{profile: go, folder: core}]")
+	checkReductions(t, []reductionCase{
+		{"the root beside a folder", core, withProfiles("[{profile: go}, {profile: go, folder: core}]"), []string{}},
+		{"a folder beside the root", withProfiles("[{profile: go}]"), withProfiles("[{profile: go}, {profile: go, folder: core}]"), []string{}},
+		{"a folder beside the scalar form", withExecution("{profile: go}"), withProfiles("[{profile: go}, {profile: go, folder: core}]"), []string{}},
+		{"to a declaration with no profile", "version: 1\n", core, []string{}},
+		{"to no declaration", absent, core, []string{}},
+		{"the same list", core, core, []string{}},
+	})
 }

@@ -31,6 +31,11 @@ type execLease struct {
 		ID    string `json:"id"`
 		Image string `json:"image"`
 	} `json:"profile"`
+	Profiles []struct {
+		ID     string `json:"id"`
+		Image  string `json:"image"`
+		Folder string `json:"folder"`
+	} `json:"profiles"`
 	Head     *execSide `json:"head"`
 	Base     *execSide `json:"base"`
 	Manifest struct {
@@ -205,15 +210,15 @@ func TestLeaseAnswerHasNoDeclarationWhenTheManifestHasNone(t *testing.T) {
 	}
 }
 
-// An empty .suiteward.yml is a declaration (it names no execution block), not an absent one.
-func TestLeaseAnswerKeepsAnEmptyDeclaration(t *testing.T) {
+// A .suiteward.yml that names no execution block is a declaration, not an absent one.
+func TestLeaseAnswerKeepsADeclarationWithNoExecutionBlock(t *testing.T) {
 	e := newExecEnv(t)
-	e.canonicalJob(1, map[string]string{".suiteward.yml": ""})
+	e.canonicalJob(1, map[string]string{".suiteward.yml": "version: 1\n"})
 
 	got := e.lease()
 
-	if l := decodeLease(t, got); got.status != http.StatusOK || l.Declaration == nil || *l.Declaration != "" {
-		t.Errorf("lease = %d, declaration %v; want 200 with an empty declaration present", got.status, l.Declaration)
+	if l := decodeLease(t, got); got.status != http.StatusOK || l.Declaration == nil || *l.Declaration != base64.StdEncoding.EncodeToString([]byte("version: 1\n")) {
+		t.Errorf("lease = %d, declaration %v; want 200 with the declaration present", got.status, l.Declaration)
 	}
 }
 
@@ -439,7 +444,7 @@ func TestLeaseRefusesADeclarationOverOneMiB(t *testing.T) {
 	}{{"one MiB", 1 << 20, true}, {"one byte over", 1<<20 + 1, false}} {
 		t.Run(test.name, func(t *testing.T) {
 			e := newExecEnv(t)
-			job := e.canonicalJob(1, map[string]string{".suiteward.yml": "#" + strings.Repeat("a", test.size-1)})
+			job := e.canonicalJob(1, map[string]string{".suiteward.yml": "version: 1\n#" + strings.Repeat("a", test.size-len("version: 1\n#"))})
 
 			got := e.lease()
 

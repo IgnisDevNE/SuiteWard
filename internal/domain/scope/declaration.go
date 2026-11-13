@@ -233,6 +233,18 @@ func (d Declaration) Execution() (Execution, bool) {
 	return d.execution, d.execution.Profile != ""
 }
 
+// ProfileIDs returns the closed set of profile ids that a declaration accepts, sorted.
+func ProfileIDs() []string { return nil }
+
+// Part is a running entry of the execution declaration: a profile id and its folder, "." for the root.
+type Part struct{ Profile, Folder string }
+
+// Parts returns the running entries in the contract's order.
+func (d Declaration) Parts() []Part { return nil }
+
+// ListForm reports whether the execution block uses `profiles`.
+func (d Declaration) ListForm() bool { return false }
+
 // levels returns the position of each level in its order of weakening; without a profile nothing runs, so both are off.
 func (e Execution) levels() (canonical, receipt int) {
 	if e.Profile == "" {

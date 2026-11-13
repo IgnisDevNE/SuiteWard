@@ -518,3 +518,285 @@ func TestAddPatternsAndExcludesRefuseAdditionsPastTheDeclarationCap(t *testing.T
 		t.Errorf("AddExcludes past the cap error = %v, want ErrInvalidDeclaration", err)
 	}
 }
+
+// withProfiles is a declaration whose execution section holds the list form, body being the YAML of the list.
+func withProfiles(body string) string { return withExecution("{profiles: " + body + "}") }
+
+// refusal is a declaration that must be refused, with the valid declaration that differs from it by the one thing that
+// is refused, so that a refusal cannot come from anything but that.
+type refusal struct{ name, raw, valid string }
+
+func checkRefused(t *testing.T, tests []refusal) {
+	t.Helper()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := scope.ParseDeclaration([]byte(tt.valid)); err != nil {
+				t.Fatalf("ParseDeclaration(%q) error = %v, want the valid twin accepted", tt.valid, err)
+			}
+			_, err := scope.ParseDeclaration([]byte(tt.raw))
+			if !errors.Is(err, scope.ErrInvalidDeclaration) {
+				t.Fatalf("ParseDeclaration(%q) error = %v, want ErrInvalidDeclaration", tt.raw, err)
+			}
+			if errors.Is(err, scope.ErrInvalidPattern) {
+				t.Fatalf("ParseDeclaration(%q) error = %v, want no ErrInvalidPattern", tt.raw, err)
+			}
+		})
+	}
+}
+
+func TestParseDeclarationProfilesList(t *testing.T) {
+	// "+lib" sorts before "." in bytes, so only a root-first rule puts the root first; docs/examples is protected only.
+	const raw = `version: 1
+execution:
+  profiles:
+    - profile: go
+      folder: tools/gen
+    - profile: go
+      folder: "+lib"
+    - profile: go
+    - profile: go
+      folder: docs/examples
+      run: false
+    - profile: go
+      folder: core
+      run: true
+`
+	d := mustParse(t, []byte(raw))
+	want := []scope.Part{{Profile: "go", Folder: "."}, {Profile: "go", Folder: "+lib"}, {Profile: "go", Folder: "core"}, {Profile: "go", Folder: "tools/gen"}}
+	if got := d.Parts(); !slices.Equal(got, want) {
+		t.Fatalf("Parts() = %v, want %v (root first, then by folder, the protected-only entry left out)", got, want)
+	}
+	// Four running Go folders are one profile: the label is go, never go-go-go-go.
+	if got, ok := d.Execution(); !ok || got != (scope.Execution{Profile: "go", Canonical: "advisory", Receipt: "advisory"}) {
+		t.Fatalf("Execution() = %+v, %v, want go at advisory and advisory", got, ok)
+	}
+	if !d.ListForm() {
+		t.Fatal("ListForm() = false for the list form")
+	}
+}
+
+func TestParseDeclarationKeepsAFolderAsDeclared(t *testing.T) {
+	for _, folder := range []string{"core", "a/b", ".hidden", "..a", "a..", "a/.b/c", "-x", "with space", "ünï", "a.b/c", strings.Repeat("a", 512)} {
+		d := mustParse(t, []byte(withProfiles("[{profile: go, folder: "+strconv.Quote(folder)+"}]")))
+		if got, want := d.Parts(), []scope.Part{{Profile: "go", Folder: folder}}; !slices.Equal(got, want) {
+			t.Errorf("folder %q: Parts() = %v, want %v", folder, got, want)
+		}
+	}
+}
+
+func TestParseDeclarationLegacyProfileIsOneGoAtTheRoot(t *testing.T) {
+	for name, levels := range map[string]string{"default levels": "", "named levels": ", canonical: required, receipt: before-approval"} {
+		t.Run(name, func(t *testing.T) {
+			scalar := mustParse(t, []byte(withExecution("{profile: go"+levels+"}")))
+			list := mustParse(t, []byte(withExecution("{profiles: [{profile: go}]"+levels+"}")))
+			scalarPolicy, scalarOK := scalar.Execution()
+			listPolicy, listOK := list.Execution()
+			if scalarPolicy != listPolicy || scalarOK != listOK || !scalarOK {
+				t.Fatalf("Execution() = %+v, %v for the scalar form and %+v, %v for the list, want the same policy", scalarPolicy, scalarOK, listPolicy, listOK)
+			}
+			root := []scope.Part{{Profile: "go", Folder: "."}}
+			if got := scalar.Parts(); !slices.Equal(got, root) {
+				t.Errorf("Parts() of the scalar form = %v, want %v", got, root)
+			}
+			if got := list.Parts(); !slices.Equal(got, root) {
+				t.Errorf("Parts() of the list = %v, want %v", got, root)
+			}
+			if scalar.ListForm() || !list.ListForm() {
+				t.Errorf("ListForm() = %v for the scalar form and %v for the list, want false and true", scalar.ListForm(), list.ListForm())
+			}
+		})
+	}
+	if none := scope.NoDeclaration(); none.ListForm() || none.Parts() != nil {
+		t.Errorf("NoDeclaration() has parts %v or the list form", none.Parts())
+	}
+}
+
+func TestParseDeclarationRefusesProfileAndProfilesTogether(t *testing.T) {
+	checkRefused(t, []refusal{
+		{"the scalar first", withExecution("{profile: go, profiles: [{profile: go}]}"), withExecution("{profiles: [{profile: go}]}")},
+		{"the list first", withExecution("{profiles: [{profile: go}], profile: go}"), withExecution("{profile: go}")},
+		{"with levels and folders", withExecution("{profile: go, canonical: required, profiles: [{profile: go, folder: core}]}"), withExecution("{canonical: required, profiles: [{profile: go, folder: core}]}")},
+		{"a protected-only list", withExecution("{profile: go, profiles: [{profile: go, run: false}]}"), withExecution("{profiles: [{profile: go, run: false}]}")},
+		{"the list twice", withExecution("{profiles: [{profile: go}], profiles: [{profile: go}]}"), withExecution("{profiles: [{profile: go}]}")},
+	})
+}
+
+func TestParseDeclarationRefusesTheSameProfileTwiceForOneFolder(t *testing.T) {
+	checkRefused(t, []refusal{
+		{"a folder twice", withProfiles("[{profile: go, folder: core}, {profile: go, folder: core}]"), withProfiles("[{profile: go, folder: core}, {profile: go, folder: core2}]")},
+		{"an absent folder twice, which is the root twice", withProfiles("[{profile: go}, {profile: go}]"), withProfiles("[{profile: go}, {profile: go, folder: core}]")},
+		{"the pair not next to its twin", withProfiles("[{profile: go, folder: a}, {profile: go, folder: b}, {profile: go, folder: a}]"), withProfiles("[{profile: go, folder: a}, {profile: go, folder: b}, {profile: go, folder: c}]")},
+		{"a running entry and a protected-only one", withProfiles("[{profile: go, folder: core}, {profile: go, folder: core, run: false}]"), withProfiles("[{profile: go, folder: core}, {profile: go, folder: core2, run: false}]")},
+		{"two protected-only entries", withProfiles("[{profile: go, run: false}, {profile: go, run: false}]"), withProfiles("[{profile: go, run: false}, {profile: go, folder: core, run: false}]")},
+	})
+}
+
+func TestParseDeclarationNestedRunningFoldersAreAccepted(t *testing.T) {
+	tests := []struct {
+		name string
+		list string
+		want []scope.Part
+	}{
+		{"the root and a folder", "[{profile: go, folder: core}, {profile: go}]", []scope.Part{{Profile: "go", Folder: "."}, {Profile: "go", Folder: "core"}}},
+		{"a folder and one inside it", "[{profile: go, folder: core/x}, {profile: go, folder: core}]", []scope.Part{{Profile: "go", Folder: "core"}, {Profile: "go", Folder: "core/x"}}},
+		{"three levels", "[{profile: go, folder: core/x}, {profile: go}, {profile: go, folder: core}]", []scope.Part{{Profile: "go", Folder: "."}, {Profile: "go", Folder: "core"}, {Profile: "go", Folder: "core/x"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := mustParse(t, []byte(withProfiles(tt.list)))
+			if got := d.Parts(); !slices.Equal(got, tt.want) {
+				t.Fatalf("Parts() = %v, want %v", got, tt.want)
+			}
+			if got, ok := d.Execution(); !ok || got.Profile != "go" {
+				t.Fatalf("Execution() = %+v, %v, want the label go", got, ok)
+			}
+		})
+	}
+}
+
+func TestParseDeclarationLevelsNeedARunningProfile(t *testing.T) {
+	checkRefused(t, []refusal{
+		{"a canonical level beside a protected-only entry", withExecution("{profiles: [{profile: go, run: false}], canonical: required}"), withExecution("{profiles: [{profile: go}], canonical: required}")},
+		{"a receipt level beside a protected-only entry", withExecution("{profiles: [{profile: go, run: false}], receipt: off}"), withExecution("{profiles: [{profile: go}], receipt: off}")},
+		{"both levels, the defaults spelled out", withExecution("{canonical: advisory, profiles: [{profile: go, run: false}], receipt: advisory}"), withExecution("{canonical: advisory, profiles: [{profile: go}], receipt: advisory}")},
+		{"every entry protected only", withExecution("{profiles: [{profile: go, folder: a, run: false}, {profile: go, folder: b, run: false}], canonical: off}"), withExecution("{profiles: [{profile: go, folder: a, run: false}, {profile: go, folder: b}], canonical: off}")},
+	})
+	// A level beside one running entry is valid, whatever the others do.
+	mixed, _ := mustParse(t, []byte(withExecution("{profiles: [{profile: go, run: false}, {profile: go, folder: core}], canonical: required}"))).Execution()
+	if want := (scope.Execution{Profile: "go", Canonical: "required", Receipt: "advisory"}); mixed != want {
+		t.Errorf("Execution() = %+v, want %+v", mixed, want)
+	}
+
+	// Every entry protected only, no level: valid, and nothing runs, so the policy is off and off.
+	protected := mustParse(t, []byte(withProfiles("[{profile: go, run: false}, {profile: go, folder: core, run: false}]")))
+	if got, ok := protected.Execution(); ok || got != (scope.Execution{}) {
+		t.Fatalf("Execution() = %+v, %v, want no policy", got, ok)
+	}
+	if parts := protected.Parts(); parts != nil {
+		t.Fatalf("Parts() = %v, want nil when nothing runs", parts)
+	}
+	if !protected.ListForm() {
+		t.Error("ListForm() = false for a list of protected-only entries")
+	}
+	running := scope.NewScope(mustParse(t, []byte(withProfiles("[{profile: go}]"))))
+	none := scope.NewScope(scope.NoDeclaration())
+	reduced := scope.Reductions(running, scope.NewScope(protected))
+	for _, want := range []string{"execution canonical: advisory -> off", "execution receipt: advisory -> off"} {
+		if !slices.Contains(reduced, want) {
+			t.Errorf("Reductions(go runs, all protected only) = %q, want it to hold %q", reduced, want)
+		}
+	}
+	if got := scope.Reductions(scope.NewScope(protected), none); len(got) != 0 {
+		t.Errorf("Reductions(all protected only, nothing) = %q, want none: both levels were off already", got)
+	}
+}
+
+func TestProfileIDsIsTheSortedClosedSetAndACopy(t *testing.T) {
+	ids := scope.ProfileIDs()
+	if len(ids) == 0 || !slices.IsSorted(ids) || !slices.Contains(ids, "go") {
+		t.Fatalf("ProfileIDs() = %q, want a sorted set that holds go", ids)
+	}
+	for _, id := range ids {
+		if _, err := scope.ParseDeclaration([]byte(withProfiles("[{profile: " + id + "}]"))); err != nil {
+			t.Errorf("ParseDeclaration of the profile %q of ProfileIDs() error = %v, want it accepted", id, err)
+		}
+	}
+	ids[0] = "changed"
+	if got := scope.ProfileIDs(); slices.Contains(got, "changed") {
+		t.Fatalf("ProfileIDs() = %q after the caller changed a result, want a copy", got)
+	}
+}
+
+// The scalar form accepts only go whatever the list accepts: a repository that runs another profile uses the list form.
+func TestParseDeclarationRefusesAnUnknownProfile(t *testing.T) {
+	// cpp is refused until task X18 lands its profile; that task moves its rows to the accepted ones.
+	valid := withProfiles("[{profile: go}]")
+	checkRefused(t, []refusal{
+		{"cpp, until X18", withProfiles("[{profile: cpp}]"), valid},
+		{"cpp at a folder, until X18", withProfiles("[{profile: cpp, folder: core}]"), valid},
+		{"cpp beside go, until X18", withProfiles("[{profile: go}, {profile: cpp, folder: core}]"), withProfiles("[{profile: go}, {profile: go, folder: core}]")},
+		{"rust", withProfiles("[{profile: rust}]"), valid},
+		{"another case", withProfiles("[{profile: Go}]"), valid},
+		{"an empty string", withProfiles(`[{profile: ""}]`), valid},
+		{"an integer", withProfiles("[{profile: 1}]"), valid},
+		{"a boolean", withProfiles("[{profile: true}]"), valid},
+		{"null", withProfiles("[{profile: ~}]"), valid},
+		{"a sequence", withProfiles("[{profile: [go]}]"), valid},
+		{"a mapping", withProfiles("[{profile: {a: go}}]"), valid},
+		{"an unknown one after a known one", withProfiles("[{profile: go}, {profile: rust, folder: core}]"), withProfiles("[{profile: go}, {profile: go, folder: core}]")},
+		{"the scalar form takes go only: cpp", withExecution("{profile: cpp}"), withExecution("{profile: go}")},
+		{"the scalar form takes go only: rust", withExecution("{profile: rust}"), withExecution("{profile: go}")},
+	})
+}
+
+func TestParseDeclarationRefusesABadProfilesEntry(t *testing.T) {
+	entry := func(body string) string { return withProfiles("[" + body + "]") }
+	many := func(n int) string {
+		items := make([]string, n)
+		for i := range items {
+			items[i] = "{profile: go, folder: f" + strconv.Itoa(i) + "}"
+		}
+		return withProfiles("[" + strings.Join(items, ", ") + "]")
+	}
+	listed, folder, run := entry("{profile: go}"), entry("{profile: go, folder: core}"), entry("{profile: go, run: false}")
+	checkRefused(t, []refusal{
+		// The list itself.
+		{"an empty list", withProfiles("[]"), listed},
+		{"a null list", withProfiles("~"), listed},
+		{"a list with nothing after its key", "version: 1\nexecution:\n  profiles:\n", listed},
+		{"a scalar", withProfiles("go"), listed},
+		{"a mapping", withProfiles("{profile: go}"), listed},
+		{"nine entries", many(9), many(8)},
+		{"a hundred entries", many(100), many(8)},
+		// An entry.
+		{"an entry that is a string", entry("go"), listed},
+		{"an entry that is a sequence", entry("[go]"), listed},
+		{"a null entry", entry("~"), listed},
+		{"an empty entry", entry("{}"), listed},
+		{"an entry without a profile", entry("{folder: core}"), folder},
+		{"an entry with only run", entry("{run: false}"), run},
+		{"an unknown key", entry("{profile: go, extra: x}"), listed},
+		{"a misspelt key", entry("{profile: go, Folder: core}"), folder},
+		{"the old canonical key", entry("{profile: go, canonical: off}"), listed},
+		{"a key that is not a string", entry("{profile: go, 1: x}"), listed},
+		{"a merge key", entry("{<<: {profile: go}}"), listed},
+		{"profile twice", entry("{profile: go, profile: go}"), listed},
+		{"folder twice", entry("{profile: go, folder: a, folder: a}"), folder},
+		{"run twice", entry("{profile: go, run: true, run: true}"), run},
+		{"an alias is not followed", entry("{profile: &p go, folder: *p}"), entry("{profile: &p go, folder: core}")},
+		// A folder.
+		{"the root spelled out", entry("{profile: go, folder: .}"), folder},
+		{"a leading slash", entry("{profile: go, folder: /a}"), folder},
+		{"a trailing slash", entry("{profile: go, folder: a/}"), folder},
+		{"an empty segment", entry("{profile: go, folder: a//b}"), folder},
+		{"a dot segment", entry("{profile: go, folder: a/./b}"), folder},
+		{"a leading dot segment", entry("{profile: go, folder: ./a}"), folder},
+		{"a dot-dot segment", entry("{profile: go, folder: a/../b}"), folder},
+		{"a leading dot-dot segment", entry("{profile: go, folder: ../a}"), folder},
+		{"dot-dot", entry("{profile: go, folder: ..}"), folder},
+		{"an empty folder", entry(`{profile: go, folder: ""}`), folder},
+		{"a folder of 513 bytes", entry("{profile: go, folder: " + strconv.Quote(strings.Repeat("a", 513)) + "}"), entry("{profile: go, folder: " + strconv.Quote(strings.Repeat("a", 512)) + "}")},
+		{"a folder of 514 bytes in two-byte characters", entry("{profile: go, folder: " + strconv.Quote(strings.Repeat("é", 257)) + "}"), entry("{profile: go, folder: " + strconv.Quote(strings.Repeat("é", 256)) + "}")},
+		{"a tab", entry(`{profile: go, folder: "a\tb"}`), folder},
+		{"a NUL", entry(`{profile: go, folder: "a\0b"}`), folder},
+		{"a DEL", entry(`{profile: go, folder: "a\x7fb"}`), folder},
+		{"a C1 control", entry(`{profile: go, folder: "a\u0085b"}`), folder},
+		{"a zero-width space", entry(`{profile: go, folder: "a\u200Bb"}`), folder},
+		{"a right-to-left override", entry(`{profile: go, folder: "a\u202Eb"}`), folder},
+		{"a byte order mark", entry(`{profile: go, folder: "a\uFEFFb"}`), folder},
+		{"a byte that is not UTF-8", "version: 1\nexecution:\n  profiles:\n    - profile: go\n      folder: \"a\xffb\"\n", folder},
+		{"an integer folder", entry("{profile: go, folder: 2024}"), folder},
+		{"a null folder", entry("{profile: go, folder: ~}"), folder},
+		{"a sequence folder", entry("{profile: go, folder: [a]}"), folder},
+		{"a mapping folder", entry("{profile: go, folder: {a: b}}"), folder},
+		// run.
+		{"run as a quoted string", entry(`{profile: go, run: "false"}`), run},
+		{"run as yes, which YAML 1.2 reads as a string", entry("{profile: go, run: yes}"), run},
+		{"run as no", entry("{profile: go, run: no}"), run},
+		{"run as on", entry("{profile: go, run: on}"), run},
+		{"run as an integer", entry("{profile: go, run: 1}"), run},
+		{"run as null", entry("{profile: go, run: ~}"), run},
+		{"run as a sequence", entry("{profile: go, run: [true]}"), run},
+		{"run as a mapping", entry("{profile: go, run: {a: b}}"), run},
+	})
+}

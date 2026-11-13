@@ -680,9 +680,10 @@ const reverseText = "To reverse it, open a new pull request with the protected f
 // of the total; a total below the list is taken as its length. Reduced says that the revision reduces the
 // protected scope or lowers the execution policy; ReducedRules and ReducedPaths (at most 20 each, of ReducedPathsTotal paths) detail
 // what it removes and are set only with Reduced. A ReducedRules entry is one that scope.Reductions writes: "rule <p>" for a
-// pattern that no longer protects, "exclude <p>" for an exclude that is added, and "execution canonical: <from> -> <to>" or
-// "execution receipt: <from> -> <to>" for a level of the execution policy that gets weaker. A reduction whose entries are all of the
-// last kind, with no ReducedPaths and no ReducedPathsTotal, removes no path: the comment says that it lowers the execution policy.
+// pattern that no longer protects, "exclude <p>" for an exclude that is added, "execution canonical: <from> -> <to>" or
+// "execution receipt: <from> -> <to>" for a level of the execution policy that gets weaker, and "execution profile: <id> <folder> removed" or
+// "execution profile: <id> <folder> -> protected only" for a running profile that stops running. A reduction whose entries are all of the
+// last three kinds, with no ReducedPaths and no ReducedPathsTotal, removes no path: the comment says that it lowers the execution policy.
 // ReducedOmitted says that the detail did not fit the message and was left out: the comment states
 // that, and counts the paths from ReducedPathsTotal; it excludes ReducedRules and ReducedPaths.
 //
@@ -788,7 +789,7 @@ func validateRevision(r Revision) error {
 	case slices.ContainsFunc(r.ReducedRules, func(e string) bool {
 		return !strings.HasPrefix(e, "rule ") && !strings.HasPrefix(e, "exclude ") && !ExecutionEntry(e)
 	}):
-		return errors.New("commandtext: a reduced rule that is none of a \"rule \", an \"exclude \", an \"execution canonical: \" and an \"execution receipt: \" entry")
+		return errors.New("commandtext: a reduced rule that is none of a \"rule \", an \"exclude \", an \"execution canonical: \", an \"execution receipt: \" and an \"execution profile: \" entry")
 	case r.ReducedOmitted && (!r.Reduced || len(r.ReducedRules) > 0 || len(r.ReducedPaths) > 0):
 		return errors.New("commandtext: reduction detail omitted on a revision that does not reduce the scope or that lists it")
 	}
@@ -822,11 +823,12 @@ func validatePrevious(r Revision) error {
 	return nil
 }
 
-// executionPrefixes start the entries that scope.Reductions writes for a level of the execution policy that gets weaker.
-var executionPrefixes = []string{"execution canonical: ", "execution receipt: "}
+// executionPrefixes start the entries that scope.Reductions writes for an execution policy that gets weaker: a level that is lowered, or
+// a running profile that is removed or made protected only.
+var executionPrefixes = []string{"execution canonical: ", "execution receipt: ", "execution profile: "}
 
-// ExecutionEntry reports whether entry is one that scope.Reductions writes for a level of the execution policy that gets weaker: it begins with "execution canonical: " or
-// "execution receipt: ". The checks job tells the lowering of the policy from the removal of the scope by it.
+// ExecutionEntry reports whether entry is one that scope.Reductions writes for an execution policy that gets weaker: it begins with "execution canonical: ",
+// "execution receipt: " or "execution profile: ". The checks job tells the lowering of the policy from the removal of the scope by it.
 func ExecutionEntry(entry string) bool {
 	return slices.ContainsFunc(executionPrefixes, func(p string) bool { return strings.HasPrefix(entry, p) })
 }
@@ -843,14 +845,18 @@ func (r Revision) lowersPolicyOnly() bool {
 
 // reductionParts are the paragraphs that say a revision reduces the protected scope or lowers the execution policy, with what it removes.
 func reductionParts(r Revision) []string {
-	var rules, excludes, levels []string // scope.Reductions marks each entry "rule <p>", "exclude <p>" or "execution <level>: <from> -> <to>"
+	// scope.Reductions marks each entry "rule <p>", "exclude <p>" or "execution <what>"; levels holds the execution ones, "execution " trimmed.
+	var rules, excludes, levels []string
 	for _, entry := range r.ReducedRules {
 		switch p, isExclude := strings.CutPrefix(entry, "exclude "); {
 		case isExclude:
 			excludes = append(excludes, p)
 		case ExecutionEntry(entry):
 			level := strings.TrimPrefix(entry, "execution ")
-			levels = append(levels, strings.Replace(level, "canonical:", "approved tests:", 1))
+			if rest, isCanonical := strings.CutPrefix(level, "canonical:"); isCanonical { // only the lead: a folder may hold the word
+				level = "approved tests:" + rest
+			}
+			levels = append(levels, level)
 		default:
 			rules = append(rules, strings.TrimPrefix(entry, "rule "))
 		}

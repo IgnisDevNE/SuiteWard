@@ -341,9 +341,11 @@ func parseEntry(node *yaml.Node) (entry, error) {
 	return e, nil
 }
 
-// checkFolder holds a folder to the contract: a clean relative path of at most maxFolderBytes, valid UTF-8, with no control
-// or format character. The root has one spelling only (no folder), so "." is refused. It never repeats the text: it is the
-// repository's. The YAML decoder already refuses invalid UTF-8; the check is kept because the contract states it.
+// checkFolder holds a folder to the contract: a clean relative path of at most maxFolderBytes, valid UTF-8, with no control,
+// format, line separator or paragraph separator character (the service refuses the two separators in a result's package, which
+// holds the folder). The root has one spelling only (no folder), so "." is refused. Its messages never repeat the text, which is
+// the repository's and not yet validated; once it is, parseProfiles quotes it in its duplicate-pair error. The YAML decoder
+// already refuses invalid UTF-8; the check is kept because the contract states it.
 func checkFolder(folder string) error {
 	switch {
 	case folder == "":
@@ -354,8 +356,8 @@ func checkFolder(folder string) error {
 		return fmt.Errorf("is %d bytes, over the limit of %d", len(folder), maxFolderBytes)
 	case !utf8.ValidString(folder):
 		return errors.New("is not UTF-8")
-	case strings.IndexFunc(folder, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) >= 0:
-		return errors.New("holds a control or format character")
+	case strings.IndexFunc(folder, func(r rune) bool { return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) }) >= 0:
+		return errors.New("holds a control, format, line separator or paragraph separator character")
 	}
 	if strings.HasPrefix(folder, "/") || strings.HasSuffix(folder, "/") || slices.ContainsFunc(strings.Split(folder, "/"), func(segment string) bool {
 		return segment == "" || segment == "." || segment == ".."

@@ -1024,7 +1024,8 @@ type revisionPayload struct {
 	RemovedTotal  int      `json:"removedTotal"`
 	Reduced       bool     `json:"reduced"`
 	// ReducedRules, ReducedPaths and ReducedPathsTotal detail a reduction, bounded like the lists above; only with Reduced. ReducedRules holds the entries of
-	// scope.Reductions: "rule <p>", "exclude <p>", and, for a weaker execution policy, "execution canonical: <from> -> <to>" and "execution receipt: <from> -> <to>".
+	// scope.Reductions: "rule <p>", "exclude <p>", and, for a weaker execution policy, "execution canonical: <from> -> <to>", "execution receipt: <from> -> <to>",
+	// "execution profile: <id> <folder> removed" and "execution profile: <id> <folder> -> protected only" (M2.2).
 	// A head that only lowers the policy has those entries and no ReducedPaths. ReducedOmitted says that the detail was
 	// left out because the payload would not fit the outbox: the total stays, the lists are empty.
 	ReducedRules      []string `json:"reducedRules,omitempty"`

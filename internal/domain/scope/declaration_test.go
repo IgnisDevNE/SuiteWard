@@ -575,6 +575,28 @@ execution:
 	}
 }
 
+// AddPatterns and AddExcludes rewrite the file through its YAML nodes; the list must come out as it went in.
+func TestAddPatternsKeepsTheProfilesList(t *testing.T) {
+	const raw = "version: 1\nexecution:\n  canonical: required\n  profiles:\n    - profile: go\n    - profile: go\n      folder: core\n      run: false\ninclude:\n  - src/**\n"
+	before := mustParse(t, []byte(raw))
+	for name, edit := range map[string]func() ([]byte, error){
+		"AddPatterns": func() ([]byte, error) { return scope.AddPatterns([]byte(raw), []string{"docs/"}, []string{"Makefile"}) },
+		"AddExcludes": func() ([]byte, error) { return scope.AddExcludes([]byte(raw), []string{"src/gen/"}) },
+	} {
+		edited, err := edit()
+		if err != nil {
+			t.Fatalf("%s error = %v", name, err)
+		}
+		after := mustParse(t, edited)
+		beforePolicy, _ := before.Execution()
+		afterPolicy, ok := after.Execution()
+		// Parts leaves the protected-only entry out, so the bytes must still hold it.
+		if !ok || afterPolicy != beforePolicy || !after.ListForm() || !slices.Equal(after.Parts(), before.Parts()) || !strings.Contains(string(edited), "run: false") {
+			t.Fatalf("%s changed the profiles: %+v %v %v became %+v %v %v\n%s", name, beforePolicy, before.ListForm(), before.Parts(), afterPolicy, after.ListForm(), after.Parts(), edited)
+		}
+	}
+}
+
 func TestParseDeclarationKeepsAFolderAsDeclared(t *testing.T) {
 	for _, folder := range []string{"core", "a/b", ".hidden", "..a", "a..", "a/.b/c", "-x", "with space", "ünï", "a.b/c", strings.Repeat("a", 512)} {
 		d := mustParse(t, []byte(withProfiles("[{profile: go, folder: "+strconv.Quote(folder)+"}]")))

@@ -38,7 +38,7 @@ type invocation struct {
 	argv    []string
 	env     []string
 	workdir string
-	// extra writes the profile's own entries to the tar, after the tree and before the completion marker; it is nil for a profile that has none.
+	// extra writes the profile's own entries to the tar, after the tree and before the completion marker.
 	// It runs while the container reads its standard input, so what it fetches is streamed and not kept.
 	extra func(ctx context.Context, app *source.Appender) error
 }

@@ -92,17 +92,15 @@ func (b sideInvoker) stream(ctx context.Context, extra func(context.Context, *so
 	}
 }
 
-// compose writes the tar: the tree, the entries of the profile (extra is nil for a profile that has none), and the completion marker.
+// compose writes the tar: the tree, the entries of the profile, and the completion marker.
 func (b sideInvoker) compose(ctx context.Context, w io.Writer, extra func(context.Context, *source.Appender) error) error {
 	a := b.a
 	app, err := source.Compose(ctx, w, b.s.tree, a.archives, a.entries, a.files, a.limits)
 	if err != nil {
 		return err
 	}
-	if extra != nil {
-		if err := extra(ctx, app); err != nil {
-			return err
-		}
+	if err := extra(ctx, app); err != nil {
+		return err
 	}
 	return app.Close()
 }

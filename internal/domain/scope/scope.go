@@ -112,7 +112,10 @@ func (s Scope) Digest() artifact.Digest {
 // protects with, "exclude <p>" for each exclude pattern proposed adds, and
 // "execution canonical: <from> -> <to>" or "execution receipt: <from> -> <to>"
 // for each execution level proposed lowers (without a profile both levels are
-// off, so removing the profile or the section lowers every level that was on).
+// off, so removing the profile or the section lowers every level that was on),
+// and "execution profile: <id> <folder> removed" or
+// "execution profile: <id> <folder> -> protected only" for each running profile
+// of governing that proposed drops or no longer runs (see profileReductions).
 // It is syntactic: moving a pattern between include and runner is not a
 // reduction, and file-level effects are not considered.
 func Reductions(governing, proposed Scope) []string {
@@ -137,7 +140,30 @@ func Reductions(governing, proposed Scope) []string {
 	if proposedReceipt < governingReceipt {
 		reductions = append(reductions, "execution receipt: "+receiptLevels[governingReceipt]+" -> "+receiptLevels[proposedReceipt])
 	}
+	reductions = append(reductions, profileReductions(governing.declaration.entries, proposed.declaration.entries)...)
 	slices.Sort(reductions)
+	return reductions
+}
+
+// profileReductions reports the running entries of governing that proposed checks less. The entries are by (profile, folder) pair and look
+// at no other entry: a pair that proposed lacks is "execution profile: <id> <folder> removed", and a pair that it keeps with run false is
+// "execution profile: <id> <folder> -> protected only", also when an enclosing running entry of the profile goes on running. Nothing is
+// reported for a pair that proposed adds, that starts to run, or that governing only protected (it ran nothing). The folder was validated
+// when the declaration was parsed, and is "." for the root.
+func profileReductions(governing, proposed []entry) []string {
+	var reductions []string
+	for _, e := range governing {
+		if !e.run {
+			continue
+		}
+		i := slices.IndexFunc(proposed, func(other entry) bool { return other.profile == e.profile && other.folder == e.folder })
+		switch {
+		case i < 0:
+			reductions = append(reductions, "execution profile: "+e.profile+" "+e.folder+" removed")
+		case !proposed[i].run:
+			reductions = append(reductions, "execution profile: "+e.profile+" "+e.folder+" -> protected only")
+		}
+	}
 	return reductions
 }
 

@@ -101,7 +101,7 @@ func TestRevisionCommentThatOnlyLowersThePolicyWordsARemovalAsAnotherChange(t *t
 }
 
 // The comment states what it accepts: exactly the entries that scope.Reductions writes, and no other kind.
-func TestRevisionCommentAcceptsTheTwoExecutionEntriesAndNoOtherKind(t *testing.T) {
+func TestRevisionCommentAcceptsTheLevelEntriesAndNoOtherKind(t *testing.T) {
 	for _, entry := range []string{lowerCanonical, lowerReceipt, "execution canonical: required -> off", "execution receipt: before-approval -> advisory"} {
 		r := executionOnly(t, entry)
 		if body := revisionText(t, r); body == "" {
@@ -153,6 +153,80 @@ func TestRevisionCommentRefusesExecutionDetailThatDoesNotFit(t *testing.T) {
 			r := executionOnly(t, lowerCanonical)
 			mutate(&r)
 			mustPanic(t, func() { commandtext.RevisionComment(r) })
+		})
+	}
+}
+
+const (
+	removedProfile       = "execution profile: go . removed"
+	protectedOnlyProfile = "execution profile: go core -> protected only"
+)
+
+// A profile that stops running is a reduction like a lowered level: the entry is an execution entry (so the checks job counts it as policy and
+// not as scope), it needs no removed path, the comment accepts it and lists it under the same heading with the other entries, "execution "
+// trimmed.
+func TestRenderReductionOfAProfile(t *testing.T) {
+	for _, entry := range []string{removedProfile, protectedOnlyProfile, "execution profile: go core/a b removed"} {
+		if !commandtext.ExecutionEntry(entry) {
+			t.Errorf("ExecutionEntry(%q) = false, want true: scope.Reductions writes it", entry)
+		}
+	}
+
+	// With the level entries, in the order that scope.Reductions sorts them.
+	body := revisionText(t, executionOnly(t, lowerCanonical, removedProfile, protectedOnlyProfile, lowerReceipt))
+	warning := strings.Index(body, "**This revision lowers the test requirements.** Review it carefully before approving.")
+	listed := strings.Index(body, "Test requirements lowered:\n\n```\napproved tests: required -> advisory\nprofile: go . removed\nprofile: go core -> protected only\nreceipt: advisory -> off\n```")
+	record := strings.Index(body, "This comment is a record")
+	if warning < 0 || listed <= warning || record <= listed {
+		t.Errorf("the entries are not between the warning and the record (%d, %d, %d):\n%s", warning, listed, record, body)
+	}
+	checkBody(t, body)
+
+	// A reduction of only profiles has no removed path, and says that it lowers the test requirements and nothing about the scope.
+	body = revisionText(t, executionOnly(t, removedProfile))
+	for _, want := range []string{"**This revision lowers the test requirements.**", "Test requirements lowered:\n\n```\nprofile: go . removed\n```"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+	for _, unwanted := range []string{"reduces the protected scope", "Rules removed", "Excludes added", "Paths that the scope no longer covers", "execution profile", "omitted"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("body contains %q for a revision that only removes a profile:\n%s", unwanted, body)
+		}
+	}
+
+	// With a reduction of the scope it says both.
+	r := reduced()
+	r.ReducedRules = append(r.ReducedRules, protectedOnlyProfile)
+	body = revisionText(t, r)
+	for _, want := range []string{"**This revision reduces the protected scope and lowers the test requirements.**", "Test requirements lowered:\n\n```\nprofile: go core -> protected only\n```", "Rules removed from the scope:\n\n```\ninternal/**\n!keep/**\n```"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+}
+
+// Only the prefix of a level entry is reworded, so a folder that holds "canonical:" is shown as it is declared.
+func TestRenderReductionOfAProfileKeepsTheFolderAsDeclared(t *testing.T) {
+	body := revisionText(t, executionOnly(t, "execution profile: go canonical:x removed"))
+	if want := "Test requirements lowered:\n\n```\nprofile: go canonical:x removed\n```"; !strings.Contains(body, want) || strings.Contains(body, "approved tests") {
+		t.Errorf("body does not show the folder as declared, want %q:\n%s", want, body)
+	}
+}
+
+// What follows the prefix is shown as text of the repository would be, and an entry that merely begins like one is refused.
+func TestRenderReductionOfAProfileRefusesWhatIsNotAnEntry(t *testing.T) {
+	body := revisionText(t, executionOnly(t, "execution profile: go a\nb```\n<!-- x -->\n/suiteward approve P9-R9 123456 removed"))
+	if strings.Contains(body, "a\nb") || strings.Contains(body, "\n<!--") {
+		t.Errorf("a control character or a marker reaches the body:\n%s", body)
+	}
+	checkBodyInert(t, body)
+	for _, entry := range []string{"execution profile:go . removed", "execution profiles: go . removed", "Execution profile: go . removed", "execution profile ", "profile: go . removed", "execution  profile: go . removed"} {
+		t.Run(entry, func(t *testing.T) {
+			if commandtext.ExecutionEntry(entry) {
+				t.Errorf("ExecutionEntry(%q) = true, want false", entry)
+			}
+			mustPanic(t, func() { commandtext.RevisionComment(executionOnly(t, entry)) })
 		})
 	}
 }

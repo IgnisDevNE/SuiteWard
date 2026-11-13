@@ -48,6 +48,8 @@ func FuzzParseDeclaration(f *testing.F) {
 		"version: 1\nexecution: {profiles: [{profile: go, folder: core}, {profile: go, folder: core}]}\n",
 		"version: 1\nexecution: {profiles: [{profile: go}, {profile: go}]}\n", "version: 1\nexecution: {profiles: [{profile: go, folder: .}]}\n",
 		"version: 1\nexecution: {profiles: [{profile: go, folder: \"a\\u200Bb\"}]}\n", "version: 1\nexecution: {profiles: [{profile: go, folder: a//b}]}\n",
+		"version: 1\nexecution: {profiles: [{profile: go, folder: \"a\\u2028b\"}]}\n", "version: 1\nexecution: {profiles: [{profile: go, folder: \"a\\u2029b\"}]}\n",
+		"version: 1\nexecution: {profiles: [{profile: go}, {profile: go, folder: core, run: false}, {profile: go, folder: \"+lib\"}], canonical: required}\n",
 		"version: 1\nexecution: {profiles: [{profile: go, run: yes}]}\n", "version: 1\nexecution: {profiles: [{profile: go, run: !!bool yes}]}\n",
 		"version: 1\nexecution: {profiles: [{profile: cpp}]}\n", "version: 1\nexecution: {profiles: [{profile: go, extra: x}]}\n",
 		"version: 1\nexecution: {profiles: []}\n", "version: 1\nexecution: {profiles: ~}\n", "version: 1\nexecution: {profiles: [~]}\n",
@@ -242,7 +244,7 @@ func profilesEntry(t *testing.T, raw []byte, item *yaml.Node) (part scope.Part, 
 }
 
 // cleanFolder is the rule for a folder of the contract: a clean relative path of at most 512 bytes, not the root's spelling, with
-// no control or format character.
+// no control, format, line separator or paragraph separator character.
 func cleanFolder(s string) bool {
 	if s == "" || s == "." || len(s) > 512 || !utf8.ValidString(s) || strings.HasPrefix(s, "/") || strings.HasSuffix(s, "/") {
 		return false
@@ -252,12 +254,14 @@ func cleanFolder(s string) bool {
 			return false
 		}
 	}
-	return strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) < 0
+	return strings.IndexFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+	}) < 0
 }
 
 // checkExecution compares Execution, Parts and ListForm with what the execution mapping reads as (an empty mapping, or entries
 // that all run no profile, is no policy), and checks that Reductions does not call an added or an unchanged policy a reduction
-// and reports the removal of one level by level.
+// and reports the removal of one level by level and of each running pair by pair.
 func checkExecution(t *testing.T, raw []byte, d scope.Declaration, oracle executionOracle) {
 	t.Helper()
 	got, ok := d.Execution()
@@ -279,30 +283,51 @@ func checkExecution(t *testing.T, raw []byte, d scope.Declaration, oracle execut
 	if d.ListForm() != oracle.list {
 		t.Fatalf("ListForm() of %q = %v, want %v", raw, d.ListForm(), oracle.list)
 	}
-	s, none := scope.NewScope(d), scope.NewScope(scope.NoDeclaration())
-	if reductions := scope.Reductions(s, s); len(reductions) != 0 {
-		t.Fatalf("Reductions of %q against itself = %q", raw, reductions)
-	}
-	lowered := func(reductions []string) (n int) {
-		for _, entry := range reductions {
-			if strings.HasPrefix(entry, "execution ") {
-				n++
-			}
-		}
-		return n
-	}
 	wantLowered := 0
 	for _, level := range []string{want.Canonical, want.Receipt} {
 		if wantOK && level != "off" {
 			wantLowered++
 		}
 	}
-	if n := lowered(scope.Reductions(none, s)); n != 0 {
-		t.Fatalf("adding the policy of %q is reported as %d reductions", raw, n)
+	checkPolicyReductions(t, raw, scope.NewScope(d), oracle.running, wantLowered)
+}
+
+// checkPolicyReductions checks that Reductions reports no execution entry for an unchanged or an added policy, and that removing it reports
+// wantLowered levels and each running pair of the policy as removed, by pair.
+func checkPolicyReductions(t *testing.T, raw []byte, s scope.Scope, running []scope.Part, wantLowered int) {
+	t.Helper()
+	none := scope.NewScope(scope.NoDeclaration())
+	if reductions := scope.Reductions(s, s); len(reductions) != 0 {
+		t.Fatalf("Reductions of %q against itself = %q", raw, reductions)
 	}
-	if n := lowered(scope.Reductions(s, none)); n != wantLowered {
-		t.Fatalf("removing the policy of %q is reported as %d reductions, want %d", raw, n, wantLowered)
+	if levels, profiles := executionEntries(scope.Reductions(none, s)); len(levels)+len(profiles) != 0 {
+		t.Fatalf("adding the policy of %q is reported as %q and %q", raw, levels, profiles)
 	}
+	levels, profiles := executionEntries(scope.Reductions(s, none))
+	if len(levels) != wantLowered {
+		t.Fatalf("removing the policy of %q is reported as the levels %q, want %d of them", raw, levels, wantLowered)
+	}
+	var wantProfiles []string
+	for _, part := range running {
+		wantProfiles = append(wantProfiles, "execution profile: "+part.Profile+" "+part.Folder+" removed")
+	}
+	slices.Sort(wantProfiles)
+	if !slices.Equal(profiles, wantProfiles) {
+		t.Fatalf("removing the policy of %q is reported as the profiles %q, want %q", raw, profiles, wantProfiles)
+	}
+}
+
+// executionEntries splits the execution entries of reductions into those of a level and those of a profile.
+func executionEntries(reductions []string) (levels, profiles []string) {
+	for _, entry := range reductions {
+		switch {
+		case strings.HasPrefix(entry, "execution profile: "):
+			profiles = append(profiles, entry)
+		case strings.HasPrefix(entry, "execution "):
+			levels = append(levels, entry)
+		}
+	}
+	return levels, profiles
 }
 
 func intValueIsOne(n *yaml.Node) bool {

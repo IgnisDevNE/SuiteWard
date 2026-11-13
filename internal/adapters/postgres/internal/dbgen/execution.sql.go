@@ -177,32 +177,14 @@ func (q *Queries) GetExecutionJob(ctx context.Context, jobID int64) (ExecutionJo
 }
 
 const getExecutionResult = `-- name: GetExecutionResult :one
-SELECT job_id, status, origin, reason, executor_version, executor_sha256, image_digest, toolchain, runtime, started_at, ended_at, received_at, body_digest, markers, submodules, unparsed
+SELECT job_id, status, origin, reason, executor_version, executor_sha256, image_digest, toolchain, runtime, started_at, ended_at, received_at, body_digest, markers, submodules, unparsed,
+       parts, removed
 FROM execution_results WHERE job_id = $1
 `
 
-type GetExecutionResultRow struct {
-	JobID           int64
-	Status          string
-	Origin          string
-	Reason          pgtype.Text
-	ExecutorVersion pgtype.Text
-	ExecutorSha256  pgtype.Text
-	ImageDigest     pgtype.Text
-	Toolchain       pgtype.Text
-	Runtime         pgtype.Text
-	StartedAt       pgtype.Timestamptz
-	EndedAt         pgtype.Timestamptz
-	ReceivedAt      pgtype.Timestamptz
-	BodyDigest      pgtype.Text
-	Markers         []byte
-	Submodules      []string
-	Unparsed        []string
-}
-
-func (q *Queries) GetExecutionResult(ctx context.Context, jobID int64) (GetExecutionResultRow, error) {
+func (q *Queries) GetExecutionResult(ctx context.Context, jobID int64) (ExecutionResult, error) {
 	row := q.db.QueryRow(ctx, getExecutionResult, jobID)
-	var i GetExecutionResultRow
+	var i ExecutionResult
 	err := row.Scan(
 		&i.JobID,
 		&i.Status,
@@ -220,6 +202,8 @@ func (q *Queries) GetExecutionResult(ctx context.Context, jobID int64) (GetExecu
 		&i.Markers,
 		&i.Submodules,
 		&i.Unparsed,
+		&i.Parts,
+		&i.Removed,
 	)
 	return i, err
 }
@@ -464,10 +448,10 @@ func (q *Queries) InsertExecutionJob(ctx context.Context, arg InsertExecutionJob
 
 const insertExecutionResult = `-- name: InsertExecutionResult :exec
 INSERT INTO execution_results (job_id, status, origin, reason, executor_version, executor_sha256, image_digest, toolchain, runtime, started_at, ended_at, received_at,
-                               body_digest, markers, submodules, unparsed)
+                               body_digest, markers, submodules, unparsed, parts, removed)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11, $12, $13, $14, $15,
-        $16)
+        $16, $17, $18)
 `
 
 type InsertExecutionResultParams struct {
@@ -487,6 +471,8 @@ type InsertExecutionResultParams struct {
 	Markers         []byte
 	Submodules      []string
 	Unparsed        []string
+	Parts           []byte
+	Removed         []byte
 }
 
 func (q *Queries) InsertExecutionResult(ctx context.Context, arg InsertExecutionResultParams) error {
@@ -507,6 +493,8 @@ func (q *Queries) InsertExecutionResult(ctx context.Context, arg InsertExecution
 		arg.Markers,
 		arg.Submodules,
 		arg.Unparsed,
+		arg.Parts,
+		arg.Removed,
 	)
 	return err
 }

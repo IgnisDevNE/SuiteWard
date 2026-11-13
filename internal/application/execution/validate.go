@@ -35,6 +35,11 @@ const (
 	maxSubmodules    = 100
 	maxText          = 64 // the toolchain and the runtime
 	maxLabel         = 32 // the profile of a job
+	maxPackage       = 512
+	maxName          = 200
+	maxParts         = 8    // the bounds of execution_parts_valid
+	maxFolder        = 512  // the folder of a part
+	maxRemoved       = 1000 // the bound of execution_removed_valid
 )
 
 func invalid(format string, args ...any) error {
@@ -312,6 +317,70 @@ func (r Result) Validate(job Spec) error {
 		}
 		seen[id] = true
 	}
+	return errorsOf(r.validateParts(job), r.validateRemoved(job, seen))
+}
+
+// validateParts checks the parts of a result against the job's label and the row (docs/contracts/persistence.md, "Store operations", Complete). The order of the
+// parts and their images against the declaration are the wire's to check: the store cannot tell the scalar form from a list with one Go entry.
+func (r Result) validateParts(job Spec) error {
+	switch {
+	case len(r.Parts) > maxParts:
+		return invalid("%d parts; at most %d", len(r.Parts), maxParts)
+	case len(r.Parts) > 0 && r.Status != StateComplete:
+		return invalid("an unavailable result has no parts")
+	case len(r.Parts) == 0 && r.Status == StateComplete && job.Profile != "go":
+		return invalid("a complete result of the job %q lists the parts that ran", job.Profile) // only a list declaration gives a label that is not go
+	case len(r.Parts) == 0:
+		return nil
+	case r.Parts[0].ImageDigest != r.ImageDigest || r.Parts[0].Toolchain != r.Toolchain:
+		return invalid("the first part must hold the image digest and the toolchain of the result")
+	}
+	ids := strings.Split(job.Profile, "-")
+	for _, p := range r.Parts {
+		if err := p.validate(ids); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validate checks a part against the ids of the job's label: its profile is one of them, and its values are within the bounds of execution_parts_valid.
+func (p Part) validate(ids []string) error {
+	switch {
+	case !slices.Contains(ids, p.Profile):
+		return invalid("a part runs a profile that is not one of the job's (%q)", strings.Join(ids, "-"))
+	case p.Folder == "" || len(p.Folder) > maxFolder:
+		return invalid("the folder of a part must be 1 to %d bytes", maxFolder)
+	case p.ImageDigest.IsZero():
+		return invalid("a part needs the image digest")
+	}
+	return validText("the toolchain of a part", p.Toolchain, true)
+}
+
+// validateRemoved checks the tests that the change of a receipt removes: only a complete receipt has them, no (package, name) appears twice, and none is also a test
+// row of the result (tests holds their keys).
+func (r Result) validateRemoved(job Spec, tests map[[2]string]bool) error {
+	switch {
+	case len(r.Removed) == 0:
+		return nil
+	case job.Plan != PlanReceipt || r.Status != StateComplete:
+		return invalid("only a complete receipt has removed tests")
+	case len(r.Removed) > maxRemoved:
+		return invalid("%d removed tests; at most %d", len(r.Removed), maxRemoved)
+	}
+	seen := make(map[[2]string]bool, len(r.Removed))
+	for _, t := range r.Removed {
+		id := [2]string{t.Package, t.Name}
+		switch {
+		case !validTestID(t.Package, t.Name, t.File):
+			return invalid("the package, name and file of a removed test are required and bounded")
+		case seen[id]:
+			return invalid("the removed test %s of package %s is listed twice", t.Name, t.Package)
+		case tests[id]:
+			return invalid("the removed test %s of package %s is also a test of the result", t.Name, t.Package)
+		}
+		seen[id] = true
+	}
 	return nil
 }
 
@@ -327,6 +396,11 @@ func validRuns(name string, runs []string, least int) error {
 	return nil
 }
 
+// validTestID is true when the package, name and file of a test, or of a removed one, are there and within the bounds of the columns of execution_tests.
+func validTestID(pkg, name, file string) bool {
+	return pkg != "" && len(pkg) <= maxPackage && name != "" && len(name) <= maxName && file != "" && len(file) <= maxPathBytes
+}
+
 func (t Test) validate(plan Plan) error {
 	canonical := plan == PlanCanonical
 	kindOK, states := t.Kind == KindDeclared, canonicalTests
@@ -335,7 +409,7 @@ func (t Test) validate(plan Plan) error {
 	}
 	excluded := t.State == "excluded"
 	switch {
-	case t.Package == "" || len(t.Package) > 512 || t.Name == "" || len(t.Name) > 200 || t.File == "" || len(t.File) > maxPathBytes:
+	case !validTestID(t.Package, t.Name, t.File):
 		return invalid("the package, name and file of a test are required and bounded")
 	case !kindOK:
 		return invalid("a test of kind %q does not belong in a %s result", t.Kind, plan)

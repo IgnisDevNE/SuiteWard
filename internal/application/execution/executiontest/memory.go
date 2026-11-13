@@ -223,7 +223,16 @@ func (m *Memory) Complete(ctx context.Context, jobID int64, r execution.Result, 
 
 func cloneReport(r execution.Report) execution.Report {
 	r.Markers, r.Submodules, r.Unparsed = slices.Clone(r.Markers), slices.Clone(r.Submodules), slices.Clone(r.Unparsed)
+	r.Parts, r.Removed = cloneList(r.Parts), cloneList(r.Removed)
 	return r
+}
+
+// cloneList copies a list and reads an empty one as none, as PostgreSQL does for a stored [] (a result with no part, or no removed test, is stored with it).
+func cloneList[T any](list []T) []T {
+	if len(list) == 0 {
+		return nil
+	}
+	return slices.Clone(list)
 }
 
 // sortTests copies the tests in the order they are read back in: by package, then name.

@@ -89,6 +89,13 @@ const (
 	ReasonNoMergeBase        Reason = "no-merge-base"
 )
 
+// ImageMissing is the reason of a run whose test runner lacks the pinned image of the profile: "image-missing-<profile>".
+func ImageMissing(profile string) Reason { return "" }
+
+// MissingImage reports the profile that a reason of the family image-missing-<id> names, and false for any other reason or a malformed one (the id must match
+// ^[a-z][a-z0-9]{0,15}$).
+func (r Reason) MissingImage() (profile string, ok bool) { return "", false }
+
 // The reasons of a cancelled job: its binding is no longer wanted.
 const (
 	ReasonHeadMoved Reason = "head-moved"

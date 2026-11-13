@@ -400,7 +400,7 @@ func (s executionStore) Complete(ctx context.Context, jobID int64, r execution.R
 		if err := job.CheckLease(r.LeaseID, now); err != nil {
 			return fmt.Errorf("%w: job %d", err, jobID)
 		}
-		if err := r.Validate(job.Plan); err != nil {
+		if err := r.Validate(job.Spec); err != nil {
 			return err
 		}
 		settled := job.Settle(r, now, githubWait)

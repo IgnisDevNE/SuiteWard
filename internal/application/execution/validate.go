@@ -257,11 +257,12 @@ func (m Marker) validate() error {
 	return nil
 }
 
-// Validate reports why the result cannot be stored for a job of the plan, as ErrInvalidRequest.
-func (r Result) Validate(plan Plan) error {
+// Validate reports why the result cannot be stored for the job, as ErrInvalidRequest.
+func (r Result) Validate(job Spec) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
+	plan := job.Plan
 	switch {
 	case r.Status == StateUnavailable && len(r.Tests) > 0:
 		return invalid("an unavailable result has no tests")

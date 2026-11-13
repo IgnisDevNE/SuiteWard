@@ -5,10 +5,12 @@ import (
 	"math"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
 )
 
 // The checks of this file are the shape the stores accept (persistence.md, "Execution (M2.1; normative)"): the codes, the sizes and
@@ -21,6 +23,7 @@ var (
 	leasePattern     = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	versionPattern   = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$`)
 	referencePattern = regexp.MustCompile(`^(P[0-9]+-R[0-9]+)?$`)
+	profileIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]{0,15}$`)
 )
 
 const (
@@ -31,6 +34,7 @@ const (
 	maxLine          = 10_000_000
 	maxSubmodules    = 100
 	maxText          = 64 // the toolchain and the runtime
+	maxLabel         = 32 // the profile of a job
 )
 
 func invalid(format string, args ...any) error {
@@ -87,8 +91,8 @@ func (s Spec) validate(createdFinal bool) error {
 	switch {
 	case s.Plan != PlanCanonical && s.Plan != PlanReceipt:
 		return invalid("unknown plan %q", s.Plan)
-	case s.Profile != "go":
-		return invalid("unknown profile %q", s.Profile)
+	case !validLabel(s.Profile):
+		return invalid("the profile %q is not a label: at most %d bytes, ids of the profiles that exist in increasing order, joined by -", s.Profile, maxLabel)
 	case !headPattern.MatchString(s.HeadSHA):
 		return invalid("the head must be 40 lowercase hexadecimal digits")
 	case s.GoverningDigest.IsZero() || s.DeclarationDigest.IsZero():
@@ -101,6 +105,22 @@ func (s Spec) validate(createdFinal bool) error {
 		return invalid("the changed total must not be negative")
 	}
 	return s.validatePlan(createdFinal)
+}
+
+// validLabel is true for the label of the running profiles of a declaration (docs/contracts/runtime.md, "The label"): ids of scope.ProfileIDs in strictly
+// increasing byte order, joined by "-", at most 32 bytes. The schema cannot say that the ids are known, sorted and unique (persistence.md, "Migration 00023").
+func validLabel(label string) bool {
+	if len(label) > maxLabel {
+		return false
+	}
+	known := scope.ProfileIDs()
+	ids := strings.Split(label, "-")
+	for i, id := range ids {
+		if !slices.Contains(known, id) || i > 0 && ids[i-1] >= id {
+			return false
+		}
+	}
+	return true
 }
 
 // validatePlan checks the fields that depend on the plan: the base, the level that runs, and the display lists.
@@ -257,10 +277,14 @@ func (m Marker) validate() error {
 	return nil
 }
 
-// Validate reports why the result cannot be stored for a job of the plan, as ErrInvalidRequest.
-func (r Result) Validate(plan Plan) error {
+// Validate reports why the result cannot be stored for the job, as ErrInvalidRequest. A reason of the family image-missing-<id> names a profile of the job's label.
+func (r Result) Validate(job Spec) error {
 	if err := r.validate(); err != nil {
 		return err
+	}
+	plan := job.Plan
+	if id, ok := r.Reason.MissingImage(); ok && !slices.Contains(strings.Split(job.Profile, "-"), id) {
+		return invalid("%q names a profile that is not one of the job's (%q)", r.Reason, job.Profile)
 	}
 	switch {
 	case r.Status == StateUnavailable && len(r.Tests) > 0:

@@ -196,7 +196,7 @@ func parseResult(job execution.Job, lease string, raw []byte, digest artifact.Di
 	if err := errors.Join(deriveStates(job.Plan, result.Tests), b.checkPaths()); err != nil {
 		return execution.Result{}, err
 	}
-	if err := result.Validate(job.Plan); err != nil {
+	if err := result.Validate(job.Spec); err != nil {
 		return execution.Result{}, err
 	}
 	return result, nil

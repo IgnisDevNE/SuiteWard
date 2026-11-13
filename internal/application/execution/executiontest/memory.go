@@ -205,7 +205,7 @@ func (m *Memory) Complete(ctx context.Context, jobID int64, r execution.Result, 
 	if err := job.CheckLease(r.LeaseID, now); err != nil {
 		return execution.Outcome{}, fmt.Errorf("%w: job %d", err, jobID)
 	}
-	if err := r.Validate(job.Plan); err != nil {
+	if err := r.Validate(job.Spec); err != nil {
 		return execution.Outcome{}, err
 	}
 	settled := job.Settle(r, now, githubWait)

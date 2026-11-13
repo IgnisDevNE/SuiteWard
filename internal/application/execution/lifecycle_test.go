@@ -98,3 +98,19 @@ func TestAJobInASetCarriesWhatTheRulesOfTheCommentsRead(t *testing.T) {
 		t.Errorf("a cancelled job: InSet = %+v, true; want it out of a set", got)
 	}
 }
+
+// A runner whose container engine lacks a profile's image ends the job at once, as toolchain-mismatch does: unavailable with the reason, not queued again, and
+// no failure counted, so that the row is stored also when the job has failed nothing (docs/contracts/runtime.md, "A missing image").
+func TestSettleImageMissingIsFinal(t *testing.T) {
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	for _, failures := range []int{0, 1, 2} {
+		job := execution.Job{ID: 4, State: execution.StateLeased, Attempts: failures + 1, Failures: failures, LeaseID: "lease", LeaseExpiresAt: now.Add(time.Minute), DeadlineAt: now.Add(time.Hour),
+			Spec: execution.Spec{Profile: "go"}}
+		result := execution.Result{Report: execution.Report{Status: execution.StateUnavailable, Reason: execution.ImageMissing("go")}}
+		got := job.Settle(result, now, time.Minute)
+		if !got.Store || got.Job.State != execution.StateUnavailable || got.Job.Reason != "image-missing-go" || got.Job.Failures != failures || !got.Job.FinishedAt.Equal(now) ||
+			!got.Job.NotBefore.IsZero() || !got.Job.LeaseExpiresAt.IsZero() {
+			t.Errorf("at %d failures: Settle = %+v, store %v; want the job unavailable for image-missing-go at once, %d failures, the row stored", failures, got.Job, got.Store, failures)
+		}
+	}
+}

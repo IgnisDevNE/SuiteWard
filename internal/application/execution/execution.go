@@ -9,6 +9,7 @@ package execution
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/IgnisDevNE/SuiteWard/internal/application/commands"
@@ -89,6 +90,20 @@ const (
 	ReasonNoMergeBase        Reason = "no-merge-base"
 )
 
+const imageMissingPrefix = "image-missing-"
+
+// ImageMissing is the reason of a run whose test runner lacks the pinned image of the profile: "image-missing-<profile>".
+func ImageMissing(profile string) Reason { return Reason(imageMissingPrefix + profile) }
+
+// MissingImage reports the profile that a reason of the family image-missing-<id> names, and false for any other reason or a malformed one (the id must match
+// ^[a-z][a-z0-9]{0,15}$).
+func (r Reason) MissingImage() (profile string, ok bool) {
+	if id, found := strings.CutPrefix(string(r), imageMissingPrefix); found && profileIDPattern.MatchString(id) {
+		return id, true
+	}
+	return "", false
+}
+
 // The reasons of a cancelled job: its binding is no longer wanted.
 const (
 	ReasonHeadMoved Reason = "head-moved"
@@ -101,7 +116,7 @@ type Spec struct {
 	RepositoryID      int64
 	PullNumber        int
 	Plan              Plan
-	Profile           string // go
+	Profile           string // the label of the running profiles: go, and later cpp and cpp-go (docs/contracts/runtime.md, "The label")
 	HeadSHA           string
 	BaseSHA           string // the merge base; empty for a canonical job and for a receipt job created already unavailable
 	GoverningDigest   artifact.Digest

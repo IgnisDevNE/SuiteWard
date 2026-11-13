@@ -66,42 +66,61 @@ func seen(runs map[testID][]execution.Observation) map[testID]string {
 	return out
 }
 
+var (
+	testA = testID{Package: "a", Name: "TestA", File: "a/a_test.go"}
+	testB = testID{Package: "a", Name: "TestB", File: "a/a_test.go"}
+)
+
+// throughTheSeam runs the tests on the head of a canonical job as the attempt does: the profile plans the side, and runs it in the containers
+// of the attempt's invoker.
+func throughTheSeam(t *testing.T, head repo, rt sandbox.Runtime) map[testID][]execution.Observation {
+	t.Helper()
+	sc := canonicalScenario()
+	sc.head = head
+	a := anAttempt(t, sc, rt)
+	s := headSide(t, a)
+	files := map[string][]byte{}
+	if m, ok := head["go.mod"]; ok {
+		files["go.mod"] = []byte(m)
+	}
+	p := a.profile()
+	plan, err := p.plan(sideFiles{side: s, files: files}, a.lease.Limits, a.toolchain)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	runs, err := p.run(context.Background(), a.box(s), plan, []testID{testA, testB})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	return runs
+}
+
+// checkGoContainer checks the one container of a Go side: the Go image, the Go command and environment, the tree below src, and then go's own
+// directories, and the marker last: the sandbox runs nothing without it.
+func checkGoContainer(t *testing.T, c call) {
+	t.Helper()
+	argv, env := goprofile.Command([]goprofile.TestID{goprofile.TestID(testA), goprofile.TestID(testB)}, 600*time.Second, false)
+	if c.Spec.Image != goprofile.Image || c.Spec.Workdir != goprofile.TreeDir || !slices.Equal(c.Spec.Argv, argv) || !slices.Equal(c.Spec.Env, env) {
+		t.Errorf("the container is %q in %q with %q and %q; want the Go image in %q with %q and %q",
+			c.Spec.Image, c.Spec.Workdir, c.Spec.Argv, c.Spec.Env, goprofile.TreeDir, argv, env)
+	}
+	tail := c.Entries[len(c.Entries)-3:]
+	if want := []string{goprofile.HomeDir + "/.keep", goprofile.TmpDir + "/.keep", sandbox.CompleteMarker}; !slices.Equal(tail, want) {
+		t.Errorf("the tar ends with %q; want %q", tail, want)
+	}
+	if _, ok := c.Files["src/go.mod"]; !ok {
+		t.Errorf("the tar holds %q; want the tree below src", c.Entries)
+	}
+}
+
 func TestGoProfileRunsASideAsBefore(t *testing.T) {
-	testA := testID{Package: "a", Name: "TestA", File: "a/a_test.go"}
-	testB := testID{Package: "a", Name: "TestB", File: "a/a_test.go"}
-	tests := []testID{testA, testB}
-	// through runs a side as the attempt does: the profile plans it, and then runs it in the containers of the attempt's invoker.
-	through := func(t *testing.T, sc *scenario, rt sandbox.Runtime) map[testID][]execution.Observation {
-		t.Helper()
-		a := anAttempt(t, sc, rt)
-		s := headSide(t, a)
-		files := map[string][]byte{}
-		if m, ok := sc.head["go.mod"]; ok {
-			files["go.mod"] = []byte(m)
-		}
-		p := a.profile()
-		plan, err := p.plan(sideFiles{side: s, files: files}, a.lease.Limits, a.toolchain)
-		if err != nil {
-			t.Fatalf("plan: %v", err)
-		}
-		runs, err := p.run(context.Background(), a.box(s), plan, tests)
-		if err != nil {
-			t.Fatalf("run: %v", err)
-		}
-		return runs
-	}
-	sources := func(files repo) *scenario {
-		sc := canonicalScenario()
-		sc.head = files
-		return sc
-	}
 	module := repo{"go.mod": goMod, "a/a_test.go": "package a\n"}
 
 	t.Run("a side that passes runs once in the Go image with the Go command", func(t *testing.T) {
 		rt := newRuntime(func(c call) (sandbox.Outcome, error) {
 			return goTest(c, func(string, string) string { return "pass" }), nil
 		})
-		runs := through(t, sources(module), rt)
+		runs := throughTheSeam(t, module, rt)
 		if got, want := seen(runs), map[testID]string{testA: "pass", testB: "pass"}; !maps.Equal(got, want) {
 			t.Errorf("the observations are %v; want %v", got, want)
 		}
@@ -109,20 +128,7 @@ func TestGoProfileRunsASideAsBefore(t *testing.T) {
 		if len(calls) != 1 {
 			t.Fatalf("%d containers ran; want 1", len(calls))
 		}
-		c := calls[0]
-		argv, env := goprofile.Command([]goprofile.TestID{goprofile.TestID(testA), goprofile.TestID(testB)}, 600*time.Second, false)
-		if c.Spec.Image != goprofile.Image || c.Spec.Workdir != goprofile.TreeDir || !slices.Equal(c.Spec.Argv, argv) || !slices.Equal(c.Spec.Env, env) {
-			t.Errorf("the container is %q in %q with %q and %q; want the Go image in %q with %q and %q",
-				c.Spec.Image, c.Spec.Workdir, c.Spec.Argv, c.Spec.Env, goprofile.TreeDir, argv, env)
-		}
-		// The tree comes first, then go's own directories, and the marker is last: the sandbox runs nothing without it.
-		tail := c.Entries[len(c.Entries)-3:]
-		if want := []string{goprofile.HomeDir + "/.keep", goprofile.TmpDir + "/.keep", sandbox.CompleteMarker}; !slices.Equal(tail, want) {
-			t.Errorf("the tar ends with %q; want %q", tail, want)
-		}
-		if _, ok := c.Files["src/go.mod"]; !ok {
-			t.Errorf("the tar holds %q; want the tree below src", c.Entries)
-		}
+		checkGoContainer(t, calls[0])
 	})
 
 	t.Run("a test that fails and then passes runs again, alone", func(t *testing.T) {
@@ -136,7 +142,7 @@ func TestGoProfileRunsASideAsBefore(t *testing.T) {
 				return "pass"
 			}), nil
 		})
-		runs := through(t, sources(module), rt)
+		runs := throughTheSeam(t, module, rt)
 		if got, want := seen(runs), map[testID]string{testA: "pass", testB: "fail,pass"}; !maps.Equal(got, want) {
 			t.Errorf("the observations are %v; want %v", got, want)
 		}
@@ -151,7 +157,7 @@ func TestGoProfileRunsASideAsBefore(t *testing.T) {
 
 	t.Run("a side without a module reads build-error and runs nothing", func(t *testing.T) {
 		rt := newRuntime(func(call) (sandbox.Outcome, error) { return sandbox.Outcome{}, errors.New("no container is to run") })
-		runs := through(t, sources(repo{"a/a_test.go": "package a\n"}), rt)
+		runs := throughTheSeam(t, repo{"a/a_test.go": "package a\n"}, rt)
 		if got, want := seen(runs), map[testID]string{testA: "build-error", testB: "build-error"}; !maps.Equal(got, want) {
 			t.Errorf("the observations are %v; want %v", got, want)
 		}

@@ -116,7 +116,7 @@ func TestExecutionJobConstraints(t *testing.T) {
 		{"repository zero", "23514", "execution_jobs_repository_check", map[string]any{"repository_id": 0}},
 		{"pull zero", "23514", "execution_jobs_pull_check", map[string]any{"pull_number": 0}},
 		{"unknown plan", "23514", "execution_jobs_plan_check", map[string]any{"plan": "both"}},
-		{"another profile", "23514", "execution_jobs_profile_check", map[string]any{"profile": "python"}},
+		{"a profile in capitals", "23514", "execution_jobs_profile_check", map[string]any{"profile": "Go"}},
 		{"short head", "23514", "execution_jobs_head_check", map[string]any{"head_sha": "abc"}},
 		{"upper-case head", "23514", "execution_jobs_head_check", map[string]any{"head_sha": strings.ToUpper(execSHA(10))}},
 		{"malformed base", "23514", "execution_jobs_base_check", with(receipt, map[string]any{"base_sha": "abc"})},

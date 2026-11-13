@@ -161,3 +161,16 @@ type proxySink struct{ app *source.Appender }
 func (p proxySink) Add(name string, size int64, r io.Reader) error {
 	return p.app.Add(goprofile.ProxyDir+"/"+name, size, r)
 }
+
+// profile is the profile of the job: Go, until a job names another.
+func (a *attempt) profile() profile { return goProfile{} }
+
+// sideInvoker is the invoker of one side.
+type sideInvoker struct {
+	a *attempt
+	s side
+}
+
+func (a *attempt) box(s side) invoker { return sideInvoker{a, s} }
+
+func (sideInvoker) invoke(context.Context, invocation) (output, error) { return output{}, nil }

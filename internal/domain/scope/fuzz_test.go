@@ -181,38 +181,9 @@ func profilesRunning(t *testing.T, raw []byte, list *yaml.Node) []scope.Part {
 	var running []scope.Part
 	pairs := map[scope.Part]bool{}
 	for _, item := range list.Content {
-		if item.Kind != yaml.MappingNode {
-			t.Fatalf("accepted %q with a profiles entry that is not a mapping", raw)
-		}
-		part, run, keys := scope.Part{Folder: "."}, true, map[string]bool{}
-		for i := 0; i < len(item.Content); i += 2 {
-			key, value := item.Content[i], item.Content[i+1]
-			if keys[key.Value] || key.Kind != yaml.ScalarNode || key.ShortTag() != "!!str" || value.Kind != yaml.ScalarNode {
-				t.Fatalf("accepted %q with the profiles entry key %q (duplicate, not a string, or its value is not a scalar)", raw, key.Value)
-			}
-			keys[key.Value] = true
-			switch isStr := value.ShortTag() == "!!str"; key.Value {
-			case "profile":
-				if !isStr || !slices.Contains(scope.ProfileIDs(), value.Value) {
-					t.Fatalf("accepted %q with the profile %q, which is not a string of the closed set", raw, value.Value)
-				}
-				part.Profile = value.Value
-			case "folder":
-				if !isStr || !cleanFolder(value.Value) {
-					t.Fatalf("accepted %q with the folder %q, which is not a clean relative path", raw, value.Value)
-				}
-				part.Folder = value.Value
-			case "run":
-				if value.ShortTag() != "!!bool" || !slices.Contains([]string{"true", "True", "TRUE", "false", "False", "FALSE"}, value.Value) {
-					t.Fatalf("accepted %q with run %q, which is not a YAML boolean", raw, value.Value)
-				}
-				run = strings.EqualFold(value.Value, "true")
-			default:
-				t.Fatalf("accepted %q with the unknown profiles entry key %q", raw, key.Value)
-			}
-		}
-		if part.Profile == "" || pairs[part] {
-			t.Fatalf("accepted %q with an entry without a profile or a pair (%s, %s) twice", raw, part.Profile, part.Folder)
+		part, run := profilesEntry(t, raw, item)
+		if pairs[part] {
+			t.Fatalf("accepted %q with the pair (%s, %s) twice", raw, part.Profile, part.Folder)
 		}
 		pairs[part] = true
 		if run {
@@ -229,6 +200,45 @@ func profilesRunning(t *testing.T, raw []byte, list *yaml.Node) []scope.Part {
 		return cmp.Or(strings.Compare(rootFirst(a), rootFirst(b)), strings.Compare(a.Profile, b.Profile))
 	})
 	return running
+}
+
+// profilesEntry checks one entry of the list form against the schema and returns its pair and whether it runs.
+func profilesEntry(t *testing.T, raw []byte, item *yaml.Node) (part scope.Part, run bool) {
+	t.Helper()
+	if item.Kind != yaml.MappingNode {
+		t.Fatalf("accepted %q with a profiles entry that is not a mapping", raw)
+	}
+	part, run, keys := scope.Part{Folder: "."}, true, map[string]bool{}
+	for i := 0; i < len(item.Content); i += 2 {
+		key, value := item.Content[i], item.Content[i+1]
+		if keys[key.Value] || key.Kind != yaml.ScalarNode || key.ShortTag() != "!!str" || value.Kind != yaml.ScalarNode {
+			t.Fatalf("accepted %q with the profiles entry key %q (duplicate, not a string, or its value is not a scalar)", raw, key.Value)
+		}
+		keys[key.Value] = true
+		switch isStr := value.ShortTag() == "!!str"; key.Value {
+		case "profile":
+			if !isStr || !slices.Contains(scope.ProfileIDs(), value.Value) {
+				t.Fatalf("accepted %q with the profile %q, which is not a string of the closed set", raw, value.Value)
+			}
+			part.Profile = value.Value
+		case "folder":
+			if !isStr || !cleanFolder(value.Value) {
+				t.Fatalf("accepted %q with the folder %q, which is not a clean relative path", raw, value.Value)
+			}
+			part.Folder = value.Value
+		case "run":
+			if value.ShortTag() != "!!bool" || !slices.Contains([]string{"true", "True", "TRUE", "false", "False", "FALSE"}, value.Value) {
+				t.Fatalf("accepted %q with run %q, which is not a YAML boolean", raw, value.Value)
+			}
+			run = strings.EqualFold(value.Value, "true")
+		default:
+			t.Fatalf("accepted %q with the unknown profiles entry key %q", raw, key.Value)
+		}
+	}
+	if part.Profile == "" {
+		t.Fatalf("accepted %q with a profiles entry that names no profile", raw)
+	}
+	return part, run
 }
 
 // cleanFolder is the rule for a folder of the contract: a clean relative path of at most 512 bytes, not the root's spelling, with

@@ -338,15 +338,18 @@ func (e *execTestEnv) enqueue(spec execution.Spec) execution.Job {
 	return job
 }
 
+// execCanonicalDeclaration is the canonical declaration that the jobs of these tests name, which the lease reads again for the profiles of the job.
+const execCanonicalDeclaration = "version: 1\nexecution:\n  canonical: required\n  profile: go\n"
+
 // defaultFiles is the manifest of the jobs that name none.
-var defaultFiles = map[string]string{"contract.go": "package contract\n", ".suiteward.yml": "execution:\n  canonical: required\n  profile: go\n"}
+var defaultFiles = map[string]string{"contract.go": "package contract\n", ".suiteward.yml": execCanonicalDeclaration}
 
 // canonicalJob is a pending canonical job for the head numbered n over the manifest of files.
 func (e *execTestEnv) canonicalJob(n int, files map[string]string) execution.Job {
 	e.t.Helper()
 	m := e.manifest(files)
 	return e.enqueue(execution.Spec{RepositoryID: execRepoID, PullNumber: 3, Plan: execution.PlanCanonical, Profile: "go", HeadSHA: execSHA(n),
-		GoverningDigest: m.Digest(), GoverningSource: "V1", DeclarationDigest: execDigest(files[".suiteward.yml"]),
+		GoverningDigest: m.Digest(), GoverningSource: "V1", DeclarationDigest: e.put(execCanonicalDeclaration),
 		CanonicalLevel: domain.CanonicalLevelRequired, ReceiptLevel: domain.ReceiptLevelOff})
 }
 
@@ -355,7 +358,7 @@ func (e *execTestEnv) receiptJob(n int, files map[string]string) execution.Job {
 	e.t.Helper()
 	m := e.manifest(files)
 	return e.enqueue(execution.Spec{RepositoryID: execRepoID, PullNumber: 3, Plan: execution.PlanReceipt, Profile: "go", HeadSHA: execSHA(n), BaseSHA: execSHA(n + 1000),
-		GoverningDigest: m.Digest(), GoverningSource: "P1-R2", DeclarationDigest: execDigest(files[".suiteward.yml"]),
+		GoverningDigest: m.Digest(), GoverningSource: "P1-R2", DeclarationDigest: e.put(execCanonicalDeclaration),
 		CanonicalLevel: domain.CanonicalLevelOff, ReceiptLevel: domain.ReceiptLevelAdvisory})
 }
 

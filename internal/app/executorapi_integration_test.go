@@ -125,7 +125,7 @@ func (e *pgExecutorEnv) enqueue(n int) execution.Job {
 // through the planner, with nothing seeded, is in execution_lease_integration_test.go.
 func enqueueExecutionJob(t *testing.T, store *postgres.Store, artifacts *filesystem.Store, n int) execution.Job {
 	t.Helper()
-	files := map[string]string{"contract.go": fmt.Sprintf("package contract // %d\n", n), declarationPath: "execution:\n  canonical: required\n  profile: go\n"}
+	files := map[string]string{"contract.go": fmt.Sprintf("package contract // %d\n", n), declarationPath: "version: 1\nexecution:\n  canonical: required\n  profile: go\n"}
 	var entries []artifact.Entry
 	for path, content := range files {
 		if err := artifacts.Put(t.Context(), execDigest(content), strings.NewReader(content)); err != nil {

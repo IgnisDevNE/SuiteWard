@@ -98,8 +98,10 @@ func ImageMissing(profile string) Reason { return Reason(imageMissingPrefix + pr
 // MissingImage reports the profile that a reason of the family image-missing-<id> names, and false for any other reason or a malformed one (the id must match
 // ^[a-z][a-z0-9]{0,15}$).
 func (r Reason) MissingImage() (profile string, ok bool) {
-	profile, ok = strings.CutPrefix(string(r), imageMissingPrefix)
-	return profile, ok && profileIDPattern.MatchString(profile)
+	if id, found := strings.CutPrefix(string(r), imageMissingPrefix); found && profileIDPattern.MatchString(id) {
+		return id, true
+	}
+	return "", false
 }
 
 // The reasons of a cancelled job: its binding is no longer wanted.

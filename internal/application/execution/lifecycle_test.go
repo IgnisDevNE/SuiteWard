@@ -105,12 +105,12 @@ func TestSettleImageMissingIsFinal(t *testing.T) {
 	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
 	for _, failures := range []int{0, 1, 2} {
 		job := execution.Job{ID: 4, State: execution.StateLeased, Attempts: failures + 1, Failures: failures, LeaseID: "lease", LeaseExpiresAt: now.Add(time.Minute), DeadlineAt: now.Add(time.Hour),
-			Spec: execution.Spec{Profile: "cpp-go"}}
-		result := execution.Result{Report: execution.Report{Status: execution.StateUnavailable, Reason: execution.ImageMissing("cpp")}}
+			Spec: execution.Spec{Profile: "go"}}
+		result := execution.Result{Report: execution.Report{Status: execution.StateUnavailable, Reason: execution.ImageMissing("go")}}
 		got := job.Settle(result, now, time.Minute)
-		if !got.Store || got.Job.State != execution.StateUnavailable || got.Job.Reason != "image-missing-cpp" || got.Job.Failures != failures || !got.Job.FinishedAt.Equal(now) ||
+		if !got.Store || got.Job.State != execution.StateUnavailable || got.Job.Reason != "image-missing-go" || got.Job.Failures != failures || !got.Job.FinishedAt.Equal(now) ||
 			!got.Job.NotBefore.IsZero() || !got.Job.LeaseExpiresAt.IsZero() {
-			t.Errorf("at %d failures: Settle = %+v, store %v; want the job unavailable for image-missing-cpp at once, %d failures, the row stored", failures, got.Job, got.Store, failures)
+			t.Errorf("at %d failures: Settle = %+v, store %v; want the job unavailable for image-missing-go at once, %d failures, the row stored", failures, got.Job, got.Store, failures)
 		}
 	}
 }

@@ -230,6 +230,17 @@ type Test struct {
 	State          string
 }
 
+// Part is one part of a complete result: the profile and folder of a running entry, and the image and toolchain it ran with.
+type Part struct {
+	Profile     string
+	Folder      string          // "." for the root
+	ImageDigest artifact.Digest // sha256:<64 hex>
+	Toolchain   string
+}
+
+// Removed is an approved test that a receipt's change removes (SW-62).
+type Removed struct{ Package, Name, File string }
+
 // Report is what an executor says about a run, or what the service says about a job it ended itself: the stored columns of the
 // results row, apart from the tests.
 type Report struct {
@@ -245,7 +256,9 @@ type Report struct {
 	BodyDigest      artifact.Digest // of the request body, so that the same result sent again is recognized
 	Markers         []Marker
 	Submodules      []string
-	Unparsed        []string // the changed test files that go cannot parse, which list no test (a receipt only), at most 100 clean relative paths ending _test.go
+	Unparsed        []string  // the changed test files that go cannot parse, which list no test (a receipt only), at most 100 clean relative paths ending _test.go
+	Parts           []Part    // the parts that ran, in lease order; nil for a result of an M2.1 runner (the first part is the row's ImageDigest and Toolchain)
+	Removed         []Removed // the approved tests that the change of a receipt removes (a complete receipt only)
 }
 
 // Result is a request to store the result of a leased job.

@@ -382,6 +382,241 @@ func rsBound(e *env) {
 	}
 }
 
+// goParts are the parts of a Go job that ran n folders, the first in the root. The image and the toolchain of the first are those of report(), which are the
+// row's.
+func goParts(n int) []execution.Part {
+	parts := make([]execution.Part, n)
+	for i := range parts {
+		parts[i] = execution.Part{Profile: "go", Folder: fmt.Sprintf("svc%d", i), ImageDigest: digest("image"), Toolchain: "go1.25.1"}
+	}
+	parts[0].Folder = "."
+	return parts
+}
+
+// removedTests are n tests that a change removes, which differ by name.
+func removedTests(n int) []execution.Removed {
+	list := make([]execution.Removed, n)
+	for i := range list {
+		list[i] = execution.Removed{Package: "pkg", Name: fmt.Sprintf("TestRemoved%04d", i), File: "pkg/removed_test.go"}
+	}
+	return list
+}
+
+// requireNoPartsOrRemoved requires the stored result of a job to hold no part and no removed test, and to read them as no list at all: a row that holds []
+// reads back as nil in every store.
+func (e *env) requireNoPartsOrRemoved(id int64) {
+	e.t.Helper()
+	got, found, err := e.s.Result(e.ctx, id)
+	e.must(err)
+	if !found || got.Parts != nil || got.Removed != nil {
+		e.t.Fatalf("Result(%d) = parts %v, removed %v, found %v; want none, as nil", id, got.Parts, got.Removed, found)
+	}
+}
+
+// rsParts: ResultStoresParts. A complete result keeps the parts it ran, in order, and reads them back; the same body again is the same stored result; and a result
+// with none, as an M2.1 runner sends it, is stored with [] and reads back empty.
+func rsParts(e *env) {
+	job := e.enqueue(canonicalSpec(1), 0)
+	l := e.mustLease(job.ID, 0)
+	r := completeCanonical(l.LeaseID, "parts")
+	r.Parts = []execution.Part{
+		{Profile: "go", Folder: ".", ImageDigest: digest("image"), Toolchain: "go1.25.1"},
+		{Profile: "go", Folder: "svc/api", ImageDigest: digest("another image"), Toolchain: "go1.25.2"}, // only the first part is the row's
+	}
+	out, err := e.s.Complete(e.ctx, job.ID, r, at(10*time.Second), githubWait)
+	e.must(err)
+	if out.State != execution.StateComplete || out.Replayed {
+		e.t.Fatalf("outcome = %+v; want complete, not replayed", out)
+	}
+	e.requireResult(job.ID, execution.OriginExecutor, 10*time.Second, r.Report)
+	e.requireTests(job.ID, sortedTests(r))
+	again := r
+	again.LeaseID = e.newLeaseID()
+	out, err = e.s.Complete(e.ctx, job.ID, again, at(time.Hour), githubWait)
+	e.must(err)
+	if out.State != execution.StateComplete || !out.Replayed {
+		e.t.Fatalf("outcome of the same body = %+v; want complete, replayed", out)
+	}
+	e.requireResult(job.ID, execution.OriginExecutor, 10*time.Second, r.Report) // received once, with the parts it had
+
+	// The longest list of the longest values is accepted and read back.
+	edge := e.enqueue(canonicalSpec(2), time.Minute)
+	el := e.mustLease(edge.ID, time.Minute)
+	full := completeCanonical(el.LeaseID, "eight parts")
+	full.Parts = goParts(8)
+	full.Parts[7].Toolchain, full.Parts[7].Folder = long(64), long(512)
+	_, err = e.s.Complete(e.ctx, edge.ID, full, at(time.Minute+10*time.Second), githubWait)
+	e.must(err)
+	e.requireResult(edge.ID, execution.OriginExecutor, time.Minute+10*time.Second, full.Report)
+
+	// A result with no part is stored with [], and reads back as none.
+	none := e.enqueue(canonicalSpec(3), 3*time.Minute)
+	nl := e.mustLease(none.ID, 3*time.Minute)
+	_, err = e.s.Complete(e.ctx, none.ID, completeCanonical(nl.LeaseID, "none"), at(3*time.Minute+10*time.Second), githubWait)
+	e.must(err)
+	e.requireNoPartsOrRemoved(none.ID)
+}
+
+// rsPartsRefused: ResultRefusesPartsNotOfTheJob. The store checks every part against the job and the row before it writes anything. (An empty list on a complete
+// result of a job whose label is not go waits for X18, which adds the profile that makes such a label.)
+func rsPartsRefused(e *env) {
+	job := e.enqueue(canonicalSpec(1), 0)
+	l := e.mustLease(job.ID, 0)
+	valid := func() execution.Result {
+		r := completeCanonical(l.LeaseID, "parts")
+		r.Parts = goParts(2)
+		return r
+	}
+	requireInvalid(e, valid, map[string]func(*execution.Result){
+		"a part of a profile that is not the job's":       func(r *execution.Result) { r.Parts[1].Profile = "cpp" },
+		"a first part of a profile that is not the job's": func(r *execution.Result) { r.Parts[0].Profile = "cpp" },
+		"a part of a profile that does not exist":         func(r *execution.Result) { r.Parts[1].Profile = "python" },
+		"a part of no profile":                            func(r *execution.Result) { r.Parts[1].Profile = "" },
+		"a part of the profile in capitals":               func(r *execution.Result) { r.Parts[1].Profile = "Go" },
+		"a first part of another image":                   func(r *execution.Result) { r.Parts[0].ImageDigest = digest("another image") },
+		"a first part of another toolchain":               func(r *execution.Result) { r.Parts[0].Toolchain = "go1.25.2" },
+		"nine parts":                                      func(r *execution.Result) { r.Parts = goParts(9) },
+		"a part without an image":                         func(r *execution.Result) { r.Parts[1].ImageDigest = artifact.Digest{} },
+		"a part without a toolchain":                      func(r *execution.Result) { r.Parts[1].Toolchain = "" },
+		"a toolchain of 65 bytes":                         func(r *execution.Result) { r.Parts[1].Toolchain = long(65) },
+		"a part without a folder":                         func(r *execution.Result) { r.Parts[1].Folder = "" },
+		"a folder of 513 bytes":                           func(r *execution.Result) { r.Parts[1].Folder = long(513) },
+		"parts on an unavailable result of a retried reason": func(r *execution.Result) {
+			r.Status, r.Reason, r.Tests = execution.StateUnavailable, execution.ReasonExecutorError, nil
+		},
+		"parts on an unavailable result of a final reason": func(r *execution.Result) {
+			r.Status, r.Reason, r.Tests = execution.StateUnavailable, execution.ReasonToolchainMismatch, nil
+		},
+	}, func(r execution.Result) error {
+		_, err := e.s.Complete(e.ctx, job.ID, r, at(10*time.Second), githubWait)
+		return err
+	})
+	e.requireUntouched(l) // nothing was written, and a retried reason did not queue the job again
+}
+
+// completeReceiptWithRemoved is a complete receipt that removes two approved tests.
+func completeReceiptWithRemoved(leaseID, body string) execution.Result {
+	r := completeReceipt(leaseID, body)
+	r.Removed = []execution.Removed{{Package: "pkg", Name: "TestGone", File: "pkg/gone_test.go"}, {Package: "tools", Name: "TestOldTool", File: "tools/old_test.go"}}
+	return r
+}
+
+// rsRemoved: ResultStoresRemovedOfAReceipt. A complete receipt keeps the approved tests its change removes and reads them back, with its parts too; and a
+// receipt with none reads back as none.
+func rsRemoved(e *env) {
+	job := e.enqueue(receiptSpec(1), 0)
+	l := e.mustLease(job.ID, 0)
+	r := completeReceiptWithRemoved(l.LeaseID, "removed")
+	r.Parts = goParts(2)
+	out, err := e.s.Complete(e.ctx, job.ID, r, at(10*time.Second), githubWait)
+	e.must(err)
+	if out.State != execution.StateComplete || out.Replayed {
+		e.t.Fatalf("outcome = %+v; want complete, not replayed", out)
+	}
+	e.requireResult(job.ID, execution.OriginExecutor, 10*time.Second, r.Report)
+	e.requireTests(job.ID, sortedTests(r))
+	again := r
+	again.LeaseID = e.newLeaseID()
+	out, err = e.s.Complete(e.ctx, job.ID, again, at(time.Hour), githubWait)
+	e.must(err)
+	if !out.Replayed {
+		e.t.Fatalf("outcome of the same body = %+v; want replayed", out)
+	}
+	e.requireResult(job.ID, execution.OriginExecutor, 10*time.Second, r.Report)
+
+	// The longest list of the longest entries is accepted and read back.
+	edge := e.enqueue(receiptSpec(2), time.Minute)
+	el := e.mustLease(edge.ID, time.Minute)
+	full := completeReceipt(el.LeaseID, "a thousand removed")
+	full.Removed = removedTests(1000)
+	full.Removed[999] = execution.Removed{Package: long(512), Name: "T" + long(199), File: long(1024)}
+	_, err = e.s.Complete(e.ctx, edge.ID, full, at(time.Minute+10*time.Second), githubWait)
+	e.must(err)
+	e.requireResult(edge.ID, execution.OriginExecutor, time.Minute+10*time.Second, full.Report)
+
+	// A receipt that removes nothing is stored with [], and reads back as none.
+	none := e.enqueue(receiptSpec(3), 3*time.Minute)
+	nl := e.mustLease(none.ID, 3*time.Minute)
+	_, err = e.s.Complete(e.ctx, none.ID, completeReceipt(nl.LeaseID, "none"), at(3*time.Minute+10*time.Second), githubWait)
+	e.must(err)
+	e.requireNoPartsOrRemoved(none.ID)
+}
+
+// rsRemovedRefused: ResultRefusesRemovedOnCanonical. Removed tests belong to a complete receipt and to nothing else, and each is a test that the result does not
+// list.
+func rsRemovedRefused(e *env) {
+	canonical := e.enqueue(canonicalSpec(1), 0)
+	cl := e.mustLease(canonical.ID, 0)
+	withRemoved := completeCanonical(cl.LeaseID, "canonical")
+	withRemoved.Removed = removedTests(1)
+	_, err := e.s.Complete(e.ctx, canonical.ID, withRemoved, at(10*time.Second), githubWait)
+	e.requireErr(err, execution.ErrInvalidRequest)
+	e.requireUntouched(cl)
+
+	receipt := e.enqueue(receiptSpec(2), time.Minute)
+	rl := e.mustLease(receipt.ID, time.Minute)
+	requireInvalid(e, func() execution.Result { return completeReceiptWithRemoved(rl.LeaseID, "receipt") }, map[string]func(*execution.Result){
+		"removed tests on an unavailable result of a retried reason": func(r *execution.Result) {
+			r.Status, r.Reason, r.Tests, r.Markers, r.Unparsed = execution.StateUnavailable, execution.ReasonExecutorError, nil, nil, nil
+		},
+		"removed tests on an unavailable result of a final reason": func(r *execution.Result) {
+			r.Status, r.Reason, r.Tests, r.Markers, r.Unparsed = execution.StateUnavailable, execution.ReasonToolchainMismatch, nil, nil, nil
+		},
+		"a pair twice": func(r *execution.Result) { r.Removed = append(r.Removed, r.Removed[0]) },
+		"a pair twice with another file": func(r *execution.Result) {
+			r.Removed = append(r.Removed, execution.Removed{Package: "pkg", Name: "TestGone", File: "pkg/other_test.go"})
+		},
+		"an entry that is a test row": func(r *execution.Result) {
+			r.Removed[1] = execution.Removed{Package: "pkg", Name: "TestChanged", File: "pkg/p_test.go"}
+		},
+		"an entry that is an excluded test row": func(r *execution.Result) {
+			r.Removed[1] = execution.Removed{Package: "pkg", Name: "TestGuarded", File: "pkg/g_test.go"}
+		},
+		"1001 entries":               func(r *execution.Result) { r.Removed = removedTests(1001) },
+		"an entry without a package": func(r *execution.Result) { r.Removed[1].Package = "" },
+		"a package of 513 bytes":     func(r *execution.Result) { r.Removed[1].Package = long(513) },
+		"an entry without a name":    func(r *execution.Result) { r.Removed[1].Name = "" },
+		"a name of 201 bytes":        func(r *execution.Result) { r.Removed[1].Name = long(201) },
+		"an entry without a file":    func(r *execution.Result) { r.Removed[1].File = "" },
+		"a file of 1025 bytes":       func(r *execution.Result) { r.Removed[1].File = long(1025) },
+	}, func(r execution.Result) error {
+		_, err := e.s.Complete(e.ctx, receipt.ID, r, at(time.Minute+30*time.Second), githubWait)
+		return err
+	})
+	e.requireUntouched(rl)
+}
+
+// rsImageMissing: a runner that lacks the image of a profile says which, and the profile is one of the job's. The reason is final, and it is the schema of
+// migration 00023 that lets PostgreSQL keep it.
+func rsImageMissing(e *env) {
+	job := e.enqueue(canonicalSpec(1), 0)
+	l := e.mustLease(job.ID, 0)
+	requireInvalid(e, func() execution.Result {
+		return unavailableResult(l.LeaseID, execution.ImageMissing("go"), "image missing")
+	}, map[string]func(*execution.Result){
+		"an id that is not the job's":   func(r *execution.Result) { r.Reason = execution.ImageMissing("cpp") },
+		"an empty id":                   func(r *execution.Result) { r.Reason = "image-missing-" },
+		"an id in capitals":             func(r *execution.Result) { r.Reason = "image-missing-Go" },
+		"the label of a job of two ids": func(r *execution.Result) { r.Reason = "image-missing-cpp-go" },
+		"a reason of the family on a complete result": func(r *execution.Result) {
+			*r = completeCanonical(l.LeaseID, "complete")
+			r.Reason = execution.ImageMissing("go")
+		},
+	}, func(r execution.Result) error {
+		_, err := e.s.Complete(e.ctx, job.ID, r, at(10*time.Second), githubWait)
+		return err
+	})
+	e.requireUntouched(l)
+	missing := unavailableResult(l.LeaseID, execution.ImageMissing("go"), "image missing")
+	out, err := e.s.Complete(e.ctx, job.ID, missing, at(10*time.Second), githubWait)
+	e.must(err)
+	if out.State != execution.StateUnavailable || out.Replayed {
+		e.t.Fatalf("outcome = %+v; want unavailable at once, not retried", out)
+	}
+	e.requireJob(ended(l, execution.StateUnavailable, execution.ImageMissing("go"), 10*time.Second))
+	e.requireResult(job.ID, execution.OriginExecutor, 10*time.Second, missing.Report)
+}
+
 // testFiles are n paths of size bytes each that end _test.go and differ, for the lists that are bounded.
 func testFiles(n, size int) []string {
 	paths := make([]string, n)

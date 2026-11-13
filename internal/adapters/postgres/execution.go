@@ -323,19 +323,55 @@ type markerJSON struct {
 	Line int    `json:"line"`
 }
 
-func insertResultParams(jobID int64, origin execution.Origin, receivedAt time.Time, r execution.Report) (dbgen.InsertExecutionResultParams, error) {
-	markers := make([]markerJSON, len(r.Markers))
-	for i, m := range r.Markers {
-		markers[i] = markerJSON(m)
+// partJSON is a part as the parts column holds it, with the keys of migration 00023.
+type partJSON struct {
+	Profile     string `json:"profile"`
+	Folder      string `json:"folder"`
+	ImageDigest string `json:"imageDigest"`
+	Toolchain   string `json:"toolchain"`
+}
+
+// removedJSON is a removed test as the removed column holds it, with the keys of migration 00023.
+type removedJSON struct {
+	Package string `json:"package"`
+	Name    string `json:"name"`
+	File    string `json:"file"`
+}
+
+// jsonList encodes the list as the JSON array that a column of a result holds. The rows are built with make, so that an empty list encodes as [] and not as the
+// null of a nil slice, which the columns refuse.
+func jsonList[S, T any](column string, list []S, row func(S) T) ([]byte, error) {
+	rows := make([]T, len(list))
+	for i, item := range list {
+		rows[i] = row(item)
 	}
-	encoded, err := json.Marshal(markers)
+	encoded, err := json.Marshal(rows)
 	if err != nil {
-		return dbgen.InsertExecutionResultParams{}, fmt.Errorf("encode the markers: %w", err)
+		return nil, fmt.Errorf("encode the %s: %w", column, err)
+	}
+	return encoded, nil
+}
+
+func insertResultParams(jobID int64, origin execution.Origin, receivedAt time.Time, r execution.Report) (dbgen.InsertExecutionResultParams, error) {
+	markers, err := jsonList("markers", r.Markers, func(m execution.Marker) markerJSON { return markerJSON(m) })
+	if err != nil {
+		return dbgen.InsertExecutionResultParams{}, err
+	}
+	parts, err := jsonList("parts", r.Parts, func(p execution.Part) partJSON {
+		return partJSON{Profile: p.Profile, Folder: p.Folder, ImageDigest: p.ImageDigest.String(), Toolchain: p.Toolchain}
+	})
+	if err != nil {
+		return dbgen.InsertExecutionResultParams{}, err
+	}
+	removed, err := jsonList("removed tests", r.Removed, func(t execution.Removed) removedJSON { return removedJSON(t) })
+	if err != nil {
+		return dbgen.InsertExecutionResultParams{}, err
 	}
 	return dbgen.InsertExecutionResultParams{JobID: jobID, Status: string(r.Status), Origin: string(origin), Reason: optionalText(string(r.Reason)),
 		ExecutorVersion: optionalText(r.ExecutorVersion), ExecutorSha256: optionalText(strings.TrimPrefix(r.ExecutorSHA256.String(), "sha256:")),
 		ImageDigest: optionalText(r.ImageDigest.String()), Toolchain: optionalText(r.Toolchain), Runtime: optionalText(r.Runtime), StartedAt: timestamp(r.StartedAt),
-		EndedAt: timestamp(r.EndedAt), ReceivedAt: timestamp(receivedAt), BodyDigest: optionalText(r.BodyDigest.String()), Markers: encoded, Submodules: stringList(r.Submodules), Unparsed: stringList(r.Unparsed)}, nil
+		EndedAt: timestamp(r.EndedAt), ReceivedAt: timestamp(receivedAt), BodyDigest: optionalText(r.BodyDigest.String()), Markers: markers, Submodules: stringList(r.Submodules),
+		Unparsed: stringList(r.Unparsed), Parts: parts, Removed: removed}, nil
 }
 
 func insertTestsParams(jobID int64, tests []execution.Test) []dbgen.InsertExecutionTestsParams {
@@ -584,6 +620,23 @@ func parseDigestColumn(column string, value pgtype.Text) (artifact.Digest, error
 	return digest, nil
 }
 
+// decodeList reads the JSON array that a column of a result holds. A stored [] reads as nil, as a result with no part and no removed test is stored with it.
+func decodeList[T, S any](column string, data []byte, item func(T) (S, error)) ([]S, error) {
+	var rows []T
+	if err := json.Unmarshal(data, &rows); err != nil {
+		return nil, fmt.Errorf("stored %s: %w", column, err)
+	}
+	var list []S
+	for _, row := range rows {
+		value, err := item(row)
+		if err != nil {
+			return nil, fmt.Errorf("stored %s: %w", column, err)
+		}
+		list = append(list, value)
+	}
+	return list, nil
+}
+
 // Result implements execution.Store.
 func (s executionStore) Result(ctx context.Context, jobID int64) (execution.StoredResult, bool, error) {
 	row, err := dbgen.New(s.pool).GetExecutionResult(ctx, jobID)
@@ -593,14 +646,19 @@ func (s executionStore) Result(ctx context.Context, jobID int64) (execution.Stor
 	if err != nil {
 		return execution.StoredResult{}, false, fmt.Errorf("read the result of job %d: %w", jobID, err)
 	}
-	var markers []markerJSON
-	if err := json.Unmarshal(row.Markers, &markers); err != nil {
-		return execution.StoredResult{}, false, fmt.Errorf("read the result of job %d: stored markers: %w", jobID, err)
-	}
 	report := execution.Report{Status: execution.State(row.Status), Reason: execution.Reason(row.Reason.String), ExecutorVersion: row.ExecutorVersion.String, Toolchain: row.Toolchain.String,
 		Runtime: row.Runtime.String, StartedAt: observedTime(row.StartedAt), EndedAt: observedTime(row.EndedAt), Submodules: row.Submodules, Unparsed: row.Unparsed}
-	for _, m := range markers {
-		report.Markers = append(report.Markers, execution.Marker(m))
+	if report.Markers, err = decodeList("markers", row.Markers, func(m markerJSON) (execution.Marker, error) { return execution.Marker(m), nil }); err != nil {
+		return execution.StoredResult{}, false, fmt.Errorf("read the result of job %d: %w", jobID, err)
+	}
+	if report.Parts, err = decodeList("parts", row.Parts, func(p partJSON) (execution.Part, error) {
+		digest, err := artifact.ParseDigest(p.ImageDigest)
+		return execution.Part{Profile: p.Profile, Folder: p.Folder, ImageDigest: digest, Toolchain: p.Toolchain}, err
+	}); err != nil {
+		return execution.StoredResult{}, false, fmt.Errorf("read the result of job %d: %w", jobID, err)
+	}
+	if report.Removed, err = decodeList("removed tests", row.Removed, func(t removedJSON) (execution.Removed, error) { return execution.Removed(t), nil }); err != nil {
+		return execution.StoredResult{}, false, fmt.Errorf("read the result of job %d: %w", jobID, err)
 	}
 	if report.ExecutorSHA256, err = parseHex("executor_sha256", row.ExecutorSha256); err != nil {
 		return execution.StoredResult{}, false, fmt.Errorf("read the result of job %d: %w", jobID, err)

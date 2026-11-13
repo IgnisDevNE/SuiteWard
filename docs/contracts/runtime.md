@@ -1258,6 +1258,7 @@ The fields are in the tables of [The executor API](#the-executor-api): `profile`
 - **`list` is not a profile.** `profile.id` of a list lease is the constant `list`, so that an M2.1 runner, which reads `profile.id` and `profile.image` and nothing else, refuses at once with `profile-unsupported`. It is never a label and never in the `profile` column of `execution_jobs`. For the scalar form `profile.id` is the label, `go`.
 - **The runner refuses with `profile-unsupported`**, before it does anything else, when an `id` of `profiles` is unknown to it or an `image` is not the pin that it holds for that id.
 - **The runner asks for the toolchain of each profile once for the job** and sends one `parts` entry for each part, in lease order.
+- **The page and the evidence binding** show the label as the profile of the run, and the toolchain and the image digest of each part, in lease order, naming the profile and the folder: the row that says "Go toolchain" becomes one row for each part and no longer names a language. A result with no `parts` keeps its one row, read from `sandbox`.
 - **Only when the lease carried `profiles`** does a runner send `parts`, `removed` or a reason of the family `image-missing-<id>`. A lease without `profiles` is an M2.1 service's, and an M2.1 service decodes a result strictly. The service accepts a result with no `parts` (an M2.1 runner's) and stores `[]`.
 
 **Service and runner of different releases.** The installer upgrades both together. When they differ:

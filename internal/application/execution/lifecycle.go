@@ -30,14 +30,15 @@ func (r Reason) Retried() bool {
 	return false
 }
 
-// executorSet reports whether an executor may give the reason in an unavailable result.
+// executorSet reports whether an executor may give the reason in an unavailable result: a code below, or a well formed image-missing-<id>, whose id the job must have (Result.Validate).
 func (r Reason) executorSet() bool {
 	switch r {
 	case ReasonExecutorError, ReasonSandboxUnavailable, ReasonArchiveUnavailable, ReasonGitHubUnavailable, ReasonFetchFailed, ReasonInstallFailed,
 		ReasonResourceLimit, ReasonToolchainMismatch, ReasonSourceMismatch, ReasonTooLarge, ReasonProfileUnsupported:
 		return true
 	}
-	return false
+	_, ok := r.MissingImage()
+	return ok
 }
 
 // createdFinal reports whether a job may be created already unavailable for the reason.

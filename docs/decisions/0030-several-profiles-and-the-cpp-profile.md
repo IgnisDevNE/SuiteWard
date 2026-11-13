@@ -244,6 +244,7 @@ Decisions 9 to 14 settled what a part sees, how downloads work, who owns a test 
    - An archive is unpacked with `--strip-components=1`, so it must hold one top-level folder.
    - The sources that `cpp` recognizes are `.c`, `.cc`, `.cpp` and `.cxx`. A GoogleTest name is `Suite.Name`. A dependency has a name of `^[A-Za-z][A-Za-z0-9_]{0,63}$`, a `.tar.gz` or `.tgz` URL of at most 2048 bytes, and a part has at most 16 of them.
    - The dependency plan reads only the CMake files under the part's folder, although the part gets the whole tree: a `FetchContent_Declare` outside the folder is not planned, and every test of the side reads `build-error`.
+   - The reductions are written by pair and look at no other entry: a running entry that is made protected only is reported even when an enclosing running entry of its profile goes on running the tests, because a Go test may land in a nested module and read `EXCLUDED`.
    - Smaller rules: the root is spelled `.` in the lease, the parts and the reductions, and `folder: .` is refused; the scalar `profile` accepts `go` only; `sandbox` describes the first part; `removed` leaves out excluded tests; `Suggest` matches on the last segment of a path.
 
 ## Not decided

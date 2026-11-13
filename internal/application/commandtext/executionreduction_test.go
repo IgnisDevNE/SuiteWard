@@ -101,7 +101,7 @@ func TestRevisionCommentThatOnlyLowersThePolicyWordsARemovalAsAnotherChange(t *t
 }
 
 // The comment states what it accepts: exactly the entries that scope.Reductions writes, and no other kind.
-func TestRevisionCommentAcceptsTheTwoExecutionEntriesAndNoOtherKind(t *testing.T) {
+func TestRevisionCommentAcceptsTheLevelEntriesAndNoOtherKind(t *testing.T) {
 	for _, entry := range []string{lowerCanonical, lowerReceipt, "execution canonical: required -> off", "execution receipt: before-approval -> advisory"} {
 		r := executionOnly(t, entry)
 		if body := revisionText(t, r); body == "" {

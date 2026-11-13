@@ -334,7 +334,7 @@ func renderRevision(in fuzzInput) (rendered, bool) {
 	case in.n&2 != 0:
 		r.Reduced, r.ReducedRules, r.ReducedPaths = true, in.list(3, 20), in.list(4, 20)
 		// RevisionComment panics on an entry of none of these kinds; with no path and only execution entries the reduction lowers the policy alone.
-		kinds := []string{"rule ", "exclude ", "execution canonical: ", "execution receipt: "}
+		kinds := []string{"rule ", "exclude ", "execution canonical: ", "execution receipt: ", "execution profile: "}
 		if in.reps&4 != 0 {
 			kinds, r.ReducedPaths = kinds[2:], nil
 		}

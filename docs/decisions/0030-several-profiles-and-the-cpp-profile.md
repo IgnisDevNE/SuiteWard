@@ -45,7 +45,7 @@ The job stays the unit: one for each pull request, head and plan, for one bindin
   - *The receipt's evaluated files* (the files that the canonical `include` matches and the revision adds or changes) are split by the same rule. A part evaluates its own files. A file that no part owns, or that the profile of its owner does not read as a test file, evaluates nothing. The base side of a part is the base commit's files under its folder, with the head's version laid over them for every such file that the head adds or changes.
 - **Evidence.** A result holds one image digest and one toolchain today. It gains `parts`, one entry for each part. The old `sandbox` fields stay and describe the first part. The pull request page shows one toolchain row for each part, and the runner asks each profile for its toolchain once.
 - **A missing image** ends the whole job (sections 8 and 9).
-- **Retries are per job**: three attempts. Before the first test container, every part is checked: its image is held, its toolchain is asked, and its sides are prepared (the source check and the dependency plan). A failure that is retried, a download for example, is found before any test has run, so a retry repeats no finished run.
+- **Retries are per job**: three attempts. Before the first test container, every part is checked: its image is held, its toolchain is asked, and its dependency plan is made. A failure that is retried, a download for example, is found before any test has run, so a retry repeats no finished run.
 - **One deadline and one set of limits** serve the whole job: `EXECUTOR_JOB_TIMEOUT` and the limits of the lease. A part gets only the files under its folder (open point 1). The spike measured `core/` of Borealis well inside the limits.
 - **Parts come from the canonical declaration of the job**, the one that its `declaration_digest` names. They do not come from the `declaration` bytes that the lease ships, which are the governing declaration. The two differ for an approved pull request that edits `.suiteward.yml`. So the lease carries the folders itself.
 
@@ -210,7 +210,7 @@ Why the whole job, and not "those tests excluded": an excluded test passes the g
 
 ## What this amends
 
-**[ADR 0028](0028-canonical-execution-and-the-receipt.md).** Task D1 will add its dated note; until then this list is the note.
+**[ADR 0028](0028-canonical-execution-and-the-receipt.md).** ADR 0028 needs a dated note that points here. No task of the phase owns that file yet (task D1 owns ADR 0029), so until one does, this list is the note.
 
 - **Section 1.** `profile: go` is not the only value: the list form accepts `go` and `cpp`, each with an optional folder and an optional `run`. Strict keys now include `profiles`, `folder` and `run`. "Levels need a profile" reads "need a running profile". "The toolchain is not configurable" holds for each profile: its image is the release's pin.
 - **Section 2.** The expected tests are those of each part, by its profile and the files it owns, and not only the top-level Go test functions of the manifest.

@@ -276,10 +276,11 @@ func (a *attempt) canonical(ctx context.Context) (completion, error) {
 		return done, nil
 	}
 	s := side{which: source.SideHead, tree: tree}
-	if err := a.prepare(&s, files["go.mod"], files["go.sum"]); err != nil {
+	plan, err := a.prepare(s, files)
+	if err != nil {
 		return completion{}, err
 	}
-	runs, err := a.runSide(ctx, &s, declared.Tests)
+	runs, err := a.runSide(ctx, s, plan, fromGo(declared.Tests))
 	if err != nil {
 		return completion{}, err
 	}
@@ -305,7 +306,7 @@ func sortRows(rows []testRow) {
 }
 
 // fillRuns writes the observations of each side into the rows of the tests that ran. A canonical run has no base.
-func fillRuns(rows []testRow, head, base map[goprofile.TestID][]execution.Observation) {
+func fillRuns(rows []testRow, head, base map[testID][]execution.Observation) {
 	names := func(runs []execution.Observation) []string {
 		out := make([]string, len(runs))
 		for i, o := range runs {
@@ -314,7 +315,7 @@ func fillRuns(rows []testRow, head, base map[goprofile.TestID][]execution.Observ
 		return out
 	}
 	for i := range rows {
-		id := goprofile.TestID{Package: rows[i].Package, Name: rows[i].Name, File: rows[i].File}
+		id := testID{Package: rows[i].Package, Name: rows[i].Name, File: rows[i].File}
 		if runs, ok := head[id]; ok {
 			rows[i].Head = names(runs)
 		}
@@ -382,17 +383,20 @@ func (a *attempt) receipt(ctx context.Context) (completion, error) {
 	}
 	headSide, baseSide := side{which: source.SideHead, tree: headTree}, side{which: source.SideBase, tree: baseTree}
 	// Each side's toolchain and dependencies are checked before the first container runs.
-	if err := a.prepare(&headSide, headRead.root["go.mod"], headRead.root["go.sum"]); err != nil {
-		return completion{}, err
-	}
-	if err := a.prepare(&baseSide, baseRoot["go.mod"], baseRoot["go.sum"]); err != nil {
-		return completion{}, err
-	}
-	headRuns, err := a.runSide(ctx, &headSide, runnable)
+	headPlan, err := a.prepare(headSide, headRead.root)
 	if err != nil {
 		return completion{}, err
 	}
-	baseRuns, err := a.runSide(ctx, &baseSide, runnable)
+	basePlan, err := a.prepare(baseSide, baseRoot)
+	if err != nil {
+		return completion{}, err
+	}
+	ran := fromGo(runnable)
+	headRuns, err := a.runSide(ctx, headSide, headPlan, ran)
+	if err != nil {
+		return completion{}, err
+	}
+	baseRuns, err := a.runSide(ctx, baseSide, basePlan, ran)
 	if err != nil {
 		return completion{}, err
 	}

@@ -17,7 +17,8 @@ import (
 	"github.com/IgnisDevNE/SuiteWard/internal/application/execution"
 	"github.com/IgnisDevNE/SuiteWard/internal/domain/artifact"
 	domain "github.com/IgnisDevNE/SuiteWard/internal/domain/execution"
-	"github.com/IgnisDevNE/SuiteWard/internal/executor/goprofile"
+	"github.com/IgnisDevNE/SuiteWard/internal/domain/scope"
+	"github.com/IgnisDevNE/SuiteWard/internal/executor/profiles"
 )
 
 // declarationPath is the file that holds a repository's declaration; the lease answer carries its bytes.
@@ -46,6 +47,7 @@ type leaseAnswer struct {
 	Plan           string        `json:"plan"`
 	Pull           int           `json:"pull"`
 	Profile        leaseProfile  `json:"profile"`
+	Profiles       []leasePart   `json:"profiles"`
 	Head           leaseSide     `json:"head"`
 	Base           *leaseSide    `json:"base,omitempty"` // exactly for a receipt
 	Manifest       leaseManifest `json:"manifest"`
@@ -53,9 +55,20 @@ type leaseAnswer struct {
 	Limits         any           `json:"limits"`
 }
 
+// listProfile is the profile.id of a job whose canonical or governing declaration is in list form. It is never a label, so an M2.1 runner, which reads
+// profile.id and profile.image and nothing else, refuses the job at once (docs/contracts/runtime.md, "The lease, the result and the versions (M2.2)").
+const listProfile = "list"
+
 type leaseProfile struct {
 	ID    string `json:"id"`
 	Image string `json:"image"`
+}
+
+// leasePart is a running entry of the job's canonical declaration with the image that this release pins for its profile.
+type leasePart struct {
+	ID     string `json:"id"`
+	Image  string `json:"image"`
+	Folder string `json:"folder"`
 }
 
 type leaseSide struct {
@@ -180,8 +193,20 @@ func (h *executorAPI) build(ctx context.Context, job execution.Job, leaseID stri
 	if err != nil {
 		return nil, err
 	}
+	parts, list, err := h.jobProfiles(ctx, job)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := leaseParts(parts)
+	if err != nil {
+		return nil, fmt.Errorf("job %d: %w", job.ID, err)
+	}
+	profile := leaseProfile{ID: job.Profile, Image: entries[0].Image} // jobProfiles gives at least one part
+	if list {
+		profile.ID = listProfile
+	}
 	answer := &leaseAnswer{JobID: job.ID, LeaseID: leaseID, LeaseExpiresAt: rfc3339(time.Time{}), DeadlineAt: rfc3339(time.Time{}), Plan: string(job.Plan), Pull: job.PullNumber,
-		Profile: leaseProfile{ID: job.Profile, Image: goprofile.Image}, Manifest: manifest, Declaration: declaration, Limits: jobLimits}
+		Profile: profile, Profiles: entries, Manifest: manifest, Declaration: declaration, Limits: jobLimits}
 	if answer.Head, err = h.side(ctx, job, repo, job.HeadSHA, readBy); err != nil {
 		return nil, err
 	}
@@ -254,8 +279,70 @@ func (h *executorAPI) manifestOf(ctx context.Context, job execution.Job) (artifa
 	return manifest, nil
 }
 
-// declaration is the base64 of the declaration's bytes, refused before it is read when it is over 1 MiB.
+// jobProfiles reads the canonical declaration that job.DeclarationDigest names and the governing declaration of the job's manifest, and returns the running
+// entries of the canonical one, in contract order, and whether either declaration is in list form. A manifest without a declaration is not a list. Both
+// declarations were validated where the manifest and the job were made, so one that does not parse, or a canonical one that runs nothing, is the service's own fault.
+func (h *executorAPI) jobProfiles(ctx context.Context, job execution.Job) (parts []scope.Part, list bool, err error) {
+	canonical, err := h.parsedDeclaration(ctx, job.DeclarationDigest)
+	if err != nil {
+		return nil, false, fmt.Errorf("the canonical declaration of job %d: %w", job.ID, err)
+	}
+	if parts = canonical.Parts(); len(parts) == 0 {
+		return nil, false, fmt.Errorf("the canonical declaration %s of job %d runs nothing, and the plan makes no job for it", job.DeclarationDigest, job.ID)
+	}
+	manifest, err := h.manifestOf(ctx, job)
+	if err != nil {
+		return nil, false, err
+	}
+	i := slices.IndexFunc(manifest.Entries(), func(entry artifact.Entry) bool { return entry.Path == declarationPath })
+	if i < 0 {
+		return parts, canonical.ListForm(), nil
+	}
+	governing, err := h.parsedDeclaration(ctx, manifest.Entries()[i].Content)
+	if err != nil {
+		return nil, false, fmt.Errorf("the governing declaration of job %d: %w", job.ID, err)
+	}
+	return parts, canonical.ListForm() || governing.ListForm(), nil
+}
+
+// leaseParts lists the parts with the image that this release pins for the profile of each.
+func leaseParts(parts []scope.Part) ([]leasePart, error) {
+	entries := make([]leasePart, len(parts))
+	for i, part := range parts {
+		profile, err := profiles.ByID(part.Profile)
+		if err != nil {
+			return nil, fmt.Errorf("the image of a running profile: %w", err)
+		}
+		entries[i] = leasePart{ID: part.Profile, Image: profile.Image, Folder: part.Folder}
+	}
+	return entries, nil
+}
+
+// parsedDeclaration is the declaration that digest names.
+func (h *executorAPI) parsedDeclaration(ctx context.Context, digest artifact.Digest) (scope.Declaration, error) {
+	raw, err := h.declarationBytes(ctx, digest)
+	if err != nil {
+		return scope.Declaration{}, err
+	}
+	declaration, err := scope.ParseDeclaration(raw)
+	if err != nil {
+		return scope.Declaration{}, fmt.Errorf("parse the declaration %s: %w", digest, err)
+	}
+	return declaration, nil
+}
+
+// declaration is the base64 of the declaration's bytes.
 func (h *executorAPI) declaration(ctx context.Context, digest artifact.Digest) (*string, error) {
+	content, err := h.declarationBytes(ctx, digest)
+	if err != nil {
+		return nil, err
+	}
+	encoded := base64.StdEncoding.EncodeToString(content)
+	return &encoded, nil
+}
+
+// declarationBytes reads a declaration from the content store: refused before it is read when it is over 1 MiB, and checked to be the content of its digest.
+func (h *executorAPI) declarationBytes(ctx context.Context, digest artifact.Digest) ([]byte, error) {
 	size, err := h.content.Size(ctx, digest)
 	if err != nil {
 		return nil, fmt.Errorf("size the declaration %s: %w", digest, err)
@@ -267,8 +354,10 @@ func (h *executorAPI) declaration(ctx context.Context, digest artifact.Digest) (
 	if err != nil {
 		return nil, fmt.Errorf("read the declaration %s: %w", digest, err)
 	}
-	encoded := base64.StdEncoding.EncodeToString(content)
-	return &encoded, nil
+	if artifact.Hash(content) != digest {
+		return nil, fmt.Errorf("the declaration %s is not the content of that digest", digest)
+	}
+	return content, nil
 }
 
 // repoName is the owner/name of an enrolled repository.

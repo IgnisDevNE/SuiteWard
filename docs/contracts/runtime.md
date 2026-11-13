@@ -1339,6 +1339,7 @@ The profile is C and C++ built with CMake and run with CTest, the tests being Go
 - A test that the lexer cannot see (a project macro that expands to a `TEST`, a generated test) is not expected and not covered.
 - Declared tests of one part that share a `Suite.Name` in different directories read as one: a case does not say which directory declared it, so each of them takes the worst result of the cases of that name.
 - An archive must hold one top-level folder, because the unpack uses `--strip-components=1`; otherwise the unpack is wrong and the build fails.
+- The whole tree is present (owner decision 10), but the dependency plan reads only the CMake files under the part's folder. A `FetchContent_Declare` outside the folder that the build reaches is not planned: the configure is offline, so every test of the side reads `build-error` †.
 - A forged JUnit is the class of forged events that Go has. The exit-status rule above is the only cross-check, and M2.2 adds no signal.
 
 #### Removed tests and the weakened set (M2.2)

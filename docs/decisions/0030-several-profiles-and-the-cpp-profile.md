@@ -1,13 +1,13 @@
 # ADR 0030: Several profiles in one repository, and the C/C++ profile
 
 - **Date:** 2026-11-13
-- **Status:** Accepted for phase M2.2 (SW-40), designed and not implemented. It applies the owner's decisions on the phase plan (decisions 1 to 6, 2026-11-11), decision 8 (2026-11-13, nested folders) and decisions 9 to 12 (2026-11-13, after the first review of this record: downloads, what a part sees, who owns a test file, redirect hosts). Decision 11 replaces the wording of decision 8. The rules that no decision settles are listed at the end as gap rules, and one of them needs the owner's confirmation. The phase page (task D3) will carry the decisions.
+- **Status:** Accepted for phase M2.2 (SW-40), designed and not implemented. It applies the owner's decisions on the phase plan (decisions 1 to 6, 2026-11-11), decision 8 (2026-11-13, nested folders) and decisions 9 to 14 (2026-11-13, after the reviews of this record: downloads, what a part sees, who owns a test file, redirect hosts, protected-only entries, two profiles at one folder). Decision 11 replaces the wording of decision 8. The rules that no decision settles are listed at the end as gap rules. The phase page (task D3) will carry the decisions.
 - **Product:** SuiteWard
 - **Scope:** How one repository names several execution profiles, each in its own folder; the C/C++ profile (CMake, CTest and GoogleTest); a profile that is protected only; the end of a run as unavailable, in plain words, when the image of a declared profile is not installed; the sandbox images that an installation chooses; and what the lease, the result, the schema and the installer need for these. About forty code tasks consume this record and the M2.2 sections of the contracts.
 - **Amends:** [ADR 0028](0028-canonical-execution-and-the-receipt.md) where it says that `go` is the only profile, that one image serves a run, and how dependencies are fetched; and [ADR 0029](0029-results-communication.md) only where the weakened-test signal gains removed tests and build failures (SW-62). The list is in [What this amends](#what-this-amends).
 - **Related:** [ADR 0008](0008-progressive-integrity-and-execution.md), [ADR 0027](0027-agent-human-trust-separation.md), D-ROADMAP in the [decision register](../plan/decisions.md#d-roadmap-the-order-after-m21), the [runtime contract](../contracts/runtime.md#execution-with-several-profiles-m22-normative), the [persistence contract](../contracts/persistence.md#migration-00023-several-profiles-m22-normative) and the [threat model](../security/threat-model.md).
 
-A † marks a choice of task D0 of M2.2 (a name, a size, a number, a word or a rule that the design leaves out), made inside this decision. The integrator may change it under the register's rule on implementation choices. Gap rule 5 lists the choices that go beyond the design.
+A † marks a choice of task D0 of M2.2 (a name, a size, a number, a word or a rule that the design leaves out), made inside this decision. The integrator may change it under the register's rule on implementation choices. Gap rule 4 lists the choices that go beyond the design.
 
 ## Context
 
@@ -29,13 +29,15 @@ The owner decided, for M2.2 ([D-ROADMAP](../plan/decisions.md#d-roadmap-the-orde
 
 A spike on a copy of `core/` of Borealis, in the real image and under the sandbox's flags, corrected the first design in several places. They are marked "spike" below, and section 7 gives its numbers.
 
-## Decided by the owner after the first review
+## Decided by the owner after the reviews
 
-The first review of this record found that three of its rules cost more than they said, and the owner answered on 2026-11-13. The sections below state these decisions as decided.
+The reviews of this record found rules that cost more than they said or that the design left open, and the owner answered on 2026-11-13. The sections below state these decisions as decided.
 
 - **Decision 9, downloads.** A `cpp` dependency is downloaded while its part's input streams into the container, as Go's modules are today. A `fetch-failed` after an earlier part has run makes the next attempt run that part again. The runner buffers nothing. The first design's claim that a C++ fetch failure does not cost Go's run is withdrawn (sections 1 and 6).
-- **Decision 10, what a part sees.** Each part's container gets the whole tree, as the Go run does today, with the part's folder as the working directory. Only the tests of the files that the part owns are expected. A build that reaches outside its folder works. The cost is that each part's container streams and unpacks the whole tree (sections 1 and 7).
-- **Decision 11, who owns a test file** (it replaces the wording of decision 8). A test file belongs to the profile that recognizes it (Go: `_test.go`; `cpp`: `.c`, `.cc`, `.cpp`, `.cxx`), at that profile's deepest running folder above the file. A folder of another profile takes nothing away, so no recognized test is out of reach. One directory may therefore hold tests of two profiles. Test identity stays unique because a Go name never holds a `.` and a CTest name always does, and the service's per-package build state is keyed by `(profile, package)`. A protected-only entry takes its profile's test files under its folder away from the enclosing running entry of the same profile, so adding one checks less and is a reduction. That two profiles may name the same folder, for example Go and `cpp` both at the root, is the orchestrator's reading of this decision and **needs the owner's confirmation** (gap rule 1).
+- **Decision 10, what a part sees.** Each part's container gets the whole tree, as the Go run does today, with the part's folder as the working directory. Only the tests of the files that the part owns are expected. A build that reads a file outside its folder (a `../cmake/` module, an `add_subdirectory` of a sibling) finds it. A dependency that such a build declares outside the folder is still not planned, so it fails (section 6). The cost is that each part's container streams and unpacks the whole tree (sections 1 and 7).
+- **Decision 11, who owns a test file** (it replaces the wording of decision 8). A test file belongs to the profile that recognizes it (Go: `_test.go`; `cpp`: `.c`, `.cc`, `.cpp`, `.cxx`), at that profile's deepest **running** folder above the file. A folder of another profile takes nothing away, so no recognized test is out of reach. One directory may therefore hold tests of two profiles. Test identity stays unique because a Go name never holds a `.` and a CTest name always does, and the service's per-package build state is keyed by `(profile, package)`.
+- **Decision 13, protected-only entries ("takes nothing away").** A `run: false` entry owns no file. A test file belongs to the deepest running entry of its profile (decision 11, literally), so a protected-only entry inside a running folder of the same profile changes nothing: those tests keep running in the enclosing part. Protected only takes effect only where no running entry of that profile is above the file: there its tests stay under the contract and none runs. An added `run: false` entry is therefore not a reduction.
+- **Decision 14, two profiles at one folder.** Different profiles may name the same folder, for example Go and `cpp` both at the root. The same profile may not appear twice for one folder: a `(profile, folder)` pair appears once.
 - **Decision 12, redirect hosts.** The declared URL stays `https://github.com/…` with a SHA-256 (decision 5). Its redirects may reach any of GitHub's website domains from the official meta API (`api.github.com/meta`, `domains.website`, read 2026-11-13): `*.github.com`, `*.githubusercontent.com`, `*.githubassets.com`, `*.github.io` and `*.github.dev`, as a fixed list in the code. The owner will revisit it when other platforms are supported (section 6).
 
 ## Decision
@@ -47,7 +49,7 @@ The sections follow the design of the phase. Section 7 is evidence and section 9
 The job stays the unit: one for each pull request, head and plan, for one binding ([ADR 0028, section 5](0028-canonical-execution-and-the-receipt.md#5-observations-states-and-their-precedence)). It runs every **running** profile of the canonical declaration, each in its image and its folder. One such run is a **part**. The results comment, both checks, the approve gate, `pr_receipt_checks`, `approval_receipts` and the weakened signal keep their shape. A test is still `(package, name)`, and `package` is the directory from the repository root. It stays unique even when two parts share a directory (decision 11).
 
 - **The label of a job.** The job's `profile` is the sorted **unique** ids of its running profiles, joined by `-`: `go`, `cpp`, `cpp-go`. Two Go folders give `go`, never `go-go`. It is at most 32 bytes.
-- **Who owns a test file (decision 11).** A test file belongs to the profile that recognizes it, at that profile's deepest entry above the file; the root contains every file. A protected-only entry is an entry too: when it is the deepest, the file belongs to no part and runs nowhere. An entry of another profile takes nothing away, so Go at the root and `cpp` in `core/` each keep the test files of their own kind in `core/`. One directory may hold tests of two profiles. That is safe because `(package, name)` stays unique (a Go name never holds a `.`, a CTest name always does) and because the NEW API rule, which reads a package as built or not (`unbuilt` in the service), is keyed by `(profile, package)`. A file that no entry of its profile contains belongs to no part.
+- **Who owns a test file (decision 11).** A test file belongs to the profile that recognizes it, at that profile's deepest **running** entry above the file; the root contains every file. A `run: false` entry owns no file and changes no ownership (decision 13): where a running entry of the profile is above the file, the file runs there, and where none is, the file belongs to no part and runs nowhere, with or without the protected-only entry. An entry of another profile takes nothing away, so Go at the root and `cpp` in `core/` each keep the test files of their own kind in `core/`. One directory may hold tests of two profiles. That is safe because `(package, name)` stays unique (a Go name never holds a `.`, a CTest name always does) and because the NEW API rule, which reads a package as built or not (`unbuilt` in the service), is keyed by `(profile, package)`. A file that no running entry of its profile contains belongs to no part. A running Go entry's folder must hold its own `go.mod`: a side without one has nothing that `go` can run, and every test of that part reads `build-error` † (gap rule 4).
 - **How ownership cuts the work.**
   - *The canonical tree* is composed once for the whole job, as ADR 0028 section 2 says. Every part is given the whole tree, and its commands run in its folder (decision 10).
   - *The declared tests* of a part come only from the test files it owns, by the rules of its profile. Only those are expected.
@@ -72,12 +74,12 @@ execution:
       run: false             # protected only; the default is true
 ```
 
-- `profiles` has 1 to 8 entries. A `(profile, folder)` pair appears once, and that is the only uniqueness rule: entries may nest, and two profiles may name one folder (gap rule 1). A folder is a clean relative path. `profile: go` stays valid and means one Go profile at the root: this repository keeps it.
+- `profiles` has 1 to 8 entries. A `(profile, folder)` pair appears once, and that is the only uniqueness rule: entries may nest, and different profiles may name one folder (decision 14). A folder is a clean relative path. `profile: go` stays valid and means one Go profile at the root: this repository keeps it.
 - The ids are a closed set. The code accepts `cpp` only from the task that lands its profile (X18), so no engine reads a declaration that it cannot run.
-- A protected-only entry (`run: false`) never runs. It takes its profile's test files under its folder away from the enclosing running entry of the same profile (section 1, decision 11), and those files stay under the contract through the `include` patterns, as in a repository with no `execution` block.
+- A protected-only entry (`run: false`) never runs and owns no file (decision 13). It changes nothing where a running entry of its profile is above its folder. Where none is, the tests of its folder stay under the contract through the `include` patterns, as in a repository with no `execution` block, and none runs.
 - A level (`canonical` or `receipt`) named with no running profile is an invalid declaration (this extends the rule of ADR 0028 section 1: levels need a running profile). A list whose entries are all protected only, with no level, is valid and runs nothing.
 - `Execution()` keeps its shape. Its `Profile` is the label of section 1, and it reports "not configured" when nothing runs, so its three callers do not change.
-- The reductions gain three entries: `execution profile: <id> <folder> removed`, `execution profile: <id> <folder> -> protected only`, and (decision 11) `execution profile: <id> <folder> protected only inside <enclosing>` † for a protected-only entry added inside a running one of its profile. They are listed in the revision comment as the level reductions are. The exact rules are in the [runtime contract](../contracts/runtime.md#the-declaration-m22).
+- The reductions gain two entries: `execution profile: <id> <folder> removed` and `execution profile: <id> <folder> -> protected only`. They are listed in the revision comment as the level reductions are. An added entry is not a reduction, `run: false` included, because it takes nothing away (decision 13). The exact rules are in the [runtime contract](../contracts/runtime.md#the-declaration-m22).
 
 ### 3. The lease and the result
 
@@ -175,7 +177,7 @@ On `core/` of Borealis (`main` at `1820fef4`), with the exact sandbox flags: 77 
 - `Settings.Profiles`, the key `profiles` of the settings file, has no `omitempty`. A file with no such key (an install of an earlier release) reads as `[go]`. `profiles: []` is an explicit "none".
 - The sandbox images are pulled after the repositories are chosen, only for the chosen profiles. A pull that fails warns, and names the fix: `suiteward profile add <name>`. The test runner never pulls.
 - The profiles page lists every profile with the size of its image, and preselects the profiles that the **file paths** of the chosen repositories suggest (`go.mod`, `CMakeLists.txt`; `settings.gradle` joins in M2.3). Nothing reads file contents. With GitHub off, nothing is suggested.
-- `suiteward profile add <name>` is a co-located command. On the isolated tier the root host step takes the profiles (gap rule 3).
+- `suiteward profile add <name>` is a co-located command. On the isolated tier the root host step takes the profiles (gap rule 2).
 - `doctor`'s `executor.image` row covers each chosen profile, and an upgrade pulls the new images of the chosen profiles.
 
 The [runtime contract](../contracts/runtime.md#the-installer-and-the-profiles-m22) states the key and the command; the install guide (task D2) explains them to users.
@@ -186,7 +188,7 @@ When the container engine does not hold the image of a profile of the lease, the
 
 Why the whole job, and not "those tests excluded": an excluded test passes the gate. A co-located agent could delete an image to skip tests. The owner accepted this cost with the plan.
 
-**What the owner needs to know.** A missing image ends the whole run of a commit as unavailable, the results of the other profiles included, and it does so even when the missing profile has nothing to run in that revision. Adding the image does not run the commit again by itself (gap rule 4).
+**What the owner needs to know.** A missing image ends the whole run of a commit as unavailable, the results of the other profiles included, and it does so even when the missing profile has nothing to run in that revision. Adding the image does not run the commit again by itself (gap rule 3).
 
 ## Alternatives rejected
 
@@ -210,7 +212,7 @@ Why the whole job, and not "those tests excluded": an excluded test passes the g
 - The bytes of a C/C++ dependency are as safe as TLS to GitHub and the candidate's own `URL_HASH`, which the candidate controls. That is equal to a networked configure and not stronger, as for Go's `go.sum` ([ADR 0028, section 11](0028-canonical-execution-and-the-receipt.md#11-the-sandbox-and-the-go-profile)).
 - The candidate's code runs in the sandbox during the configure, the build and `gtest_discover_tests` (which runs each test binary at build time), as Go's compile and tests do. It can write the JUnit files, which is the class of forged events that Go has. M2.2 adds no signal for it. The exit-status rule is the only cross-check (the [contract](../contracts/runtime.md#the-cpp-profile)).
 - A `CMakeLists.txt` anywhere suggests `cpp` in the installer, with or without tests. A part's tests that its CMake does not list read MISSING, so owners should protect the `CMakeLists.txt` that lists their tests.
-- A revision that only deletes test files has no receipt, so the weakened signal cannot name those removals (gap rule 2).
+- A revision that only deletes test files has no receipt, so the weakened signal cannot name those removals (gap rule 1).
 - The pull request page, the evidence binding and the check summaries state parts, so their texts change (tasks Y6 to Y8 and Y19 to Y20).
 
 ## What this amends
@@ -229,20 +231,19 @@ Why the whole job, and not "those tests excluded": an excluded test passes the g
 
 ## Gap rules
 
-Decisions 9 to 12 settled three points of the first version of this record: what a part sees, a protected-only entry and nested entries, and the redirect hosts. The rules below are not decided by the owner. Each is the narrowest one that the code can implement, and the contracts mark with † the ones that go beyond the design.
+Decisions 9 to 14 settled what a part sees, how downloads work, who owns a test file, protected-only entries, two profiles at one folder and the redirect hosts. The rules below are not decided by the owner. Each is the narrowest one that the code can implement, and the contracts mark with † the ones that go beyond the design.
 
-1. **Two profiles at one folder (needs the owner's confirmation).** The orchestrator reads decision 11 as allowing `go` and `cpp` both at the root: the only uniqueness rule is that a `(profile, folder)` pair appears once, and the label of such a job is `cpp-go`. The stricter reading keeps running folders pairwise different. It refuses that declaration and changes nothing else, because Go at the root with `cpp` in `core/` shares directories either way.
-2. **A revision that only deletes test files has no receipt.** ADR 0028 section 2 makes it `not-applicable`, so no run reports `removed` and the weakened signal cannot name those deletions. Changing the applicability rule is beyond this record. The cost is the case that SW-62 describes, when it is the only change.
-3. **The fix of a missing image on the isolated tier.** There `suiteward profile add` does not exist: the root host step takes the profiles. The sentence of the reason must name a fix the reader can run. The contract writes the co-located command, and asks task Y6 for the isolated wording once task Y18 settles the host step.
-4. **Adding the image does not run the commit again.** `image-missing-<id>` is final for its job, as `toolchain-mismatch` is. After `profile add`, a new push makes the next run. Where a gate holds, the owner can unblock the commit instead, which passes without running its tests. Replacing the job when an image appears would need the service to learn about the runner's image store, which it does not know.
-5. **Choices beyond the design, marked † in the contracts.**
+1. **A revision that only deletes test files has no receipt.** ADR 0028 section 2 makes it `not-applicable`, so no run reports `removed` and the weakened signal cannot name those deletions. Changing the applicability rule is beyond this record. The cost is the case that SW-62 describes, when it is the only change.
+2. **The fix of a missing image on the isolated tier.** There `suiteward profile add` does not exist: the root host step takes the profiles. The sentence of the reason must name a fix the reader can run. The contract writes the co-located command, and asks task Y6 for the isolated wording once task Y18 settles the host step.
+3. **Adding the image does not run the commit again.** `image-missing-<id>` is final for its job, as `toolchain-mismatch` is. After `profile add`, a new push makes the next run. Where a gate holds, the owner can unblock the commit instead, which passes without running its tests. Replacing the job when an image appears would need the service to learn about the runner's image store, which it does not know.
+4. **Choices beyond the design, marked † in the contracts.**
+   - A running Go entry's folder must hold its own `go.mod`: the part runs `go` in its folder, and a side with no `go.mod` has nothing that `go` can run, so every test of the part reads `build-error`. A Go entry at a folder without a module is therefore a declaration that reads as failing tests, not as an error.
    - `ctest --timeout <testTimeoutSeconds>`: CTest's own default is 1500 s, so a hung test would hold the job to its deadline and read as `timeout`, not as `fail`. `-DBUILD_TESTING=ON`.
    - A hash mismatch, a refused redirect and a bound that is passed read `install-failed`. A download that fails or is cut off reads `fetch-failed`.
    - `github.com` itself is on the redirect list, so that a renamed repository's archive URL is followed; a redirect has at most 3 hops.
    - An archive is unpacked with `--strip-components=1`, so it must hold one top-level folder.
    - The sources that `cpp` recognizes are `.c`, `.cc`, `.cpp` and `.cxx`. A GoogleTest name is `Suite.Name`. A dependency has a name of `^[A-Za-z][A-Za-z0-9_]{0,63}$`, a `.tar.gz` or `.tgz` URL of at most 2048 bytes, and a part has at most 16 of them.
    - The dependency plan reads only the CMake files under the part's folder, although the part gets the whole tree: a `FetchContent_Declare` outside the folder is not planned, and every test of the side reads `build-error`.
-   - The third reduction string of section 2. Inside a protected-only entry, a running entry of the same profile keeps its own subtree.
    - Smaller rules: the root is spelled `.` in the lease, the parts and the reductions, and `folder: .` is refused; the scalar `profile` accepts `go` only; `sandbox` describes the first part; `removed` leaves out excluded tests; `Suggest` matches on the last segment of a path.
 
 ## Not decided
